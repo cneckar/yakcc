@@ -11,9 +11,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { EMIT_CASES } from "./__fixtures__/emit-cases.js";
 import { runnable } from "./__fixtures__/runnable.js";
+import { graphIdentity } from "./canonical.js";
 import { RUST_PRELUDE, RustEmitError, emitRust } from "./emit-rust.js";
 import { emitTypeScript } from "./emit-ts.js";
 import { liftAtom } from "./lift.js";
+import { raiseRust } from "./raise-rust.js";
 
 /** Reads `case<TAB>json args` lines, prints each result as JSON (a value, or what was thrown). */
 const DRIVER = String.raw`
@@ -311,4 +313,19 @@ describe("lowering to Rust: refusals (#1278)", () => {
       ),
     ).toThrow(RustEmitError);
   });
+});
+
+describe("raising the Rust lowering: round trip (#1278)", () => {
+  const cases = [
+    ...EMIT_CASES.map((c) => [c.name, c.source] as const),
+    ...MORE.map(([name, source]) => [name, source] as const),
+  ];
+  for (const [name, source] of cases) {
+    it(`lowers, raises and lifts to the same identity: ${name}`, () => {
+      const g = liftAtom(source);
+      const rust = emitRust(g);
+      const ts = raiseRust(rust);
+      expect(graphIdentity(liftAtom(ts)), `${rust}\n${ts}`).toBe(graphIdentity(g));
+    });
+  }
 });

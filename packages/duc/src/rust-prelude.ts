@@ -455,6 +455,111 @@ pub fn call(f: V, args: Vec<V>) -> V {
     }
 }
 
+pub fn call_detached(f: V, args: Vec<V>) -> V {
+    call(f, args)
+}
+
+pub fn call_opt(f: V, args: Vec<V>) -> V {
+    if is_nullish(&f) { V::Undef } else { call(f, args) }
+}
+
+pub fn get_opt(o: V, k: &str) -> V {
+    if is_nullish(&o) { V::Undef } else { get(o, k) }
+}
+
+pub fn call_error(kind: &str, msg: V) -> V {
+    new_error(kind, msg)
+}
+
+pub fn to_string_m(x: V, rest: Vec<V>) -> V {
+    match (&x, rest.first()) {
+        (V::Null | V::Undef, _) => type_error(format!("Cannot read properties of {} (reading 'toString')", str_of(&x))),
+        (V::Num(f), Some(r)) if !matches!(r, V::Undef) => {
+            let radix = num(r) as u32;
+            if !(2..=36).contains(&radix) {
+                throw(V::Err(Rc::new(JsErr { kind: "RangeError".to_string(), message: "toString() radix must be between 2 and 36".to_string() })));
+            }
+            s(&radix_str(*f, radix))
+        }
+        _ => str_v(x),
+    }
+}
+
+/// A number in a radix, as JavaScript writes it: the integer part, then up to 52 fraction digits.
+fn radix_str(f: f64, radix: u32) -> String {
+    if f.is_nan() { return "NaN".to_string(); }
+    if f.is_infinite() { return if f > 0.0 { "Infinity".to_string() } else { "-Infinity".to_string() }; }
+    if radix == 10 { return num_str(f); }
+    let neg = f < 0.0;
+    let a = f.abs();
+    let mut int = a.trunc();
+    let mut frac = a - int;
+    let digits: Vec<char> = "0123456789abcdefghijklmnopqrstuvwxyz".chars().collect();
+    let mut ip = Vec::new();
+    if int == 0.0 { ip.push('0'); }
+    while int >= 1.0 {
+        let d = (int % radix as f64) as usize;
+        ip.push(digits[d]);
+        int = (int / radix as f64).trunc();
+    }
+    ip.reverse();
+    let mut out: String = ip.into_iter().collect();
+    if frac > 0.0 {
+        out.push('.');
+        let mut count = 0;
+        while frac > 0.0 && count < 52 {
+            frac *= radix as f64;
+            let d = frac.trunc() as usize;
+            out.push(digits[d]);
+            frac -= d as f64;
+            count += 1;
+        }
+    }
+    if neg { format!("-{}", out) } else { out }
+}
+
+pub fn platform(name: &str) -> V {
+    V::Undef
+}
+
+pub fn freeze(x: V) -> V {
+    x
+}
+
+pub fn idx_opt(o: V, i: V) -> V { if is_nullish(&o) { V::Undef } else { idx(o, i) } }
+pub fn comma(a: V, b: V) -> V { b }
+pub fn void_of(a: V) -> V { V::Undef }
+pub fn template(texts: &[&str], vals: Vec<V>) -> V {
+    let mut out = String::new();
+    for (i, t) in texts.iter().enumerate() {
+        out.push_str(t);
+        if let Some(v) = vals.get(i) {
+            out.push_str(&str_of(v));
+        }
+    }
+    s(&out)
+}
+pub fn add_assign(a: V, b: V) -> V { add(a, b) }
+pub fn sub_assign(a: V, b: V) -> V { sub(a, b) }
+pub fn mul_assign(a: V, b: V) -> V { mul(a, b) }
+pub fn div_assign(a: V, b: V) -> V { div(a, b) }
+pub fn rem_assign(a: V, b: V) -> V { rem(a, b) }
+pub fn pre_inc(a: V) -> V { n(num(&a) + 1.0) }
+pub fn post_inc(a: V) -> V { n(num(&a) + 1.0) }
+pub fn pre_dec(a: V) -> V { n(num(&a) - 1.0) }
+pub fn post_dec(a: V) -> V { n(num(&a) - 1.0) }
+pub fn put_member(o: V, k: &str, v: V) -> V { put(o, s(k), v) }
+pub fn math_pow(a: V, b: V) -> V { pow(a, b) }
+pub fn math_abs(x: V) -> V { n(num(&x).abs()) }
+pub fn math_floor(x: V) -> V { n(num(&x).floor()) }
+pub fn math_ceil(x: V) -> V { n(num(&x).ceil()) }
+pub fn math_trunc(x: V) -> V { n(num(&x).trunc()) }
+pub fn math_sqrt(x: V) -> V { n(num(&x).sqrt()) }
+pub fn number_of(x: V) -> V { n(num(&x)) }
+pub fn boolean_of(x: V) -> V { B(truthy(&x)) }
+pub fn global_is_nan(x: V) -> V { B(num(&x).is_nan()) }
+pub fn global_is_finite(x: V) -> V { B(num(&x).is_finite()) }
+
 pub fn arg(args: &[V], i: usize) -> V {
     args.get(i).cloned().unwrap_or(V::Undef)
 }
@@ -875,7 +980,20 @@ pub fn is_nan_number(x: V) -> V { B(matches!(x, V::Num(f) if f.is_nan())) }
 
 pub fn object_keys(x: V) -> V { arr(keys(x)) }
 
-pub fn try_catch(body: V, handler: V, finalizer: V) -> V {
+pub const NONE: V = V::Undef;
+
+pub fn uninit() -> V {
+    V::Undef
+}
+
+pub fn re_call(pattern: V, flags: V) -> V {
+    re_new(pattern, flags)
+}
+
+pub fn try_catch(parts: Vec<V>) -> V {
+    let body = parts.get(0).cloned().unwrap_or(V::Undef);
+    let handler = parts.get(1).cloned().unwrap_or(V::Undef);
+    let finalizer = parts.get(2).cloned().unwrap_or(V::Undef);
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call(body.clone(), vec![])));
     let outcome = match outcome {
         Ok(v) => Ok(v),

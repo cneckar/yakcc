@@ -25,38 +25,40 @@ export class RustEmitError extends Error {
 }
 
 const U = "V::Undef";
+/** A missing argument: undefined, written apart from an undefined passed, so the raiser keeps arity. */
+const NONE = "NONE";
 const vec = (xs: readonly string[]): string => `vec![${xs.join(", ")}]`;
 
 const METHODS: Record<string, (recv: string, args: readonly string[]) => string> = {
   trim: (r) => `trim(${r})`,
   toUpperCase: (r) => `to_upper(${r})`,
   toLowerCase: (r) => `to_lower(${r})`,
-  startsWith: (r, a) => `starts_with(${r}, ${a[0] ?? U})`,
-  endsWith: (r, a) => `ends_with(${r}, ${a[0] ?? U})`,
-  includes: (r, a) => `includes(${r}, ${a[0] ?? U})`,
-  indexOf: (r, a) => `index_of(${r}, ${a[0] ?? U})`,
-  slice: (r, a) => `slice(${r}, ${a[0] ?? U}, ${a[1] ?? U})`,
-  split: (r, a) => `split(${r}, ${a[0] ?? U})`,
-  join: (r, a) => `join(${r}, ${a[0] ?? U})`,
+  startsWith: (r, a) => `starts_with(${r}, ${a[0] ?? NONE})`,
+  endsWith: (r, a) => `ends_with(${r}, ${a[0] ?? NONE})`,
+  includes: (r, a) => `includes(${r}, ${a[0] ?? NONE})`,
+  indexOf: (r, a) => `index_of(${r}, ${a[0] ?? NONE})`,
+  slice: (r, a) => `slice(${r}, ${a[0] ?? NONE}, ${a[1] ?? NONE})`,
+  split: (r, a) => `split(${r}, ${a[0] ?? NONE})`,
+  join: (r, a) => `join(${r}, ${a[0] ?? NONE})`,
   push: (r, a) => `push(${r}, ${vec(a)})`,
-  map: (r, a) => `map_arr(${r}, ${a[0] ?? U})`,
-  filter: (r, a) => `filter_arr(${r}, ${a[0] ?? U})`,
-  some: (r, a) => `some_arr(${r}, ${a[0] ?? U})`,
-  every: (r, a) => `every_arr(${r}, ${a[0] ?? U})`,
+  map: (r, a) => `map_arr(${r}, ${a[0] ?? NONE})`,
+  filter: (r, a) => `filter_arr(${r}, ${a[0] ?? NONE})`,
+  some: (r, a) => `some_arr(${r}, ${a[0] ?? NONE})`,
+  every: (r, a) => `every_arr(${r}, ${a[0] ?? NONE})`,
   reduce: (r, a) => `reduce_arr(${r}, ${vec(a)})`,
-  toString: (r: string) => `str_v(${r})`,
-  replace: (r, a) => `replace_str(${r}, ${a[0] ?? U}, ${a[1] ?? U})`,
+  toString: (r: string, a: readonly string[]) => `to_string_m(${r}, ${vec(a)})`,
+  replace: (r, a) => `replace_str(${r}, ${a[0] ?? NONE}, ${a[1] ?? NONE})`,
   concat: (r, a) => `concat(${r}, ${vec(a)})`,
-  substring: (r, a) => `substring(${r}, ${a[0] ?? U}, ${a[1] ?? U})`,
-  forEach: (r, a) => `for_each_arr(${r}, ${a[0] ?? U})`,
-  find: (r, a) => `find_arr(${r}, ${a[0] ?? U})`,
-  findIndex: (r, a) => `find_index_arr(${r}, ${a[0] ?? U})`,
-  charAt: (r, a) => `char_at(${r}, ${a[0] ?? U})`,
-  charCodeAt: (r, a) => `char_code_at(${r}, ${a[0] ?? U})`,
-  at: (r, a) => `at(${r}, ${a[0] ?? U})`,
+  substring: (r, a) => `substring(${r}, ${a[0] ?? NONE}, ${a[1] ?? NONE})`,
+  forEach: (r, a) => `for_each_arr(${r}, ${a[0] ?? NONE})`,
+  find: (r, a) => `find_arr(${r}, ${a[0] ?? NONE})`,
+  findIndex: (r, a) => `find_index_arr(${r}, ${a[0] ?? NONE})`,
+  charAt: (r, a) => `char_at(${r}, ${a[0] ?? NONE})`,
+  charCodeAt: (r, a) => `char_code_at(${r}, ${a[0] ?? NONE})`,
+  at: (r, a) => `at(${r}, ${a[0] ?? NONE})`,
   pop: (r) => `pop(${r})`,
-  test: (r, a) => `re_test(${r}, ${a[0] ?? U})`,
-  match: (r, a) => `match_str(${r}, ${a[0] ?? U})`,
+  test: (r, a) => `re_test(${r}, ${a[0] ?? NONE})`,
+  match: (r, a) => `match_str(${r}, ${a[0] ?? NONE})`,
   shift: (r) => `shift(${r})`,
   reverse: (r) => `reverse(${r})`,
 };
@@ -64,7 +66,7 @@ const METHODS: Record<string, (recv: string, args: readonly string[]) => string>
 const mathOf =
   (fn: string) =>
   (a: readonly string[]): string =>
-    `n(num(&${a[0] ?? U}).${fn}())`;
+    `math_${fn}(${a[0] ?? NONE})`;
 
 const AMBIENT_MEMBERS: Record<string, Record<string, (args: readonly string[]) => string>> = {
   Math: {
@@ -73,33 +75,33 @@ const AMBIENT_MEMBERS: Record<string, Record<string, (args: readonly string[]) =
     ceil: mathOf("ceil"),
     trunc: mathOf("trunc"),
     sqrt: mathOf("sqrt"),
-    round: (a) => `round(${a[0] ?? U})`,
+    round: (a) => `round(${a[0] ?? NONE})`,
     max: (a) => `math_max(${vec(a)})`,
     min: (a) => `math_min(${vec(a)})`,
-    pow: (a) => `pow(${a[0] ?? U}, ${a[1] ?? U})`,
+    pow: (a) => `math_pow(${a[0] ?? NONE}, ${a[1] ?? NONE})`,
   },
   Object: {
-    keys: (a) => `object_keys(${a[0] ?? U})`,
+    keys: (a) => `object_keys(${a[0] ?? NONE})`,
     // Freezing changes nothing a lowered function can observe without a write to the frozen value.
-    freeze: (a) => a[0] ?? U,
+    freeze: (a) => `freeze(${a[0] ?? NONE})`,
   },
-  Array: { isArray: (a) => `is_array(${a[0] ?? U})` },
+  Array: { isArray: (a) => `is_array(${a[0] ?? NONE})` },
   Number: {
-    isFinite: (a) => `is_finite_number(${a[0] ?? U})`,
-    isInteger: (a) => `is_integer_number(${a[0] ?? U})`,
-    isNaN: (a) => `is_nan_number(${a[0] ?? U})`,
+    isFinite: (a) => `is_finite_number(${a[0] ?? NONE})`,
+    isInteger: (a) => `is_integer_number(${a[0] ?? NONE})`,
+    isNaN: (a) => `is_nan_number(${a[0] ?? NONE})`,
   },
 };
 
 const AMBIENT_CALLS: Record<string, (args: readonly string[]) => string> = {
-  __yakccTry: (a) => `try_catch(${a[0] ?? U}, ${a[1] ?? U}, ${a[2] ?? U})`,
+  __yakccTry: (a) => `try_catch(${vec(a)})`,
   String: (a) => `str_v(${a[0] ?? 's("")'})`,
-  Number: (a) => `n(num(&${a[0] ?? "n(0.0)"}))`,
-  Boolean: (a) => `B(truthy(&${a[0] ?? U}))`,
-  parseInt: (a) => `parse_int(${a[0] ?? U}, ${a[1] ?? U})`,
-  isNaN: (a) => `B(num(&${a[0] ?? U}).is_nan())`,
-  isFinite: (a) => `B(num(&${a[0] ?? U}).is_finite())`,
-  RegExp: (a) => `re_new(${a[0] ?? U}, ${a[1] ?? U})`,
+  Number: (a) => `number_of(${a[0] ?? "n(0.0)"})`,
+  Boolean: (a) => `boolean_of(${a[0] ?? NONE})`,
+  parseInt: (a) => `parse_int(${a[0] ?? NONE}, ${a[1] ?? NONE})`,
+  isNaN: (a) => `global_is_nan(${a[0] ?? NONE})`,
+  isFinite: (a) => `global_is_finite(${a[0] ?? NONE})`,
+  RegExp: (a) => `re_call(${a[0] ?? NONE}, ${a[1] ?? NONE})`,
 };
 
 const PLATFORM_VALUES: Record<string, string> = {
@@ -345,7 +347,8 @@ function rustFunction(
       if (label === "==" && producer.get(ins[1] as ValueId)?.label === "null")
         return `B(is_nullish(&${arg(0)}))`;
       if (label === "ElementAccess") return `idx(${arg(0)}, ${arg(1)})`;
-      if (label === ",") return `{ let _ = ${arg(0)}; ${arg(1)} }`;
+      if (label === "ElementAccess?.") return `idx_opt(${arg(0)}, ${arg(1)})`;
+      if (label === ",") return `comma(${arg(0)}, ${arg(1)})`;
     }
     if (ins.length === 1) {
       if (label === "!") return `not(${arg(0)})`;
@@ -353,17 +356,23 @@ function rustFunction(
       if (label === "-") return `neg(${arg(0)})`;
       if (label === "+") return `pos(${arg(0)})`;
       if (label === "TypeOfExpression") return `type_of(${arg(0)})`;
-      if (label === "VoidExpression") return `{ let _ = ${arg(0)}; ${U} }`;
-      if (isMemberRead(label)) return `get(${arg(0)}, ${rustString(label.replace(/^\??\./, ""))})`;
+      if (label === "VoidExpression") return `void_of(${arg(0)})`;
+      if (isMemberRead(label))
+        return `${label.startsWith("?.") ? "get_opt" : "get"}(${arg(0)}, ${rustString(label.replace(/^\??\./, ""))})`;
     }
-    if (label === "CallExpression" || label === "NewExpression") {
+    if (label === "CallExpression" || label === "CallExpression?." || label === "NewExpression") {
       let callee = ins[0] as ValueId;
       const viaComma = producer.get(callee);
+      // (0, f)(args): f called with no receiver.
+      let detached = false;
       if (
         viaComma?.label === "," &&
-        producer.get(viaComma.inputs[0] as ValueId)?.kind === "literal-source"
-      )
+        producer.get(viaComma.inputs[0] as ValueId)?.kind === "literal-source" &&
+        inline.has(viaComma.id)
+      ) {
         callee = viaComma.inputs[1] as ValueId;
+        detached = true;
+      }
       const args = ins.slice(1).map((v) => ref(v));
       const amb = ambientMember(callee);
       if (amb !== undefined) {
@@ -378,13 +387,18 @@ function rustFunction(
         platform.diamond?.reason === "platform-primitive"
       ) {
         const sym = platform.diamond.symbol;
-        if (ERRORS.has(sym)) return `new_error(${rustString(sym)}, ${args[0] ?? U})`;
+        if (sym === "RegExp" && label === "NewExpression")
+          return `re_new(${args[0] ?? NONE}, ${args[1] ?? NONE})`;
+        if (ERRORS.has(sym))
+          return `${label === "NewExpression" ? "new_error" : "call_error"}(${rustString(sym)}, ${args[0] ?? NONE})`;
         const call = AMBIENT_CALLS[sym];
         if (call === undefined) throw new RustEmitError(`${sym}(...) has no Rust form here`);
         return call(args);
       }
       const cp = producer.get(callee);
       if (cp !== undefined && inline.has(cp.id) && isMemberRead(cp.label ?? "")) {
+        if ((cp.label ?? "").startsWith("?."))
+          throw new RustEmitError("an optional method call has no Rust form here");
         const method = (cp.label ?? "").replace(/^\??\./, "");
         const fn = METHODS[method];
         if (fn === undefined) throw new RustEmitError(`the method ${method} has no Rust form here`);
@@ -392,7 +406,8 @@ function rustFunction(
       }
       if (label === "NewExpression")
         throw new RustEmitError("new of a value other than an Error has no Rust form here");
-      return `call(${ref(callee)}, ${vec(args)})`;
+      if (label === "CallExpression?.") return `call_opt(${ref(callee)}, ${vec(args)})`;
+      return `${detached ? "call_detached" : "call"}(${ref(callee)}, ${vec(args)})`;
     }
     if (label === "ArrayLiteral") {
       if (!ins.some((v) => producer.get(v)?.label === "..."))
@@ -423,12 +438,7 @@ function rustFunction(
     }
     if (label.startsWith("template:")) {
       const texts = JSON.parse(label.slice("template:".length)) as string[];
-      const pieces: string[] = [];
-      texts.forEach((t, i) => {
-        if (t !== "") pieces.push(`out.push_str(${rustString(t)});`);
-        if (i < ins.length) pieces.push(`out.push_str(&str_of(&${arg(i)}));`);
-      });
-      return `{ let mut out = String::new(); ${pieces.join(" ")} s(&out) }`;
+      return `template(&[${texts.map(rustString).join(", ")}], ${vec(ins.map((v) => ref(v)))})`;
     }
     throw new RustEmitError(`the operation "${label}" has no Rust form`);
   };
@@ -438,7 +448,7 @@ function rustFunction(
   const statementsOf = (node: DucNode): string[] => {
     const out = node.outputs[0];
     const label = node.label ?? "";
-    if (node.kind === "literal-source") return declare(nameOf(out as ValueId), U);
+    if (node.kind === "literal-source") return declare(nameOf(out as ValueId), "uninit()");
     if (node.kind === "sel") return declare(nameOf(out as ValueId), render(node));
     if (node.kind !== "op") throw new RustEmitError(`a ${node.kind} is not a statement`);
     const arg = (i: number): string => ref(node.inputs[i] as ValueId);
@@ -464,19 +474,26 @@ function rustFunction(
         "};",
       ];
     }
+    // A compound assignment and a step are operations of their own, as the graph has them.
     const compound: Record<string, string> = {
-      "+=": "add",
-      "-=": "sub",
-      "*=": "mul",
-      "/=": "div",
-      "%=": "rem",
+      "+=": "add_assign",
+      "-=": "sub_assign",
+      "*=": "mul_assign",
+      "/=": "div_assign",
+      "%=": "rem_assign",
     };
     const fn = compound[label];
     if (fn !== undefined) return declare(name, `${fn}(${arg(0)}, ${arg(1)})`);
-    if (label === "++" || label === "post++") return declare(name, `add(pos(${arg(0)}), n(1.0))`);
-    if (label === "--" || label === "post--") return declare(name, `sub(pos(${arg(0)}), n(1.0))`);
+    const steps: Record<string, string> = {
+      "++": "pre_inc",
+      "post++": "post_inc",
+      "--": "pre_dec",
+      "post--": "post_dec",
+    };
+    const step = steps[label];
+    if (step !== undefined) return declare(name, `${step}(${arg(0)})`);
     if (label.startsWith(".") && label.endsWith("="))
-      return declare(name, `put(${arg(0)}, s(${rustString(label.slice(1, -1))}), ${arg(1)})`);
+      return declare(name, `put_member(${arg(0)}, ${rustString(label.slice(1, -1))}, ${arg(1)})`);
     if (label === "[]=") return declare(name, `put(${arg(0)}, ${arg(1)}, ${arg(2)})`);
     return declare(name, render(node));
   };
@@ -642,8 +659,20 @@ function rustFunction(
     (n, i) =>
       `let mut ${nameOf(n.outputs[0] as ValueId)}: V = ${isRestParam(n.label) ? "rest_args" : "arg"}(&args, ${i});`,
   );
-  const body = [...bindings, ...emitScope(undefined)];
+  // A free or ambient name that nothing uses is still part of the atom: it is read on its own.
+  const used = new Set<ValueId>([...g.obs, ...branches.map((b) => b.cond)]);
+  for (const node of g.nodes) for (const v of node.inputs) used.add(v);
+  const unread = g.nodes
+    .filter((n) => n.kind === "diamond-source" && !used.has(n.outputs[0] as ValueId))
+    .map((n) => {
+      const d = n.diamond as { reason: string; symbol: string };
+      return d.reason === "platform-primitive"
+        ? `let _ = platform(${rustString(d.symbol)});`
+        : `let _ = ${referenceName(d.symbol)}();`;
+    });
+  const body = [...bindings, ...unread, ...emitScope(undefined)];
   const obs = g.obs[0];
-  body.push(obs !== undefined ? `return ${ref(obs)};` : `return ${U};`);
+  // No observation: the function computes nothing it returns (NONE, not an undefined returned).
+  body.push(obs !== undefined ? `return ${ref(obs)};` : "return NONE;");
   return { body };
 }
