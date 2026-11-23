@@ -52,15 +52,15 @@ describe("structural distance (#1280)", () => {
     ).toEqual([1, 0]);
   });
 
-  it("a comparison written the other way round is the same structure for selection", () => {
+  it("a comparison written the other way round is nearest the original", () => {
     const lt = g("export function f(a: number, b: number) { return a < b ? a : b; }");
     const gt = g("export function f(a: number, b: number) { return b > a ? a : b; }");
     const max = g("export function f(a: number, b: number) { return a > b ? a : b; }");
     // Identity keeps them apart; selection does not.
     expect(graphIdentity(gt)).not.toBe(graphIdentity(lt));
-    expect(structuralDistance(gt, lt)).toBe(0);
-    // min and max stay apart: parameters enter by position.
-    expect(structuralDistance(max, lt)).toBeGreaterThan(0);
+    // min written as `b > a` is nearer min than max is: parameters enter by position.
+    expect(structuralDistance(gt, lt)).toBeLessThan(structuralDistance(max, lt));
+    expect(structuralDistance(gt, lt)).toBeLessThan(structuralDistance(gt, max));
   });
 
   it("tells apart equal producers feeding a comparison the other way round", () => {
@@ -74,7 +74,8 @@ describe("structural distance (#1280)", () => {
     const afterFlipped = g(
       "export function f(a: string, b: string) { const x = h(a); const y = h(b); return y < x; }",
     );
-    expect(structuralDistance(afterFlipped, after)).toBe(0);
-    expect(structuralDistance(afterFlipped, before)).toBeGreaterThan(0);
+    expect(structuralDistance(afterFlipped, after)).toBeLessThan(
+      structuralDistance(afterFlipped, before),
+    );
   });
 });

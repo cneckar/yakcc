@@ -21,6 +21,7 @@ import type { DucGraph, DucNode, ValueId } from "./types.js";
 
 /** A comparison's mirror: `b > a` selects like `a < b`. */
 const MIRROR: Readonly<Record<string, string>> = { ">": "<", ">=": "<=" };
+const COMPARISONS = new Set(["<", "<=", ">", ">="]);
 const mirrored = (n: DucNode): boolean =>
   n.kind === "op" && n.inputs.length === 2 && MIRROR[n.label ?? ""] !== undefined;
 
@@ -41,8 +42,8 @@ const INTERN = new Map<string, string>();
 /** The bag of a graph's node and edge keys, with closures' bags folded in. */
 export function structuralBag(g: DucGraph): Map<string, number> {
   const bag = new Map<string, number>();
-  const add = (k: string): void => {
-    bag.set(k, (bag.get(k) ?? 0) + 1);
+  const add = (k: string, weight = 1): void => {
+    bag.set(k, (bag.get(k) ?? 0) + weight);
   };
   // Refined keys are interned to short names, so the bag's keys stay small.
   const interned = new Map<string, string>();
@@ -64,6 +65,10 @@ export function structuralBag(g: DucGraph): Map<string, number> {
     const key = (n: DucNode): string => nodeKey(n, params);
     for (const n of canon.nodes) {
       add(`n${depth}|${key(n)}`);
+      // The comparison as written, at half weight: a weak signal beside the mirrored entries, which
+      // breaks a tie toward the operator the query used.
+      if (n.kind === "op" && n.inputs.length === 2 && COMPARISONS.has(n.label ?? ""))
+        add(`r${depth}|${n.label}`, 0.5);
       const flip = mirrored(n);
       n.inputs.forEach((v, i) => {
         const p = producer.get(v);
