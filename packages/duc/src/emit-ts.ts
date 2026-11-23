@@ -86,11 +86,16 @@ export interface EmitSignature {
 }
 
 /**
- * Emits a graph as a TypeScript function. With a signature, the parameters and the result are
+ * Emits a graph as a TypeScript function, `f` unless `options.name` names it. With a signature, the
+ * parameters and the result are
  * annotated from the contract; the types inside are TypeScript's to infer. Throws EmitError for a
  * graph it cannot express.
  */
-export function emitTypeScript(g: DucGraph, signature?: EmitSignature): string {
+export function emitTypeScript(
+  g: DucGraph,
+  signature?: EmitSignature,
+  options: { readonly name?: string } = {},
+): string {
   // The structure must be expressible: the line form's checks hold here too, closures included.
   try {
     printLineForm(g);
@@ -119,7 +124,7 @@ export function emitTypeScript(g: DucGraph, signature?: EmitSignature): string {
   if (asModule) return [...importLines, ...body, ""].join("\n");
   return [
     ...importLines,
-    `export ${modeHead(g.mode)}f(${typed.join(", ")})${result} {`,
+    `export ${modeHead(g.mode)}${options.name ?? "f"}(${typed.join(", ")})${result} {`,
     ...body.map((l) => `  ${l}`),
     "}",
     "",
