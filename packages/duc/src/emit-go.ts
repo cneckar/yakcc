@@ -147,6 +147,7 @@ export function emitGo(g: DucGraph): string {
   } catch (e) {
     throw new GoEmitError(e instanceof Error ? e.message : String(e));
   }
+  if (g.mode !== undefined) throw new GoEmitError(`an ${g.mode} function has no form here`);
   const { body } = goFunction(g, "", []);
   return ["func f(args ...any) any {", ...indent(body), "}", ""].join("\n");
 }
@@ -433,6 +434,10 @@ function goFunction(
     if (out === undefined) return [`_ = ${render(node)}`];
     const name = nameOf(out);
     if (node.closure !== undefined) {
+      if (label !== "closure" && label !== "function")
+        throw new GoEmitError(
+          `a closure that is ${label.replace(/ closure$/, "")} has no form here`,
+        );
       if (label === "function")
         throw new GoEmitError("a function with its own receiver (this) has no Go form here");
       const inner = goFunction(

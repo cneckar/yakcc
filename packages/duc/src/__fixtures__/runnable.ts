@@ -13,5 +13,5 @@ const RUNTIME = [
 export function runnable(code: string): string {
   return code
     .replace(/^import \{ __yakccTry \} from "@yakcc\/duc\/runtime";$/m, RUNTIME)
-    .replace("export function f", "function f");
+    .replace(/^export (async )?function(\*?) f/m, "$1function$2 f");
 }

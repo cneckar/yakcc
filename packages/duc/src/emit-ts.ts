@@ -118,11 +118,17 @@ export function emitTypeScript(g: DucGraph, signature?: EmitSignature): string {
   if (asModule) return [...importLines, ...body, ""].join("\n");
   return [
     ...importLines,
-    `export function f(${typed.join(", ")})${result} {`,
+    `export ${modeHead(g.mode)}f(${typed.join(", ")})${result} {`,
     ...body.map((l) => `  ${l}`),
     "}",
     "",
   ].join("\n");
+}
+
+/** The words before a function's name: `function`, `async function`, `function*`. */
+function modeHead(mode: DucGraph["mode"]): string {
+  if (mode === undefined) return "function ";
+  return `${mode.startsWith("async") ? "async " : ""}function${mode.endsWith("generator") ? "*" : ""} `;
 }
 
 /**
@@ -311,6 +317,9 @@ function emitFunction(
     if (PREFIX.has(label) && ins.length === 1) return `${label}${arg(0)}`;
     if (label === "TypeOfExpression") return `typeof ${arg(0)}`;
     if (label === "VoidExpression") return `void ${arg(0)}`;
+    if (label === "AwaitExpression") return `(await ${arg(0)})`;
+    if (label === "YieldExpression") return ins.length === 0 ? "(yield)" : `(yield ${arg(0)})`;
+    if (label === "YieldExpression*") return `(yield* ${arg(0)})`;
     if (isMemberRead(label)) {
       if (label === "ElementAccess") return `${arg(0)}[${arg(1)}]`;
       if (label === "ElementAccess?.") return `${arg(0)}?.[${arg(1)}]`;
@@ -394,10 +403,13 @@ function emitFunction(
           c.inputs.map((v) => ref(v)),
           imports,
         );
+        // A method's `async` and `*` are in its closure's label.
+        const own = c.label ?? "";
+        const mode = `${own.startsWith("async ") ? "async " : ""}${own.endsWith("*") ? "*" : ""}`;
         const head =
           kind === "constructor"
             ? "constructor"
-            : `${isStatic === true ? "static " : ""}${kind === "method" ? "" : `${kind} `}${member}`;
+            : `${isStatic === true ? "static " : ""}${kind === "method" ? mode : `${kind} `}${member}`;
         lines.push(
           `  ${head}(${inner.params.join(", ")}) {`,
           ...inner.body.map((l) => `    ${l}`),
@@ -416,12 +428,17 @@ function emitFunction(
       );
       // A function sees its caller's receiver; an arrow sees the enclosing one, as a capture. A
       // function that reads itself is named, `function Fn_(..)`, and reads that name.
+      // `async`, and a generator's `*`, are in the label (#1276); a generator is always a function.
       const recursive = node.closure.nodes.some((n) => n.label === "function-self");
+      const isAsync = label.startsWith("async ");
+      const base = isAsync ? label.slice("async ".length) : label;
+      const fn = `${isAsync ? "async " : ""}function${base === "function*" ? "*" : ""}`;
+      const params = inner.params.join(", ");
       const head = recursive
-        ? `function Fn_(${inner.params.join(", ")}) {`
-        : label === "function"
-          ? `function (${inner.params.join(", ")}) {`
-          : `(${inner.params.join(", ")}) => {`;
+        ? `${fn} Fn_(${params}) {`
+        : base === "closure"
+          ? `${isAsync ? "async " : ""}(${params}) => {`
+          : `${fn} (${params}) {`;
       return [`const ${name} = ${head}`, ...inner.body.map((l) => `  ${l}`), "};"];
     }
     // A reassigned variable is a temporary, and the value's own name is a const: a closure that

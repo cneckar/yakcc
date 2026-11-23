@@ -32,6 +32,7 @@ import type {
   DucGraph,
   DucLoop,
   DucNode,
+  FunctionMode,
   NodeId,
   ValueId,
 } from "./types.js";
@@ -205,6 +206,8 @@ class Lifter {
   private functionSelfValue: ValueId | undefined;
 
   private readonly obs: ValueId[] = [];
+  /** The atom's function is async or a generator (#1276). */
+  private mode: FunctionMode | undefined;
 
   /**
    * Names held in a cell (#1276): a closure rebinds them, so the closure and its scope share one
@@ -313,6 +316,7 @@ class Lifter {
   run(file: Node): void {
     const primary = findPrimaryFunction(file);
     if (primary !== undefined) {
+      this.mode = functionModeOf(primary);
       this.liftFunction(primary);
     } else {
       // No single exported function: lift the top-level statements in one scope,
@@ -503,7 +507,7 @@ class Lifter {
    * and accessor in order, its label naming each member's kind, name and whether it is static. A
    * member reads the class's own name as `class-self`. Undefined when it is not that: a heritage
    * clause (`super` needs the parent), a field, a static block, a computed or private name, a
-   * parameter property, or a member that is not a closure (async, a generator).
+   * parameter property, or a member that is not a closure. An async or generator method is one.
    */
   private liftClass(
     node: import("ts-morph").ClassDeclaration | import("ts-morph").ClassExpression,
@@ -847,13 +851,7 @@ class Lifter {
     selfName?: string,
     classSelf?: string,
   ): ValueId | undefined {
-    const asyncOrGenerator =
-      (Node.isFunctionDeclaration(fn) ||
-        Node.isFunctionExpression(fn) ||
-        Node.isArrowFunction(fn) ||
-        Node.isMethodDeclaration(fn)) &&
-      (fn.isAsync() || (!Node.isArrowFunction(fn) && fn.isGenerator()));
-    if (asyncOrGenerator) return undefined;
+    const mode = functionModeOf(fn);
     if (fn.getDescendantsOfKind(SyntaxKind.SuperKeyword).length > 0) return undefined;
     // `this` in an arrow is the enclosing receiver, captured like a name; in a function it is the
     // caller's receiver, so the closure is a `function` (#1276).
@@ -991,7 +989,7 @@ class Lifter {
     );
     const [value] = this.emit("op", inputs, 1, {
       origin: { kind: "Closure", text: truncate(selfName ?? fn.getText()) },
-      label: dynamicThis ? "function" : "closure",
+      label: closureLabel(dynamicThis, mode),
     });
     (this.nodes[this.nodes.length - 1] as MutableNode).closure = graph;
     return value as ValueId;
@@ -2357,7 +2355,11 @@ class Lifter {
     if (Node.isAwaitExpression(node) || Node.isYieldExpression(node)) {
       const inner = node.getExpression();
       const inputs = inner !== undefined ? [this.liftExpr(inner)] : [];
-      return this.emit("op", inputs, 1, { origin: { kind: node.getKindName() } })[0] as ValueId;
+      const delegates = Node.isYieldExpression(node) && node.getAsteriskToken() !== undefined;
+      return this.emit("op", inputs, 1, {
+        origin: { kind: node.getKindName() },
+        label: delegates ? "YieldExpression*" : node.getKindName(),
+      })[0] as ValueId;
     }
     if (Node.isClassExpression(node)) {
       const lifted = this.liftClass(node);
@@ -2740,7 +2742,8 @@ class Lifter {
       ...(n.loop !== undefined ? { loop: n.loop } : {}),
       ...(n.closure !== undefined ? { closure: n.closure } : {}),
     }));
-    return canonicalizeGraph(nodes, dedupe(this.obs), this.branches);
+    const graph = canonicalizeGraph(nodes, dedupe(this.obs), this.branches);
+    return this.mode !== undefined ? { ...graph, mode: this.mode } : graph;
   }
 }
 
@@ -3104,6 +3107,35 @@ function findPrimaryFunction(file: Node): FunctionLike | undefined {
   if (exported.length > 1) return undefined; // ambiguous entry point — top-level path
   // No exported function-like: a lone bare function declaration is the atom.
   return all.length === 1 ? all[0] : undefined;
+}
+
+/** Whether a function is async, a generator, or both (#1276). */
+function functionModeOf(fn: FunctionLike): FunctionMode | undefined {
+  const isAsync =
+    (Node.isFunctionDeclaration(fn) ||
+      Node.isFunctionExpression(fn) ||
+      Node.isArrowFunction(fn) ||
+      Node.isMethodDeclaration(fn)) &&
+    fn.isAsync();
+  const isGenerator =
+    (Node.isFunctionDeclaration(fn) ||
+      Node.isFunctionExpression(fn) ||
+      Node.isMethodDeclaration(fn)) &&
+    fn.isGenerator();
+  if (isAsync && isGenerator) return "async generator";
+  if (isAsync) return "async";
+  if (isGenerator) return "generator";
+  return undefined;
+}
+
+/**
+ * A closure's label: `function` when it has its own receiver, else `closure`; `async ` before it
+ * when it is async. A generator is always a `function*`: it has no arrow form.
+ */
+export function closureLabel(dynamicThis: boolean, mode: FunctionMode | undefined): string {
+  const generator = mode === "generator" || mode === "async generator";
+  const base = generator ? "function*" : dynamicThis ? "function" : "closure";
+  return mode === "async" || mode === "async generator" ? `async ${base}` : base;
 }
 
 /** Names of all exported top-level bindings (for the no-primary-function case). */
@@ -3529,6 +3561,7 @@ const HEAP_LABELS = new Set([
   "...",
   "AwaitExpression",
   "YieldExpression",
+  "YieldExpression*",
   "TaggedTemplateExpression",
   "DeleteExpression",
 ]);

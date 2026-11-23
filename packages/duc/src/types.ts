@@ -186,7 +186,16 @@ export interface DucGraph {
    * or empty when the atom has no branches.
    */
   readonly branches?: readonly DucBranch[];
+  /**
+   * How the atom's function runs, when it is not an ordinary function (#1276): an `async` function
+   * returns a promise and may `await`, a generator returns an iterator and may `yield`. Part of the
+   * identity. A closure's mode is in its node's label instead (`async closure`, `function*`).
+   */
+  readonly mode?: FunctionMode;
 }
+
+/** An async function, a generator, or both. */
+export type FunctionMode = "async" | "generator" | "async generator";
 
 /** The body of a `loop` node. See `DucNode.loop`. */
 export interface DucLoop {

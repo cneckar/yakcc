@@ -667,6 +667,7 @@ export function graphIdentity(g: DucGraph): string {
     })),
     obs: canon.obs,
     ...(canon.branches !== undefined ? { branches: canon.branches } : {}),
+    ...(g.mode !== undefined ? { mode: g.mode } : {}),
   };
   return createHash("sha256").update(canonicalJson(structure)).digest("hex");
 }

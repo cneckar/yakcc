@@ -577,6 +577,8 @@ export function emitPython(g: DucGraph): string {
   } catch (e) {
     throw new PyEmitError(e instanceof Error ? e.message : String(e));
   }
+  if (g.mode !== undefined) throw new PyEmitError(`an ${g.mode} function has no form here`);
+  if (g.mode !== undefined) throw new PyEmitError(`an ${g.mode} function has no form here`);
   const { params, body } = pyFunction(g, "", []);
   return [`def f(${params.join(", ")}):`, ...indent(body.length > 0 ? body : ["pass"]), ""].join(
     "\n",
@@ -915,6 +917,10 @@ function pyFunction(
     }
     const name = nameOf(out);
     if (node.closure !== undefined) {
+      if (label !== "closure" && label !== "function")
+        throw new PyEmitError(
+          `a closure that is ${label.replace(/ closure$/, "")} has no form here`,
+        );
       if (label === "function")
         throw new PyEmitError("a function with its own receiver (this) has no Python form here");
       const inner = pyFunction(

@@ -67,6 +67,7 @@ import type {
   DucGraph,
   DucLoop,
   DucNode,
+  FunctionMode,
   NodeId,
   ValueId,
 } from "./types.js";
@@ -171,6 +172,7 @@ export function parseLineForm(text: string): DucGraph {
   let paramCount = 0;
   let branchCount = 0;
   let loopCount = 0;
+  let mode: FunctionMode | undefined;
 
   const currentRegion = (): string | undefined => {
     if (open.length === 0) return undefined;
@@ -256,7 +258,21 @@ export function parseLineForm(text: string): DucGraph {
     if (trimmed === "" || trimmed.startsWith("#")) return;
     const follows = pendingJoin;
     pendingJoin = undefined;
-    const [head = "", ...rest] = trimmed.split(/\s+/);
+    const [first = "", ...words] = trimmed.split(/\s+/);
+    // `async function`, `async method`, `async generator`: one head of two words.
+    const asyncHead = first === "async" && CLOSURE_HEADS.has(words[0] ?? "");
+    const head = asyncHead ? `async ${words[0]}` : first;
+    const rest = asyncHead ? words.slice(1) : words;
+
+    if (head === "mode") {
+      const m = rest.join(" ");
+      if (m !== "async" && m !== "generator" && m !== "async generator")
+        throw new LineFormError(line, "expected: mode async | generator | async generator");
+      if (nodes.length > 0 || mode !== undefined)
+        throw new LineFormError(line, "mode is the program's first line");
+      mode = m;
+      return;
+    }
 
     // A loop's header lines (carry, invariant, element) come first, in any order; the body follows.
     const top = open[open.length - 1];
@@ -671,7 +687,7 @@ export function parseLineForm(text: string): DucGraph {
       return;
     }
 
-    if (head === "function" || head === "method") {
+    if (CLOSURE_LABELS.has(head)) {
       const usage = `expected: ${head} <name> [with <name> ...]`;
       const withAt = rest.indexOf("with");
       if (
@@ -688,8 +704,8 @@ export function parseLineForm(text: string): DucGraph {
       for (; j < lines.length; j++) {
         const t = (lines[j] as string).trim();
         if (t === "" || t.startsWith("#")) continue;
-        const h = t.split(/\s+/)[0];
-        if (h === "if" || h === "loop" || h === "function" || h === "method") depth++;
+        const h = t.split(/\s+/)[0] ?? "";
+        if (h === "if" || h === "loop" || h === "async" || CLOSURE_HEADS.has(h)) depth++;
         else if (h === "end") {
           if (depth === 0) break;
           depth--;
@@ -718,7 +734,7 @@ export function parseLineForm(text: string): DucGraph {
           kind: "op",
           inputs: captures,
           outputs: [out],
-          label: head === "method" ? "function" : "closure",
+          label: CLOSURE_LABELS.get(head) as string,
           closure: inner,
         },
         currentRegion(),
@@ -745,8 +761,21 @@ export function parseLineForm(text: string): DucGraph {
       unclosed.kind === "if" ? "if is not closed by end" : "loop is not closed by end",
     );
   }
-  return canonicalizeGraph(nodes, obs, branches);
+  const graph = canonicalizeGraph(nodes, obs, branches);
+  return mode !== undefined ? { ...graph, mode } : graph;
 }
+
+/** A closure's line-form head, by its label: a `method` has its own receiver (#1276). */
+const CLOSURE_LABELS = new Map([
+  ["function", "closure"],
+  ["method", "function"],
+  ["generator", "function*"],
+  ["async function", "async closure"],
+  ["async method", "async function"],
+  ["async generator", "async function*"],
+]);
+const CLOSURE_HEADS = new Set(["function", "method", "generator"]);
+const HEAD_OF_LABEL = new Map([...CLOSURE_LABELS].map(([head, label]) => [label, head] as const));
 
 /** `prefix` is a region path or the top level; `region` is a node's region. */
 export function isPrefix(prefix: string | undefined, region: string | undefined): boolean {
@@ -986,8 +1015,11 @@ export function printLineForm(g: DucGraph): string {
   /** The lines of a closure: its header, its own program, and its end. */
   const printClosure = (node: DucNode): string[] => {
     printed.add(node.id);
+    const head = HEAD_OF_LABEL.get(node.label ?? "");
+    if (head === undefined)
+      throw new Error(`closure ${node.id} has the unknown label "${node.label}"`);
     const header = [
-      node.label === "function" ? "method" : "function",
+      head,
       node.outputs[0] as string,
       ...(node.inputs.length > 0 ? ["with", ...node.inputs] : []),
     ];
@@ -1129,5 +1161,6 @@ export function printLineForm(g: DucGraph): string {
     throw new Error("some node or branch is not reachable from the top level");
   }
   for (const v of g.obs) lines.push(`out ${v}`);
+  if (g.mode !== undefined) lines.unshift(`mode ${g.mode}`);
   return `${lines.join("\n")}\n`;
 }
