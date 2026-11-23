@@ -1,3 +1,6 @@
+import { parseType, typeToTypeScript } from "./infer-types.js";
+import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
+import { loweringView } from "./ordering.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Lowering to TypeScript (#1275, decision 5A): a graph is emitted as a TypeScript function whose
@@ -13,9 +16,7 @@
  * that holds an opaque node (a closure, a class, a construct summarized by its text), or the return
  * state of returns on some paths, has no TypeScript form here: `emitTypeScript` throws EmitError.
  */
-import { parseType, typeToTypeScript } from "./infer-types.js";
-import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
-import { loweringView } from "./ordering.js";
+import { isRestParam, paramIndex } from "./params.js";
 import { RUNTIME_MODULE } from "./runtime.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
@@ -169,8 +170,8 @@ function emitFunction(
     const outer = invariantOuter.get(v);
     if (outer !== undefined) return nameOf(outer);
     const p = producer.get(v);
-    if (p?.kind === "param-source" && Number(p.label) < bound.length)
-      return bound[Number(p.label)] as string;
+    if (p?.kind === "param-source" && paramIndex(p.label) < bound.length)
+      return bound[paramIndex(p.label)] as string;
     if (p?.kind === "diamond-source" && p.diamond !== undefined) {
       if (p.diamond.reason === "unlinked-reference") {
         const module = p.diamond.module;
@@ -199,7 +200,8 @@ function emitFunction(
   const classMembers = new Set<NodeId>();
   for (const node of g.nodes) {
     if (!(node.label ?? "").startsWith("class:")) continue;
-    for (const v of node.inputs) {
+    const extending = (node.label ?? "").startsWith('class:[["extends"]');
+    for (const v of node.inputs.slice(extending ? 1 : 0)) {
       const p = producer.get(v);
       if (p?.closure !== undefined && (consumers.get(v) ?? []).length === 1) classMembers.add(p.id);
     }
@@ -317,6 +319,8 @@ function emitFunction(
     if (PREFIX.has(label) && ins.length === 1) return `${label}${arg(0)}`;
     if (label === "TypeOfExpression") return `typeof ${arg(0)}`;
     if (label === "VoidExpression") return `void ${arg(0)}`;
+    // A derived constructor's `super(..)`: its value is the receiver it makes (#1276).
+    if (label === "super") return `super(${ins.map((v) => ref(v)).join(", ")})`;
     if (label === "AwaitExpression") return `(await ${arg(0)})`;
     if (label === "YieldExpression") return ins.length === 0 ? "(yield)" : `(yield ${arg(0)})`;
     if (label === "YieldExpression*") return `(yield* ${arg(0)})`;
@@ -392,8 +396,12 @@ function emitFunction(
     if (label.startsWith("class:")) {
       // `class Self_ { constructor(..) {..} [static] name(..) {..} get name() {..} }`
       const members = JSON.parse(label.slice("class:".length)) as [string, string?, boolean?][];
-      const lines = [`const ${name} = class Self_ {`];
+      // `class Self_ extends P {`: the parent is the first input (#1276).
+      const lines = [
+        `const ${name} = class Self_${members[0]?.[0] === "extends" ? ` extends ${arg(0)}` : ""} {`,
+      ];
       members.forEach(([kind, member, isStatic], i) => {
+        if (kind === "extends") return;
         const c = producer.get(node.inputs[i] as ValueId);
         if (c?.closure === undefined || !classMembers.has(c.id))
           throw new EmitError(`member ${i} of class ${node.id} is not its own closure`);
@@ -680,9 +688,9 @@ function emitFunction(
     .map((n) => `${nameOf(n.outputs[0] as ValueId)};`);
 
   const params = g.nodes
-    .filter((n) => n.kind === "param-source" && Number(n.label) >= bound.length)
-    .sort((a, b) => Number(a.label) - Number(b.label))
-    .map((n) => nameOf(n.outputs[0] as ValueId));
+    .filter((n) => n.kind === "param-source" && paramIndex(n.label) >= bound.length)
+    .sort((a, b) => paramIndex(a.label) - paramIndex(b.label))
+    .map((n) => `${isRestParam(n.label) ? "..." : ""}${nameOf(n.outputs[0] as ValueId)}`);
   const body = [...unread, ...emitScope(undefined)];
   if (asModule) {
     // Each observation is exported, in order: a value written as a name, or a const holding it.

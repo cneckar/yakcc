@@ -1,3 +1,5 @@
+import { canonicalizeGraph } from "./canonical.js";
+import { normalizeLiteral } from "./literal.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The line form: the authoring format a model writes (#1275). One directive per line, in
@@ -58,8 +60,7 @@
  * inside a branch or a loop is not visible after its end: only a join or a loop's results carry a
  * value out. A free or ambient source is one per symbol, so it is top level wherever it is written.
  */
-import { canonicalizeGraph } from "./canonical.js";
-import { normalizeLiteral } from "./literal.js";
+import { isRestParam } from "./params.js";
 import type {
   DiamondLabel,
   DiamondReason,
@@ -309,10 +310,18 @@ export function parseLineForm(text: string): DucGraph {
 
     if (head === "param") {
       if (open.length > 0) throw new LineFormError(line, "param must come before any if or loop");
-      if (rest.length !== 1) throw new LineFormError(line, "expected: param <name>");
+      // `param xs ...` is a rest parameter: the arguments from there on, as an array.
+      const restParam = rest.length === 2 && rest[1] === "...";
+      if (rest.length !== 1 && !restParam)
+        throw new LineFormError(line, "expected: param <name> [...]");
       const out = define(rest[0] as string, line);
       add(
-        { kind: "param-source", inputs: [], outputs: [out], label: String(paramCount++) },
+        {
+          kind: "param-source",
+          inputs: [],
+          outputs: [out],
+          label: `${paramCount++}${restParam ? "..." : ""}`,
+        },
         undefined,
       );
       return;
@@ -963,7 +972,7 @@ export function printLineForm(g: DucGraph): string {
     switch (node.kind) {
       case "param-source": {
         if (out === undefined) throw new Error("param-source without an output");
-        return `param ${out}`;
+        return `param ${out}${isRestParam(node.label) ? " ..." : ""}`;
       }
       case "literal-source": {
         if (out === undefined || node.label === undefined)

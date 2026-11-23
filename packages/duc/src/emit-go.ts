@@ -1,3 +1,6 @@
+import { regexToPython } from "./emit-py.js";
+import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
+import { loweringView } from "./ordering.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Lowering a DUC graph to Go (#1278, vision 2: the graph is lowered directly to each target).
@@ -10,9 +13,7 @@
  *
  * Anything else is refused with a reason (`GoEmitError`), never guessed.
  */
-import { regexToPython } from "./emit-py.js";
-import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
-import { loweringView } from "./ordering.js";
+import { isRestParam, paramIndex } from "./params.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
 export { GO_PRELUDE } from "./go-prelude.js";
@@ -186,8 +187,8 @@ function goFunction(
     const outer = invariantOuter.get(v);
     if (outer !== undefined) return nameOf(outer);
     const p = producer.get(v);
-    if (p?.kind === "param-source" && Number(p.label) < bound.length)
-      return bound[Number(p.label)] as string;
+    if (p?.kind === "param-source" && paramIndex(p.label) < bound.length)
+      return bound[paramIndex(p.label)] as string;
     if (p?.kind === "diamond-source" && p.diamond !== undefined) {
       if (p.diamond.reason === "platform-primitive") return `@${p.diamond.symbol}`;
       // A reference is a link: the package-level name its linked implementation is bound to.
@@ -628,10 +629,13 @@ function goFunction(
   }
 
   const own = g.nodes
-    .filter((n) => n.kind === "param-source" && Number(n.label) >= bound.length)
-    .sort((a, b) => Number(a.label) - Number(b.label));
+    .filter((n) => n.kind === "param-source" && paramIndex(n.label) >= bound.length)
+    .sort((a, b) => paramIndex(a.label) - paramIndex(b.label));
+  // A rest parameter is the arguments from its place on, as an array.
   const bindings = own.flatMap((n, i) => [
-    `var ${nameOf(n.outputs[0] as ValueId)} any = arg(args, ${i})`,
+    isRestParam(n.label)
+      ? `var ${nameOf(n.outputs[0] as ValueId)} any = restArgs(args, ${i})`
+      : `var ${nameOf(n.outputs[0] as ValueId)} any = arg(args, ${i})`,
     `_ = ${nameOf(n.outputs[0] as ValueId)}`,
   ]);
   const body = [...bindings, ...emitScope(undefined)];

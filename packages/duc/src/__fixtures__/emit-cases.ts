@@ -10,6 +10,12 @@ export interface Case {
 
 export const EMIT_CASES: Case[] = [
   {
+    name: "rest parameters, of the function and of a closure",
+    source:
+      "export function f(a: number, ...xs: number[]) { const g = (...ys: number[]) => ys.length + a; return [xs, g(1, 2), g()]; }",
+    args: [[1], [1, 2, 3]],
+  },
+  {
     name: "a try whose loop declares a var the function reads after it",
     source:
       "export function f(xs: number[]) { var failed = false; try { for (var i = 0; i < xs.length; i++) { var x = xs[i]; if (x < 0) { failed = true; break; } } } catch (e) { failed = true; } return [failed, x]; }",

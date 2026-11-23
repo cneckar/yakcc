@@ -204,6 +204,8 @@ class Lifter {
   /** The name of the function this graph is, when it reads it: `function-self` (#1276). */
   private functionSelf: string | undefined;
   private functionSelfValue: ValueId | undefined;
+  /** This graph is a derived class's constructor: `this` is what its `super(..)` call makes. */
+  private derived = false;
 
   private readonly obs: ValueId[] = [];
   /** The atom's function is async or a generator (#1276). */
@@ -335,7 +337,7 @@ class Lifter {
       const nameNode = param.getNameNode();
       const [value] = this.emit("param-source", [], 1, {
         origin: { kind: "Parameter", text: truncate(nameNode.getText()) },
-        label: String(paramOffset + index),
+        label: `${paramOffset + index}${param.isRestParameter() ? "..." : ""}`,
       });
       // A default applies when the argument is undefined; a pattern reads each member (#1276).
       const init = param.getInitializer();
@@ -512,7 +514,10 @@ class Lifter {
   private liftClass(
     node: import("ts-morph").ClassDeclaration | import("ts-morph").ClassExpression,
   ): ValueId | undefined {
-    if (node.getHeritageClauses().length > 0) return undefined;
+    // `extends P` is evaluated first: the parent is the class's first input, `["extends"]` its
+    // first entry (#1276). An `implements` clause is a type and computes nothing.
+    const heritage = node.getExtends();
+    const parent = heritage !== undefined ? this.liftExpr(heritage.getExpression()) : undefined;
     const self = node.getName();
     const members: unknown[] = [];
     const closures: FunctionLike[] = [];
@@ -549,6 +554,10 @@ class Lifter {
       const value = this.liftClosure(fn, undefined, self);
       if (value === undefined) return undefined;
       values.push(value);
+    }
+    if (parent !== undefined) {
+      members.unshift(["extends"]);
+      values.unshift(parent);
     }
     return this.emit("op", values, 1, {
       origin: { kind: "Class", text: truncate(self ?? "class") },
@@ -834,6 +843,8 @@ class Lifter {
    */
   private thisValue(): ValueId {
     if (this.env.has(THIS)) return this.resolveIdentifier(THIS);
+    // A derived constructor has no receiver before its `super(..)` call.
+    if (this.derived) throw new Error("this before super() in a derived constructor");
     if (this.receiver === undefined) {
       const saved = this.regionStack.splice(0);
       try {
@@ -855,7 +866,23 @@ class Lifter {
     classSelf?: string,
   ): ValueId | undefined {
     const mode = functionModeOf(fn);
-    if (fn.getDescendantsOfKind(SyntaxKind.SuperKeyword).length > 0) return undefined;
+    // `super(..)` is a derived constructor's own statement, and nothing else uses `super` (#1276).
+    const derived =
+      Node.isConstructorDeclaration(fn) &&
+      (fn.getParent() as import("ts-morph").ClassDeclaration).getHeritageClauses().length > 0;
+    const supers = fn.getDescendantsOfKind(SyntaxKind.SuperKeyword);
+    // `super(..);`, or `const v = super(..);` as the TypeScript lowering writes it.
+    const superStatement = (k: Node): boolean => {
+      const call = k.getParent();
+      if (!Node.isCallExpression(call) || call.getExpression() !== k) return false;
+      const up = call.getParent();
+      const statement = Node.isVariableDeclaration(up) ? up.getParent()?.getParent() : up;
+      return (
+        (Node.isExpressionStatement(up) || Node.isVariableStatement(statement)) &&
+        statement?.getParent()?.getParent() === fn
+      );
+    };
+    if (supers.length > 0 && !(derived && supers.every(superStatement))) return undefined;
     // `this` in an arrow is the enclosing receiver, captured like a name; in a function it is the
     // caller's receiver, so the closure is a `function` (#1276).
     const thisUses = fn
@@ -866,7 +893,8 @@ class Lifter {
           (Node.isArrowFunction(fn) && receiverOwner(t) === receiverOwner(fn)),
       );
     const lexicalThis = Node.isArrowFunction(fn) && thisUses.length > 0;
-    const dynamicThis = !Node.isArrowFunction(fn) && thisUses.length > 0;
+    // A derived constructor has its own receiver, made by its `super(..)`, used or not.
+    const dynamicThis = !Node.isArrowFunction(fn) && (thisUses.length > 0 || derived);
     const locals = closureLocals(fn);
     // A member's own name (a method's, an accessor's) names it; it is not a read.
     const ownName =
@@ -975,6 +1003,7 @@ class Lifter {
       // A member reads its class as `class-self`; a closure inside it captures that value.
       inner.classSelf = classSelf;
       inner.functionSelf = selfOf;
+      inner.derived = derived;
       graph = inner.liftClosureBody(
         fn,
         captures,
@@ -2247,6 +2276,16 @@ class Lifter {
         origin: { kind: "Conditional" },
       })[0] as ValueId;
     }
+    if (Node.isCallExpression(node) && Node.isSuperExpression(node.getExpression())) {
+      // `super(args)` in a derived constructor (#1276): it makes the receiver, so it is `this` after.
+      const [made] = this.emit("op", this.liftElements(node.getArguments() as Node[]), 1, {
+        origin: { kind: "SuperCall", text: truncate(node.getText()) },
+        label: "super",
+        heap: true,
+      });
+      this.env.set(THIS, made as ValueId);
+      return made as ValueId;
+    }
     if (Node.isCallExpression(node) || Node.isNewExpression(node)) {
       const inputs: ValueId[] = [];
       const callee = node.getExpression();
@@ -2435,9 +2474,27 @@ class Lifter {
         entries.push(null);
         inputs.push(this.liftExpr(prop.getExpression()));
       } else {
-        // A method or an accessor: a closure-like value, opaque.
-        const nameNode = (prop as import("ts-morph").MethodDeclaration).getNameNode();
-        entries.push({ [prop.getKindName()]: keyOf(nameNode) });
+        // A method or an accessor is a closure, its entry `{method|get|set: key}` (#1276); one that
+        // is not a closure is opaque, its entry named by its syntax.
+        const member = prop as import("ts-morph").MethodDeclaration;
+        const key = keyOf(member.getNameNode());
+        const lifted =
+          Node.isMethodDeclaration(prop) ||
+          Node.isGetAccessorDeclaration(prop) ||
+          Node.isSetAccessorDeclaration(prop)
+            ? this.liftClosure(prop)
+            : undefined;
+        if (lifted !== undefined) {
+          const kind = Node.isMethodDeclaration(prop)
+            ? "method"
+            : Node.isGetAccessorDeclaration(prop)
+              ? "get"
+              : "set";
+          entries.push({ [kind]: key });
+          inputs.push(lifted);
+          continue;
+        }
+        entries.push({ [prop.getKindName()]: key });
         inputs.push(
           this.emit("op", this.collectReads(prop), 1, {
             origin: { kind: "Closure" },

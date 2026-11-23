@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Classes (#1276): a class is one operation over its members' closures, and a member reads its own
-// class as `class-self`. A heritage clause, a field, or a member that is not a closure keeps it opaque.
+// class as `class-self`. A field, `super.x`, or a member that is not a closure keeps it opaque.
 import { describe, expect, it } from "vitest";
 import { graphIdentity } from "./canonical.js";
 import { GoEmitError, emitGo } from "./emit-go.js";
@@ -43,10 +43,30 @@ describe("classes (#1276)", () => {
     expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
   });
 
-  it("a class that extends another stays opaque: super needs the parent's constructor", () => {
+  it("a class that extends another: the parent is an input, and super(..) makes the receiver", () => {
+    const src =
+      "export function f(m: string, k: number) { class E extends Error { constructor(x: string, ...rest: any[]) { if (k > 1) x = x + '!'; super(x); const g = () => this.message; this.code = k + rest.length; this.g = g; } } const e = new E(m, 1, 2); return [e.message, e.code, e.g(), e instanceof Error]; }";
+    const g = liftAtom(src);
+    expect(opaque(src)).toBe(false);
+    const code = emitTypeScript(g);
+    expect(code).toContain("extends");
+    expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    expect(run(code)("boom", 2)).toEqual(["boom!", 4, "boom!", true]);
+    // Which parent it extends is structure.
+    expect(graphIdentity(liftAtom(src.replace("extends Error", "extends TypeError")))).not.toBe(
+      graphIdentity(g),
+    );
+  });
+
+  it("super anywhere but a derived constructor's own super(..) statement stays opaque", () => {
     expect(
       opaque(
-        "export function f(m: string) { class E extends Error { constructor(x: string) { super(x); } } return new E(m); }",
+        "export function f(m: string) { class E extends Error { describe() { return super.toString(); } } return new E(m); }",
+      ),
+    ).toBe(true);
+    expect(
+      opaque(
+        "export function f(m: string) { class E extends Error { constructor(x: string) { this.a = 1; super(x); } } return new E(m); }",
       ),
     ).toBe(true);
   });

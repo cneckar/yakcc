@@ -36,9 +36,9 @@ describe("emitting TypeScript from the graph (5A)", () => {
     });
   }
 
-  it("refuses an opaque node: a class that extends another has no structure to emit", () => {
+  it("refuses an opaque node: a member that reads super.x has no structure to emit", () => {
     const g = liftAtom(
-      "export function f(m: string) { class E extends Error { constructor(x: string) { super(x); } } return new E(m); }",
+      "export function f(m: string) { class E extends Error { d() { return super.toString(); } } return new E(m); }",
     );
     expect(() => emitTypeScript(g)).toThrow(EmitError);
   });

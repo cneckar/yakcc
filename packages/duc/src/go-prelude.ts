@@ -399,6 +399,13 @@ func arg(args []any, i int) any {
 	return Undefined
 }
 
+func restArgs(args []any, i int) any {
+	if i >= len(args) {
+		return &Array{Items: []any{}}
+	}
+	return &Array{Items: append([]any{}, args[i:]...)}
+}
+
 func round(x any) any { return math.Floor(num(x) + 0.5) }
 
 func mathMax(xs ...any) any {

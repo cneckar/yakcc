@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Canonical forms for DUC graphs (P1, #1275).
@@ -14,7 +15,7 @@
  * `graphIdentity` hashes the structure alone. Renaming a local or changing a comment changes
  * annotations only, so the identity does not change.
  */
-import { createHash } from "node:crypto";
+import { paramIndex } from "./params.js";
 import type { DiamondLabel, DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
 
 /**
@@ -487,8 +488,8 @@ export function canonicalizeGraph(
       if (aParam !== bParam) return aParam ? -1 : 1;
       if (aParam && bParam) {
         // A parameter's label is its index in the interface.
-        const la = Number(a.node.label);
-        const lb = Number(b.node.label);
+        const la = paramIndex(a.node.label);
+        const lb = paramIndex(b.node.label);
         if (!Number.isNaN(la) && !Number.isNaN(lb) && la !== lb) return la - lb;
         return (originalIndex.get(a.node) ?? 0) - (originalIndex.get(b.node) ?? 0);
       }

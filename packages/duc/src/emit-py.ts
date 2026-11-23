@@ -1,3 +1,5 @@
+import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
+import { loweringView } from "./ordering.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Lowering a DUC graph to Python (#1278, vision 2: the graph is lowered directly to each target).
@@ -11,8 +13,7 @@
  * Anything else is refused with a reason (`PyEmitError`), never guessed: an unknown method, a
  * construct the line form does not express, an opaque node.
  */
-import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
-import { loweringView } from "./ordering.js";
+import { isRestParam, paramIndex } from "./params.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
 export class PyEmitError extends Error {
@@ -621,8 +622,8 @@ function pyFunction(
     const outer = invariantOuter.get(v);
     if (outer !== undefined) return nameOf(outer);
     const p = producer.get(v);
-    if (p?.kind === "param-source" && Number(p.label) < bound.length)
-      return bound[Number(p.label)] as string;
+    if (p?.kind === "param-source" && paramIndex(p.label) < bound.length)
+      return bound[paramIndex(p.label)] as string;
     if (p?.kind === "diamond-source" && p.diamond !== undefined) {
       // `arguments` is the list of what the function was called with.
       if (
@@ -1113,21 +1114,31 @@ function pyFunction(
   }
 
   const own = g.nodes
-    .filter((n) => n.kind === "param-source" && Number(n.label) >= bound.length)
-    .sort((a, b) => Number(a.label) - Number(b.label));
+    .filter((n) => n.kind === "param-source" && paramIndex(n.label) >= bound.length)
+    .sort((a, b) => paramIndex(a.label) - paramIndex(b.label));
+  // A rest parameter is the arguments from its place on, as a list: `*name`, made a list.
+  const rest = own.find((n) => isRestParam(n.label));
+  const plain = own.filter((n) => n !== rest);
+  const restName = rest !== undefined ? nameOf(rest.outputs[0] as ValueId) : undefined;
   const params = usesArguments
     ? ["*_args"]
     : // A JavaScript function ignores arguments past its parameters.
-      [...own.map((n) => `${nameOf(n.outputs[0] as ValueId)}=UNDEFINED`), "*_rest"];
+      [
+        ...plain.map((n) => `${nameOf(n.outputs[0] as ValueId)}=UNDEFINED`),
+        restName !== undefined ? `*${restName}` : "*_rest",
+      ];
   const bindings = usesArguments
     ? [
         "_arguments = list(_args)",
-        ...own.map(
+        ...plain.map(
           (n, i) =>
             `${nameOf(n.outputs[0] as ValueId)} = _args[${i}] if len(_args) > ${i} else UNDEFINED`,
         ),
+        ...(restName !== undefined ? [`${restName} = list(_args[${plain.length}:])`] : []),
       ]
-    : [];
+    : restName !== undefined
+      ? [`${restName} = list(${restName})`]
+      : [];
   const body = [...bindings, ...emitScope(undefined)];
   const obs = g.obs[0];
   if (obs !== undefined) body.push(`return ${ref(obs)}`);
