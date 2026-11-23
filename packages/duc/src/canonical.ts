@@ -333,13 +333,45 @@ export function canonicalizeGraph(
     const cached = captureOrders.get(node);
     if (cached !== undefined) return cached;
     const sigs = node.inputs.map(sigOfValue);
-    const order = sigs
+    let order = sigs
       .map((_, i) => i)
       .sort((a, b) => {
         const sa = sigs[a] as string;
         const sb = sigs[b] as string;
         return sa < sb ? -1 : sa > sb ? 1 : a - b;
       });
+    // Captures the outer graph cannot tell apart (equal signatures) are ordered by how the closure
+    // uses them: of the orders the ties allow, the one that gives the closure the least identity.
+    // Otherwise their order would be the source's, and two lifts of one closure could differ.
+    const runs: [number, number][] = [];
+    for (let i = 0; i < order.length; ) {
+      let j = i + 1;
+      while (j < order.length && sigs[order[j] as number] === sigs[order[i] as number]) j++;
+      if (j - i > 1) runs.push([i, j]);
+      i = j;
+    }
+    const factorial = (k: number): number => (k <= 1 ? 1 : k * factorial(k - 1));
+    const choices = runs.reduce((n, [i, j]) => n * factorial(j - i), 1);
+    if (runs.length > 0 && choices <= 720 && node.closure !== undefined) {
+      const permutations = (xs: readonly number[]): number[][] =>
+        xs.length <= 1
+          ? [[...xs]]
+          : xs.flatMap((x, k) =>
+              permutations([...xs.slice(0, k), ...xs.slice(k + 1)]).map((p) => [x, ...p]),
+            );
+      let candidates: number[][] = [order];
+      for (const [i, j] of runs) {
+        candidates = candidates.flatMap((c) =>
+          permutations(c.slice(i, j)).map((p) => [...c.slice(0, i), ...p, ...c.slice(j)]),
+        );
+      }
+      let best: { order: number[]; id: string } | undefined;
+      for (const c of candidates) {
+        const id = graphIdentity(withCaptureOrder(node.closure, c));
+        if (best === undefined || id < best.id) best = { order: c, id };
+      }
+      if (best !== undefined) order = best.order;
+    }
     captureOrders.set(node, order);
     return order;
   };

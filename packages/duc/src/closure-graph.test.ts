@@ -109,6 +109,16 @@ describe("closures as graphs (#1275)", () => {
   });
 });
 
+describe("captures the outer graph cannot tell apart", () => {
+  it("are ordered by how the closure uses them, so declaring them in another order is the same graph", () => {
+    const a =
+      "export function f(x: number) { let p; let q; const g = () => { p = x; q = x + 1; return [p, q]; }; return g(); }";
+    const b =
+      "export function f(x: number) { let q; let p; const g = () => { p = x; q = x + 1; return [p, q]; }; return g(); }";
+    expect(graphIdentity(liftAtom(a))).toBe(graphIdentity(liftAtom(b)));
+  });
+});
+
 describe("captures that change (#1276)", () => {
   it("a name reassigned before the closure is made is captured with that value", () => {
     const src =
