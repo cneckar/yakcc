@@ -811,3 +811,25 @@ The summary as it applies to v0 specifically:
 When in doubt: read the cornerstone in `MASTER_PLAN.md` and check whether
 your change preserves it. If it doesn't, that is a replanning conversation,
 not an implementation conversation.
+
+## Influence facet (DUC)
+
+The substrate adds one orthogonal facet to the ladder: a semantics-free
+def-use graph per atom, with unresolved references as declared `♦`-sources. It
+answers "which inputs can affect which outputs, under any interpretation of the
+opaque parts," without executing the code or assuming its semantics.
+
+Three choices are load-bearing.
+
+1. **Conservation is mandatory and never silent.** Every unresolved use is
+   resolved or declared. The shave gate records the unknown-support on every
+   atom, and it warns first. It tightens to reject only once the corpus is clean.
+2. **Analyses are sidecar, not identity.** The influence matrix and the
+   non-interference verdict are derived facts about a block. They are stored
+   next to the block, not inside its manifest, so they never change its address.
+3. **Mechanized where it matters.** Influence soundness and the builder-run core
+   are proved in Rocq and checked admit-free. The boundary of that proof is
+   stated in `packages/duc/coq/README.md`, not left implicit.
+
+Rationale and the full decision log are in `plans/wi-duc-influence-layer.md`.
+The verification side is in `VERIFICATION.md`, under "Influence facet (the I-axis)".

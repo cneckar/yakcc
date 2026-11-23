@@ -1,0 +1,151 @@
+// SPDX-License-Identifier: Apache-2.0
+// Closures as graphs of their own (#1275): lambda lifting. A closure's captures are its first
+// parameters; the closure node takes their values. Closures it cannot express stay opaque.
+import { describe, expect, it } from "vitest";
+import { graphIdentity } from "./canonical.js";
+import { decodeGraph, encodeGraph } from "./compact.js";
+import { emitTypeScript } from "./emit-ts.js";
+import { liftAtom } from "./lift.js";
+import { parseLineForm, printLineForm } from "./line-form.js";
+
+const SOURCES = [
+  "export function f(x: number): number { const g = (y: number) => y + x; return g(2) + g(3); }",
+  "export function f(a: number, b: number): number { function sq(n: number): number { return n * n; } return sq(a) + sq(b); }",
+  "export function f(xs: number[], k: number): number { let s = 0; for (const x of xs) { const g = (v: number) => v * k; s = s + g(x); } return s; }",
+  "export function f(x: number): number { const g = (y: number) => { const h = (z: number) => z + y + x; return h(1); }; return g(2); }",
+];
+
+const closureNode = (src: string) => liftAtom(src).nodes.find((n) => n.closure !== undefined);
+
+describe("closures as graphs (#1275)", () => {
+  it("a closure is a node with its own graph, whose first params are its captures", () => {
+    const node = closureNode(SOURCES[0] as string);
+    expect(node?.label).toBe("closure");
+    expect(node?.inputs.length).toBe(1);
+    expect(node?.closure?.nodes.filter((n) => n.kind === "param-source").length).toBe(2);
+  });
+
+  it("two closures with different bodies are different structures", () => {
+    const a = "export function f(x: number): number { const g = () => x + 1; return g(); }";
+    const b = "export function f(x: number): number { const g = () => x + 2; return g(); }";
+    expect(graphIdentity(liftAtom(a))).not.toBe(graphIdentity(liftAtom(b)));
+  });
+
+  it("captures read in either order are the same structure", () => {
+    const a =
+      "export function f(p: number, q: number): number { const g = () => p - q; return g(); }";
+    const b =
+      "export function f(p: number, q: number): number { const g = () => { const t = q; return p - t; }; return g(); }";
+    expect(graphIdentity(liftAtom(b))).toBe(graphIdentity(liftAtom(a)));
+  });
+
+  for (const src of SOURCES) {
+    it(`round-trips through the line form, the compact form and TypeScript: ${src.slice(40, 110)}`, () => {
+      const g = liftAtom(src);
+      expect(graphIdentity(parseLineForm(printLineForm(g)))).toBe(graphIdentity(g));
+      expect(graphIdentity(decodeGraph(encodeGraph(g)))).toBe(graphIdentity(g));
+      expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+    });
+  }
+
+  it("a closure that reads a variable assigned after it is made stays opaque", () => {
+    const node = closureNode(
+      "export function f(x: number): number { let k = 1; const g = () => k; k = x; return g(); }",
+    );
+    expect(node).toBeUndefined();
+  });
+
+  it("a recursive function stays opaque", () => {
+    const node = closureNode(
+      "export function f(n: number): number { function fact(m: number): number { return m < 2 ? 1 : m * fact(m - 1); } return fact(n); }",
+    );
+    expect(node).toBeUndefined();
+  });
+
+  it("a function that uses this has its own receiver; an arrow captures the enclosing one", () => {
+    const fn = closureNode(
+      "export function f(x: number): unknown { return function () { return this; }; }",
+    );
+    expect(fn?.label).toBe("function");
+    expect(fn?.closure?.nodes.some((n) => n.label === "this")).toBe(true);
+    const arrow = closureNode("export function f(x: number): unknown { return () => this; }");
+    expect(arrow?.label).toBe("closure");
+    expect(arrow?.inputs).toHaveLength(1);
+    expect(arrow?.closure?.nodes.some((n) => n.label === "this")).toBe(false);
+  });
+
+  it("a function's receiver survives emission", () => {
+    const src =
+      "export function f(k: number): unknown { const o = { k, get: function () { return this.k * 2; } }; return o.get(); }";
+    const code = emitTypeScript(liftAtom(src));
+    expect(code).toContain("function (");
+    expect(new Function(`${code.replace("export ", "")}; return f(21);`)()).toBe(42);
+  });
+
+  it("a hand-written closure parses to the lifted one", () => {
+    const text = [
+      "param x",
+      "function g with x",
+      "  param cx",
+      "  param y",
+      "  op + y cx -> r",
+      "  out r",
+      "end",
+      'lit "2" -> two',
+      "op CallExpression g two -> a",
+      'lit "3" -> three',
+      // The second call comes after the first: its last operand, ^a, is the heap token (#1285).
+      "op CallExpression g three ^a -> b",
+      "op + a b -> s",
+      "out s",
+    ].join("\n");
+    expect(graphIdentity(parseLineForm(text))).toBe(graphIdentity(liftAtom(SOURCES[0] as string)));
+  });
+});
+
+describe("captures that change (#1276)", () => {
+  it("a name reassigned before the closure is made is captured with that value", () => {
+    const src =
+      "export function f(o: any, cb: any) { o = o || {}; cb = cb || (() => 0); const g = () => cb(o); return g; }";
+    expect(closureNode(src)).toBeDefined();
+  });
+
+  it("a name reassigned after the closure is made keeps it opaque", () => {
+    const src = "export function f(x: number) { const g = () => x; x = x + 1; return g; }";
+    expect(closureNode(src)).toBeUndefined();
+  });
+
+  it("a name another closure rebinds is a cell both closures share", () => {
+    const src =
+      "export function f(x: number) { const set = (v: number) => { x = v; }; const get = () => x; set(x + 1); return get() * 10 + x; }";
+    const g = liftAtom(src);
+    expect(g.nodes.some((n) => n.label?.startsWith("Closure#"))).toBe(false);
+    expect(g.nodes.some((n) => n.label === 'object:["value"]')).toBe(true);
+    const code = emitTypeScript(g);
+    const run = new Function(`${code.replace("export ", "")}; return f;`)() as (
+      x: number,
+    ) => number;
+    expect(run(2)).toBe(33);
+    expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
+  });
+
+  it("a counter a closure steps is shared with its scope", () => {
+    const src =
+      "export function f(n: number) { let count = 0; const tick = () => { count++; return count; }; for (let i = 0; i < n; i++) tick(); return count; }";
+    const g = liftAtom(src);
+    const code = emitTypeScript(g);
+    const run = new Function(`${code.replace("export ", "")}; return f;`)() as (
+      n: number,
+    ) => number;
+    expect([run(0), run(4)]).toEqual([0, 4]);
+    expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
+  });
+
+  it("a member write to a captured object keeps the same object", () => {
+    const src =
+      "export function f() { const api = {}; api.a = 1; const get = () => api.a; api.b = 2; return get; }";
+    const code = emitTypeScript(liftAtom(src));
+    expect(closureNode(src)).toBeDefined();
+    expect(new Function(`${code.replace("export ", "")}; return f()();`)()).toBe(1);
+  });
+});

@@ -1,0 +1,21 @@
+{
+  "id": "safe-filename",
+  "spec": "Write `export function sanitizeFilename(name: string): string` that removes every character other than ASCII letters, digits, dot, dash, and underscore, and returns 'untitled' when nothing remains.",
+  "reference": "export function sanitizeFilename(name: string): string {\n  const kept = name.replace(/[^A-Za-z0-9._-]/g, '');\n  return kept.length > 0 ? kept : 'untitled';\n}",
+  "slice": [
+    {
+      "id": "path-join",
+      "score": 0.7,
+      "sourcePkg": "shadow-fs",
+      "text": "function joinSafe(base, name) { /* joins paths, rejects traversal */ }",
+      "citation": {
+        "merkleRoot": "fixture-join-safe",
+        "sourceFile": "shadow-fs/paths.ts",
+        "lineStart": 20,
+        "lineEnd": 31
+      }
+    }
+  ],
+  "heldOut": "const cases = [['report 2024.pdf','report2024.pdf'],['a/b\\\\c.txt','abc.txt'],['***','untitled'],['ok_name-1.v2','ok_name-1.v2']];\nfor (const [input, want] of cases) { const got = fn(input); if (got !== want) throw new Error('sanitize(' + JSON.stringify(input) + ') = ' + JSON.stringify(got)); }",
+  "entry": "sanitizeFilename"
+}

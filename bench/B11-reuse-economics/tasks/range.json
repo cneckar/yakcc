@@ -1,0 +1,33 @@
+{
+  "id": "range",
+  "entry": "range",
+  "spec": "Write `export function range(start: number, end: number, step: number = 1): number[]` returning the numbers from start (inclusive) toward end (exclusive) by step. Throw a RangeError when step is 0.",
+  "reference": "export function range(start: number, end: number, step: number = 1): number[] {\n  if (step === 0) throw new RangeError('step must not be 0');\n  const out: number[] = [];\n  if (step > 0) { for (let x = start; x < end; x += step) out.push(x); }\n  else { for (let x = start; x > end; x += step) out.push(x); }\n  return out;\n}",
+  "slice": [
+    {
+      "id": "counted-loop",
+      "score": 0.5,
+      "sourcePkg": "shadow-utils",
+      "text": "function countUp(from, to) { /* loop helper */ }",
+      "citation": {
+        "merkleRoot": "fixture-counted-loop",
+        "sourceFile": "shadow-utils/loops.ts",
+        "lineStart": 4,
+        "lineEnd": 9
+      }
+    },
+    {
+      "id": "unrelated",
+      "score": 0.22,
+      "sourcePkg": "shadow-misc",
+      "text": "function shuffle(xs) { /* ... */ }",
+      "citation": {
+        "merkleRoot": "fixture-unrelated",
+        "sourceFile": "shadow-misc/random.ts",
+        "lineStart": 1,
+        "lineEnd": 3
+      }
+    }
+  ],
+  "heldOut": "const cases = [[0,3,1,[0,1,2]],[5,0,-2,[5,3,1]],[2,2,1,[]],[1,4,1,[1,2,3]]];\nfor (const [a,b,s,want] of cases) { const got = fn(a,b,s); if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error('range(' + a + ',' + b + ',' + s + ') = ' + JSON.stringify(got)); }\nlet threw = false; try { fn(0, 1, 0); } catch (e) { threw = e instanceof RangeError; } if (!threw) throw new Error('step 0 must throw RangeError');"
+}

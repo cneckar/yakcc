@@ -271,6 +271,9 @@ importers:
       '@yakcc/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@yakcc/duc':
+        specifier: workspace:*
+        version: link:../duc
       '@yakcc/hooks-base':
         specifier: workspace:*
         version: link:../hooks-base
@@ -397,6 +400,28 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.17
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@22.19.17)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@22.19.17)(esbuild@0.28.0)(tsx@4.22.3))
+
+  packages/duc:
+    dependencies:
+      '@noble/hashes':
+        specifier: ^2.2.0
+        version: 2.2.0
+      ts-morph:
+        specifier: ^28.0.0
+        version: 28.0.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      '@vitest/coverage-v8':
+        specifier: ^4.1.5
+        version: 4.1.5(vitest@4.1.5)
+      fast-check:
+        specifier: ^4.7.0
+        version: 4.7.0
       vitest:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@22.19.17)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@22.19.17)(esbuild@0.28.0)(tsx@4.22.3))
@@ -736,6 +761,9 @@ importers:
       '@yakcc/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@yakcc/duc':
+        specifier: workspace:*
+        version: link:../duc
       '@yakcc/ir':
         specifier: workspace:*
         version: link:../ir

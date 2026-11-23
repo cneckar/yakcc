@@ -1,0 +1,8 @@
+{
+  "name": "unlinked-reference-to-send",
+  "version": 1,
+  "description": "A value from a foreign module reaches a network send without the declared encrypt step.",
+  "sources": [{ "kind": "diamond", "reason": "unlinked-reference" }],
+  "sinks": ["send"],
+  "sanitizers": ["encrypt"]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "untrusted-param-to-write",
+  "version": 1,
+  "description": "A parameter reaches a file write without passing a declared sanitizer.",
+  "sources": [{ "kind": "param" }],
+  "sinks": ["write"],
+  "sanitizers": ["sanitizeFilename"]
+}

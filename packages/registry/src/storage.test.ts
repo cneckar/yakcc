@@ -37,6 +37,7 @@ import type {
   Registry,
   SourceFileGlueEntry,
 } from "./index.js";
+import { SCHEMA_VERSION } from "./schema.js";
 import { openRegistry } from "./storage.js";
 
 // ---------------------------------------------------------------------------
@@ -169,7 +170,7 @@ describe("schema migrations", () => {
     applyMigrations(db);
 
     // Version check.
-    expect(SCHEMA_VERSION).toBe(14);
+    expect(SCHEMA_VERSION).toBe(17);
     const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
@@ -184,7 +185,7 @@ describe("schema migrations", () => {
     // Migration 11 bumps schema_version to 11 (registry_meta table).
     // Migration 12 bumps schema_version to 12 (submitted_at column on blocks; PR #818).
     // The canonical_ast_hash backfill (migration 2→3 version bump) is done by openRegistry.
-    expect(row?.version).toBe(14);
+    expect(row?.version).toBe(SCHEMA_VERSION);
 
     // blocks table exists with expected columns.
     const cols = db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>;
@@ -248,9 +249,9 @@ describe("schema migrations", () => {
     expect(stateColNames).toContain("last_shave_time");
 
     // idx_source_file_state_hash index exists.
-    const stateIndexes = db
-      .prepare("PRAGMA index_list(source_file_state)")
-      .all() as Array<{ name: string }>;
+    const stateIndexes = db.prepare("PRAGMA index_list(source_file_state)").all() as Array<{
+      name: string;
+    }>;
     const stateIndexNames = stateIndexes.map((i) => i.name);
     expect(stateIndexNames).toContain("idx_source_file_state_hash");
 
@@ -271,7 +272,7 @@ describe("schema migrations", () => {
       | { version: number }
       | undefined;
     // Second application is a no-op; version stays at 10 (all migrations already ran).
-    expect(row?.version).toBe(14);
+    expect(row?.version).toBe(SCHEMA_VERSION);
 
     db.close();
   });
@@ -337,7 +338,7 @@ describe("schema migrations", () => {
     const vRow = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
-    expect(vRow?.version).toBe(14);
+    expect(vRow?.version).toBe(SCHEMA_VERSION);
 
     db.close();
   });
@@ -525,6 +526,30 @@ describe("storeBlock and selectBlocks", () => {
 // ---------------------------------------------------------------------------
 // getBlock round-trip
 // ---------------------------------------------------------------------------
+
+describe("provenance sidecars round-trip (DEC-RETRIEVAL-DERIVATION-001, DEC-DUC-USUPP-PROVENANCE-001)", () => {
+  it("derivationJson and ducUsupp are stored verbatim and read back", async () => {
+    const spec = makeSpecYak();
+    const row = {
+      ...makeBlockRow(spec),
+      derivationJson: '{"derivation":"ai"}',
+      ducUsupp: '{"unknowns":[]}',
+    };
+    await registry.storeBlock(row);
+    const got = await registry.getBlock(row.blockMerkleRoot);
+    expect(got?.derivationJson).toBe('{"derivation":"ai"}');
+    expect(got?.ducUsupp).toBe('{"unknowns":[]}');
+  });
+
+  it("a row stored without the sidecars reads back as null, not undefined", async () => {
+    const spec = makeSpecYak();
+    const row = makeBlockRow(spec);
+    await registry.storeBlock(row);
+    const got = await registry.getBlock(row.blockMerkleRoot);
+    expect(got?.derivationJson).toBeNull();
+    expect(got?.ducUsupp).toBeNull();
+  });
+});
 
 describe("getBlock", () => {
   it("returns the stored block row by merkle root", async () => {
@@ -899,7 +924,7 @@ describe("openRegistry backfill (v2 → v3 migration)", () => {
     const versionAfterBackfill = (
       db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(versionAfterBackfill).toBe(14);
+    expect(versionAfterBackfill).toBe(SCHEMA_VERSION);
     db2.close();
 
     // Phase 3: reopen idempotency — second openRegistry doesn't re-backfill or re-fail.
@@ -1006,7 +1031,7 @@ describe("migration 3 → 4: parent_block_root column", () => {
     const ver = (
       db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(ver).toBe(14);
+    expect(ver).toBe(SCHEMA_VERSION);
     // parent_block_root column is present.
     const cols = db2.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>;
     expect(cols.map((c) => c.name)).toContain("parent_block_root");
@@ -1919,7 +1944,7 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     const vPost = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(vPost).toBe(14);
+    expect(vPost).toBe(SCHEMA_VERSION);
 
     // kind column now present.
     const colsPost = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
@@ -1980,15 +2005,15 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
     const vAfterFirst = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(vAfterFirst).toBe(14);
-    expect(SCHEMA_VERSION).toBe(14);
+    expect(vAfterFirst).toBe(SCHEMA_VERSION);
+    expect(SCHEMA_VERSION).toBe(17);
 
     // Second run — must be a complete no-op; no throws; version stays at 10.
     expect(() => applyMigrations(db)).not.toThrow();
     const vAfterSecond = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(vAfterSecond).toBe(14);
+    expect(vAfterSecond).toBe(SCHEMA_VERSION);
 
     // Verify column count is stable (no duplicate columns created).
     const cols = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
@@ -3715,7 +3740,7 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
     const versionRow = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as {
       version: number;
     };
-    expect(versionRow.version).toBe(14);
+    expect(versionRow.version).toBe(SCHEMA_VERSION);
 
     // blocks table has the three new provenance columns.
     const blockCols = (
@@ -3798,15 +3823,15 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
     const v1 = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(v1).toBe(14);
-    expect(SCHEMA_VERSION).toBe(14);
+    expect(v1).toBe(SCHEMA_VERSION);
+    expect(SCHEMA_VERSION).toBe(17);
 
     // Second run — must be a complete no-op.
     expect(() => applyMigrations(db)).not.toThrow();
     const v2 = (
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(v2).toBe(14);
+    expect(v2).toBe(SCHEMA_VERSION);
 
     // Column count is stable — no duplicate columns.
     const cols = (db.prepare("PRAGMA table_info(blocks)").all() as Array<{ name: string }>).map(
@@ -3844,7 +3869,7 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
     const versionPost = (
       db2.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
-    expect(versionPost).toBe(14);
+    expect(versionPost).toBe(SCHEMA_VERSION);
 
     // The workspace_plumbing table exists (P1 creates it empty).
     const tables = (
@@ -4092,7 +4117,9 @@ describe("migration 8: storeSourceFileGlue / getSourceFileGlue / listSourceFileG
     expect(retrieved?.sourcePkg).toBe("packages/cli");
     expect(retrieved?.sourceFile).toBe("packages/cli/src/commands/foo.ts");
     expect(retrieved?.contentHash).toBe(hash);
-    expect(Buffer.from(retrieved?.contentBlob ?? new Uint8Array()).equals(Buffer.from(blob))).toBe(true);
+    expect(Buffer.from(retrieved?.contentBlob ?? new Uint8Array()).equals(Buffer.from(blob))).toBe(
+      true,
+    );
     expect(retrieved?.createdAt).toBe(1_700_000_000_000);
 
     await registry.close();
@@ -4140,7 +4167,9 @@ describe("migration 8: storeSourceFileGlue / getSourceFileGlue / listSourceFileG
       "packages/cli/src/commands/bar.ts",
     );
     expect(retrieved?.contentHash).toBe(hashV2);
-    expect(Buffer.from(retrieved?.contentBlob ?? new Uint8Array()).equals(Buffer.from(blobV2))).toBe(true);
+    expect(
+      Buffer.from(retrieved?.contentBlob ?? new Uint8Array()).equals(Buffer.from(blobV2)),
+    ).toBe(true);
 
     await registry.close();
   });
@@ -4502,9 +4531,9 @@ describe("commons-push local queue (#794 slice 1)", () => {
     await expect(registry.markBlockSubmitted(row.blockMerkleRoot, -1)).rejects.toThrow(
       /submittedAt must be a non-negative/,
     );
-    await expect(
-      registry.markBlockSubmitted(row.blockMerkleRoot, Number.NaN),
-    ).rejects.toThrow(/submittedAt must be a non-negative/);
+    await expect(registry.markBlockSubmitted(row.blockMerkleRoot, Number.NaN)).rejects.toThrow(
+      /submittedAt must be a non-negative/,
+    );
     await expect(
       registry.markBlockSubmitted(row.blockMerkleRoot, Number.POSITIVE_INFINITY),
     ).rejects.toThrow(/submittedAt must be a non-negative/);
@@ -4584,5 +4613,71 @@ describe("commons-push storeBlock seam (#794 slice 3)", () => {
     const row = makeBlockRow(spec);
     await expect(registry.storeBlock(row)).resolves.toBeUndefined();
     await registry.close();
+  });
+});
+
+describe("intent search: lexical channel (DEC-RETRIEVAL-LEXICAL-001, #1260)", () => {
+  // A provider that embeds every text to the same vector. The KNN channel therefore has no
+  // semantic signal at all, which is the failure the lexical channel exists to cover.
+  // Every text sits at the same point as the query, except the target spec, which is far away.
+  // The decoys and the query are then equidistant, so k=2 KNN returns decoys and misses the target.
+  function blurredEmbeddingProvider(): EmbeddingProvider {
+    return {
+      dimension: 384,
+      modelId: "mock/blurred",
+      async embed(text: string): Promise<Float32Array> {
+        const vec = new Float32Array(384);
+        if (text.includes("sanitize-filename")) vec[1] = 1;
+        else vec[0] = 1;
+        return vec;
+      },
+    };
+  }
+
+  const CARD = {
+    behavior: "sanitizeFilename removes unsafe characters from a file name",
+    inputs: [{ name: "name", typeHint: "string" }],
+    outputs: [{ name: "result", typeHint: "string" }],
+  };
+
+  it("recovers a block whose rare identifier is in the query, which the blurred KNN cannot", async () => {
+    const reg = await openRegistry(":memory:", { embeddings: blurredEmbeddingProvider() });
+    try {
+      const decoys = ["parse-int", "sum-list", "min-max", "unique-keys", "pad-left"];
+      for (const name of decoys) {
+        await reg.storeBlock(makeBlockRow(makeSpecYak(name, `Computes ${name} of a value`)));
+      }
+      const target = makeBlockRow(
+        makeSpecYak(
+          "sanitize-filename",
+          "sanitizeFilename removes unsafe characters from a file name",
+        ),
+        "export function sanitizeFilename(name: string): string { return name.replace(/[^\\w.]/g, ''); }",
+      );
+      await reg.storeBlock(target);
+
+      // The premise: with no lexical channel the blurred KNN does NOT surface the target at k=2.
+      const knnOnly = await reg.findCandidatesByIntent(CARD, { k: 2 });
+      expect(knnOnly.some((c) => c.block.blockMerkleRoot === target.blockMerkleRoot)).toBe(false);
+
+      const lexical = await reg.findCandidatesByIntent(CARD, { k: 2, lexical: true });
+      const hit = lexical.find((c) => c.block.blockMerkleRoot === target.blockMerkleRoot);
+      expect(hit).toBeDefined();
+      expect(["lexical", "both"]).toContain(hit?.retrievalChannel);
+    } finally {
+      await reg.close();
+    }
+  });
+
+  it("without the lexical option the result is unchanged and carries no channel label", async () => {
+    const reg = await openRegistry(":memory:", { embeddings: mockEmbeddingProvider() });
+    try {
+      await reg.storeBlock(makeBlockRow(makeSpecYak("parse-int", "Parse a JSON integer")));
+      const plain = await reg.findCandidatesByIntent(CARD, { k: 5 });
+      expect(plain.length).toBeGreaterThan(0);
+      expect(plain.every((c) => c.retrievalChannel === undefined)).toBe(true);
+    } finally {
+      await reg.close();
+    }
   });
 });

@@ -182,6 +182,31 @@ export interface BlockTripletRow {
    * @decision DEC-V2-REGISTRY-SOURCE-FILE-PROVENANCE-001
    */
   readonly sourceOffset?: number | null;
+
+  // ---------------------------------------------------------------------------
+  // Migration-15 field (DEC-DUC-USUPP-PROVENANCE-001 / GH #1163)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The DUC conservation-gate result for this atom, serialized as JSON — the
+   * atom's *unknown-support* (`usupp`): the declared unknowns (`♦`-sources) its
+   * observations depend on, each carrying `symbol`, `reason`, and optional
+   * `module`, plus a `liftError` when the fragment could not be lifted. This is
+   * the computed provenance fact that replaces shave's informal "candidate
+   * pending audit" status (`@yakcc/duc`).
+   *
+   * Null / absent when the atom has no unknowns and lifted cleanly (a fully
+   * closed graph), and for every pre-v15 row. NOT folded into blockMerkleRoot —
+   * provenance metadata only; first-observed-wins via INSERT OR IGNORE.
+   *
+   * @decision DEC-DUC-USUPP-PROVENANCE-001
+   */
+  readonly ducUsupp?: string | null;
+  /**
+   * JSON provenance of how the corpus artifact was derived: `{"derivation":"human"|"tool"|"ai"}`
+   * (DEC-RETRIEVAL-DERIVATION-001). Null when not recorded. Not part of the block identity.
+   */
+  readonly derivationJson?: string | null;
 }
 
 /**
@@ -513,6 +538,11 @@ export interface CandidateMatch {
   /** The full block triplet row. */
   readonly block: BlockTripletRow;
   /**
+   * Which channel found this candidate: the embedding KNN, the lexical index, or both.
+   * Set only when a lexical channel was requested.
+   */
+  readonly retrievalChannel?: "knn" | "lexical" | "both" | undefined;
+  /**
    * Cosine distance from the query embedding to this block's spec embedding.
    * Lower values indicate greater semantic similarity.
    * Results are ordered ascending in cosineDistance by default.
@@ -551,6 +581,13 @@ export interface FindCandidatesOptions {
    * - "structural": reorder by combined (1 - cosineDistance) + structuralScore descending.
    */
   readonly rerank?: "structural" | "none" | undefined;
+  /**
+   * Add a lexical (BM25) channel over the stored specs, fused with the embedding KNN by
+   * reciprocal rank fusion (DEC-RETRIEVAL-LEXICAL-001, WI-REUSE B3, #1260). Off by
+   * default. Enabling it scans every spec in the registry once per call, so the cost is
+   * linear in registry size. Use it when rare identifiers matter more than cost.
+   */
+  readonly lexical?: boolean | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -706,6 +743,41 @@ export interface FindCandidatesByQueryResult {
  *   - `selectBlocks(specHash)` returns all blocks satisfying a spec.
  *   - `getBlock(merkleRoot)` retrieves a specific block by content address.
  */
+/**
+ * One reference's link, stored outside the graph's identity (#1279, #1275 decision 2B): the
+ * reference by reason, symbol and module, and the contract (`specHash`) it links to.
+ */
+export interface DucLinkRow {
+  readonly reason: string;
+  readonly symbol: string;
+  readonly module?: string;
+  readonly spec: string;
+}
+
+/**
+ * An implementation as a DUC graph (#1279), keyed by the pair (contract `specHash`, graph identity).
+ * Several graphs may implement one contract. The structure is the authoritative form; the TypeScript
+ * text, when present, is a cache of what the emitter generates from it.
+ */
+export interface DucImplementationRow {
+  readonly specHash: string;
+  readonly graphIdentity: string;
+  /** The version of the structure's encoding. */
+  readonly formatVersion: number;
+  /** The version of the lifter that produced the graph. */
+  readonly lifterVersion: number;
+  /** The structure (no origins, no links), brotli-compressed. */
+  readonly structure: Uint8Array;
+  readonly links: readonly DucLinkRow[];
+  /** Origin annotations, brotli-compressed, or null. */
+  readonly annotations?: Uint8Array | null;
+  /** The block this implementation was shaved as, when there is one. */
+  readonly blockMerkleRoot?: string | null;
+  /** The emitted TypeScript, a cache of the graph. */
+  readonly tsCache?: string | null;
+  readonly createdAt?: number;
+}
+
 export interface Registry {
   /**
    * Store a block triplet in the registry.
@@ -1153,6 +1225,22 @@ export interface Registry {
   getSourceFileContentHash(sourcePkg: string, sourceFile: string): Promise<string | null>;
 
   /** Release all resources held by this registry instance. */
+  /**
+   * Store an implementation's graph (#1279). Idempotent on the pair (specHash, graphIdentity): the
+   * structure of an identity is stored once; links, annotations and the TypeScript cache of the
+   * pair are replaced by the latest store.
+   */
+  storeDucImplementation(row: DucImplementationRow): Promise<void>;
+
+  /** The implementation with this pair, or null. */
+  getDucImplementation(
+    specHash: string,
+    graphIdentity: string,
+  ): Promise<DucImplementationRow | null>;
+
+  /** The graph identities that implement a contract, oldest first. */
+  listDucImplementations(specHash: string): Promise<readonly string[]>;
+
   close(): Promise<void>;
 
   /**
@@ -1284,3 +1372,6 @@ export {
   type ReleaseLock,
   type WriteLockOptions,
 } from "./lock.js";
+
+export { bm25Search, buildBm25, reciprocalRankFusion, tokenize } from "./lexical.js";
+export type { Bm25Index, LexicalDoc, RankedHit } from "./lexical.js";

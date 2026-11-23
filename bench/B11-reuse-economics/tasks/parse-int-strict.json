@@ -1,0 +1,33 @@
+{
+  "id": "parse-int-strict",
+  "entry": "parseIntStrict",
+  "spec": "Write `export function parseIntStrict(s: string): number` that returns the integer the whole string denotes (optional sign, digits only), and throws a SyntaxError for anything else, including surrounding spaces or decimals.",
+  "reference": "export function parseIntStrict(s: string): number {\n  if (!/^[+-]?\\d+$/.test(s)) throw new SyntaxError('not an integer: ' + s);\n  return Number(s);\n}",
+  "slice": [
+    {
+      "id": "parse-number",
+      "score": 0.66,
+      "sourcePkg": "shadow-utils",
+      "text": "function parseNumber(s) { /* parseFloat wrapper */ }",
+      "citation": {
+        "merkleRoot": "fixture-parse-number",
+        "sourceFile": "shadow-utils/parse.ts",
+        "lineStart": 4,
+        "lineEnd": 9
+      }
+    },
+    {
+      "id": "unrelated",
+      "score": 0.22,
+      "sourcePkg": "shadow-misc",
+      "text": "function clampByte(n) { /* ... */ }",
+      "citation": {
+        "merkleRoot": "fixture-unrelated",
+        "sourceFile": "shadow-misc/bytes.ts",
+        "lineStart": 1,
+        "lineEnd": 3
+      }
+    }
+  ],
+  "heldOut": "const cases = [['42',42],['-7',-7],['+3',3],['0',0]];\nfor (const [input, want] of cases) { const got = fn(input); if (got !== want) throw new Error('parseIntStrict(' + input + ') = ' + got); }\nfor (const bad of ['1.5',' 2','3x','','--1']) { let threw = false; try { fn(bad); } catch (e) { threw = e instanceof SyntaxError; } if (!threw) throw new Error('must reject ' + JSON.stringify(bad)); }"
+}

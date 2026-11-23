@@ -1,0 +1,8 @@
+{
+  "name": "platform-primitive-to-exec",
+  "version": 1,
+  "description": "An ambient global (such as globalThis or Math; host globals like process are not yet in the ambient list) reaches a command execution sink.",
+  "sources": [{ "kind": "diamond", "reason": "platform-primitive" }],
+  "sinks": ["exec"],
+  "sanitizers": []
+}

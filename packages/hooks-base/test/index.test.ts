@@ -387,6 +387,10 @@ describe("executeRegistryQuery — passthrough (error) path", () => {
       // Added: exportAllEmbeddings() added to Registry interface in WI-1117 Slice 2.
       // Delegate to the real registry so the mock remains valid as the interface grows.
       exportAllEmbeddings: registry.exportAllEmbeddings.bind(registry),
+      // Added: DUC implementations (#1279).
+      storeDucImplementation: registry.storeDucImplementation.bind(registry),
+      getDucImplementation: registry.getDucImplementation.bind(registry),
+      listDucImplementations: registry.listDucImplementations.bind(registry),
     };
 
     const ctx: EmissionContext = { intent: "some emission intent" };

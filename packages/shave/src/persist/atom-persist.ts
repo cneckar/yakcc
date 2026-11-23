@@ -27,14 +27,21 @@
 //     that have a full Registry pass it directly.
 
 import type { BlockMerkleRoot, CanonicalAstHash } from "@yakcc/contracts";
-import type { BlockTripletRow } from "@yakcc/registry";
+import { emitTypeScript, liftAtom, packGraph } from "@yakcc/duc";
+import type { BlockTripletRow, DucImplementationRow } from "@yakcc/registry";
 import type { Registry } from "@yakcc/registry";
 import { runMutationTesting } from "@yakcc/variance";
 import type { MutationResult } from "@yakcc/variance";
 import { extractCorpus } from "../corpus/index.js";
-import type { CorpusAtomSpec, CorpusExtractionOptions } from "../corpus/index.js";
+import type { CorpusAtomSpec, CorpusExtractionOptions, CorpusSource } from "../corpus/index.js";
 import type { IntentCard } from "../intent/types.js";
 import type { NovelGlueEntry } from "../universalize/types.js";
+import {
+  type DucGateMode,
+  type ModuleBindingInfo,
+  ducGateModeFromEnv,
+  enforceDucGate,
+} from "./duc-gate.js";
 import { buildTriplet } from "./triplet.js";
 
 // ---------------------------------------------------------------------------
@@ -143,6 +150,38 @@ export interface PersistOptions {
    * Default: 0.80. Range [0, 1].
    */
   readonly mutationKillRateThreshold?: number | undefined;
+
+  // @decision DEC-DUC-CONSERVATION-GATE-001
+  /**
+   * DUC conservation-gate mode. `warn` (default) records unknown-support and
+   * warns on unexplained free references but still admits the atom; `reject`
+   * throws {@link DucGateRejection} on such an atom. When omitted, resolved from
+   * `YAKCC_DUC_GATE` (default warn). The gate always runs and always records
+   * `ducUsupp` provenance regardless of mode.
+   */
+  readonly ducGateMode?: DucGateMode | undefined;
+
+  // @decision DEC-DUC-COMPOSITION-EDGE-001 (WI-EXPLAIN-01, GH #1170)
+  /**
+   * The recursion forest's internal-symbol set — the names of every sibling/child
+   * atom in the same shave. A `free-identifier` reference matching one of these is
+   * an internal composition edge, not an external unknown: the gate records it as
+   * `composition` and excludes it from `unexplained` (so it never trips reject
+   * mode). Metadata-only — the atom's bytes and content address are untouched.
+   *
+   * Computed once per forest via `collectInternalSymbols(...)` and forwarded here.
+   * When omitted, no free-identifier is treated as internal (pre-#1170 behavior).
+   */
+  readonly internalSymbols?: ReadonlySet<string> | undefined;
+
+  // @decision DEC-DUC-MODULE-CAPTURE-001 (WI-EXPLAIN, GH #1171)
+  /**
+   * The enclosing module's top-level bindings, classified `pure` (a literal const
+   * never mutated) or `mutable`. An atom's free reference to a `pure` binding is a
+   * recorded capture and does not trip reject mode. Computed once per module via
+   * `moduleBindingsOf(moduleSource)`. When omitted, no capture is recognised.
+   */
+  readonly moduleBindings?: ReadonlyMap<string, ModuleBindingInfo> | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -213,6 +252,20 @@ export async function persistNovelGlueAtom(
   // for interactive shaves and non-bootstrap runners. INSERT OR IGNORE in storeBlock
   // ensures first-observed-wins: a second store with null does not clobber existing
   // non-null provenance.
+  // DUC conservation gate (DEC-DUC-CONSERVATION-GATE-001): lift the atom, compute
+  // its unknown-support, and enforce the warn/reject policy. In `reject` mode an
+  // atom with an unexplained free reference throws DucGateRejection here, before
+  // any registry write; in `warn` mode (default) it is recorded and admitted. The
+  // gate never throws for lift failures — those degrade to a recorded liftError.
+  const gate = enforceDucGate(
+    entry.source,
+    intentCard.behavior.slice(0, 60),
+    options?.ducGateMode ?? ducGateModeFromEnv(),
+    undefined, // warn — default console.warn
+    options?.internalSymbols, // sibling/child atom names → composition edges (#1170)
+    options?.moduleBindings, // pure module constants → recorded captures (#1171)
+  );
+
   const sc = options?.sourceContext;
   const row: BlockTripletRow = {
     blockMerkleRoot: triplet.merkleRoot,
@@ -229,6 +282,10 @@ export async function persistNovelGlueAtom(
     sourcePkg: sc?.sourcePkg ?? null,
     sourceFile: sc?.sourceFile ?? null,
     sourceOffset: sc?.sourceOffset ?? null,
+    // DUC unknown-support provenance (DEC-DUC-USUPP-PROVENANCE-001).
+    ducUsupp: gate.ducUsupp,
+    // DEC-RETRIEVAL-DERIVATION-001 (WI-REUSE B2, #1259): how the corpus artifact was made.
+    derivationJson: JSON.stringify({ derivation: derivationOf(corpusResult.source) }),
   };
 
   // Mutation-testing gate: verify corpus tests kill a minimum fraction of
@@ -265,7 +322,51 @@ export async function persistNovelGlueAtom(
   // blockMerkleRoot twice is a no-op (per Registry contract).
   await registry.storeBlock(row);
 
+  // The graph beside the block (#1279): the implementation keyed by (specHash, graph identity),
+  // with the emitted TypeScript as its cache. A registry view without the method, or an atom the
+  // lifter refuses, stores the block alone.
+  if (typeof registry.storeDucImplementation === "function") {
+    const stored = ducImplementationOf(entry.source, triplet.specHash, triplet.merkleRoot);
+    if (stored !== undefined) await registry.storeDucImplementation(stored);
+  }
+
   return triplet.merkleRoot;
+}
+
+/**
+ * The DUC implementation of an atom's source: its packed graph under the contract, with the emitted
+ * TypeScript as a cache (undefined when the emitter does not express the graph). Undefined when the
+ * source does not lift.
+ */
+export function ducImplementationOf(
+  source: string,
+  specHash: string,
+  blockMerkleRoot: string | null,
+): DucImplementationRow | undefined {
+  let graph: ReturnType<typeof liftAtom>;
+  try {
+    graph = liftAtom(source);
+  } catch {
+    return undefined;
+  }
+  const packed = packGraph(graph);
+  let tsCache: string | null = null;
+  try {
+    tsCache = emitTypeScript(graph);
+  } catch {
+    tsCache = null;
+  }
+  return {
+    specHash,
+    graphIdentity: packed.identity,
+    formatVersion: packed.formatVersion,
+    lifterVersion: packed.lifterVersion,
+    structure: packed.structure,
+    links: packed.links,
+    annotations: packed.annotations ?? null,
+    blockMerkleRoot,
+    tsCache,
+  };
 }
 
 /**
@@ -298,4 +399,22 @@ export async function maybePersistNovelGlueAtom(
   // registry satisfies the storeBlock contract even if it doesn't implement
   // every Registry method. Only storeBlock is called in this flow.
   return persistNovelGlueAtom(entry, registry as unknown as Registry, options);
+}
+
+/**
+ * How a corpus source was derived (DEC-RETRIEVAL-DERIVATION-001). `ai-derived` is the
+ * only model-written source, so it is the one that must be filterable. Tests and
+ * documented examples were written by people. props-file is a hand-written property file.
+ */
+function derivationOf(source: CorpusSource): "human" | "tool" | "ai" {
+  switch (source) {
+    case "ai-derived":
+      return "ai";
+    case "props-file":
+    case "upstream-test":
+    case "documented-usage":
+      return "human";
+    default:
+      return "tool";
+  }
 }

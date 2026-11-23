@@ -1,3 +1,4 @@
+import { type AuthorityDelta, authorityDelta } from "@yakcc/duc";
 // SPDX-License-Identifier: MIT
 /**
  * @decision DEC-VARIANCE-WIRING-001
@@ -61,6 +62,12 @@ export interface VarianceScoreEntry {
   readonly merkleRoot: BlockMerkleRoot;
   readonly score: number;
   readonly dimensions: DimensionScores;
+  /**
+   * Differential authority of this candidate against the top-ranked reference
+   * (DEC-DUC-AUTHORITY-DELTA-001, WI-GUARD A1, #1254). Present on every entry except
+   * the reference itself. Annotation only: it never changes the ranking.
+   */
+  readonly authority?: AuthorityDelta;
 }
 
 // ---------------------------------------------------------------------------
@@ -131,6 +138,32 @@ const _decoder = new TextDecoder();
  * @throws VarianceCandidateMalformedError if any candidate row is missing or its
  *         specCanonicalBytes cannot be validated as SpecYak.
  */
+/**
+ * Annotate each non-reference candidate with its differential authority against the
+ * top-ranked reference (DEC-DUC-AUTHORITY-DELTA-001, WI-GUARD A1, #1254). A candidate
+ * that adds influence over the reference is not a refinement of it, so choosing it
+ * exposes authority the reference did not. The reference is the default choice and
+ * carries no delta. Annotation only: the order is never changed here. Entries whose
+ * source is unknown are left unannotated.
+ */
+export function annotateAuthority(
+  ranked: readonly VarianceScoreEntry[],
+  implByRoot: ReadonlyMap<BlockMerkleRoot, string>,
+): VarianceScoreEntry[] {
+  const out: VarianceScoreEntry[] = [...ranked];
+  const reference = ranked[0];
+  const referenceSource =
+    reference !== undefined ? implByRoot.get(reference.merkleRoot) : undefined;
+  if (referenceSource === undefined) return out;
+  for (let i = 1; i < out.length; i++) {
+    const entry = out[i];
+    const source = entry !== undefined ? implByRoot.get(entry.merkleRoot) : undefined;
+    if (entry === undefined || source === undefined) continue;
+    out[i] = { ...entry, authority: authorityDelta(source, referenceSource) };
+  }
+  return out;
+}
+
 export async function rankCluster(
   intentCard: IntentCard,
   canonicalAstHash: string,
@@ -144,6 +177,7 @@ export async function rankCluster(
   // Step 2-4: Fetch + decode + score each candidate.
   // We collect scores in input order so the stable sort preserves original order for ties.
   const scored: VarianceScoreEntry[] = [];
+  const implByRoot = new Map<BlockMerkleRoot, string>();
   for (const merkleRoot of matchMerkleRoots) {
     // Fetch the BlockTripletRow — missing row is treated as malformed (Sacred Practice #5).
     const row = await registry.getBlock(merkleRoot);
@@ -168,6 +202,7 @@ export async function rankCluster(
     // Score: varianceScore uses DIMENSION_WEIGHTS (governance-locked per DEC-VAR-003/-005).
     const result = varianceScore(canonicalSpec, candidateSpec);
 
+    implByRoot.set(merkleRoot, row.implSource);
     scored.push({
       merkleRoot,
       score: result.score,
@@ -187,5 +222,6 @@ export async function rankCluster(
     return diff;
   });
 
-  return scored;
+  // Step 6: differential authority against the top-ranked reference (annotation only).
+  return annotateAuthority(scored, implByRoot);
 }

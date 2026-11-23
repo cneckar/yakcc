@@ -1,0 +1,10 @@
+# Coq build artifacts
+*.vo
+*.vok
+*.vos
+*.glob
+.*.aux
+.lia.cache
+# verify scratch
+_assum.*
+_chk.out

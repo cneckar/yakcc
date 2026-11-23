@@ -275,23 +275,27 @@ describe("T2: observe-don't-mutate — response unchanged under all 3 outcomes",
       getForeignRefs: registry.getForeignRefs.bind(registry),
       storeWorkspacePlumbing: registry.storeWorkspacePlumbing.bind(registry),
       listWorkspacePlumbing: registry.listWorkspacePlumbing.bind(registry),
-        storeSourceFileGlue: registry.storeSourceFileGlue.bind(registry),
-        getSourceFileGlue: registry.getSourceFileGlue.bind(registry),
-        listSourceFileGlue: registry.listSourceFileGlue.bind(registry),
-        getAtomRangesBySourceFile: registry.getAtomRangesBySourceFile.bind(registry),
-        listOccurrencesBySourceFile: registry.listOccurrencesBySourceFile.bind(registry),
-        listOccurrencesByMerkleRoot: registry.listOccurrencesByMerkleRoot.bind(registry),
-        replaceSourceFileOccurrences: registry.replaceSourceFileOccurrences.bind(registry),
-        storeSourceFileContentHash: registry.storeSourceFileContentHash.bind(registry),
-        getSourceFileContentHash: registry.getSourceFileContentHash.bind(registry),
-        listCatalogPage: registry.listCatalogPage.bind(registry),
-        getStoredEmbeddingModelId: registry.getStoredEmbeddingModelId.bind(registry),
-        getStoredEmbeddingDimension: registry.getStoredEmbeddingDimension.bind(registry),
-        recreateEmbeddingsTable: registry.recreateEmbeddingsTable.bind(registry),
-        listUnsubmittedBlocks: registry.listUnsubmittedBlocks.bind(registry),
-        markBlockSubmitted: registry.markBlockSubmitted.bind(registry),
-        // Added: exportAllEmbeddings() added to Registry interface in WI-1117 Slice 2.
-        exportAllEmbeddings: registry.exportAllEmbeddings.bind(registry),
+      storeSourceFileGlue: registry.storeSourceFileGlue.bind(registry),
+      getSourceFileGlue: registry.getSourceFileGlue.bind(registry),
+      listSourceFileGlue: registry.listSourceFileGlue.bind(registry),
+      getAtomRangesBySourceFile: registry.getAtomRangesBySourceFile.bind(registry),
+      listOccurrencesBySourceFile: registry.listOccurrencesBySourceFile.bind(registry),
+      listOccurrencesByMerkleRoot: registry.listOccurrencesByMerkleRoot.bind(registry),
+      replaceSourceFileOccurrences: registry.replaceSourceFileOccurrences.bind(registry),
+      storeSourceFileContentHash: registry.storeSourceFileContentHash.bind(registry),
+      getSourceFileContentHash: registry.getSourceFileContentHash.bind(registry),
+      listCatalogPage: registry.listCatalogPage.bind(registry),
+      getStoredEmbeddingModelId: registry.getStoredEmbeddingModelId.bind(registry),
+      getStoredEmbeddingDimension: registry.getStoredEmbeddingDimension.bind(registry),
+      recreateEmbeddingsTable: registry.recreateEmbeddingsTable.bind(registry),
+      listUnsubmittedBlocks: registry.listUnsubmittedBlocks.bind(registry),
+      markBlockSubmitted: registry.markBlockSubmitted.bind(registry),
+      // Added: exportAllEmbeddings() added to Registry interface in WI-1117 Slice 2.
+      exportAllEmbeddings: registry.exportAllEmbeddings.bind(registry),
+      // Added: DUC implementations (#1279).
+      storeDucImplementation: registry.storeDucImplementation.bind(registry),
+      getDucImplementation: registry.getDucImplementation.bind(registry),
+      listDucImplementations: registry.listDucImplementations.bind(registry),
     };
 
     const hook = createHook(brokenRegistry, {
@@ -386,6 +390,8 @@ describe("T5: cline-specific session ID prefix", () => {
 
     const lines = readTelemetryLines(testTelemetryDir, autoId);
     expect(lines).toHaveLength(1);
-    expect(lines[0]?.outcome).toMatch(/^(registry-hit|synthesis-required|passthrough|intent-too-broad)$/);
+    expect(lines[0]?.outcome).toMatch(
+      /^(registry-hit|synthesis-required|passthrough|intent-too-broad)$/,
+    );
   }, 10_000);
 });

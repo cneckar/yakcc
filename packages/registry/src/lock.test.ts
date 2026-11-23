@@ -135,11 +135,9 @@ describe("acquireWriteLock — stale lock", () => {
   it("steals a lock held by a dead PID", async () => {
     // PID 999999 is almost certainly not a running process.
     const deadPid = 999999;
-    writeFileSync(
-      lockPath,
-      JSON.stringify({ pid: deadPid, startedAt: new Date().toISOString() }),
-      { flag: "w" },
-    );
+    writeFileSync(lockPath, JSON.stringify({ pid: deadPid, startedAt: new Date().toISOString() }), {
+      flag: "w",
+    });
 
     // Should succeed immediately (stale detection kicks in on first poll).
     const release = await acquireWriteLock(registryPath, { timeoutMs: 2000 });

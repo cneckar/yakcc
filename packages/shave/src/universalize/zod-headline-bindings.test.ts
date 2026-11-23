@@ -803,7 +803,7 @@ describe("zod/string-min -- v3/helpers/util.cjs working-helper atom (WI-510 Slic
 // ---------------------------------------------------------------------------
 describe("zod/string-max -- v3/helpers/parseUtil.cjs working-helper atom (WI-510 Slice 8 Group B)", () => {
   it(
-    "section A -- moduleCount in [1,3], stubCount in [0,2], leafTotal>=30, externalSpecifiers=[]",
+    "section A -- moduleCount=5, stubCount in [0,2], leafTotal>=30, externalSpecifiers=[]",
     { timeout: 60_000 },
     async () => {
       const forest = await shavePackage(ZOD_FIXTURE_ROOT, {
@@ -817,14 +817,13 @@ describe("zod/string-max -- v3/helpers/parseUtil.cjs working-helper atom (WI-510
         "[zod-string-max sA] filePaths:",
         forestModules(forest).map((m) => normalize(m.filePath)),
       );
+      // parseUtil.cjs -> errors.cjs -> locales/en.cjs, ZodError.cjs, helpers/util.cjs. en.cjs used
+      // to stub (a module-level arrow function, #576), so the walk stopped there; it now decomposes
+      // and the walk reaches all 5 (#1276).
       expect(
         forest.moduleCount,
-        "string-max (parseUtil.cjs) moduleCount in [1,3] (plan §3.3)",
-      ).toBeGreaterThanOrEqual(1);
-      expect(
-        forest.moduleCount,
-        "string-max (parseUtil.cjs) moduleCount in [1,3] (plan §3.3)",
-      ).toBeLessThanOrEqual(3);
+        "string-max (parseUtil.cjs) moduleCount is 5 now that en.cjs decomposes",
+      ).toBe(5);
       expect(
         forest.stubCount,
         "string-max (parseUtil.cjs) stubCount in [0,2] (one transitive may stub)",
@@ -1194,7 +1193,7 @@ describe("zod/number-int -- v3/ZodError.cjs working-helper atom (WI-510 Slice 8 
 // ---------------------------------------------------------------------------
 describe("zod/v3/locales/en.cjs -- engine-gap corroboration, array-each extended stub (WI-510 Slice 8 Group A extra)", () => {
   it(
-    "section A -- moduleCount=0, stubCount=1, leafTotal=0 (arrow fn at module scope stubs; DEC-WI510-S8-HELPER-FILE-MAPPING-AMENDED-002)",
+    "section A -- en.cjs decomposes: the module-level arrow function gap (#576) is closed",
     { timeout: 30_000 },
     async () => {
       const forest = await shavePackage(ZOD_FIXTURE_ROOT, {
@@ -1208,34 +1207,27 @@ describe("zod/v3/locales/en.cjs -- engine-gap corroboration, array-each extended
         "[zod-en-locale sA] stubs:",
         forestStubs(forest).map((s) => s.specifier),
       );
-      // Engine-gap: top-level `const errorMap = (issue, _ctx) => { ... }` arrow function
-      // at module scope extends issue #576 beyond class bodies to module-level declarations.
-      // DEC-WI510-S8-ENGINE-GAP-CORROBORATION-TESTS-001: assert empirical engine output.
-      expect(
-        forest.moduleCount,
-        "en.cjs moduleCount must be 0 (arrow fn at module scope stubs entry)",
-      ).toBe(0);
-      expect(forest.stubCount, "en.cjs stubCount must be 1").toBe(1);
-      expect(forestTotalLeafCount(forest), "en.cjs leafTotal must be 0").toBe(0);
+      // The top-level `const errorMap = (issue, _ctx) => { switch (...) {} }` used to stub the
+      // module (DEC-WI510-S8-HELPER-FILE-MAPPING-AMENDED-002, #576). It now decomposes, with its
+      // fixture-local requires (#1276). DEC-WI510-S8-ENGINE-GAP-CORROBORATION-TESTS-001: assert
+      // the empirical engine output, which is now the closed gap.
+      expect(forest.moduleCount, "en.cjs and its requires decompose").toBe(3);
+      expect(forest.stubCount, "en.cjs no longer stubs").toBe(0);
+      expect(forestTotalLeafCount(forest), "en.cjs has leaves").toBeGreaterThan(0);
       const allExternal = forestModules(forest).flatMap((m) => m.externalSpecifiers);
       expect(allExternal).toEqual([]);
     },
   );
 
-  it(
-    "section B -- stub specifier path ends in zod-3.25.76/v3/locales/en.cjs",
-    { timeout: 30_000 },
-    async () => {
-      const forest = await shavePackage(ZOD_FIXTURE_ROOT, {
-        registry: emptyRegistry,
-        entryPath: join(ZOD_FIXTURE_ROOT, "v3", "locales", "en.cjs"),
-      });
-      const stubs = forestStubs(forest);
-      expect(stubs).toHaveLength(1);
-      const stubSpec = normalize(stubs[0]?.specifier ?? "");
-      expect(stubSpec).toContain(join("locales", "en.cjs"));
-    },
-  );
+  it("section B -- en.cjs is a module of the forest, not a stub", { timeout: 30_000 }, async () => {
+    const forest = await shavePackage(ZOD_FIXTURE_ROOT, {
+      registry: emptyRegistry,
+      entryPath: join(ZOD_FIXTURE_ROOT, "v3", "locales", "en.cjs"),
+    });
+    expect(forestStubs(forest)).toHaveLength(0);
+    const paths = forestModules(forest).map((m) => normalize(m.filePath));
+    expect(paths.some((p) => p.endsWith(join("locales", "en.cjs")))).toBe(true);
+  });
 
   it(
     "section D -- two-pass byte-identical determinism for en.cjs stub state",
@@ -1535,8 +1527,9 @@ describe("zod -- compound interaction: all 4 Group B bindings end-to-end (WI-510
         {
           name: "string-max",
           entry: join(ZOD_FIXTURE_ROOT, "v3", "helpers", "parseUtil.cjs"),
+          // 5 now that locales/en.cjs decomposes and the walk continues past it (#1276).
           minMod: 1,
-          maxMod: 3,
+          maxMod: 5,
           maxStub: 2,
           minLeaf: 30,
         },

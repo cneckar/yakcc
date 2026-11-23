@@ -52,6 +52,7 @@ import type {
   BootstrapManifestEntry,
   CandidateMatch,
   CandidateNearMiss,
+  DucImplementationRow,
   FindCandidatesByQueryOptions,
   FindCandidatesByQueryResult,
   FindCandidatesOptions,
@@ -64,6 +65,7 @@ import type {
   SourceFileGlueEntry,
   WorkspacePlumbingEntry,
 } from "./index.js";
+import { bm25Search, buildBm25, reciprocalRankFusion } from "./lexical.js";
 import { SCHEMA_VERSION, applyMigrations } from "./schema.js";
 import { structuralMatch } from "./search.js";
 
@@ -136,6 +138,14 @@ interface BlockRow {
    * NOT folded into blockMerkleRoot — provenance is metadata only.
    */
   source_offset: number | null;
+
+  /**
+   * Migration-15 (DEC-DUC-USUPP-PROVENANCE-001). JSON-serialized DUC
+   * conservation-gate result (unknown-support). NULL for closed atoms and all
+   * pre-v15 rows.
+   */
+  duc_usupp: string | null;
+  derivation_json: string | null;
 }
 
 interface TestHistoryRow {
@@ -340,9 +350,11 @@ class SqliteRegistry implements Registry {
         string | null,
         string | null,
         number | null,
+        string | null,
+        string | null,
       ]
     >(
-      "INSERT OR IGNORE INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash, parent_block_root, kind, foreign_pkg, foreign_export, foreign_dts_hash, source_pkg, source_file, source_offset) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO blocks(block_merkle_root, spec_hash, spec_canonical_bytes, impl_source, proof_manifest_json, level, created_at, canonical_ast_hash, parent_block_root, kind, foreign_pkg, foreign_export, foreign_dts_hash, source_pkg, source_file, source_offset, duc_usupp, derivation_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
 
     // vec0 does not support INSERT OR IGNORE / ON CONFLICT, so use DELETE+INSERT
@@ -397,6 +409,10 @@ class SqliteRegistry implements Registry {
         row.sourcePkg ?? null,
         row.sourceFile ?? null,
         row.sourceOffset ?? null,
+        // Migration-15 column (DEC-DUC-USUPP-PROVENANCE-001). Serialized DUC
+        // unknown-support; null for closed atoms. First-observed-wins.
+        row.ducUsupp ?? null,
+        row.derivationJson ?? null,
       );
       insertChanges = Number(r.changes ?? 0);
       // Only write the embedding if the spec_hash doesn't already have one.
@@ -634,6 +650,25 @@ class SqliteRegistry implements Registry {
   //   spec's embedding is derived from its behavior+parameter text; the query
   //   uses the same template so query and document vectors are comparable.
 
+  /**
+   * The spec hashes ranked by BM25 against the query text, best first. Scans one spec per
+   * spec hash (the first stored spec text for that hash). Linear in registry size.
+   */
+  private lexicalSpecHashes(queryText: string, limit: number): string[] {
+    const rows = this.db
+      .prepare<[], { spec_hash: string; spec_canonical_bytes: Buffer }>(
+        "SELECT spec_hash, MIN(spec_canonical_bytes) AS spec_canonical_bytes FROM blocks GROUP BY spec_hash",
+      )
+      .all();
+    const docs = rows.map((r) => ({
+      id: r.spec_hash,
+      text: Buffer.from(r.spec_canonical_bytes).toString("utf-8"),
+    }));
+    if (docs.length === 0) return [];
+    // Keep only lexical hits that reach 20% of the best score (see bm25Search).
+    return bm25Search(buildBm25(docs), queryText, limit, { minRelative: 0.2 }).map((hit) => hit.id);
+  }
+
   async findCandidatesByIntent(
     card: IntentQuery,
     options: FindCandidatesOptions = {},
@@ -641,6 +676,9 @@ class SqliteRegistry implements Registry {
     this.assertOpen();
 
     const k = options.k ?? 10;
+    // With the lexical channel, fuse over a deeper KNN pool. Otherwise a lexical-only hit can
+    // never reach the fused top k, because the KNN list was already cut to k (#1260).
+    const knnK = options.lexical === true ? k * 4 : k;
 
     // Derive query text from the card (DEC-VECTOR-RETRIEVAL-002).
     // behavior + each input as "name: typeHint" + each output as "name: typeHint"
@@ -677,25 +715,42 @@ class SqliteRegistry implements Registry {
         .prepare<[Buffer, number], EmbeddingRow>(
           "SELECT spec_hash, distance FROM contract_embeddings WHERE embedding MATCH ? AND k = ? ORDER BY distance",
         )
-        .all(queryBuf, k);
+        .all(queryBuf, knnK);
     } catch {
       // If the embeddings table is empty, vec0 may throw. Return [] gracefully.
       return [];
     }
 
-    if (embeddingRows.length === 0) return [];
+    const useLexical = options.lexical === true;
+    if (embeddingRows.length === 0 && !useLexical) return [];
 
-    // For each spec_hash, find the best block (first from selectBlocks which uses
-    // the strictness-aware sort). We hydrate one block per spec_hash hit.
+    // KNN order and distance per spec. Without the lexical channel this is the whole answer.
+    const knnDistance = new Map<string, number>();
+    for (const eRow of embeddingRows) knnDistance.set(eRow.spec_hash, eRow.distance);
+    let orderedSpecs: string[] = embeddingRows.map((r) => r.spec_hash);
+    const channel = new Map<string, "knn" | "lexical" | "both">();
+    for (const spec of orderedSpecs) channel.set(spec, "knn");
+
+    // Lexical channel (DEC-RETRIEVAL-LEXICAL-001): BM25 over the stored spec text, fused with
+    // the KNN ranking by reciprocal rank fusion. A spec found by both channels rises.
+    if (useLexical) {
+      const lexicalSpecs = this.lexicalSpecHashes(queryText, k * 4);
+      for (const spec of lexicalSpecs) {
+        channel.set(spec, channel.has(spec) ? "both" : "lexical");
+      }
+      orderedSpecs = reciprocalRankFusion([orderedSpecs, lexicalSpecs], 60)
+        .slice(0, k)
+        .map((hit) => hit.id);
+    }
+
+    // For each spec in order, take its best block (first from selectBlocks, strictness order).
     const results: CandidateMatch[] = [];
 
-    for (const eRow of embeddingRows) {
-      const specHash = eRow.spec_hash as SpecHash;
-      // Get all blocks for this spec, ordered by strictness/quality.
+    for (const spec of orderedSpecs) {
+      const specHash = spec as SpecHash;
       const roots = await this.selectBlocks(specHash);
       if (roots.length === 0) continue;
 
-      // Take the best block (first in strictness order).
       const bestRoot = roots[0];
       if (bestRoot === undefined) continue;
 
@@ -704,7 +759,9 @@ class SqliteRegistry implements Registry {
 
       results.push({
         block,
-        cosineDistance: eRow.distance,
+        // A lexical-only hit has no embedding distance. It is reported as 1 (no similarity signal).
+        cosineDistance: knnDistance.get(spec) ?? 1,
+        ...(useLexical ? { retrievalChannel: channel.get(spec) } : {}),
       });
     }
 
@@ -2117,6 +2174,121 @@ class SqliteRegistry implements Registry {
   // close
   // -------------------------------------------------------------------------
 
+  // -------------------------------------------------------------------------
+  // DUC implementations (#1279)
+  // -------------------------------------------------------------------------
+
+  async storeDucImplementation(row: DucImplementationRow): Promise<void> {
+    const now = row.createdAt ?? Date.now();
+    const tx = this.db.transaction(() => {
+      this.db
+        .prepare(
+          "INSERT OR IGNORE INTO duc_graphs(graph_identity, format_version, lifter_version, structure, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(
+          row.graphIdentity,
+          row.formatVersion,
+          row.lifterVersion,
+          Buffer.from(row.structure),
+          now,
+        );
+      this.db
+        .prepare(
+          `INSERT INTO duc_implementations(spec_hash, graph_identity, block_merkle_root, ts_cache, created_at) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(spec_hash, graph_identity) DO UPDATE SET
+             block_merkle_root = COALESCE(excluded.block_merkle_root, duc_implementations.block_merkle_root),
+             ts_cache = COALESCE(excluded.ts_cache, duc_implementations.ts_cache)`,
+        )
+        .run(
+          row.specHash,
+          row.graphIdentity,
+          row.blockMerkleRoot ?? null,
+          row.tsCache ?? null,
+          now,
+        );
+      this.db
+        .prepare("DELETE FROM duc_links WHERE spec_hash = ? AND graph_identity = ?")
+        .run(row.specHash, row.graphIdentity);
+      const insertLink = this.db.prepare(
+        "INSERT OR REPLACE INTO duc_links(spec_hash, graph_identity, reason, symbol, module, target_spec) VALUES (?, ?, ?, ?, ?, ?)",
+      );
+      for (const l of row.links)
+        insertLink.run(row.specHash, row.graphIdentity, l.reason, l.symbol, l.module ?? "", l.spec);
+      if (row.annotations !== undefined && row.annotations !== null) {
+        this.db
+          .prepare(
+            "INSERT OR REPLACE INTO duc_annotations(spec_hash, graph_identity, annotations) VALUES (?, ?, ?)",
+          )
+          .run(row.specHash, row.graphIdentity, Buffer.from(row.annotations));
+      }
+    });
+    tx();
+  }
+
+  async getDucImplementation(
+    specHash: string,
+    graphIdentity: string,
+  ): Promise<DucImplementationRow | null> {
+    const impl = this.db
+      .prepare(
+        `SELECT i.spec_hash, i.graph_identity, i.block_merkle_root, i.ts_cache, i.created_at, g.format_version, g.lifter_version, g.structure
+         FROM duc_implementations i JOIN duc_graphs g ON g.graph_identity = i.graph_identity
+         WHERE i.spec_hash = ? AND i.graph_identity = ?`,
+      )
+      .get(specHash, graphIdentity) as
+      | {
+          spec_hash: string;
+          graph_identity: string;
+          block_merkle_root: string | null;
+          ts_cache: string | null;
+          created_at: number;
+          format_version: number;
+          lifter_version: number;
+          structure: Buffer;
+        }
+      | undefined;
+    if (impl === undefined) return null;
+    const links = this.db
+      .prepare(
+        "SELECT reason, symbol, module, target_spec FROM duc_links WHERE spec_hash = ? AND graph_identity = ? ORDER BY reason, symbol, module",
+      )
+      .all(specHash, graphIdentity) as {
+      reason: string;
+      symbol: string;
+      module: string;
+      target_spec: string;
+    }[];
+    const notes = this.db
+      .prepare("SELECT annotations FROM duc_annotations WHERE spec_hash = ? AND graph_identity = ?")
+      .get(specHash, graphIdentity) as { annotations: Buffer } | undefined;
+    return {
+      specHash: impl.spec_hash,
+      graphIdentity: impl.graph_identity,
+      formatVersion: impl.format_version,
+      lifterVersion: impl.lifter_version,
+      structure: new Uint8Array(impl.structure),
+      links: links.map((l) => ({
+        reason: l.reason,
+        symbol: l.symbol,
+        ...(l.module !== "" ? { module: l.module } : {}),
+        spec: l.target_spec,
+      })),
+      annotations: notes !== undefined ? new Uint8Array(notes.annotations) : null,
+      blockMerkleRoot: impl.block_merkle_root,
+      tsCache: impl.ts_cache,
+      createdAt: impl.created_at,
+    };
+  }
+
+  async listDucImplementations(specHash: string): Promise<readonly string[]> {
+    const rows = this.db
+      .prepare(
+        "SELECT graph_identity FROM duc_implementations WHERE spec_hash = ? ORDER BY created_at, graph_identity",
+      )
+      .all(specHash) as { graph_identity: string }[];
+    return rows.map((r) => r.graph_identity);
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -2180,6 +2352,9 @@ function hydrateBlock(row: BlockRow, artifactRows: readonly BlockArtifactRow[]):
     sourcePkg: row.source_pkg ?? null,
     sourceFile: row.source_file ?? null,
     sourceOffset: row.source_offset ?? null,
+    // Migration-15 field (DEC-DUC-USUPP-PROVENANCE-001). Pre-v15 rows return null.
+    ducUsupp: row.duc_usupp ?? null,
+    derivationJson: row.derivation_json ?? null,
   };
 }
 

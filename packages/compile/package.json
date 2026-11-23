@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@yakcc/contracts": "workspace:*",
+    "@yakcc/duc": "workspace:*",
     "@yakcc/ir": "workspace:*",
     "@yakcc/registry": "workspace:*",
     "@yakcc/shave": "workspace:*",

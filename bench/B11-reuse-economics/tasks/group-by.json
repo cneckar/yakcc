@@ -1,0 +1,33 @@
+{
+  "id": "group-by",
+  "entry": "groupBy",
+  "spec": "Write `export function groupBy<T>(items: readonly T[], key: (item: T) => string): Record<string, T[]>` that groups items by the string returned from key, keeping the original order within each group.",
+  "reference": "export function groupBy<T>(items: readonly T[], key: (item: T) => string): Record<string, T[]> {\n  const out: Record<string, T[]> = {};\n  for (const item of items) { const k = key(item); (out[k] ??= []).push(item); }\n  return out;\n}",
+  "slice": [
+    {
+      "id": "bucket-by",
+      "score": 0.79,
+      "sourcePkg": "shadow-utils",
+      "text": "function bucketBy(xs, fn) { /* partition by key */ }",
+      "citation": {
+        "merkleRoot": "fixture-bucket-by",
+        "sourceFile": "shadow-utils/partition.ts",
+        "lineStart": 4,
+        "lineEnd": 9
+      }
+    },
+    {
+      "id": "unrelated",
+      "score": 0.22,
+      "sourcePkg": "shadow-misc",
+      "text": "function zipLongest(a, b) { /* ... */ }",
+      "citation": {
+        "merkleRoot": "fixture-unrelated",
+        "sourceFile": "shadow-misc/zip.ts",
+        "lineStart": 1,
+        "lineEnd": 3
+      }
+    }
+  ],
+  "heldOut": "const xs = [{n:'a',v:1},{n:'b',v:2},{n:'a',v:3}];\nconst got = fn(xs, (x) => x.n);\nif (JSON.stringify(got) !== JSON.stringify({a:[{n:'a',v:1},{n:'a',v:3}],b:[{n:'b',v:2}]})) throw new Error('groupBy grouped wrongly: ' + JSON.stringify(got));\nif (JSON.stringify(fn([], (x) => 'k')) !== '{}') throw new Error('empty input must give an empty record');"
+}

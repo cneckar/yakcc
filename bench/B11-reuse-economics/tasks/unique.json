@@ -1,0 +1,33 @@
+{
+  "id": "unique",
+  "entry": "unique",
+  "spec": "Write `export function unique<T>(items: readonly T[]): T[]` that returns the items with later duplicates removed, keeping the first occurrence of each value and the original order.",
+  "reference": "export function unique<T>(items: readonly T[]): T[] {\n  const seen = new Set<T>();\n  const out: T[] = [];\n  for (const x of items) { if (!seen.has(x)) { seen.add(x); out.push(x); } }\n  return out;\n}",
+  "slice": [
+    {
+      "id": "dedupe-by",
+      "score": 0.84,
+      "sourcePkg": "shadow-utils",
+      "text": "function dedupeBy(xs, key) { /* keep first per key */ }",
+      "citation": {
+        "merkleRoot": "fixture-dedupe-by",
+        "sourceFile": "shadow-utils/lists.ts",
+        "lineStart": 4,
+        "lineEnd": 9
+      }
+    },
+    {
+      "id": "unrelated",
+      "score": 0.22,
+      "sourcePkg": "shadow-misc",
+      "text": "function flattenDeep(xs) { /* ... */ }",
+      "citation": {
+        "merkleRoot": "fixture-unrelated",
+        "sourceFile": "shadow-misc/tree.ts",
+        "lineStart": 1,
+        "lineEnd": 3
+      }
+    }
+  ],
+  "heldOut": "const cases = [[[1,2,1,3,2],[1,2,3]],[[],[]],[['a','b','a'],['a','b']]];\nfor (const [xs, want] of cases) { const got = fn(xs); if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error('unique(' + JSON.stringify(xs) + ') = ' + JSON.stringify(got)); }"
+}

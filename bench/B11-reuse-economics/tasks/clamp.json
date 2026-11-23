@@ -1,0 +1,9 @@
+{
+  "id": "clamp",
+  "spec": "Write `export function clamp(value: number, lo: number, hi: number): number` returning value limited to the closed interval [lo, hi]. Throw a RangeError when lo > hi.",
+  "reference": "export function clamp(value: number, lo: number, hi: number): number {\n  if (lo > hi) throw new RangeError('lo must be <= hi');\n  return Math.min(hi, Math.max(lo, value));\n}",
+  "slice": [
+    { "id": "bound-check", "score": 0.4, "sourcePkg": "shadow-utils", "text": "function inRange(v, lo, hi) { return v >= lo && v <= hi; }", "citation": { "merkleRoot": "fixture-in-range", "sourceFile": "shadow-utils/numbers.ts", "lineStart": 2, "lineEnd": 2 } }
+  ],
+  "heldOut": "const cases = [[5,0,10,5],[-3,0,10,0],[99,0,10,10],[0,0,0,0]];\nfor (const [v, lo, hi, want] of cases) { const got = fn(v, lo, hi); if (got !== want) throw new Error('clamp(' + v + ',' + lo + ',' + hi + ') = ' + got); }\nlet threw = false; try { fn(1, 5, 2); } catch (e) { threw = e instanceof RangeError; } if (!threw) throw new Error('lo > hi must throw RangeError');"
+}

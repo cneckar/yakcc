@@ -176,7 +176,7 @@
  *   Migration is pure DDL (CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS);
  *   table starts empty. No backfill required. Closes #1087.
  */
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 17;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -1525,4 +1525,102 @@ export function applyMigrations(db: MigrationsDb): void {
     }
     db.prepare("UPDATE schema_version SET version = ?").run(14);
   }
+
+  // Migration 14 → 15: add duc_usupp column to blocks
+  // (DEC-DUC-USUPP-PROVENANCE-001 / WI-DUC-02 / GH #1163).
+  //
+  // SQLite has no ADD COLUMN IF NOT EXISTS. Wrap the ALTER in try/catch so the
+  // migration is recoverable: a crash between ADD COLUMN and the version bump
+  // leaves the column present at version=14; re-entry catches the
+  // "duplicate column name" SQLite error, treats it as a no-op, and proceeds
+  // to bump the version normally. Matches the MIGRATION_12 (submitted_at) pattern.
+  //
+  // No backfill: NULL is the correct sentinel for all pre-v15 rows (the DUC
+  // conservation gate had not run when they were shaved). duc_usupp is
+  // provenance metadata only — NOT folded into blockMerkleRoot.
+  if (currentVersion < 15) {
+    try {
+      db.exec("ALTER TABLE blocks ADD COLUMN duc_usupp TEXT NULL");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // SQLite emits "duplicate column name: duc_usupp" when the column already
+      // exists. Any other error is a real failure and must propagate.
+      if (!/duplicate column name/i.test(msg)) {
+        throw err;
+      }
+    }
+    db.prepare("UPDATE schema_version SET version = ?").run(15);
+  }
+
+  // Migration 15 → 16: add derivation_json column to blocks
+  // (DEC-RETRIEVAL-DERIVATION-001 / WI-REUSE B2 / GH #1259).
+  //
+  // Records how a block's corpus artifact was derived: human-written, tool-extracted,
+  // or AI-derived. The SEAM finding is that an agent-maintained cache can cost more
+  // than it saves, so consumers must be able to filter by derivation. Same
+  // duplicate-column recovery as migration 15 (MIGRATION_12 pattern).
+  //
+  // No backfill: NULL is the sentinel for pre-v16 rows, meaning derivation was not
+  // recorded. It is provenance metadata only and is NOT folded into blockMerkleRoot.
+  if (currentVersion < 16) {
+    try {
+      db.exec("ALTER TABLE blocks ADD COLUMN derivation_json TEXT NULL");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/duplicate column name/i.test(msg)) {
+        throw err;
+      }
+    }
+    db.prepare("UPDATE schema_version SET version = ?").run(16);
+  }
+
+  // Migration 16 → 17: DUC graphs as the stored implementation form (#1279, #1275).
+  //
+  // duc_graphs holds each graph structure once, keyed by its identity (structure only, no origins,
+  // no links; brotli-compressed compact encoding). duc_implementations keys an implementation by
+  // the pair (spec_hash, graph_identity): several graphs may implement one contract, and the same
+  // graph may implement several. Links and annotations are separate records, outside identity
+  // (decision 2B). ts_cache is the emitted TypeScript, a cache of the graph.
+  //
+  // Pure DDL; the tables start empty. No backfill: existing blocks keep their impl_source, and a
+  // shave from now on stores the graph beside the block.
+  if (currentVersion < 17) {
+    for (const ddl of MIGRATION_17_DDL) db.exec(ddl);
+    db.prepare("UPDATE schema_version SET version = ?").run(17);
+  }
 }
+
+const MIGRATION_17_DDL: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS duc_graphs (
+    graph_identity TEXT    PRIMARY KEY,
+    format_version INTEGER NOT NULL,
+    lifter_version INTEGER NOT NULL,
+    structure      BLOB    NOT NULL,
+    created_at     INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS duc_implementations (
+    spec_hash         TEXT    NOT NULL,
+    graph_identity    TEXT    NOT NULL REFERENCES duc_graphs(graph_identity),
+    block_merkle_root TEXT    NULL,
+    ts_cache          TEXT    NULL,
+    created_at        INTEGER NOT NULL,
+    PRIMARY KEY (spec_hash, graph_identity)
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_duc_implementations_graph ON duc_implementations(graph_identity)",
+  `CREATE TABLE IF NOT EXISTS duc_links (
+    spec_hash      TEXT NOT NULL,
+    graph_identity TEXT NOT NULL,
+    reason         TEXT NOT NULL,
+    symbol         TEXT NOT NULL,
+    module         TEXT NOT NULL DEFAULT '',
+    target_spec    TEXT NOT NULL,
+    PRIMARY KEY (spec_hash, graph_identity, reason, symbol, module)
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_duc_links_target ON duc_links(target_spec)",
+  `CREATE TABLE IF NOT EXISTS duc_annotations (
+    spec_hash      TEXT NOT NULL,
+    graph_identity TEXT NOT NULL,
+    annotations    BLOB NOT NULL,
+    PRIMARY KEY (spec_hash, graph_identity)
+  )`,
+];

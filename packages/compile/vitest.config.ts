@@ -14,6 +14,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@yakcc/contracts": resolve(__dirname, "../contracts/src/index.ts"),
+      "@yakcc/duc": resolve(__dirname, "../duc/src/index.ts"),
       "@yakcc/registry": resolve(__dirname, "../registry/src/index.ts"),
       "@yakcc/ir": resolve(__dirname, "../ir/src/index.ts"),
       "@yakcc/seeds": resolve(__dirname, "../seeds/src/index.ts"),

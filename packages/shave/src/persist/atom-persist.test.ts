@@ -1,4 +1,5 @@
 import type { BlockMerkleRoot, CanonicalAstHash, EmbeddingProvider } from "@yakcc/contracts";
+import { emitTypeScript, graphIdentity, liftAtom, unpackGraph } from "@yakcc/duc";
 import type { BlockTripletRow } from "@yakcc/registry";
 import type { Registry } from "@yakcc/registry";
 import { openRegistry } from "@yakcc/registry";
@@ -7,7 +8,11 @@ import { extractCorpus } from "../corpus/index.js";
 import type { CorpusAtomSpec } from "../corpus/index.js";
 import type { IntentCard } from "../intent/types.js";
 import type { NovelGlueEntry } from "../universalize/types.js";
-import { maybePersistNovelGlueAtom, persistNovelGlueAtom } from "./atom-persist.js";
+import {
+  ducImplementationOf,
+  maybePersistNovelGlueAtom,
+  persistNovelGlueAtom,
+} from "./atom-persist.js";
 import { buildTriplet } from "./triplet.js";
 
 // ---------------------------------------------------------------------------
@@ -647,5 +652,36 @@ describe("T7: persistNovelGlueAtom forwards sourceContext to storeBlock (P1 prov
     expect(row?.sourcePkg).toBe("packages/shave");
     expect(row?.sourceFile).toBe("packages/shave/src/index.ts");
     expect(row?.sourceOffset).toBeNull();
+  });
+});
+
+describe("#1279: the graph is stored beside the block", () => {
+  it("persisting an atom stores its implementation by (specHash, identity), and it loads back unchanged", async () => {
+    const registry = await openRegistry(":memory:", { embeddings: mockEmbeddingProvider() });
+    try {
+      const entry = makeEntry();
+      const merkleRoot = await persistNovelGlueAtom(entry, registry);
+      // biome-ignore lint/style/noNonNullAssertion: persisted above
+      const block = (await registry.getBlock(merkleRoot!))!;
+      const identities = await registry.listDucImplementations(block.specHash);
+      const expected = graphIdentity(liftAtom(entry.source));
+      expect(identities).toEqual([expected]);
+      const stored = await registry.getDucImplementation(block.specHash, expected);
+      expect(stored?.blockMerkleRoot).toBe(merkleRoot);
+      // biome-ignore lint/style/noNonNullAssertion: asserted above
+      expect(graphIdentity(unpackGraph(stored!))).toBe(expected);
+      // The TypeScript text is a cache of the graph: what the emitter generates from it.
+      // biome-ignore lint/style/noNonNullAssertion: asserted above
+      expect(stored?.tsCache).toBe(emitTypeScript(unpackGraph(stored!)));
+    } finally {
+      await registry.close();
+    }
+  });
+
+  it("a registry without the method stores the block alone", () => {
+    expect(
+      ducImplementationOf("export function f(x: number) { return x + 1; }", "spec", null)
+        ?.graphIdentity,
+    ).toBe(graphIdentity(liftAtom("export function f(x: number) { return x + 1; }")));
   });
 });
