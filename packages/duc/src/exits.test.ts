@@ -59,6 +59,35 @@ describe("conditions that assign, and postfix values (#1276)", () => {
   }
 });
 
+describe("iterating over an existing name (#1276)", () => {
+  const cases: [string, unknown[]][] = [
+    [
+      "export function f(o: any) { let i; let n = 0; for (i in o) { n = n + o[i]; } return [n, i]; }",
+      [{ a: 1, b: 2 }],
+    ],
+    ['export function f(o: any) { let i = "none"; for (i in o) {} return i; }', [{}]],
+    [
+      "export function f(xs: number[]) { let x = -1; for (x of xs) { if (x > 2) break; } return x; }",
+      [[1, 3, 5]],
+    ],
+  ];
+  for (const [src, args] of cases) {
+    it(`assigns each element to the name, which the loop carries: ${src.slice(22, 70)}`, () => {
+      const g = liftAtom(src);
+      expect(g.nodes.some((n) => (n.label ?? "").includes("#"))).toBe(false);
+      const code = emitTypeScript(g);
+      const run = (text: string): unknown =>
+        (new Function(`${text}; return f;`)() as (...a: unknown[]) => unknown)(
+          ...structuredClone(args),
+        );
+      expect(run(code.replace("export ", ""))).toEqual(
+        run(src.replace("export ", "").replace(/: (any|number\[\])/g, "")),
+      );
+      expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
+    });
+  }
+});
+
 describe("delete (#1276)", () => {
   it("delete is a heap operation on the object, its value delete's result, and lifts back the same", () => {
     const src =

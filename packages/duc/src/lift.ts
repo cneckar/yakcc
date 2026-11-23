@@ -200,6 +200,9 @@ class Lifter {
   /** The name of the class whose member this graph is: it reads as `class-self` (#1276). */
   private classSelf: string | undefined;
   private classSelfValue: ValueId | undefined;
+  /** The name of the function this graph is, when it reads it: `function-self` (#1276). */
+  private functionSelf: string | undefined;
+  private functionSelfValue: ValueId | undefined;
 
   private readonly obs: ValueId[] = [];
 
@@ -838,7 +841,13 @@ class Lifter {
       const at = outerReads.indexOf(classSelf);
       if (at !== -1) outerReads.splice(at, 1);
     }
-    if (selfName !== undefined && outerReads.includes(selfName)) return undefined;
+    // A function's own name inside it is the function (`function-self`), not a capture (#1276).
+    const selfOf: string | undefined =
+      selfName ?? (Node.isFunctionExpression(fn) ? fn.getName() : undefined);
+    if (selfName !== undefined) {
+      const at = outerReads.indexOf(selfName);
+      if (at !== -1) outerReads.splice(at, 1);
+    }
     // A platform primitive the scope does not bind is a source of its own in the closure's graph, so
     // a lowering knows it there (`new RangeError`, `JSON.parse`). Every other name is captured: a free
     // name or an import stays one source of the atom, at its top level, where it is linked.
@@ -904,6 +913,7 @@ class Lifter {
       for (const [name, binding] of this.imports) inner.imports.set(name, binding);
       // A member reads its class as `class-self`; a closure inside it captures that value.
       inner.classSelf = classSelf;
+      inner.functionSelf = selfOf;
       graph = inner.liftClosureBody(
         fn,
         captures,
@@ -1682,21 +1692,31 @@ class Lifter {
     exitNames: readonly string[],
     guard?: Node,
   ): boolean {
-    const init = node.getInitializer() as import("ts-morph").VariableDeclarationList;
-    const decl = init.getDeclarations()[0] as import("ts-morph").VariableDeclaration;
-    const declared = patternNames(decl.getNameNode());
+    const initializer = node.getInitializer();
+    // `for (x in o)` with an existing x: each element is assigned to x, which the loop carries.
+    const existing = Node.isIdentifier(initializer) ? initializer : undefined;
+    const decl = existing
+      ? undefined
+      : ((initializer as import("ts-morph").VariableDeclarationList).getDeclarations()[0] as import(
+          "ts-morph",
+        ).VariableDeclaration);
+    const declared = decl !== undefined ? patternNames(decl.getNameNode()) : [];
     const of: "values" | "keys" = Node.isForOfStatement(node) ? "values" : "keys";
     const body = node.getStatement();
 
     const iterable = this.liftExpr(node.getExpression());
     // Each step reads the iterable, so an iterating loop always carries the heap token, last.
-    const carried = [
-      ...this.collectAssignedOuterNames(body).filter(
-        (name) => this.env.has(name) && !declared.includes(name),
-      ),
-      ...exitNames,
-      HEAP,
-    ];
+    const assigned = this.collectAssignedOuterNames(body).filter(
+      (name) => this.env.has(name) && !declared.includes(name),
+    );
+    if (
+      existing !== undefined &&
+      this.env.has(existing.getText()) &&
+      !this.cells.has(existing.getText()) &&
+      !assigned.includes(existing.getText())
+    )
+      assigned.unshift(existing.getText());
+    const carried = [...assigned, ...exitNames, HEAP];
     const inits = carried.map((name) => this.env.get(name) as ValueId);
 
     const saved = this.env;
@@ -1727,7 +1747,10 @@ class Lifter {
         });
         [element] = this.emit("carry-source", [], 1, {
           label: "element",
-          origin: { kind: "LoopElement", text: truncate(decl.getNameNode().getText()) },
+          origin: {
+            kind: "LoopElement",
+            text: truncate((decl?.getNameNode() ?? existing)?.getText() ?? ""),
+          },
         }) as [ValueId];
         // The condition is tested first: none of the exits is set (or the written guard holds).
         const flags = exitNames
@@ -1748,7 +1771,8 @@ class Lifter {
             label: "!",
           })[0] as ValueId;
         }
-        this.bindPattern(decl.getNameNode(), element);
+        if (decl !== undefined) this.bindPattern(decl.getNameNode(), element);
+        else if (existing !== undefined) this.assignTo(existing, element as ValueId);
         try {
           const statements = Node.isBlock(body) ? body.getStatements() : [body];
           this.liftStatements(guard !== undefined ? statements.slice(1) : statements, []);
@@ -2579,6 +2603,21 @@ class Lifter {
   private resolveName(name: string): ValueId {
     const bound = this.env.get(name);
     if (bound !== undefined) return bound;
+    if (name === this.functionSelf && name !== undefined) {
+      // The function itself, one source per graph, at its top level.
+      if (this.functionSelfValue === undefined) {
+        const saved = this.regionStack.splice(0);
+        try {
+          [this.functionSelfValue] = this.emit("op", [], 1, {
+            origin: { kind: "FunctionSelf", text: truncate(name) },
+            label: "function-self",
+          }) as [ValueId];
+        } finally {
+          this.regionStack.push(...saved);
+        }
+      }
+      return this.functionSelfValue;
+    }
     if (name === this.classSelf) {
       // The class itself, one source per graph, at its top level.
       if (this.classSelfValue === undefined) {
@@ -3284,7 +3323,11 @@ function iterateLiftable(
 ): boolean {
   if (Node.isForOfStatement(node) && node.isAwaited()) return false;
   const init = node.getInitializer();
-  return Node.isVariableDeclarationList(init) && init.getDeclarations().length === 1;
+  // One declared variable, or an existing name the loop assigns each element to (#1276).
+  return (
+    (Node.isVariableDeclarationList(init) && init.getDeclarations().length === 1) ||
+    Node.isIdentifier(init)
+  );
 }
 
 /**

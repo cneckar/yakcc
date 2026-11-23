@@ -333,6 +333,8 @@ function emitFunction(
     if (label === "delete[]") return `delete ${arg(0)}[${arg(1)}]`;
     // The class a member belongs to: the class expression's own name (#1276).
     if (label === "class-self") return "Self_";
+    // The function this graph is: the function expression's own name (#1276).
+    if (label === "function-self") return "Fn_";
     if (label.startsWith("object:")) {
       const entries = JSON.parse(label.slice("object:".length)) as unknown[];
       let at = 0;
@@ -412,9 +414,12 @@ function emitFunction(
         node.inputs.map((v) => ref(v)),
         imports,
       );
-      // A function sees its caller's receiver; an arrow sees the enclosing one, as a capture.
-      const head =
-        label === "function"
+      // A function sees its caller's receiver; an arrow sees the enclosing one, as a capture. A
+      // function that reads itself is named, `function Fn_(..)`, and reads that name.
+      const recursive = node.closure.nodes.some((n) => n.label === "function-self");
+      const head = recursive
+        ? `function Fn_(${inner.params.join(", ")}) {`
+        : label === "function"
           ? `function (${inner.params.join(", ")}) {`
           : `(${inner.params.join(", ")}) => {`;
       return [`const ${name} = ${head}`, ...inner.body.map((l) => `  ${l}`), "};"];

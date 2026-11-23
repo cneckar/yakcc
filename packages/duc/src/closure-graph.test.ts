@@ -61,11 +61,17 @@ describe("closures as graphs (#1275)", () => {
     expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
   });
 
-  it("a recursive function stays opaque", () => {
-    const node = closureNode(
-      "export function f(n: number): number { function fact(m: number): number { return m < 2 ? 1 : m * fact(m - 1); } return fact(n); }",
-    );
-    expect(node).toBeUndefined();
+  it("a recursive function reads itself as function-self, and computes the same (#1276)", () => {
+    const src =
+      "export function f(n: number): number { function fact(m: number): number { return m < 2 ? 1 : m * fact(m - 1); } return fact(n); }";
+    expect(closureNode(src)).toBeDefined();
+    const g = liftAtom(src);
+    const code = emitTypeScript(g);
+    const run = new Function(`${code.replace("export ", "")}; return f;`)() as (
+      n: number,
+    ) => number;
+    expect(run(5)).toBe(120);
+    expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
   });
 
   it("a function that uses this has its own receiver; an arrow captures the enclosing one", () => {
