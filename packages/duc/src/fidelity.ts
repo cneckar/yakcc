@@ -128,7 +128,8 @@ export function liftFidelity(source: string, graph: DucGraph): LiftFidelity {
 }
 
 /** `typeof name` tested to be present: `typeof name === "function"`, `typeof name !== "undefined"`. */
-function testsPresent(e: ts.Expression, name: string): boolean {
+function testsPresent(test: ts.Expression, name: string): boolean {
+  let e = test;
   while (ts.isParenthesizedExpression(e)) e = e.expression;
   if (!ts.isBinaryExpression(e)) return false;
   const op = e.operatorToken.kind;

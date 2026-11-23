@@ -293,6 +293,7 @@ class Reader {
     let m: RegExpExecArray | null;
     if (text === "pass") return undefined;
     if (text === "break") return { t: "break" };
+    // biome-ignore lint/suspicious/noAssignInExpressions: one match per form, tried in order
     if ((m = /^def (\w+)\((.*)\):$/.exec(text)) !== null) {
       const { params, body } = this.fn(text, indent);
       return {
@@ -312,12 +313,14 @@ class Reader {
         ],
       };
     }
+    // biome-ignore lint/suspicious/noAssignInExpressions: one match per form, tried in order
     if ((m = /^if not _truthy\((.*)\):$/.exec(text)) !== null) {
       const body = this.block(indent);
       if (body.length !== 1 || body[0]?.t !== "break")
         throw new RaiseError("a guard without its break");
       return { t: "guard", c: parseExpr(m[1] as string) };
     }
+    // biome-ignore lint/suspicious/noAssignInExpressions: one match per form, tried in order
     if ((m = /^if _truthy\((.*)\):$/.exec(text)) !== null) {
       const c = parseExpr(m[1] as string);
       const then = this.block(indent);
@@ -341,10 +344,13 @@ class Reader {
         list.map((st) =>
           st.t === "let" && joins.includes(st.name) ? { t: "assign", name: st.name, e: st.e } : st,
         );
+      // biome-ignore lint/suspicious/noThenProperty: the statement's own field, never awaited
       return [...declared, { t: "if", c, then: asAssign(then), else: otherwise }];
     }
+    // biome-ignore lint/suspicious/noAssignInExpressions: one match per form, tried in order
     if ((m = /^while _truthy\((.*)\):$/.exec(text)) !== null)
       return { t: "while", c: parseExpr(m[1] as string), body: this.block(indent) };
+    // biome-ignore lint/suspicious/noAssignInExpressions: one match per form, tried in order
     if ((m = /^for (\w+) in _(values|keys)\((.*)\):$/.exec(text)) !== null)
       return {
         t: "for",
@@ -353,8 +359,10 @@ class Reader {
         e: parseExpr(m[3] as string),
         body: this.block(indent),
       };
+    // biome-ignore lint/suspicious/noAssignInExpressions: one match per form, tried in order
     if ((m = /^return (.*)$/.exec(text)) !== null)
       return { t: "return", e: parseExpr(m[1] as string) };
+    // biome-ignore lint/suspicious/noAssignInExpressions: one match per form, tried in order
     if ((m = /^(\w+) = _args\[(\d+)\] if len\(_args\) > \d+ else UNDEFINED$/.exec(text)) !== null)
       return {
         t: "expr",
@@ -369,11 +377,13 @@ class Reader {
       };
     if (text === "_arguments = list(_args)")
       return { t: "expr", e: { t: "call", fn: "__skip", args: [] } };
+    // biome-ignore lint/suspicious/noAssignInExpressions: one match per form, tried in order
     if ((m = /^(\w+) = list\((\w+)\)$/.exec(text)) !== null && m[1] === m[2])
       return {
         t: "expr",
         e: { t: "call", fn: "__rest_binding", args: [{ t: "str", v: m[1] as string }] },
       };
+    // biome-ignore lint/suspicious/noAssignInExpressions: one match per form, tried in order
     if ((m = /^(\w+), = (.*),$/.exec(text)) !== null) {
       // `a, = x,`: one carry.
       return [
@@ -385,6 +395,7 @@ class Reader {
         },
       ];
     }
+    // biome-ignore lint/suspicious/noAssignInExpressions: one match per form, tried in order
     if ((m = /^(\w+(?:, \w+)+) = (.*)$/.exec(text)) !== null) {
       // `a, b = x, y`: the carries, assigned together.
       const names = (m[1] as string).split(", ");
@@ -400,6 +411,7 @@ class Reader {
         ),
       ];
     }
+    // biome-ignore lint/suspicious/noAssignInExpressions: one match per form, tried in order
     if ((m = /^(\w+) = (.*)$/.exec(text)) !== null) {
       const name = m[1] as string;
       const e = parseExpr(m[2] as string);

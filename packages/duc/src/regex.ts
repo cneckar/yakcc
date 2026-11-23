@@ -206,11 +206,16 @@ export function parseRegex(pattern: string, flags: string): ParsedRegex {
     at++;
     return { t: "class", negate, ranges };
   };
+  /** Consumes one character and gives `v`. */
+  const step = <T>(v: T): T => {
+    at++;
+    return v;
+  };
   const parseQuantifier = (): { min: number; max: number } | undefined => {
     const c = peek();
-    if (c === "*") return at++, { min: 0, max: Number.POSITIVE_INFINITY };
-    if (c === "+") return at++, { min: 1, max: Number.POSITIVE_INFINITY };
-    if (c === "?") return at++, { min: 0, max: 1 };
+    if (c === "*") return step({ min: 0, max: Number.POSITIVE_INFINITY });
+    if (c === "+") return step({ min: 1, max: Number.POSITIVE_INFINITY });
+    if (c === "?") return step({ min: 0, max: 1 });
     if (c === "{") {
       const m = /^\{(\d+)(,(\d*))?\}/.exec(pattern.slice(at));
       if (m === null) {
@@ -228,9 +233,9 @@ export function parseRegex(pattern: string, flags: string): ParsedRegex {
   const parseAtom = (): Node | undefined => {
     const c = peek();
     if (c === undefined || c === "|" || c === ")") return undefined;
-    if (c === "^") return at++, { t: "bol" };
-    if (c === "$") return at++, { t: "eol" };
-    if (c === ".") return at++, { t: "any" };
+    if (c === "^") return step({ t: "bol" });
+    if (c === "$") return step({ t: "eol" });
+    if (c === ".") return step({ t: "any" });
     if (c === "[") {
       at++;
       return parseClass();
@@ -268,9 +273,9 @@ export function parseRegex(pattern: string, flags: string): ParsedRegex {
     if (c === "\\") {
       at++;
       const e = peek() as string;
-      if (e === "b" || e === "B") return at++, { t: "boundary", negate: e === "B" };
+      if (e === "b" || e === "B") return step({ t: "boundary", negate: e === "B" });
       const set = classEscape(e);
-      if (set !== undefined) return at++, { t: "class", negate: false, ranges: set };
+      if (set !== undefined) return step({ t: "class", negate: false, ranges: set });
       if (/[1-9]/.test(e)) {
         const m = /^\d+/.exec(pattern.slice(at)) as RegExpExecArray;
         at += m[0].length;

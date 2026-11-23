@@ -1214,9 +1214,10 @@ class Lifter {
 
   private liftClosure(
     fn: FunctionLike,
-    selfName?: string,
+    givenSelf?: string,
     classSelf?: string,
   ): ValueId | undefined {
+    let selfName = givenSelf;
     const mode = functionModeOf(fn);
     // `super(..)` is a derived constructor's own statement, and nothing else uses `super` (#1276).
     const derived =

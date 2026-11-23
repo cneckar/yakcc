@@ -516,7 +516,7 @@ export function emitLlvm(source: DucGraph, signature: NativeSignature, symbol = 
   const ret = (t: LType): string => (t === "i1" ? "zeroext i1" : "double");
   const param = (t: LType): string => (t === "i1" ? "i1 zeroext" : "double");
   const lines = [
-    `; yakcc native lowering (#1292)`,
+    "; yakcc native lowering (#1292)",
     `source_filename = "${symbol}"`,
     "",
     `define ${ret(result.t)} @${symbol}(${paramTypes.map((t, i) => `${param(t)} %p${i}`).join(", ")}) nounwind {`,
