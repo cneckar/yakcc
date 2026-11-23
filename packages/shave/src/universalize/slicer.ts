@@ -107,6 +107,7 @@
  */
 
 import type { BlockMerkleRoot, CanonicalAstHash } from "@yakcc/contracts";
+import { liftAtom } from "@yakcc/duc";
 import { validateStrictSubset } from "@yakcc/ir";
 import { Project, ScriptKind } from "ts-morph";
 import type { IntentCard } from "../intent/types.js";
@@ -475,6 +476,32 @@ async function walkNodeStrict(
  * @see DEC-V2-SLICER-SEARCH-001
  * @see DEC-V2-GLUE-AWARE-SHAVE-001
  */
+/**
+ * Whether the DUC lifter lifts a source to a graph with no opaque node, in it or in its closures:
+ * then the graph, not the strict-subset predicate, decides that it is an atom (DEC-SHAVE-GRAPH-DECIDES-001).
+ * An import or require binding is never one: it is a link, not a computation.
+ */
+function liftsWhole(source: string): boolean {
+  if (/^\s*import\s/.test(source)) return false;
+  let graph: ReturnType<typeof liftAtom>;
+  try {
+    graph = liftAtom(source);
+  } catch {
+    return false;
+  }
+  // Dynamic code (eval, the Function constructor) has a meaning no graph holds.
+  const dynamic = (n: (typeof graph.nodes)[number]): boolean =>
+    n.diamond !== undefined && (n.diamond.symbol === "eval" || n.diamond.symbol === "Function");
+  const opaque = (g: typeof graph): boolean =>
+    g.nodes.some(
+      (n) =>
+        (n.label ?? "").includes("#") ||
+        dynamic(n) ||
+        (n.closure !== undefined && opaque(n.closure)),
+    );
+  return !opaque(graph) && graph.nodes.some((n) => n.kind !== "diamond-source");
+}
+
 async function walkNodeGlueAware(
   node: RecursionNode,
   registry: Pick<ShaveRegistryView, "findByCanonicalAstHash" | "getBlock">,
@@ -581,6 +608,19 @@ async function walkNodeGlueAware(
     firstError !== undefined
       ? `${firstError.rule}: ${firstError.message}`
       : "strict-subset-failure";
+
+  // The graph decides what is stored (#1281, #1279): an atom the DUC lifter lifts with no opaque
+  // node is an atom, though the strict-subset predicate refuses it.
+  if (node.kind === "atom" && liftsWhole(node.source)) {
+    acc.entries.push({
+      kind: "novel-glue",
+      sourceRange: node.sourceRange,
+      source: node.source,
+      canonicalAstHash: node.canonicalAstHash,
+    });
+    acc.novelGlueBytes += node.sourceRange.end - node.sourceRange.start;
+    return;
+  }
 
   if (node.kind === "atom") {
     // AtomLeaf fails → emit GlueLeafEntry (we cannot recurse further).

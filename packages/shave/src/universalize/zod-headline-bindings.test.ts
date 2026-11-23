@@ -1510,7 +1510,7 @@ describe("zod/number-int section F -- combinedScore quality gate (WI-510 Slice 8
 // ===========================================================================
 describe("zod -- compound interaction: all 4 Group B bindings end-to-end (WI-510 Slice 8)", () => {
   it(
-    "all 4 Group B bindings resolve, slice, persist; produce distinct entryPaths and distinct atom merkle roots",
+    "all 4 Group B bindings resolve, slice, persist; produce distinct entryPaths, each persisting its atoms",
     // Sequential over 4 bindings: string-min ~11s + string-max ~23s + regex-match ~1.6s + number-int ~24s = ~60s.
     // 120_000ms gives ample headroom.
     { timeout: 120_000 },
@@ -1597,12 +1597,14 @@ describe("zod -- compound interaction: all 4 Group B bindings end-to-end (WI-510
 
           let persistedCount = 0;
           let firstMerkleRoot: string | undefined;
+          const bindingRoots = new Set<string>();
           for (const { slicePlan } of plans) {
             for (const entry of slicePlan.entries) {
               if (entry.kind === "novel-glue") {
                 const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
                 if (mr !== undefined) {
                   persistedCount++;
+                  bindingRoots.add(mr);
                   if (firstMerkleRoot === undefined) firstMerkleRoot = mr;
                 }
               }
@@ -1617,23 +1619,21 @@ describe("zod -- compound interaction: all 4 Group B bindings end-to-end (WI-510
           if (firstMerkleRoot !== undefined)
             expect(await registry.getBlock(firstMerkleRoot)).not.toBeNull();
 
-          if (firstMerkleRoot !== undefined) {
-            expect(
-              seenMerkleRoots.has(firstMerkleRoot),
-              `${b.name}: entry-atom merkle root must be distinct from previous bindings`,
-            ).toBe(false);
-            seenMerkleRoots.add(firstMerkleRoot);
-          }
+          // Atoms are content-addressed, and since the graph decides what is stored (#1281) every
+          // lifted statement of a module is one: bindings whose module sets overlap (number-int's
+          // two modules are among string-max's five) share their atoms. What each binding must
+          // have is its own entry path (above) and atoms of its own forest persisted.
+          expect(bindingRoots.size, `${b.name}: must persist its forest's atoms`).toBeGreaterThan(
+            0,
+          );
+          for (const root of bindingRoots) seenMerkleRoots.add(root);
         } finally {
           await registry.close();
         }
       }
 
       expect(seenEntryPaths.size, "all 4 Group B bindings must have distinct entryPaths").toBe(4);
-      expect(
-        seenMerkleRoots.size,
-        "all 4 Group B bindings must have distinct entry-atom merkle roots",
-      ).toBe(4);
+      expect(seenMerkleRoots.size, "the 4 bindings persist atoms").toBeGreaterThan(0);
     },
   );
 });
