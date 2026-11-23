@@ -567,3 +567,21 @@ describe("CommonJS module scope (#1173, DEC-DUC-MODULE-SCOPE-001)", () => {
     expect(result.unexplained.map((u) => u.symbol).sort()).toEqual(["exports", "require"]);
   });
 });
+
+describe("CommonJS imports and destructured declarations bind module names (#1173)", () => {
+  it("a destructured require binds each name as an import", () => {
+    const b = moduleBindingsOf(
+      'const { FLAG_LOOSE, safeRe: re } = require("../internal/constants");\nconst ms = require("ms");',
+    );
+    expect(b.get("FLAG_LOOSE")?.binding).toBe("pure");
+    expect(b.get("re")?.binding).toBe("pure");
+    expect(b.get("ms")?.binding).toBe("pure");
+    const src = "function f(o) { return (o.loose && FLAG_LOOSE) || re; }";
+    expect(runDucConservationGate(src, new Set(), b).unexplained).toEqual([]);
+  });
+  it("a destructuring declaration binds each of its names", () => {
+    const b = moduleBindingsOf("const { a, b: [c] } = { a: 1, b: [2] };\nexports.x = a;");
+    expect(b.has("a")).toBe(true);
+    expect(b.has("c")).toBe(true);
+  });
+});
