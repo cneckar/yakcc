@@ -204,6 +204,12 @@ class Lifter {
   /** The name of the function this graph is, when it reads it: `function-self` (#1276). */
   private functionSelf: string | undefined;
   private functionSelfValue: ValueId | undefined;
+  /**
+   * Free names the atom assigns (#1276): each is a binding outside the atom, so a read is a
+   * `binding` operation on it and a write a `binding=`, ordered among the heap operations. The
+   * name's value is the binding itself (its source, or a closure's capture of it).
+   */
+  private bindings = new Set<string>();
   /** This graph is a derived class's constructor: `this` is what its `super(..)` call makes. */
   private derived = false;
 
@@ -316,6 +322,7 @@ class Lifter {
 
   // --- driver ---
   run(file: Node): void {
+    for (const name of writtenFreeNames(file)) if (!this.imports.has(name)) this.bindings.add(name);
     const primary = findPrimaryFunction(file);
     if (primary !== undefined) {
       this.mode = functionModeOf(primary);
@@ -914,7 +921,8 @@ class Lifter {
     // A name in a cell is shared: the closure writes the cell it captures.
     const rebindsOutside = (t: Node): boolean => {
       if (Node.isPropertyAccessExpression(t) || Node.isElementAccessExpression(t)) return false;
-      const outer = (name: string): boolean => !locals.has(name) && !this.cells.has(name);
+      const outer = (name: string): boolean =>
+        !locals.has(name) && !this.cells.has(name) && !this.bindings.has(name);
       if (Node.isIdentifier(t)) return outer(t.getText());
       return t.getDescendantsOfKind(SyntaxKind.Identifier).some((id) => outer(id.getText()));
     };
@@ -980,8 +988,8 @@ class Lifter {
       const base = baseIdentifierOfTarget(t);
       if (base === undefined || !captures.includes(base)) return false;
       if (!Node.isIdentifier(t)) return false;
-      // The closure holds the cell, which every write changes.
-      if (this.cells.has(base)) return false;
+      // The closure holds the cell (or the binding), which every write changes.
+      if (this.cells.has(base) || this.bindings.has(base)) return false;
       const doneBefore =
         !Node.isFunctionDeclaration(fn) &&
         t.getEnd() <= fn.getStart() &&
@@ -1004,6 +1012,7 @@ class Lifter {
       inner.classSelf = classSelf;
       inner.functionSelf = selfOf;
       inner.derived = derived;
+      for (const name of captures) if (this.bindings.has(name)) inner.bindings.add(name);
       graph = inner.liftClosureBody(
         fn,
         captures,
@@ -1015,9 +1024,11 @@ class Lifter {
     const inputs = captures.map((name) =>
       name === THIS
         ? this.thisValue()
-        : this.cells.has(name) && this.env.has(name)
-          ? this.throughLoop(this.env.get(name) as ValueId)
-          : this.resolveIdentifier(name),
+        : this.bindings.has(name)
+          ? this.throughLoop(this.resolveName(name))
+          : this.cells.has(name) && this.env.has(name)
+            ? this.throughLoop(this.env.get(name) as ValueId)
+            : this.resolveIdentifier(name),
     );
     const [value] = this.emit("op", inputs, 1, {
       origin: { kind: "Closure", text: truncate(selfName ?? fn.getText()) },
@@ -2254,7 +2265,9 @@ class Lifter {
       });
       // ++/-- on a bound identifier reassigns it. No other unary operator does: `-x` leaves x as it is.
       const steps = token === "++" || token === "--";
-      if (steps && Node.isIdentifier(operand) && this.env.has(operand.getText())) {
+      if (steps && Node.isIdentifier(operand) && this.isBinding(operand.getText()))
+        this.writeBinding(operand.getText(), out as ValueId);
+      else if (steps && Node.isIdentifier(operand) && this.env.has(operand.getText())) {
         if (this.cells.has(operand.getText())) this.writeCell(operand.getText(), out as ValueId);
         else this.env.set(operand.getText(), out as ValueId);
       }
@@ -2667,6 +2680,10 @@ class Lifter {
 
   /** Reassign an lvalue. Identifier -> rebind; member/element -> mutate base object. */
   private assignTo(lhs: Node, value: ValueId): void {
+    if (Node.isIdentifier(lhs) && this.isBinding(lhs.getText())) {
+      this.writeBinding(lhs.getText(), value);
+      return;
+    }
     if (Node.isIdentifier(lhs)) {
       if (this.cells.has(lhs.getText()) && this.env.has(lhs.getText()))
         this.writeCell(lhs.getText(), value);
@@ -2694,21 +2711,139 @@ class Lifter {
       }
       return;
     }
-    // Destructuring / other lvalue: conservatively rebind every bound name inside.
+    // A destructuring assignment reads each member as a declaration's pattern does (#1276).
+    if (Node.isObjectLiteralExpression(lhs) || Node.isArrayLiteralExpression(lhs)) {
+      this.assignPattern(lhs, value);
+      return;
+    }
+    if (Node.isParenthesizedExpression(lhs)) {
+      this.assignTo(lhs.getExpression(), value);
+      return;
+    }
+    // Another lvalue: conservatively rebind every bound name inside.
     for (const name of patternNames(lhs)) {
-      if (this.cells.has(name) && this.env.has(name)) this.writeCell(name, value);
+      if (this.isBinding(name)) this.writeBinding(name, value);
+      else if (this.cells.has(name) && this.env.has(name)) this.writeCell(name, value);
       else if (this.env.has(name)) this.env.set(name, value);
+    }
+  }
+
+  /**
+   * `{ a, b: [c], d = e, ...rest } = v` and `[a, , b = e, ...rest] = v`: each target is assigned the
+   * member it names, read as bindPattern reads a declaration's, its default applied when undefined.
+   */
+  private assignPattern(
+    lhs: import("ts-morph").ObjectLiteralExpression | import("ts-morph").ArrayLiteralExpression,
+    value: ValueId,
+  ): void {
+    const read = (label: string, inputs: ValueId[], text: string): ValueId =>
+      this.emit("op", inputs, 1, {
+        origin: { kind: "Destructure", text: truncate(text) },
+        label,
+      })[0] as ValueId;
+    const literal = (text: string): ValueId =>
+      this.emit("literal-source", [], 1, {
+        origin: { kind: "Literal", text },
+        label: normalizeLiteral(text),
+      })[0] as ValueId;
+    // A target with `= default` is the target, its member defaulted.
+    const assign = (target: Node, member: ValueId): void => {
+      if (
+        Node.isBinaryExpression(target) &&
+        target.getOperatorToken().getKind() === SyntaxKind.EqualsToken
+      ) {
+        this.assignTo(target.getLeft(), this.withDefault(member, target.getRight()));
+        return;
+      }
+      this.assignTo(target, member);
+    };
+    if (Node.isObjectLiteralExpression(lhs)) {
+      const taken: string[] = [];
+      for (const prop of lhs.getProperties()) {
+        if (Node.isSpreadAssignment(prop)) {
+          assign(
+            prop.getExpression(),
+            read(`ObjectRest:${JSON.stringify(taken)}`, [value], prop.getText()),
+          );
+          continue;
+        }
+        if (Node.isShorthandPropertyAssignment(prop)) {
+          const name = prop.getName();
+          taken.push(name);
+          const member = read(`.${name}`, [value], prop.getText());
+          const init = prop.getObjectAssignmentInitializer();
+          this.assignTo(
+            prop.getNameNode(),
+            init !== undefined ? this.withDefault(member, init) : member,
+          );
+          continue;
+        }
+        if (!Node.isPropertyAssignment(prop))
+          throw new Error("a destructuring target with a method");
+        const key = prop.getNameNode();
+        let member: ValueId;
+        if (Node.isComputedPropertyName(key)) {
+          member = read(
+            "ElementAccess",
+            [value, this.liftExpr(key.getExpression())],
+            prop.getText(),
+          );
+        } else {
+          const name =
+            Node.isStringLiteral(key) || Node.isNumericLiteral(key)
+              ? key.getLiteralText()
+              : key.getText();
+          taken.push(name);
+          member = /^[A-Za-z_$][\w$]*$/.test(name)
+            ? read(`.${name}`, [value], prop.getText())
+            : read("ElementAccess", [value, literal(JSON.stringify(name))], prop.getText());
+        }
+        assign(prop.getInitializerOrThrow(), member);
+      }
+      return;
+    }
+    for (const [i, el] of lhs.getElements().entries()) {
+      if (Node.isOmittedExpression(el)) continue;
+      if (Node.isSpreadElement(el)) {
+        const slice = read(".slice", [value], el.getText());
+        assign(
+          el.getExpression(),
+          read("CallExpression", [slice, literal(String(i))], el.getText()),
+        );
+        continue;
+      }
+      assign(el, read("ElementAccess", [value, literal(String(i))], el.getText()));
     }
   }
 
   /** Resolve an identifier read to a value: bound name, import, ambient, or free. */
   private resolveIdentifier(name: string): ValueId {
+    if (this.isBinding(name))
+      return this.emit("op", [this.throughLoop(this.resolveName(name))], 1, {
+        origin: { kind: "Identifier", text: truncate(name) },
+        label: "binding",
+        heap: true,
+      })[0] as ValueId;
     const bound = this.throughLoop(this.resolveName(name));
     if (!this.cells.has(name) || !this.env.has(name)) return bound;
     return this.emit("op", [bound], 1, {
       origin: { kind: "PropertyAccess", text: truncate(name) },
       label: ".value",
     })[0] as ValueId;
+  }
+
+  /** Whether a name is a binding outside the atom that it writes (its value is the binding). */
+  private isBinding(name: string): boolean {
+    return this.bindings.has(name);
+  }
+
+  /** Writes a binding outside the atom: `name = value`, a heap operation. */
+  private writeBinding(name: string, value: ValueId): void {
+    this.emit("op", [this.throughLoop(this.resolveName(name)), value], 1, {
+      origin: { kind: "Write", text: truncate(name) },
+      label: "binding=",
+      heap: true,
+    });
   }
 
   /**
@@ -2952,6 +3087,60 @@ function assignmentTargets(node: Node): Node[] {
   const targets = assignmentTargetsOf(node);
   assignmentTargetsCache.set(node.compilerNode, targets);
   return targets;
+}
+
+/**
+ * The names an atom assigns that it declares nowhere (#1276): bindings outside it. A name declared
+ * anywhere in the atom is not one, though a shadowed declaration may be another binding.
+ */
+function writtenFreeNames(file: Node): string[] {
+  const declared = new Set<string>();
+  for (const d of file.getDescendantsOfKind(SyntaxKind.VariableDeclaration))
+    for (const name of patternNames(d.getNameNode())) declared.add(name);
+  for (const p of file.getDescendantsOfKind(SyntaxKind.Parameter))
+    for (const name of patternNames(p.getNameNode())) declared.add(name);
+  for (const kind of [
+    SyntaxKind.FunctionDeclaration,
+    SyntaxKind.FunctionExpression,
+    SyntaxKind.ClassDeclaration,
+    SyntaxKind.ClassExpression,
+  ]) {
+    for (const d of file.getDescendantsOfKind(kind)) {
+      const name = (d as import("ts-morph").FunctionDeclaration).getName();
+      if (name !== undefined) declared.add(name);
+    }
+  }
+  const written: string[] = [];
+  for (const t of assignmentTargets(file)) {
+    for (const name of assignedNames(t))
+      if (!declared.has(name) && !written.includes(name)) written.push(name);
+  }
+  return written;
+}
+
+/** The names an assignment target rebinds: a name, or the names in a destructuring pattern. */
+function assignedNames(t: Node): string[] {
+  if (Node.isIdentifier(t)) return [t.getText()];
+  if (Node.isParenthesizedExpression(t)) return assignedNames(t.getExpression());
+  if (Node.isBinaryExpression(t) && t.getOperatorToken().getKind() === SyntaxKind.EqualsToken)
+    return assignedNames(t.getLeft());
+  if (Node.isArrayLiteralExpression(t))
+    return t
+      .getElements()
+      .flatMap((e) => assignedNames(Node.isSpreadElement(e) ? e.getExpression() : e));
+  if (Node.isObjectLiteralExpression(t))
+    return t
+      .getProperties()
+      .flatMap((p) =>
+        Node.isShorthandPropertyAssignment(p)
+          ? [p.getName()]
+          : Node.isPropertyAssignment(p)
+            ? assignedNames(p.getInitializerOrThrow())
+            : Node.isSpreadAssignment(p)
+              ? assignedNames(p.getExpression())
+              : [],
+      );
+  return [];
 }
 
 function assignmentTargetsOf(node: Node): Node[] {

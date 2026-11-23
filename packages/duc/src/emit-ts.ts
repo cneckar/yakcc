@@ -354,6 +354,8 @@ function emitFunction(
     if (PREFIX.has(label) && ins.length === 1) return `${label}${arg(0)}`;
     if (label === "TypeOfExpression") return `typeof ${arg(0)}`;
     if (label === "VoidExpression") return `void ${arg(0)}`;
+    // A binding outside the atom, read by its name (#1276).
+    if (label === "binding") return arg(0);
     // A derived constructor's `super(..)`: its value is the receiver it makes (#1276).
     if (label === "super") return `super(${ins.map((v) => ref(v)).join(", ")})`;
     if (label === "AwaitExpression") return `(await ${arg(0)})`;
@@ -426,6 +428,14 @@ function emitFunction(
     if (node.kind !== "op") throw new EmitError(`a ${node.kind} is not a statement`);
     const arg = (i: number): string => ref(node.inputs[i] as ValueId);
     if (label === "throw") return [`throw ${arg(0)};`];
+    // A write to a binding outside the atom: `name = value` (#1276).
+    if (label === "binding=") {
+      const written = node.outputs[0];
+      return [
+        `${arg(0)} = ${arg(1)};`,
+        ...(written !== undefined ? [`const ${nameOf(written)} = ${arg(1)};`] : []),
+      ];
+    }
     if (out === undefined) throw new EmitError(`the statement "${label}" has no TypeScript form`);
     const name = nameOf(out);
     if (
