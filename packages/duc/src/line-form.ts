@@ -1,4 +1,5 @@
 import { canonicalizeGraph } from "./canonical.js";
+import { isHeapLabel } from "./heap-labels.js";
 import { normalizeLiteral } from "./literal.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
@@ -174,6 +175,10 @@ export function parseLineForm(text: string): DucGraph {
   let branchCount = 0;
   let loopCount = 0;
   let mode: FunctionMode | undefined;
+  // A program that writes no heap token (#1288): its top-level heap operations are ordered as they
+  // are written, as the lifter orders them. A program that writes one is taken as written.
+  const implicitHeap = !/(^|\s)\^/.test(text);
+  let lastHeap: ValueId | undefined;
 
   const currentRegion = (): string | undefined => {
     if (open.length === 0) return undefined;
@@ -344,8 +349,22 @@ export function parseLineForm(text: string): DucGraph {
         throw new LineFormError(line, "only the last operand may be the heap token (^<name>)");
       const inputs = operands.map((n) => use(n.replace(/^\^/, ""), line));
       const outputs = results.map((n) => define(n, line));
+      let ordered = marked !== -1;
+      if (
+        implicitHeap &&
+        currentRegion() === undefined &&
+        (isHeapLabel(label) || label === "throw")
+      ) {
+        if (lastHeap !== undefined) {
+          inputs.push(lastHeap);
+          ordered = true;
+        }
+        // Every heap operation is a token, as in the lifter: one with no result gets one.
+        if (outputs.length === 0) outputs.push(fresh(0));
+        lastHeap = outputs[0];
+      }
       add(
-        { kind: "op", inputs, outputs, label, ...(marked !== -1 ? { order: 1 as const } : {}) },
+        { kind: "op", inputs, outputs, label, ...(ordered ? { order: 1 as const } : {}) },
         currentRegion(),
       );
       return;

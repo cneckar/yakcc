@@ -24,6 +24,7 @@ import { createHash } from "node:crypto";
 import { Node, Project, ScriptKind, type SourceFile, SyntaxKind, ts } from "ts-morph";
 import { KNOWN_PRIMITIVES } from "./base-set.js";
 import { canonicalizeGraph } from "./canonical.js";
+import { isHeapLabel } from "./heap-labels.js";
 import { normalizeLiteral } from "./literal.js";
 import { RUNTIME_MODULE } from "./runtime.js";
 import type {
@@ -4194,38 +4195,6 @@ const HEAP = "%heap";
 const TRY_PRIMITIVE = "__yakccTry";
 const ASYNC_TRY_PRIMITIVE = "__yakccTryAsync";
 const RUNTIME_PRIMITIVES = new Set([TRY_PRIMITIVE, ASYNC_TRY_PRIMITIVE]);
-
-const HEAP_LABELS = new Set([
-  "delete[]",
-  "CallExpression",
-  "CallExpression?.",
-  "NewExpression",
-  "ElementAccess",
-  "[]=",
-  "in",
-  "instanceof",
-  "...",
-  "AwaitExpression",
-  "YieldExpression",
-  "YieldExpression*",
-  "TaggedTemplateExpression",
-  "DeleteExpression",
-]);
-
-/**
- * Whether an operation reads or writes shared state, so its place among the others is structure: a
- * call, `new`, a member read or write, `in`, a spread, an opaque summary (its label has a hash).
- */
-export function isHeapLabel(label: string): boolean {
-  return (
-    HEAP_LABELS.has(label) ||
-    label.includes("#") ||
-    label.startsWith("?.") ||
-    label.startsWith("delete.") ||
-    label.startsWith("ElementAccess") ||
-    (label.startsWith(".") && label.length > 1)
-  );
-}
 
 const HEAP_SYNTAX = new Set([
   SyntaxKind.CallExpression,
