@@ -20,14 +20,23 @@ Before the format locks, #1292 asks one question: **does the graph carry what su
 
 **Values are NaN-boxed into one 64-bit word**, as JavaScript engines box them:
 - a double is itself, with NaN canonical;
-- every other value has a tag in the top 16 bits (0xFFF9 to 0xFFFC), a space no canonical double uses.
+- every other value has a tag in the top 16 bits, a space no canonical double uses: 0xFFF9 for undefined, null and the booleans, then strings, arrays, objects and functions.
 
 **Strings are UTF-16 code units**, as in JavaScript.
 
 **The runtime is one C file**, `packages/duc/runtime/yk.c`.
 - clang, LLVM's C compiler, compiles it for each target, so the lowering and the runtime come from one toolchain.
 - It is linked like any C library.
-- Its operations follow ECMA-262 for the values it covers: ToNumber (the full StringNumericLiteral grammar), ToString (Number::toString's shortest round-trip digits and layout), ToPrimitive for arrays, `+`, the arithmetic, relational and equality operators, `typeof`, truthiness, property and index reads, and the string and array builtins it lists.
+- Its operations follow ECMA-262 for the values it covers:
+  - ToNumber (the full StringNumericLiteral grammar) and ToString (Number::toString's shortest round-trip digits and layout);
+  - ToPrimitive: an array's join, and an object's own `valueOf` / `toString`;
+  - `+`, the arithmetic, relational and equality operators, `typeof`, truthiness;
+  - property and index reads and writes;
+  - the string builtins (`charCodeAt`, `slice`, `indexOf`, `split`, `includes`, `startsWith`, `endsWith`, `trim`);
+  - the array builtins (`push`, `join`, `indexOf`, `slice`, `map`, `forEach`, `filter`, `reduce`, `some`, `every`, `find`, `findIndex`, `includes`, `sort`);
+  - `String`, `Number` and `Boolean` as function values.
+- **Objects** keep their own properties in insertion order.
+- **Functions** have one calling convention: `(closure, this, argc, argv)`. A closure's graph is lowered to its own function. Its captures (the graph's first parameters) are read from the closure record, and its own parameters from `argv`, `undefined` past `argc`. A `function` takes the receiver a method call gives; an arrow does not.
 
 **`emitLlvmBoxed`** lowers a graph to LLVM IR. Every value is an `i64`, and each operation the graph names is a call to the runtime. The exported function is `uint64_t f(uint64_t, …)`.
 
@@ -40,6 +49,9 @@ Before the format locks, #1292 asks one question: **does the graph carry what su
 | The runtime function for an operation | Its label, one to one: `+` is `yk_add`, `ElementAccess` is `yk_get`, `.length` is a named read, `template:[…]` is `yk_template` |
 | The receiver of a method call | The member read that feeds the call |
 | The order calls are made in | The heap token. `loweringView` gives each heap operation the operations it comes after, and the scope planner schedules by them, inside and across branches and loops |
+| A closure's code and captures | The closure node: its captures are its inputs, its graph is nested, and `this` and `function-self` are operations inside it |
+| A captured variable that is reassigned | A cell, an `object:["value"]` the closure captures. It needs no lowering of its own |
+| The object a write yields | The write's output (`.k=`, `[]=`), as the TypeScript lowering reads it |
 
 Graph node order is canonical, not source order, so this ordering is required: without it, `xs.push(t)` and a later `xs.length` could be reversed.
 
@@ -59,25 +71,28 @@ for arrays). The inputs include:
 - booleans, `null` and `undefined`;
 - arrays of all of these.
 
-The six programs cover:
-- `+` on every pair of kinds;
-- every other operator with its coercions;
+Eleven programs, each run on 500 generated inputs, cover:
+- `+` on every pair of kinds, and every other operator with its coercions;
 - template literals;
-- string methods;
-- arrays, with a loop and `push`;
-- the exact `Math` on any value.
+- the string methods, and arrays with a loop and `push`;
+- the exact `Math` on any value;
+- objects: computed keys, reads and writes, own methods with `this`, chained;
+- closures: a counter cell, recursion, functions as values;
+- the array callbacks, including `sort` with and without a comparator;
+- an object's own `valueOf` and `toString`.
 
 **Other architectures.** The array program also runs on AArch64, ARMv7 and RISC-V. Each is
 cross-linked against the target's glibc, with the runtime compiled by clang for the target, and run
 under QEMU, with the same agreement.
 
-**What the tests found:** one runtime bug. `null == undefined` took the same-tag shortcut to strict
-equality. It is fixed.
+**What the tests found, all fixed:**
+- `null == undefined` took the same-tag shortcut to strict equality.
+- A write returned the assigned value instead of the object.
 
 ## Next slices
 
-- Objects (property maps, writes) and the prototype methods programs use.
-- Closures: a code pointer and the captured values, from the closure's own graph.
-- Iteration.
+- Iteration (`for…of`, `for…in`).
+- `new`, classes, accessors, spread, and the prototype chain.
+- Exceptions: the try lowering's primitive, and the runtime's TypeErrors as thrown values.
 - A collector.
 - The boundary a contract's types give, so a typed caller need not box.

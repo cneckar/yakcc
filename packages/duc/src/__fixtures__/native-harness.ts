@@ -82,6 +82,11 @@ export function encode(v: unknown): string {
     return `s${v.length}:${units}`;
   }
   if (Array.isArray(v)) return [`a${v.length}`, ...v.map(encode)].join(" ");
+  if (v !== null && typeof v === "object")
+    return [
+      `o${Object.keys(v).length}`,
+      ...Object.entries(v).flatMap(([k, x]) => [encode(k), encode(x)]),
+    ].join(" ");
   if (v === undefined) return "u";
   if (v === null) return "l";
   if (v === true) return "t";
@@ -117,15 +122,53 @@ export function decode(text: string): unknown {
       at = end;
       return Array.from({ length: len }, read);
     }
+    if (c === "o") {
+      let end = at;
+      while (/[0-9]/.test(text[end] as string)) end++;
+      const len = Number(text.slice(at, end));
+      at = end;
+      const o: Record<string, unknown> = {};
+      for (let i = 0; i < len; i++) {
+        const k = read() as string;
+        o[k] = read();
+      }
+      return o;
+    }
+    if (c === "F") return FUNCTION;
     return { u: undefined, l: null, t: true, f: false }[c as "u" | "l" | "t" | "f"];
   };
   return read();
 }
 
-/** Two values the same, as Object.is says, element by element for arrays. */
+/** What the runtime writes for a function: its value has no text form. */
+export const FUNCTION = Symbol("function");
+
+/**
+ * Two values the same: Object.is for primitives, element by element for arrays, key by key (in
+ * order) for objects; a function is any function.
+ */
 export function same(a: unknown, b: unknown): boolean {
+  if (a === FUNCTION || b === FUNCTION) return typeof (a === FUNCTION ? b : a) === "function";
   if (Array.isArray(a) && Array.isArray(b))
     return a.length === b.length && a.every((x, i) => same(x, b[i]));
+  if (
+    a !== null &&
+    b !== null &&
+    typeof a === "object" &&
+    typeof b === "object" &&
+    !Array.isArray(a) &&
+    !Array.isArray(b)
+  ) {
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    return (
+      ka.length === kb.length &&
+      ka.every(
+        (k, i) =>
+          k === kb[i] && same((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]),
+      )
+    );
+  }
   return Object.is(a, b);
 }
 

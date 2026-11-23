@@ -1,20 +1,25 @@
-import { LlvmEmitError, type LlvmModule } from "./emit-llvm.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The native lowering beyond the typed subset (#1292, DEC-DUC-NATIVE-RUNTIME-001): every value is a
  * NaN-boxed 64-bit word, and every operation the graph names is a call to the yakcc runtime
  * (`runtime/yk.c`), which implements JavaScript's semantics for it. The graph needs nothing it does not
- * carry: an operation's label names the runtime function, and the heap token's order is the order the
- * calls are made in.
+ * carry: an operation's label names the runtime function, a method call's receiver is the member
+ * read that feeds it, and the heap token's order is the order the calls are made in.
+ *
+ * A closure's graph is a function of its own, with one calling convention for every JavaScript
+ * function: `i64 (ptr closure, i64 this, i64 argc, ptr argv)`. Its captures (its graph's first
+ * parameters) are read from the closure record, its own parameters from `argv` (undefined past
+ * `argc`). `function-self` is the closure itself; `this` is the receiver the call gives.
  *
  * The exported function takes and returns boxed values: `uint64_t f(uint64_t, …)`.
  *
- * Covered: numbers, booleans, undefined, null, strings (UTF-16), arrays; the arithmetic, relational,
- * equality and logical operators with JavaScript's coercions; `typeof`; template literals; reading
- * `.length`, indexes and named members; the string and array methods the runtime lists; the exact
- * `Math`. Refused, with the reason: objects and writes to them, closures, free names, the approximated
- * `Math` and `**`, spread, iteration.
+ * Covered: numbers, booleans, undefined, null, strings (UTF-16), arrays, plain objects, closures; the
+ * operators with JavaScript's coercions; `typeof`; template literals; reads and writes of members and
+ * elements; calls of closures and of methods (an object's own, and the string and array builtins the
+ * runtime lists); the exact `Math`. Refused, with the reason: free names, `new`, accessors, spread,
+ * iteration, async and generator functions, the approximated `Math` and `**`.
  */
+import { LlvmEmitError, type LlvmModule } from "./emit-llvm.js";
 import { bodyPathOf, joinOwners, sidePath } from "./line-form.js";
 import { loweringView } from "./ordering.js";
 import { paramIndex } from "./params.js";
@@ -56,20 +61,30 @@ const UNARY: Readonly<Record<string, string>> = {
   "!": "yk_not",
   TypeOfExpression: "yk_typeof",
 };
+/** The global functions the runtime gives as values. */
+const GLOBALS = new Set(["String", "Number", "Boolean"]);
 const MATH1 = new Set(["floor", "ceil", "trunc", "sqrt", "abs", "sign", "round"]);
 const APPROXIMATED =
   /^(exp|expm1|log|log1p|log2|log10|sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|cbrt|hypot|pow)$/;
-const METHODS = new Set(["charCodeAt", "slice", "indexOf", "push", "join"]);
 
 const RUNTIME_DECLS: Readonly<Record<string, string>> = {
   yk_truthy: "declare i32 @yk_truthy(i64)",
   yk_string_utf8: "declare i64 @yk_string_utf8(ptr, i64)",
   yk_array_of: "declare i64 @yk_array_of(i64, ptr)",
+  yk_object_of: "declare i64 @yk_object_of(i64, ptr, ptr)",
   yk_template: "declare i64 @yk_template(i64, ptr, ptr)",
   yk_get: "declare i64 @yk_get(i64, i64)",
   yk_get_named: "declare i64 @yk_get_named(i64, ptr, i64)",
+  yk_set: "declare i64 @yk_set(i64, i64, i64)",
+  yk_set_named: "declare i64 @yk_set_named(i64, ptr, i64, i64)",
   yk_call_method: "declare i64 @yk_call_method(i64, ptr, i64, i64, ptr)",
+  yk_call: "declare i64 @yk_call(i64, i64, i64, ptr)",
+  yk_closure_new: "declare i64 @yk_closure_new(ptr, i32, i64, ptr)",
+  yk_closure_self: "declare i64 @yk_closure_self(ptr)",
+  yk_capture: "declare i64 @yk_capture(ptr, i64)",
+  yk_arg: "declare i64 @yk_arg(i64, ptr, i64)",
   yk_math1: "declare i64 @yk_math1(ptr, i64)",
+  yk_global: "declare i64 @yk_global(ptr, i64)",
   yk_math_minmax: "declare i64 @yk_math_minmax(i32, i64, ptr)",
   ...Object.fromEntries(Object.values(BINARY).map((f) => [f, `declare i64 @${f}(i64, i64)`])),
   ...Object.fromEntries(Object.values(UNARY).map((f) => [f, `declare i64 @${f}(i64)`])),
@@ -87,12 +102,57 @@ function llvmBytes(text: string): { body: string; length: number } {
   return { body, length: bytes.length };
 }
 
-/** The graph lowered to an LLVM module of boxed values, calling the runtime. */
-export function emitLlvmBoxed(source: DucGraph, symbol = "f"): LlvmModule {
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(symbol))
-    throw new LlvmEmitError(`"${symbol}" is not a symbol a linker takes`);
+/** A slot of an object literal's label: a named or computed key, a method, a spread. */
+type Slot =
+  | { readonly kind: "named"; readonly name: string }
+  | { readonly kind: "computed" }
+  | { readonly kind: "method"; readonly name: string }
+  | { readonly kind: "unsupported"; readonly what: string };
+
+function slotsOf(label: string): Slot[] {
+  return (JSON.parse(label.slice("object:".length)) as unknown[]).map((entry): Slot => {
+    if (entry === null) return { kind: "unsupported", what: "spread in an object literal" };
+    if (entry === 1) return { kind: "computed" };
+    if (typeof entry === "string") return { kind: "named", name: entry };
+    const [kind, k] = Object.entries(entry as Record<string, unknown>)[0] ?? [];
+    if (kind === "method" && typeof k === "string") return { kind: "method", name: k };
+    return { kind: "unsupported", what: `a ${kind} member` };
+  });
+}
+
+/** The module being built: its constants, the runtime functions it calls, its functions. */
+class ModuleBuilder {
+  readonly globals: string[] = [];
+  readonly used = new Set<string>();
+  readonly functions: string[] = [];
+  private closures = 0;
+
+  constant(text: string, nul = false): { ptr: string; length: number } {
+    const { body, length } = llvmBytes(text);
+    const name = `@.str${this.globals.length}`;
+    this.globals.push(
+      `${name} = private unnamed_addr constant [${length + (nul ? 1 : 0)} x i8] c"${body}${nul ? "\\00" : ""}"`,
+    );
+    return { ptr: name, length };
+  }
+
+  closureName(of: string): string {
+    return `${of}.closure${this.closures++}`;
+  }
+}
+
+/**
+ * One graph lowered to one LLVM function. The entry function takes its parameters as `i64`s; a
+ * closure's function takes the closure, the receiver, and the arguments.
+ */
+function lowerFunction(
+  m: ModuleBuilder,
+  source: DucGraph,
+  name: string,
+  closure: { readonly captures: number } | undefined,
+): void {
   if (source.mode !== undefined)
-    throw new LlvmEmitError(`an ${source.mode} function has no form here`);
+    throw new LlvmEmitError(`an ${source.mode} function is not in the subset yet`);
   if (source.obs.length !== 1) throw new LlvmEmitError("a native function has exactly one result");
   const { graph: g, after } = loweringView(source);
   const owners = joinOwners(g);
@@ -110,19 +170,23 @@ export function emitLlvmBoxed(source: DucGraph, symbol = "f"): LlvmModule {
     const a = alias.get(v);
     return a === undefined ? v : resolve(a);
   };
-  const planner = scopePlanner(g, owners, resolve, (m) => new LlvmEmitError(m), after);
+  const planner = scopePlanner(g, owners, resolve, (msg) => new LlvmEmitError(msg), after);
 
-  // Math, and the members read from it.
+  // Math, whose members a call names; and the global functions the runtime gives as values.
   const mathValue = new Set<ValueId>();
+  const globalValue = new Map<ValueId, string>();
   for (const n of g.nodes) {
     if (n.kind !== "diamond-source") continue;
-    if (n.diamond?.reason === "platform-primitive" && n.diamond.symbol === "Math")
+    const sym = n.diamond?.symbol ?? "";
+    if (n.diamond?.reason === "platform-primitive" && sym === "Math")
       mathValue.add(n.outputs[0] as ValueId);
-    else throw new LlvmEmitError(`"${n.diamond?.symbol}" is not in the native base set`);
+    else if (n.diamond?.reason === "platform-primitive" && GLOBALS.has(sym))
+      globalValue.set(n.outputs[0] as ValueId, sym);
+    else throw new LlvmEmitError(`"${sym}" is not in the native base set`);
   }
   const memberOf = (v: ValueId): { node: DucNode; name: string } | undefined => {
     const p = producer.get(resolve(v));
-    if (p === undefined || p.kind !== "op" || !/^\.\w+$/.test(p.label ?? "")) return undefined;
+    if (p === undefined || p.kind !== "op" || !/^\.[\w$]+$/.test(p.label ?? "")) return undefined;
     return { node: p, name: (p.label as string).slice(1) };
   };
   const isMath = (v: ValueId): boolean => mathValue.has(resolve(v));
@@ -132,15 +196,14 @@ export function emitLlvmBoxed(source: DucGraph, symbol = "f"): LlvmModule {
     .sort((a, b) => paramIndex(a.label) - paramIndex(b.label));
 
   const body: string[] = [];
-  const globals: string[] = [];
-  const used = new Set<string>();
+  const entryAllocas: string[] = [];
   const slots = new Map<ValueId, string>();
   let temp = 0;
   let label = 0;
   const fresh = (): string => `%t${temp++}`;
   const freshLabel = (what: string): string => `${what}${label++}`;
   const emit = (line: string): void => void body.push(`  ${line}`);
-  const block = (name: string): void => void body.push(`${name}:`);
+  const block = (lbl: string): void => void body.push(`${lbl}:`);
   const slotOf = (v: ValueId): string => {
     let s = slots.get(v);
     if (s === undefined) {
@@ -150,31 +213,23 @@ export function emitLlvmBoxed(source: DucGraph, symbol = "f"): LlvmModule {
     return s;
   };
   const call = (fn: string, args: string): string => {
-    used.add(fn);
+    m.used.add(fn);
     const r = fresh();
     emit(`${r} = call i64 @${fn}(${args})`);
     return r;
   };
-  /** A constant string in the module, by its UTF-8 bytes: the pointer and the length. */
-  const bytes = (text: string, nul = false): { ptr: string; length: number } => {
-    const { body: b, length } = llvmBytes(text);
-    const name = `@.str${globals.length}`;
-    globals.push(
-      `${name} = private unnamed_addr constant [${length + (nul ? 1 : 0)} x i8] c"${b}${nul ? "\\00" : ""}"`,
-    );
-    return { ptr: name, length };
+  const str = (text: string): string => {
+    const s = m.constant(text);
+    return call("yk_string_utf8", `ptr ${s.ptr}, i64 ${s.length}`);
   };
-  /** A list of values in a stack array, for a runtime call that takes several. */
   // Stack arrays live in the entry block: one inside a loop would grow the stack each iteration.
-  const entryAllocas: string[] = [];
   const list = (values: readonly string[]): string => {
     const at = fresh();
-    entryAllocas.push(`  ${at} = alloca [${Math.max(values.length, 1)} x i64]`);
+    const n = Math.max(values.length, 1);
+    entryAllocas.push(`  ${at} = alloca [${n} x i64]`);
     values.forEach((v, i) => {
       const p = fresh();
-      emit(
-        `${p} = getelementptr [${Math.max(values.length, 1)} x i64], ptr ${at}, i64 0, i64 ${i}`,
-      );
+      emit(`${p} = getelementptr [${n} x i64], ptr ${at}, i64 0, i64 ${i}`);
       emit(`store i64 ${v}, ptr ${p}`);
     });
     return at;
@@ -189,23 +244,25 @@ export function emitLlvmBoxed(source: DucGraph, symbol = "f"): LlvmModule {
       if (text === "false") return FALSE;
       if (text === "null") return NULL;
       if (text === "undefined") return UNDEFINED;
-      if (text.startsWith('"')) {
-        const s = bytes(JSON.parse(text) as string);
-        return call("yk_string_utf8", `ptr ${s.ptr}, i64 ${s.length}`);
-      }
+      if (text.startsWith('"')) return str(JSON.parse(text) as string);
       const n = Number(text.replace(/_/g, ""));
       if (text === "" || (Number.isNaN(n) && text !== "NaN"))
         throw new LlvmEmitError(`the literal ${text} is not in the subset yet`);
       return boxedNumber(n);
     }
-    if (p?.kind === "diamond-source") throw new LlvmEmitError("Math is not a value here");
+    if (p?.kind === "diamond-source") {
+      const sym = globalValue.get(v);
+      if (sym === undefined) throw new LlvmEmitError("Math is not a value here");
+      const key = m.constant(sym);
+      return call("yk_global", `ptr ${key.ptr}, i64 ${key.length}`);
+    }
     const r = fresh();
     emit(`${r} = load i64, ptr ${slotOf(v)}`);
     return r;
   };
   const set = (v: ValueId, r: string): void => emit(`store i64 ${r}, ptr ${slotOf(v)}`);
   const truthy = (v: ValueId): string => {
-    used.add("yk_truthy");
+    m.used.add("yk_truthy");
     const i = fresh();
     emit(`${i} = call i32 @yk_truthy(i64 ${operand(v)})`);
     const b = fresh();
@@ -213,11 +270,32 @@ export function emitLlvmBoxed(source: DucGraph, symbol = "f"): LlvmModule {
     return b;
   };
 
+  /** A closure node: its graph lowered to a function, and the record that holds its captures. */
+  const makeClosure = (n: DucNode): string => {
+    const graph = n.closure as DucGraph;
+    const lbl = n.label ?? "";
+    if (lbl !== "closure" && lbl !== "function")
+      throw new LlvmEmitError(`a "${lbl}" function is not in the subset yet`);
+    const fn = m.closureName(name);
+    lowerFunction(m, graph, fn, { captures: n.inputs.length });
+    const caps = n.inputs.map(operand);
+    m.used.add("yk_closure_new");
+    const r = fresh();
+    emit(
+      `${r} = call i64 @yk_closure_new(ptr @${fn}, i32 ${lbl === "function" ? 1 : 0}, i64 ${caps.length}, ptr ${list(caps)})`,
+    );
+    return r;
+  };
+
   const emitNode = (n: DucNode): void => {
     if (["literal-source", "param-source", "carry-source", "diamond-source"].includes(n.kind))
       return;
-    if (n.closure !== undefined) throw new LlvmEmitError("a closure is not in the subset yet");
     const out = n.outputs[0] as ValueId | undefined;
+    if (n.closure !== undefined) {
+      if (out === undefined) throw new LlvmEmitError("a closure with no value");
+      set(out, makeClosure(n));
+      return;
+    }
     if (out === undefined) throw new LlvmEmitError(`"${n.label}" has no result`);
     const lbl = n.label ?? "";
     const ins = n.inputs as readonly ValueId[];
@@ -232,16 +310,38 @@ export function emitLlvmBoxed(source: DucGraph, symbol = "f"): LlvmModule {
       return;
     }
     if (n.kind !== "op") throw new LlvmEmitError(`a ${n.kind} node is not in the subset`);
+    if (lbl === "this" || lbl.startsWith("ThisKeyword#")) {
+      if (closure === undefined) throw new LlvmEmitError("`this` outside a function");
+      set(out, "%this");
+      return;
+    }
+    if (lbl === "function-self") {
+      if (closure === undefined) throw new LlvmEmitError("function-self outside a function");
+      set(out, call("yk_closure_self", "ptr %closure"));
+      return;
+    }
     // A member read: of Math, nothing (the call names it); otherwise the property's value.
-    const member = /^\.\w+$/.test(lbl) && ins.length === 1;
+    const member = /^\.[\w$]+$/.test(lbl) && ins.length === 1;
     if (member && isMath(ins[0] as ValueId)) return;
     if (member) {
-      const name = bytes(lbl.slice(1));
+      const key = m.constant(lbl.slice(1));
       set(
         out,
         call(
           "yk_get_named",
-          `i64 ${operand(ins[0] as ValueId)}, ptr ${name.ptr}, i64 ${name.length}`,
+          `i64 ${operand(ins[0] as ValueId)}, ptr ${key.ptr}, i64 ${key.length}`,
+        ),
+      );
+      return;
+    }
+    if (/^\.[\w$]+=$/.test(lbl) && ins.length === 2) {
+      const key = m.constant(lbl.slice(1, -1));
+      const obj = operand(ins[0] as ValueId);
+      set(
+        out,
+        call(
+          "yk_set_named",
+          `i64 ${obj}, ptr ${key.ptr}, i64 ${key.length}, i64 ${operand(ins[1] as ValueId)}`,
         ),
       );
       return;
@@ -253,15 +353,18 @@ export function emitLlvmBoxed(source: DucGraph, symbol = "f"): LlvmModule {
       );
       return;
     }
+    if (lbl === "[]=" && ins.length === 3) {
+      const [o, k, v] = ins as [ValueId, ValueId, ValueId];
+      set(out, call("yk_set", `i64 ${operand(o)}, i64 ${operand(k)}, i64 ${operand(v)}`));
+      return;
+    }
     if (lbl === "CallExpression") {
       const callee = memberOf(ins[0] as ValueId);
-      if (callee === undefined)
-        throw new LlvmEmitError("a call of anything but a method or Math is not in the subset yet");
       const args = ins.slice(1).map(operand);
-      if (isMath(callee.node.inputs[0] as ValueId)) {
+      if (callee !== undefined && isMath(callee.node.inputs[0] as ValueId)) {
         if (MATH1.has(callee.name) && args.length === 1) {
-          const name = bytes(callee.name, true);
-          set(out, call("yk_math1", `ptr ${name.ptr}, i64 ${args[0]}`));
+          const key = m.constant(callee.name, true);
+          set(out, call("yk_math1", `ptr ${key.ptr}, i64 ${args[0]}`));
           return;
         }
         if (callee.name === "min" || callee.name === "max") {
@@ -280,16 +383,23 @@ export function emitLlvmBoxed(source: DucGraph, symbol = "f"): LlvmModule {
           );
         throw new LlvmEmitError(`Math.${callee.name} is not in the subset yet`);
       }
-      if (!METHODS.has(callee.name))
-        throw new LlvmEmitError(`the method .${callee.name} is not in the runtime yet`);
-      const name = bytes(callee.name);
-      const recv = operand(callee.node.inputs[0] as ValueId);
+      if (callee !== undefined) {
+        // A method call: the receiver is the object the member is read from.
+        const key = m.constant(callee.name);
+        const recv = operand(callee.node.inputs[0] as ValueId);
+        set(
+          out,
+          call(
+            "yk_call_method",
+            `i64 ${recv}, ptr ${key.ptr}, i64 ${key.length}, i64 ${args.length}, ptr ${list(args)}`,
+          ),
+        );
+        return;
+      }
+      const fn = operand(ins[0] as ValueId);
       set(
         out,
-        call(
-          "yk_call_method",
-          `i64 ${recv}, ptr ${name.ptr}, i64 ${name.length}, i64 ${args.length}, ptr ${list(args)}`,
-        ),
+        call("yk_call", `i64 ${fn}, i64 ${UNDEFINED}, i64 ${args.length}, ptr ${list(args)}`),
       );
       return;
     }
@@ -332,11 +442,22 @@ export function emitLlvmBoxed(source: DucGraph, symbol = "f"): LlvmModule {
       set(out, call("yk_array_of", `i64 ${elems.length}, ptr ${list(elems)}`));
       return;
     }
+    if (lbl.startsWith("object:")) {
+      // Keys and values in source order: a computed key is the input before its value.
+      const keys: string[] = [];
+      const values: string[] = [];
+      let at = 0;
+      for (const slot of slotsOf(lbl)) {
+        if (slot.kind === "unsupported")
+          throw new LlvmEmitError(`${slot.what} is not in the subset yet`);
+        keys.push(slot.kind === "computed" ? operand(ins[at++] as ValueId) : str(slot.name));
+        values.push(operand(ins[at++] as ValueId));
+      }
+      set(out, call("yk_object_of", `i64 ${keys.length}, ptr ${list(keys)}, ptr ${list(values)}`));
+      return;
+    }
     if (lbl.startsWith("template:")) {
-      const strings = (JSON.parse(lbl.slice("template:".length)) as string[]).map((t) => {
-        const s = bytes(t);
-        return call("yk_string_utf8", `ptr ${s.ptr}, i64 ${s.length}`);
-      });
+      const strings = (JSON.parse(lbl.slice("template:".length)) as string[]).map(str);
       const subs = ins.map(operand);
       set(out, call("yk_template", `i64 ${subs.length}, ptr ${list(strings)}, ptr ${list(subs)}`));
       return;
@@ -360,11 +481,11 @@ export function emitLlvmBoxed(source: DucGraph, symbol = "f"): LlvmModule {
     const elseL = freshLabel("else");
     const endL = freshLabel("end");
     emit(`br i1 ${truthy(b.cond)}, label %${thenL}, label %${elseL}`);
-    for (const [side, name, input] of [
+    for (const [side, lbl, input] of [
       ["t", thenL, 1],
       ["e", elseL, 2],
     ] as const) {
-      block(name);
+      block(lbl);
       emitScope(sidePath(b, side));
       for (const j of joins) set(j.outputs[0] as ValueId, operand(j.inputs[input] as ValueId));
       emit(`br label %${endL}`);
@@ -403,25 +524,49 @@ export function emitLlvmBoxed(source: DucGraph, symbol = "f"): LlvmModule {
     loop.outputs.forEach((v, i) => set(v, operand(rec.carry[i] as ValueId)));
   };
 
-  params.forEach((p, i) => set(p.outputs[0] as ValueId, `%p${i}`));
+  // Parameters: the entry function's own; a closure's captures, then its arguments.
+  params.forEach((p, i) => {
+    const v = p.outputs[0] as ValueId;
+    if (closure === undefined) set(v, `%p${i}`);
+    else if (i < closure.captures) set(v, call("yk_capture", `ptr %closure, i64 ${i}`));
+    else set(v, call("yk_arg", `i64 %argc, ptr %argv, i64 ${i - closure.captures}`));
+  });
   emitScope(undefined);
   emit(`ret i64 ${operand(g.obs[0] as ValueId)}`);
 
-  const lines = [
+  const head =
+    closure === undefined
+      ? `define i64 @${name}(${params.map((_, i) => `i64 %p${i}`).join(", ")}) {`
+      : `define internal i64 @${name}(ptr %closure, i64 %this, i64 %argc, ptr %argv) {`;
+  m.functions.push(
+    [
+      head,
+      "entry:",
+      ...[...slots.values()].map((s) => `  ${s} = alloca i64`),
+      ...entryAllocas,
+      ...body,
+      "}",
+      "",
+    ].join("\n"),
+  );
+}
+
+/** The graph lowered to an LLVM module of boxed values, calling the runtime. */
+export function emitLlvmBoxed(source: DucGraph, symbol = "f"): LlvmModule {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(symbol))
+    throw new LlvmEmitError(`"${symbol}" is not a symbol a linker takes`);
+  const m = new ModuleBuilder();
+  lowerFunction(m, source, symbol, undefined);
+  const params = source.nodes.filter((n) => n.kind === "param-source").length;
+  const ir = [
     "; yakcc native lowering, boxed values (#1292)",
     `source_filename = "${symbol}"`,
     "",
-    ...globals,
+    ...m.globals,
     "",
-    `define i64 @${symbol}(${params.map((_, i) => `i64 %p${i}`).join(", ")}) {`,
-    "entry:",
-    ...[...slots.values()].map((s) => `  ${s} = alloca i64`),
-    ...entryAllocas,
-    ...body,
-    "}",
+    ...m.functions,
+    ...[...m.used].sort().map((f) => RUNTIME_DECLS[f] as string),
     "",
-    ...[...used].sort().map((f) => RUNTIME_DECLS[f] as string),
-    "",
-  ];
-  return { ir: lines.join("\n"), symbol, params: params.map(() => "i64"), result: "i64" };
+  ].join("\n");
+  return { ir, symbol, params: Array(params).fill("i64"), result: "i64" };
 }
