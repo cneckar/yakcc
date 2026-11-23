@@ -1,0 +1,78 @@
+{
+  "id": "suggest-words",
+  "entry": "suggest",
+  "difficulty": "compose-2",
+  "atoms": [
+    "fastest-levenshtein-1.0.16:esm/mod.js#distance",
+    "fastest-levenshtein-1.0.16:esm/mod.js#closest"
+  ],
+  "spec": "Write `export function suggest(word: string, candidates: readonly string[], maxDistance: number): string[]` that returns the candidates whose Levenshtein distance from `word` (insertions, deletions and substitutions of UTF-16 code units, each costing 1) is at most `maxDistance`, sorted by distance ascending, with ties in input order and later duplicates of a string removed. Strings may be longer than 32 characters. Throw a RangeError if maxDistance is not a non-negative integer.",
+  "reference": "function distance(a: string, b: string): number {\n  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);\n  for (let i = 1; i <= a.length; i++) {\n    const cur = [i];\n    for (let j = 1; j <= b.length; j++) {\n      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));\n    }\n    prev = cur;\n  }\n  return prev[b.length];\n}\nexport function suggest(word: string, candidates: readonly string[], maxDistance: number): string[] {\n  if (!Number.isInteger(maxDistance) || maxDistance < 0) throw new RangeError('maxDistance must be a non-negative integer');\n  const seen = new Set<string>();\n  const hits: { s: string; d: number; i: number }[] = [];\n  candidates.forEach((s, i) => {\n    if (seen.has(s)) return;\n    seen.add(s);\n    const d = distance(word, s);\n    if (d <= maxDistance) hits.push({ s, d, i });\n  });\n  return hits.sort((x, y) => x.d - y.d || x.i - y.i).map((h) => h.s);\n}",
+  "slice": [
+    {
+      "id": "lev-distance",
+      "score": 0.9,
+      "ref": {
+        "file": "fastest-levenshtein-1.0.16/esm/mod.js",
+        "name": "distance"
+      },
+      "sourcePkg": "fastest-levenshtein-1.0.16",
+      "text": "const distance = (a, b) => {\n    if (a.length < b.length) {\n        const tmp = b;\n        b = a;\n        a = tmp;\n    }\n    if (b.length === 0) {\n        return a.length;\n    }\n    if (a.length <= 32) {\n        return myers_32(a, b);\n    }\n    return myers_x(a, b);\n};",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-2f549e246f4746ba",
+        "sourceFile": "fastest-levenshtein-1.0.16/esm/mod.js",
+        "lineStart": 141,
+        "lineEnd": 154
+      }
+    },
+    {
+      "id": "lev-closest",
+      "score": 0.86,
+      "ref": {
+        "file": "fastest-levenshtein-1.0.16/esm/mod.js",
+        "name": "closest"
+      },
+      "sourcePkg": "fastest-levenshtein-1.0.16",
+      "text": "const closest = (str, arr) => {\n    let min_distance = Infinity;\n    let min_index = 0;\n    for (let i = 0; i < arr.length; i++) {\n        const dist = distance(str, arr[i]);\n        if (dist < min_distance) {\n            min_distance = dist;\n            min_index = i;\n        }\n    }\n    return arr[min_index];\n};",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-7e67e7b5607c95e0",
+        "sourceFile": "fastest-levenshtein-1.0.16/esm/mod.js",
+        "lineStart": 155,
+        "lineEnd": 166
+      }
+    },
+    {
+      "id": "lev-myers-32",
+      "score": 0.7,
+      "ref": {
+        "file": "fastest-levenshtein-1.0.16/esm/mod.js",
+        "name": "myers_32"
+      },
+      "sourcePkg": "fastest-levenshtein-1.0.16",
+      "text": "const myers_32 = (a, b) => {\n    const n = a.length;\n    const m = b.length;\n    const lst = 1 << (n - 1);\n    let pv = -1;\n    let mv = 0;\n    let sc = n;\n    let i = n;\n    while (i--) {\n        peq[a.charCodeAt(i)] |= 1 << i;\n    }\n    for (i = 0; i < m; i++) {\n        let eq = peq[b.charCodeAt(i)];\n        const xv = eq | mv;\n        eq |= ((eq & pv) + pv) ^ pv;\n        mv |= ~(eq | pv);\n        pv &= eq;\n        if (mv & lst) {\n            sc++;\n        }\n        if (pv & lst) {\n            sc--;\n        }\n        mv = (mv << 1) | 1;\n        pv = (pv << 1) | ~(xv | mv);\n        mv &= xv;\n    }\n    i = n;\n    while (i--) {\n        peq[a.charCodeAt(i)] = 0;\n    }\n    return sc;\n};",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-32583cd8d7fe52b9",
+        "sourceFile": "fastest-levenshtein-1.0.16/esm/mod.js",
+        "lineStart": 31,
+        "lineEnd": 63
+      }
+    },
+    {
+      "id": "semver-sort",
+      "score": 0.36,
+      "ref": {
+        "file": "semver-7.8.0/functions/sort.js",
+        "name": "sort"
+      },
+      "sourcePkg": "semver-7.8.0",
+      "text": "const sort = (list, loose) => list.sort((a, b) => compareBuild(a, b, loose))",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-aa6a0dac07d25eb0",
+        "sourceFile": "semver-7.8.0/functions/sort.js",
+        "lineStart": 4,
+        "lineEnd": 4
+      }
+    }
+  ],
+  "heldOut": "const eq = (got, want, label) => { if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error(label + ' = ' + JSON.stringify(got)); };\neq(fn('kitten', ['sitting', 'kitten', 'mitten', 'bitten', 'smitten', 'kit'], 2), ['kitten', 'mitten', 'bitten', 'smitten'], 'kitten');\neq(fn('kitten', ['sitting', 'kit'], 3), ['sitting', 'kit'], 'ties keep input order');\neq(fn('', ['ab', 'a', ''], 1), ['', 'a'], 'empty word');\neq(fn('ab', ['ab', 'ac', 'ab'], 1), ['ab', 'ac'], 'duplicates');\neq(fn('flaw', ['lawn'], 1), [], 'flaw/lawn is 2');\neq(fn('flaw', ['lawn'], 2), ['lawn'], 'flaw/lawn is 2');\nconst long = 'a'.repeat(40);\neq(fn(long, ['a'.repeat(39) + 'b', 'b'.repeat(40), 'a'.repeat(38)], 2), ['a'.repeat(39) + 'b', 'a'.repeat(38)], 'long strings');\neq(fn('abc', [], 5), [], 'no candidates');\nfor (const bad of [-1, 1.5, NaN]) { let threw = false; try { fn('a', ['a'], bad); } catch (e) { threw = e instanceof RangeError; } if (!threw) throw new Error('must throw RangeError for ' + bad); }"
+}

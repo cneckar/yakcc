@@ -1,5 +1,6 @@
 {
   "id": "unique",
+  "difficulty": "single",
   "entry": "unique",
   "spec": "Write `export function unique<T>(items: readonly T[]): T[]` that returns the items with later duplicates removed, keeping the first occurrence of each value and the original order.",
   "reference": "export function unique<T>(items: readonly T[]): T[] {\n  const seen = new Set<T>();\n  const out: T[] = [];\n  for (const x of items) { if (!seen.has(x)) { seen.add(x); out.push(x); } }\n  return out;\n}",

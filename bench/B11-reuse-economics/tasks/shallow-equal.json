@@ -1,5 +1,6 @@
 {
   "id": "shallow-equal",
+  "difficulty": "single",
   "entry": "shallowEqual",
   "spec": "Write `export function shallowEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean` that returns true when both objects have the same own keys and each value is strictly equal (===) to the other's.",
   "reference": "export function shallowEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {\n  const ka = Object.keys(a);\n  const kb = Object.keys(b);\n  if (ka.length !== kb.length) return false;\n  return ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && a[k] === b[k]);\n}",

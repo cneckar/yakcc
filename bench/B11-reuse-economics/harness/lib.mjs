@@ -18,6 +18,20 @@ export function loadTasks(dir) {
     .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")));
 }
 
+/** The exported function a task's held-out check calls: `entry`, or the id camel-cased. */
+export function entryName(task) {
+  return task.entry ?? task.id.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+}
+
+/**
+ * What a model client may see of a task: its id and spec, plus the reference solution for
+ * the offline validation client. The held-out check is never part of it, so no client can
+ * read the answer key it is scored by.
+ */
+export function clientView(task) {
+  return { id: task.id, spec: task.spec, reference: task.reference };
+}
+
 /** Transpile TypeScript to JavaScript (types erased). */
 export function transpile(source) {
   const out = ts.transpileModule(source, {
@@ -43,7 +57,7 @@ export function extractCode(text) {
  * with dashes camel-cased). The held-out check receives it as `fn`.
  */
 export function scoreSolution(task, candidateTs) {
-  const entry = task.entry ?? task.id.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  const entry = entryName(task);
   let js;
   try {
     js = transpile(candidateTs);
@@ -71,7 +85,9 @@ export function scoreSolution(task, candidateTs) {
   const fn = module.exports[entry];
   if (typeof fn !== "function") return { pass: false, error: `no exported function ${entry}` };
   try {
-    vm.runInContext(`(function(fn){${task.heldOut}\n})`, context, { timeout: 2000 })(fn);
+    // The check is called inside the context, so the timeout bounds the candidate's run too.
+    context.__candidate = fn;
+    vm.runInContext(`(function(fn){${task.heldOut}\n})(__candidate)`, context, { timeout: 2000 });
     return { pass: true, error: null };
   } catch (err) {
     return { pass: false, error: err.message };
@@ -130,4 +146,14 @@ export function summarize(rows) {
     a.meanMs = a.n === 0 ? 0 : a.ms / a.n;
   }
   return byArm;
+}
+
+/** summarize, split by a row key (for example the task's difficulty class). */
+export function summarizeBy(rows, keyOf) {
+  const groups = {};
+  for (const r of rows) {
+    const k = keyOf(r);
+    groups[k] = [...(groups[k] ?? []), r];
+  }
+  return Object.fromEntries(Object.entries(groups).map(([k, rs]) => [k, summarize(rs)]));
 }

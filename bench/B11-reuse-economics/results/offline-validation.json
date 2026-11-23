@@ -1,7 +1,127 @@
 {
   "client": "offline",
-  "tasks": 10,
+  "tasks": 21,
   "rows": [
+    {
+      "arm": "scratch",
+      "task": "add-days-iso",
+      "pass": true,
+      "error": null,
+      "inputTokens": 134,
+      "outputTokens": 242,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "add-days-iso",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1215,
+      "outputTokens": 242,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "add-days-iso",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1215,
+      "outputTokens": 242,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "add-durations",
+      "pass": true,
+      "error": null,
+      "inputTokens": 215,
+      "outputTokens": 299,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "add-durations",
+      "pass": true,
+      "error": null,
+      "inputTokens": 732,
+      "outputTokens": 299,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "add-durations",
+      "pass": true,
+      "error": null,
+      "inputTokens": 732,
+      "outputTokens": 299,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "base64url-from-string",
+      "pass": true,
+      "error": null,
+      "inputTokens": 108,
+      "outputTokens": 298,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "base64url-from-string",
+      "pass": true,
+      "error": null,
+      "inputTokens": 975,
+      "outputTokens": 298,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "base64url-from-string",
+      "pass": true,
+      "error": null,
+      "inputTokens": 975,
+      "outputTokens": 298,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "build-order",
+      "pass": true,
+      "error": null,
+      "inputTokens": 145,
+      "outputTokens": 272,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "build-order",
+      "pass": true,
+      "error": null,
+      "inputTokens": 909,
+      "outputTokens": 272,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "build-order",
+      "pass": true,
+      "error": null,
+      "inputTokens": 909,
+      "outputTokens": 272,
+      "turns": 1,
+      "ms": 0
+    },
     {
       "arm": "scratch",
       "task": "chunk",
@@ -64,6 +184,36 @@
     },
     {
       "arm": "scratch",
+      "task": "days-between",
+      "pass": true,
+      "error": null,
+      "inputTokens": 139,
+      "outputTokens": 184,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "days-between",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1135,
+      "outputTokens": 184,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "days-between",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1135,
+      "outputTokens": 184,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "scratch",
       "task": "group-by",
       "pass": true,
       "error": null,
@@ -90,7 +240,37 @@
       "inputTokens": 116,
       "outputTokens": 61,
       "turns": 1,
-      "ms": 1
+      "ms": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "memoize-lru",
+      "pass": true,
+      "error": null,
+      "inputTokens": 163,
+      "outputTokens": 160,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "memoize-lru",
+      "pass": true,
+      "error": null,
+      "inputTokens": 639,
+      "outputTokens": 160,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "memoize-lru",
+      "pass": true,
+      "error": null,
+      "inputTokens": 639,
+      "outputTokens": 160,
+      "turns": 1,
+      "ms": 0
     },
     {
       "arm": "scratch",
@@ -124,6 +304,36 @@
     },
     {
       "arm": "scratch",
+      "task": "pointer-get",
+      "pass": true,
+      "error": null,
+      "inputTokens": 184,
+      "outputTokens": 236,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "pointer-get",
+      "pass": true,
+      "error": null,
+      "inputTokens": 985,
+      "outputTokens": 236,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "pointer-get",
+      "pass": true,
+      "error": null,
+      "inputTokens": 985,
+      "outputTokens": 236,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "scratch",
       "task": "range",
       "pass": true,
       "error": null,
@@ -140,7 +350,7 @@
       "inputTokens": 113,
       "outputTokens": 83,
       "turns": 1,
-      "ms": 0
+      "ms": 1
     },
     {
       "arm": "fallback",
@@ -244,6 +454,66 @@
     },
     {
       "arm": "scratch",
+      "task": "sort-versions",
+      "pass": true,
+      "error": null,
+      "inputTokens": 275,
+      "outputTokens": 376,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "sort-versions",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1002,
+      "outputTokens": 376,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "sort-versions",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1002,
+      "outputTokens": 376,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "suggest-words",
+      "pass": true,
+      "error": null,
+      "inputTokens": 136,
+      "outputTokens": 235,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "suggest-words",
+      "pass": true,
+      "error": null,
+      "inputTokens": 534,
+      "outputTokens": 235,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "suggest-words",
+      "pass": true,
+      "error": null,
+      "inputTokens": 534,
+      "outputTokens": 235,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "scratch",
       "task": "title-case",
       "pass": true,
       "error": null,
@@ -301,9 +571,93 @@
       "outputTokens": 52,
       "turns": 1,
       "ms": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "uuid-normalize",
+      "pass": true,
+      "error": null,
+      "inputTokens": 186,
+      "outputTokens": 209,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "uuid-normalize",
+      "pass": true,
+      "error": null,
+      "inputTokens": 967,
+      "outputTokens": 209,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "uuid-normalize",
+      "pass": true,
+      "error": null,
+      "inputTokens": 967,
+      "outputTokens": 209,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "uuid-version",
+      "pass": true,
+      "error": null,
+      "inputTokens": 159,
+      "outputTokens": 91,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "slice",
+      "task": "uuid-version",
+      "pass": true,
+      "error": null,
+      "inputTokens": 497,
+      "outputTokens": 91,
+      "turns": 1,
+      "ms": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "uuid-version",
+      "pass": true,
+      "error": null,
+      "inputTokens": 497,
+      "outputTokens": 91,
+      "turns": 1,
+      "ms": 0
     }
   ],
   "decisions": [
+    {
+      "task": "add-days-iso",
+      "action": "reuse",
+      "reason": "strong-match",
+      "candidateIndex": 0
+    },
+    {
+      "task": "add-durations",
+      "action": "reuse",
+      "reason": "strong-match",
+      "candidateIndex": 0
+    },
+    {
+      "task": "base64url-from-string",
+      "action": "reuse",
+      "reason": "strong-match",
+      "candidateIndex": 0
+    },
+    {
+      "task": "build-order",
+      "action": "reuse",
+      "reason": "strong-match",
+      "candidateIndex": 0
+    },
     {
       "task": "chunk",
       "action": "reuse",
@@ -316,14 +670,32 @@
       "reason": "near-miss-only"
     },
     {
+      "task": "days-between",
+      "action": "reuse",
+      "reason": "strong-match",
+      "candidateIndex": 0
+    },
+    {
       "task": "group-by",
       "action": "synthesize",
       "reason": "near-miss-only"
     },
     {
+      "task": "memoize-lru",
+      "action": "reuse",
+      "reason": "strong-match",
+      "candidateIndex": 0
+    },
+    {
       "task": "parse-int-strict",
       "action": "synthesize",
       "reason": "near-miss-only"
+    },
+    {
+      "task": "pointer-get",
+      "action": "reuse",
+      "reason": "strong-match",
+      "candidateIndex": 0
     },
     {
       "task": "range",
@@ -346,6 +718,18 @@
       "reason": "near-miss-only"
     },
     {
+      "task": "sort-versions",
+      "action": "reuse",
+      "reason": "strong-match",
+      "candidateIndex": 0
+    },
+    {
+      "task": "suggest-words",
+      "action": "reuse",
+      "reason": "strong-match",
+      "candidateIndex": 0
+    },
+    {
       "task": "title-case",
       "action": "reuse",
       "reason": "strong-match",
@@ -356,38 +740,148 @@
       "action": "reuse",
       "reason": "strong-match",
       "candidateIndex": 0
+    },
+    {
+      "task": "uuid-normalize",
+      "action": "reuse",
+      "reason": "strong-match",
+      "candidateIndex": 0
+    },
+    {
+      "task": "uuid-version",
+      "action": "reuse",
+      "reason": "strong-match",
+      "candidateIndex": 0
     }
   ],
   "summary": {
     "scratch": {
-      "n": 10,
-      "passes": 10,
-      "inputTokens": 637,
-      "outputTokens": 547,
+      "n": 21,
+      "passes": 21,
+      "inputTokens": 2481,
+      "outputTokens": 3149,
       "ms": 0,
       "passRate": 1,
-      "meanTokens": 118.4,
+      "meanTokens": 268.0952380952381,
       "meanMs": 0
     },
     "slice": {
-      "n": 10,
-      "passes": 10,
-      "inputTokens": 1118,
-      "outputTokens": 547,
-      "ms": 0,
-      "passRate": 1,
-      "meanTokens": 166.5,
-      "meanMs": 0
-    },
-    "fallback": {
-      "n": 10,
-      "passes": 10,
-      "inputTokens": 1118,
-      "outputTokens": 547,
+      "n": 21,
+      "passes": 21,
+      "inputTokens": 10708,
+      "outputTokens": 3149,
       "ms": 1,
       "passRate": 1,
-      "meanTokens": 166.5,
-      "meanMs": 0.1
+      "meanTokens": 659.8571428571429,
+      "meanMs": 0.047619047619047616
+    },
+    "fallback": {
+      "n": 21,
+      "passes": 21,
+      "inputTokens": 10708,
+      "outputTokens": 3149,
+      "ms": 0,
+      "passRate": 1,
+      "meanTokens": 659.8571428571429,
+      "meanMs": 0
+    }
+  },
+  "byDifficulty": {
+    "compose-3+": {
+      "scratch": {
+        "n": 7,
+        "passes": 7,
+        "inputTokens": 1171,
+        "outputTokens": 1817,
+        "ms": 0,
+        "passRate": 1,
+        "meanTokens": 426.85714285714283,
+        "meanMs": 0
+      },
+      "slice": {
+        "n": 7,
+        "passes": 7,
+        "inputTokens": 7188,
+        "outputTokens": 1817,
+        "ms": 0,
+        "passRate": 1,
+        "meanTokens": 1286.4285714285713,
+        "meanMs": 0
+      },
+      "fallback": {
+        "n": 7,
+        "passes": 7,
+        "inputTokens": 7188,
+        "outputTokens": 1817,
+        "ms": 0,
+        "passRate": 1,
+        "meanTokens": 1286.4285714285713,
+        "meanMs": 0
+      }
+    },
+    "compose-2": {
+      "scratch": {
+        "n": 4,
+        "passes": 4,
+        "inputTokens": 673,
+        "outputTokens": 785,
+        "ms": 0,
+        "passRate": 1,
+        "meanTokens": 364.5,
+        "meanMs": 0
+      },
+      "slice": {
+        "n": 4,
+        "passes": 4,
+        "inputTokens": 2402,
+        "outputTokens": 785,
+        "ms": 0,
+        "passRate": 1,
+        "meanTokens": 796.75,
+        "meanMs": 0
+      },
+      "fallback": {
+        "n": 4,
+        "passes": 4,
+        "inputTokens": 2402,
+        "outputTokens": 785,
+        "ms": 0,
+        "passRate": 1,
+        "meanTokens": 796.75,
+        "meanMs": 0
+      }
+    },
+    "single": {
+      "scratch": {
+        "n": 10,
+        "passes": 10,
+        "inputTokens": 637,
+        "outputTokens": 547,
+        "ms": 0,
+        "passRate": 1,
+        "meanTokens": 118.4,
+        "meanMs": 0
+      },
+      "slice": {
+        "n": 10,
+        "passes": 10,
+        "inputTokens": 1118,
+        "outputTokens": 547,
+        "ms": 1,
+        "passRate": 1,
+        "meanTokens": 166.5,
+        "meanMs": 0.1
+      },
+      "fallback": {
+        "n": 10,
+        "passes": 10,
+        "inputTokens": 1118,
+        "outputTokens": 547,
+        "ms": 0,
+        "passRate": 1,
+        "meanTokens": 166.5,
+        "meanMs": 0
+      }
     }
   }
 }

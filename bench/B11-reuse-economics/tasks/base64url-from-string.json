@@ -1,0 +1,95 @@
+{
+  "id": "base64url-from-string",
+  "entry": "base64UrlFromString",
+  "difficulty": "compose-3+",
+  "atoms": [
+    "base64-js-1.5.1:index.js#fromByteArray",
+    "base64-js-1.5.1:index.js#encodeChunk",
+    "base64-js-1.5.1:index.js#tripletToBase64"
+  ],
+  "spec": "Write `export function base64UrlFromString(text: string): string` that encodes the text as UTF-8 and returns the bytes in base64url (RFC 4648 section 5: the alphabet A-Z a-z 0-9 `-` `_`) with no padding. Encode by code point: a valid surrogate pair is one code point, and a lone surrogate is encoded as U+FFFD. Do not use Buffer, TextEncoder, btoa or any other host API.",
+  "reference": "const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';\nfunction utf8(text: string): number[] {\n  const out: number[] = [];\n  for (let i = 0; i < text.length; i++) {\n    let c = text.charCodeAt(i);\n    if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length) {\n      const d = text.charCodeAt(i + 1);\n      if (d >= 0xdc00 && d <= 0xdfff) { c = 0x10000 + ((c - 0xd800) << 10) + (d - 0xdc00); i++; }\n    }\n    if (c >= 0xd800 && c <= 0xdfff) c = 0xfffd;\n    if (c < 0x80) out.push(c);\n    else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));\n    else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));\n    else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));\n  }\n  return out;\n}\nexport function base64UrlFromString(text: string): string {\n  const bytes = utf8(text);\n  let out = '';\n  for (let i = 0; i < bytes.length; i += 3) {\n    const n = (bytes[i] << 16) | ((bytes[i + 1] ?? 0) << 8) | (bytes[i + 2] ?? 0);\n    const chars = Math.min(4, bytes.length - i + 1);\n    for (let k = 0; k < chars; k++) out += ALPHABET[(n >> (18 - 6 * k)) & 63];\n  }\n  return out;\n}",
+  "slice": [
+    {
+      "id": "b64-from-byte-array",
+      "score": 0.87,
+      "ref": {
+        "file": "base64-js-1.5.1/index.js",
+        "name": "fromByteArray"
+      },
+      "sourcePkg": "base64-js-1.5.1",
+      "text": "function fromByteArray (uint8) {\n  var tmp\n  var len = uint8.length\n  var extraBytes = len % 3 // if we have 1 byte left, pad 2 bytes\n  var parts = []\n  var maxChunkLength = 16383 // must be multiple of 3\n\n  // go through the array every three bytes, we'll deal with trailing stuff later\n  for (var i = 0, len2 = len - extraBytes; i < len2; i += maxChunkLength) {\n    parts.push(encodeChunk(uint8, i, (i + maxChunkLength) > len2 ? len2 : (i + maxChunkLength)))\n  }\n\n  // pad the end with zeros, but make sure to not forget the extra bytes\n  if (extraBytes === 1) {\n    tmp = uint8[len - 1]\n    parts.push(\n      lookup[tmp >> 2] +\n      lookup[(tmp << 4) & 0x3F] +\n      '=='\n    )\n  } else if (extraBytes === 2) {\n    tmp = (uint8[len - 2] << 8) + uint8[len - 1]\n    parts.push(\n      lookup[tmp >> 10] +\n      lookup[(tmp >> 4) & 0x3F] +\n      lookup[(tmp << 2) & 0x3F] +\n      '='\n    )\n  }\n\n  return parts.join('')\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-14b759e3b65f2035",
+        "sourceFile": "base64-js-1.5.1/index.js",
+        "lineStart": 119,
+        "lineEnd": 150
+      }
+    },
+    {
+      "id": "b64-encode-chunk",
+      "score": 0.81,
+      "ref": {
+        "file": "base64-js-1.5.1/index.js",
+        "name": "encodeChunk"
+      },
+      "sourcePkg": "base64-js-1.5.1",
+      "text": "function encodeChunk (uint8, start, end) {\n  var tmp\n  var output = []\n  for (var i = start; i < end; i += 3) {\n    tmp =\n      ((uint8[i] << 16) & 0xFF0000) +\n      ((uint8[i + 1] << 8) & 0xFF00) +\n      (uint8[i + 2] & 0xFF)\n    output.push(tripletToBase64(tmp))\n  }\n  return output.join('')\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-ac4362cf6f369060",
+        "sourceFile": "base64-js-1.5.1/index.js",
+        "lineStart": 106,
+        "lineEnd": 117
+      }
+    },
+    {
+      "id": "b64-triplet",
+      "score": 0.8,
+      "ref": {
+        "file": "base64-js-1.5.1/index.js",
+        "name": "tripletToBase64"
+      },
+      "sourcePkg": "base64-js-1.5.1",
+      "text": "function tripletToBase64 (num) {\n  return lookup[num >> 18 & 0x3F] +\n    lookup[num >> 12 & 0x3F] +\n    lookup[num >> 6 & 0x3F] +\n    lookup[num & 0x3F]\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-0f638f34a1412896",
+        "sourceFile": "base64-js-1.5.1/index.js",
+        "lineStart": 99,
+        "lineEnd": 104
+      }
+    },
+    {
+      "id": "b64-to-byte-array",
+      "score": 0.66,
+      "ref": {
+        "file": "base64-js-1.5.1/index.js",
+        "name": "toByteArray"
+      },
+      "sourcePkg": "base64-js-1.5.1",
+      "text": "function toByteArray (b64) {\n  var tmp\n  var lens = getLens(b64)\n  var validLen = lens[0]\n  var placeHoldersLen = lens[1]\n\n  var arr = new Arr(_byteLength(b64, validLen, placeHoldersLen))\n\n  var curByte = 0\n\n  // if there are placeholders, only get up to the last complete 4 chars\n  var len = placeHoldersLen > 0\n    ? validLen - 4\n    : validLen\n\n  var i\n  for (i = 0; i < len; i += 4) {\n    tmp =\n      (revLookup[b64.charCodeAt(i)] << 18) |\n      (revLookup[b64.charCodeAt(i + 1)] << 12) |\n      (revLookup[b64.charCodeAt(i + 2)] << 6) |\n      revLookup[b64.charCodeAt(i + 3)]\n    arr[curByte++] = (tmp >> 16) & 0xFF\n    arr[curByte++] = (tmp >> 8) & 0xFF\n    arr[curByte++] = tmp & 0xFF\n  }\n\n  if (placeHoldersLen === 2) {\n    tmp =\n      (revLookup[b64.charCodeAt(i)] << 2) |\n      (revLookup[b64.charCodeAt(i + 1)] >> 4)\n    arr[curByte++] = tmp & 0xFF\n  }\n\n  if (placeHoldersLen === 1) {\n    tmp =\n      (revLookup[b64.charCodeAt(i)] << 10) |\n      (revLookup[b64.charCodeAt(i + 1)] << 4) |\n      (revLookup[b64.charCodeAt(i + 2)] >> 2)\n    arr[curByte++] = (tmp >> 8) & 0xFF\n    arr[curByte++] = tmp & 0xFF\n  }\n\n  return arr\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-0b4a9bc3a94b112f",
+        "sourceFile": "base64-js-1.5.1/index.js",
+        "lineStart": 53,
+        "lineEnd": 97
+      }
+    },
+    {
+      "id": "uuid-unsafe-stringify",
+      "score": 0.38,
+      "ref": {
+        "file": "uuid-11.1.1/dist/esm/stringify.js",
+        "name": "unsafeStringify"
+      },
+      "sourcePkg": "uuid-11.1.1",
+      "text": "export function unsafeStringify(arr, offset = 0) {\n    return (byteToHex[arr[offset + 0]] +\n        byteToHex[arr[offset + 1]] +\n        byteToHex[arr[offset + 2]] +\n        byteToHex[arr[offset + 3]] +\n        '-' +\n        byteToHex[arr[offset + 4]] +\n        byteToHex[arr[offset + 5]] +\n        '-' +\n        byteToHex[arr[offset + 6]] +\n        byteToHex[arr[offset + 7]] +\n        '-' +\n        byteToHex[arr[offset + 8]] +\n        byteToHex[arr[offset + 9]] +\n        '-' +\n        byteToHex[arr[offset + 10]] +\n        byteToHex[arr[offset + 11]] +\n        byteToHex[arr[offset + 12]] +\n        byteToHex[arr[offset + 13]] +\n        byteToHex[arr[offset + 14]] +\n        byteToHex[arr[offset + 15]]).toLowerCase();\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-5c5e56dc309917ff",
+        "sourceFile": "uuid-11.1.1/dist/esm/stringify.js",
+        "lineStart": 6,
+        "lineEnd": 27
+      }
+    }
+  ],
+  "heldOut": "const cases = [\n  ['', ''], ['f', 'Zg'], ['fo', 'Zm8'], ['foo', 'Zm9v'], ['foobar', 'Zm9vYmFy'],\n  ['\\u00e9', 'w6k'], ['\\u20ac', '4oKs'], ['\\ud83d\\ude00', '8J-YgA'], ['??>', 'Pz8-'], ['??', 'Pz8'],\n  ['\\ud800', '77-9'], ['a\\udc00b', 'Ye-_vWI'], ['\\u007f\\u0080\\u07ff\\u0800', 'f8KA37_goIA'],\n];\nfor (const [text, want] of cases) { const got = fn(text); if (got !== want) throw new Error('base64UrlFromString(' + JSON.stringify(text) + ') = ' + got + ', want ' + want); }"
+}

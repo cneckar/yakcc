@@ -1,5 +1,6 @@
 {
   "id": "range",
+  "difficulty": "single",
   "entry": "range",
   "spec": "Write `export function range(start: number, end: number, step: number = 1): number[]` returning the numbers from start (inclusive) toward end (exclusive) by step. Throw a RangeError when step is 0.",
   "reference": "export function range(start: number, end: number, step: number = 1): number[] {\n  if (step === 0) throw new RangeError('step must not be 0');\n  const out: number[] = [];\n  if (step > 0) { for (let x = start; x < end; x += step) out.push(x); }\n  else { for (let x = start; x > end; x += step) out.push(x); }\n  return out;\n}",

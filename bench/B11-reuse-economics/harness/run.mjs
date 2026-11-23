@@ -7,7 +7,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { loadTasks, runArm, summarize } from "./lib.mjs";
+import { clientView, loadTasks, runArm, summarize, summarizeBy } from "./lib.mjs";
 import { offlineClient } from "./offline-client.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -20,7 +20,10 @@ const { decideFallback } = await import(
 );
 
 const STRONG = 0.8; // strong-match threshold for the fallback arm
-const BUDGET = 400; // token budget for the retrieved slice
+// Token budget for the retrieved slice. The corpus tasks cite real source spans (a parser
+// is ~270 estimated tokens), so 400 could not hold two atoms; 1200 holds the needed atoms
+// of every corpus task under the fill. The ten seed tasks' slices are far below either.
+const BUDGET = 1200;
 const SHARE = 0.5; // max share per source package in pass 1
 
 export function anthropicClient({ model, apiKey, maxTokens = 2000 }) {
@@ -84,7 +87,13 @@ export async function runAll({ tasks, client }) {
     // reuse decision here is recorded and the arm falls back to synthesis with the slice.
     rows.push(await runArm({ arm: "fallback", task, client, slice }));
   }
-  return { rows, decisions, summary: summarize(rows) };
+  const difficulty = Object.fromEntries(tasks.map((t) => [t.id, t.difficulty ?? "single"]));
+  return {
+    rows,
+    decisions,
+    summary: summarize(rows),
+    byDifficulty: summarizeBy(rows, (r) => difficulty[r.task]),
+  };
 }
 
 async function main() {
@@ -97,7 +106,8 @@ async function main() {
   const tasks = loadTasks(join(here, "..", "tasks"));
   let client;
   if ((args.client ?? "offline") === "offline") {
-    client = offlineClient(Object.fromEntries(tasks.map((t) => [t.id, t])));
+    // The offline client gets each task's client view: never the held-out check.
+    client = offlineClient(Object.fromEntries(tasks.map((t) => [t.id, clientView(t)])));
   } else {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey)

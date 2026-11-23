@@ -1,0 +1,95 @@
+{
+  "id": "build-order",
+  "entry": "buildOrder",
+  "difficulty": "compose-3+",
+  "atoms": [
+    "toposort-2.0.2:index.js#uniqueNodes",
+    "toposort-2.0.2:index.js#makeOutgoingEdges",
+    "toposort-2.0.2:index.js#toposort"
+  ],
+  "spec": "Write `export function buildOrder(deps: Readonly<Record<string, readonly string[]>>): string[]` where `deps` maps each item to the items it depends on. Return every item, including items that appear only as a dependency, ordered so that each item comes after all of its dependencies. When several items are ready at once, take the one that is smallest by string comparison (`<`) first. Throw an Error whose message contains the word `cycle` if the dependencies contain a cycle, including an item that depends on itself.",
+  "reference": "export function buildOrder(deps: Readonly<Record<string, readonly string[]>>): string[] {\n  const nodes = new Set<string>();\n  const waiting = new Map<string, number>();\n  const dependents = new Map<string, string[]>();\n  for (const [item, ds] of Object.entries(deps)) {\n    nodes.add(item);\n    for (const d of ds) nodes.add(d);\n  }\n  for (const n of nodes) { waiting.set(n, 0); dependents.set(n, []); }\n  for (const [item, ds] of Object.entries(deps)) {\n    for (const d of new Set(ds)) {\n      waiting.set(item, (waiting.get(item) ?? 0) + 1);\n      dependents.get(d)!.push(item);\n    }\n  }\n  const ready = [...nodes].filter((n) => waiting.get(n) === 0);\n  const order: string[] = [];\n  while (ready.length > 0) {\n    ready.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));\n    const next = ready.shift()!;\n    order.push(next);\n    for (const t of dependents.get(next)!) {\n      const left = waiting.get(t)! - 1;\n      waiting.set(t, left);\n      if (left === 0) ready.push(t);\n    }\n  }\n  if (order.length !== nodes.size) throw new Error('dependency cycle');\n  return order;\n}",
+  "slice": [
+    {
+      "id": "topo-toposort",
+      "score": 0.89,
+      "ref": {
+        "file": "toposort-2.0.2/index.js",
+        "name": "toposort"
+      },
+      "sourcePkg": "toposort-2.0.2",
+      "text": "function toposort(nodes, edges) {\n  var cursor = nodes.length\n    , sorted = new Array(cursor)\n    , visited = {}\n    , i = cursor\n    // Better data structures make algorithm much faster.\n    , outgoingEdges = makeOutgoingEdges(edges)\n    , nodesHash = makeNodesHash(nodes)\n\n  // check for unknown nodes\n  edges.forEach(function(edge) {\n    if (!nodesHash.has(edge[0]) || !nodesHash.has(edge[1])) {\n      throw new Error('Unknown node. There is an unknown node in the supplied edges.')\n    }\n  })\n\n  while (i--) {\n    if (!visited[i]) visit(nodes[i], i, new Set())\n  }\n\n  return sorted\n\n  function visit(node, i, predecessors) {\n    if(predecessors.has(node)) {\n      var nodeRep\n      try {\n        nodeRep = \", node was:\" + JSON.stringify(node)\n      } catch(e) {\n        nodeRep = \"\"\n      }\n      throw new Error('Cyclic dependency' + nodeRep)\n    }\n\n    if (!nodesHash.has(node)) {\n      throw new Error('Found unknown node. Make sure to provided all involved nodes. Unknown node: '+JSON.stringify(node))\n    }\n\n    if (visited[i]) return;\n    visited[i] = true\n\n    var outgoing = outgoingEdges.get(node) || new Set()\n    outgoing = Array.from(outgoing)\n\n    if (i = outgoing.length) {\n      predecessors.add(node)\n      do {\n        var child = outgoing[--i]\n        visit(child, nodesHash.get(child), predecessors)\n      } while (i)\n      predecessors.delete(node)\n    }\n\n    sorted[--cursor] = node\n  }\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-6eced374425189c1",
+        "sourceFile": "toposort-2.0.2/index.js",
+        "lineStart": 37,
+        "lineEnd": 91
+      }
+    },
+    {
+      "id": "topo-unique-nodes",
+      "score": 0.84,
+      "ref": {
+        "file": "toposort-2.0.2/index.js",
+        "name": "uniqueNodes"
+      },
+      "sourcePkg": "toposort-2.0.2",
+      "text": "function uniqueNodes(arr){\n  var res = new Set()\n  for (var i = 0, len = arr.length; i < len; i++) {\n    var edge = arr[i]\n    res.add(edge[0])\n    res.add(edge[1])\n  }\n  return Array.from(res)\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-c9f2d0bc943a5988",
+        "sourceFile": "toposort-2.0.2/index.js",
+        "lineStart": 93,
+        "lineEnd": 101
+      }
+    },
+    {
+      "id": "topo-outgoing",
+      "score": 0.83,
+      "ref": {
+        "file": "toposort-2.0.2/index.js",
+        "name": "makeOutgoingEdges"
+      },
+      "sourcePkg": "toposort-2.0.2",
+      "text": "function makeOutgoingEdges(arr){\n  var edges = new Map()\n  for (var i = 0, len = arr.length; i < len; i++) {\n    var edge = arr[i]\n    if (!edges.has(edge[0])) edges.set(edge[0], new Set())\n    if (!edges.has(edge[1])) edges.set(edge[1], new Set())\n    edges.get(edge[0]).add(edge[1])\n  }\n  return edges\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-869eb9409752b332",
+        "sourceFile": "toposort-2.0.2/index.js",
+        "lineStart": 103,
+        "lineEnd": 112
+      }
+    },
+    {
+      "id": "topo-nodes-hash",
+      "score": 0.78,
+      "ref": {
+        "file": "toposort-2.0.2/index.js",
+        "name": "makeNodesHash"
+      },
+      "sourcePkg": "toposort-2.0.2",
+      "text": "function makeNodesHash(arr){\n  var res = new Map()\n  for (var i = 0, len = arr.length; i < len; i++) {\n    res.set(arr[i], i)\n  }\n  return res\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-a07d79f92b5673a5",
+        "sourceFile": "toposort-2.0.2/index.js",
+        "lineStart": 114,
+        "lineEnd": 120
+      }
+    },
+    {
+      "id": "semver-lru",
+      "score": 0.3,
+      "ref": {
+        "file": "semver-7.8.0/internal/lrucache.js",
+        "name": "LRUCache"
+      },
+      "sourcePkg": "semver-7.8.0",
+      "text": "class LRUCache {\n  constructor () {\n    this.max = 1000\n    this.map = new Map()\n  }\n\n  get (key) {\n    const value = this.map.get(key)\n    if (value === undefined) {\n      return undefined\n    } else {\n      // Remove the key from the map and add it to the end\n      this.map.delete(key)\n      this.map.set(key, value)\n      return value\n    }\n  }\n\n  delete (key) {\n    return this.map.delete(key)\n  }\n\n  set (key, value) {\n    const deleted = this.delete(key)\n\n    if (!deleted && value !== undefined) {\n      // If cache is full, delete the least recently used item\n      if (this.map.size >= this.max) {\n        const firstKey = this.map.keys().next().value\n        this.delete(firstKey)\n      }\n\n      this.map.set(key, value)\n    }\n\n    return this\n  }\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-a86d2e0ef6e80560",
+        "sourceFile": "semver-7.8.0/internal/lrucache.js",
+        "lineStart": 3,
+        "lineEnd": 40
+      }
+    }
+  ],
+  "heldOut": "const eq = (got, want, label) => { if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error(label + ' = ' + JSON.stringify(got)); };\neq(fn({ b: ['a'], c: ['a', 'b'], a: [] }), ['a', 'b', 'c'], 'chain');\neq(fn({ app: ['lib', 'util'], lib: ['util'] }), ['util', 'lib', 'app'], 'implicit node');\neq(fn({ z: [], y: [], x: [] }), ['x', 'y', 'z'], 'independent');\neq(fn({ d: ['c'], b: ['a'] }), ['a', 'b', 'c', 'd'], 'ready order');\neq(fn({ b: ['a', 'a'] }), ['a', 'b'], 'duplicate dependency');\neq(fn({}), [], 'empty');\neq(fn({ B: [], a: [] }), ['B', 'a'], 'string order');\nfor (const bad of [{ a: ['b'], b: ['a'] }, { a: ['a'] }, { a: ['b'], b: ['c'], c: ['a'], d: [] }]) {\n  let threw = false; try { fn(bad); } catch (e) { threw = /cycle/i.test(String(e && e.message)); }\n  if (!threw) throw new Error('must throw a cycle error for ' + JSON.stringify(bad));\n}"
+}

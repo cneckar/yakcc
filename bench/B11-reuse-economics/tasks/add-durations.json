@@ -1,0 +1,78 @@
+{
+  "id": "add-durations",
+  "entry": "addDurations",
+  "difficulty": "compose-2",
+  "atoms": [
+    "ms-2.1.3:index.js#parse",
+    "ms-2.1.3:index.js#fmtShort"
+  ],
+  "spec": "Write `export function addDurations(a: string, b: string): string` that parses two duration strings in the format of the `ms` package and returns their sum in `ms`'s short format. A duration is a number (optionally negative, optionally fractional, such as `-1.5` or `.5`), optional spaces, then an optional unit, case-insensitive: ms, msec(s), millisecond(s); s, sec(s), second(s); m, min(s), minute(s); h, hr(s), hour(s); d, day(s); w, week(s); y, yr(s), year(s). No unit means milliseconds. A year is 365.25 days and a week is 7 days. The short format takes the absolute sum and uses the first of d, h, m, s whose size it reaches, writing `Math.round(sum / size)` followed by the unit letter; below one second it writes the sum followed by `ms`. Throw a RangeError if either input does not parse.",
+  "reference": "const S = 1000, M = S * 60, H = M * 60, D = H * 24, W = D * 7, Y = D * 365.25;\nconst UNITS: Record<string, number> = {\n  years: Y, year: Y, yrs: Y, yr: Y, y: Y,\n  weeks: W, week: W, w: W,\n  days: D, day: D, d: D,\n  hours: H, hour: H, hrs: H, hr: H, h: H,\n  minutes: M, minute: M, mins: M, min: M, m: M,\n  seconds: S, second: S, secs: S, sec: S, s: S,\n  milliseconds: 1, millisecond: 1, msecs: 1, msec: 1, ms: 1,\n};\nfunction parseDuration(str: string): number {\n  const match = /^(-?(?:\\d+)?\\.?\\d+) *([a-z]+)?$/i.exec(str);\n  if (!match) throw new RangeError('not a duration: ' + str);\n  const unit = (match[2] ?? 'ms').toLowerCase();\n  const size = UNITS[unit];\n  if (size === undefined) throw new RangeError('unknown unit: ' + unit);\n  return parseFloat(match[1]) * size;\n}\nfunction formatShort(ms: number): string {\n  const abs = Math.abs(ms);\n  if (abs >= D) return Math.round(ms / D) + 'd';\n  if (abs >= H) return Math.round(ms / H) + 'h';\n  if (abs >= M) return Math.round(ms / M) + 'm';\n  if (abs >= S) return Math.round(ms / S) + 's';\n  return ms + 'ms';\n}\nexport function addDurations(a: string, b: string): string {\n  return formatShort(parseDuration(a) + parseDuration(b));\n}",
+  "slice": [
+    {
+      "id": "ms-parse",
+      "score": 0.86,
+      "ref": {
+        "file": "ms-2.1.3/index.js",
+        "name": "parse"
+      },
+      "sourcePkg": "ms-2.1.3",
+      "text": "function parse(str) {\n  str = String(str);\n  if (str.length > 100) {\n    return;\n  }\n  var match = /^(-?(?:\\d+)?\\.?\\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i.exec(\n    str\n  );\n  if (!match) {\n    return;\n  }\n  var n = parseFloat(match[1]);\n  var type = (match[2] || 'ms').toLowerCase();\n  switch (type) {\n    case 'years':\n    case 'year':\n    case 'yrs':\n    case 'yr':\n    case 'y':\n      return n * y;\n    case 'weeks':\n    case 'week':\n    case 'w':\n      return n * w;\n    case 'days':\n    case 'day':\n    case 'd':\n      return n * d;\n    case 'hours':\n    case 'hour':\n    case 'hrs':\n    case 'hr':\n    case 'h':\n      return n * h;\n    case 'minutes':\n    case 'minute':\n    case 'mins':\n    case 'min':\n    case 'm':\n      return n * m;\n    case 'seconds':\n    case 'second':\n    case 'secs':\n    case 'sec':\n    case 's':\n      return n * s;\n    case 'milliseconds':\n    case 'millisecond':\n    case 'msecs':\n    case 'msec':\n    case 'ms':\n      return n;\n    default:\n      return undefined;\n  }\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-a0196fe028ef79fe",
+        "sourceFile": "ms-2.1.3/index.js",
+        "lineStart": 48,
+        "lineEnd": 103
+      }
+    },
+    {
+      "id": "ms-fmt-short",
+      "score": 0.84,
+      "ref": {
+        "file": "ms-2.1.3/index.js",
+        "name": "fmtShort"
+      },
+      "sourcePkg": "ms-2.1.3",
+      "text": "function fmtShort(ms) {\n  var msAbs = Math.abs(ms);\n  if (msAbs >= d) {\n    return Math.round(ms / d) + 'd';\n  }\n  if (msAbs >= h) {\n    return Math.round(ms / h) + 'h';\n  }\n  if (msAbs >= m) {\n    return Math.round(ms / m) + 'm';\n  }\n  if (msAbs >= s) {\n    return Math.round(ms / s) + 's';\n  }\n  return ms + 'ms';\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-a9912badad69f236",
+        "sourceFile": "ms-2.1.3/index.js",
+        "lineStart": 113,
+        "lineEnd": 128
+      }
+    },
+    {
+      "id": "ms-fmt-long",
+      "score": 0.62,
+      "ref": {
+        "file": "ms-2.1.3/index.js",
+        "name": "fmtLong"
+      },
+      "sourcePkg": "ms-2.1.3",
+      "text": "function fmtLong(ms) {\n  var msAbs = Math.abs(ms);\n  if (msAbs >= d) {\n    return plural(ms, msAbs, d, 'day');\n  }\n  if (msAbs >= h) {\n    return plural(ms, msAbs, h, 'hour');\n  }\n  if (msAbs >= m) {\n    return plural(ms, msAbs, m, 'minute');\n  }\n  if (msAbs >= s) {\n    return plural(ms, msAbs, s, 'second');\n  }\n  return ms + ' ms';\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-6f065e6e36651474",
+        "sourceFile": "ms-2.1.3/index.js",
+        "lineStart": 138,
+        "lineEnd": 153
+      }
+    },
+    {
+      "id": "date-fns-diff-ms",
+      "score": 0.41,
+      "ref": {
+        "file": "date-fns-4.1.0/differenceInMilliseconds.cjs",
+        "name": "differenceInMilliseconds"
+      },
+      "sourcePkg": "date-fns-4.1.0",
+      "text": "function differenceInMilliseconds(laterDate, earlierDate) {\n  return +(0, _index.toDate)(laterDate) - +(0, _index.toDate)(earlierDate);\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-9298df1f494b9580",
+        "sourceFile": "date-fns-4.1.0/differenceInMilliseconds.cjs",
+        "lineStart": 27,
+        "lineEnd": 29
+      }
+    }
+  ],
+  "heldOut": "const cases = [\n  ['1h', '30m', '2h'], ['1d', '-1d', '0ms'], ['2 hours', '15 mins', '2h'], ['500', '500ms', '1s'],\n  ['1.5s', '0', '2s'], ['1w', '1d', '8d'], ['-3m', '1m', '-2m'], ['10 Seconds', '20s', '30s'],\n  ['.5s', '250ms', '750ms'], ['1y', '0d', '365d'], ['59s', '1s', '1m'], ['1 HR', '1min', '1h'],\n];\nfor (const [a, b, want] of cases) { const got = fn(a, b); if (got !== want) throw new Error('addDurations(' + a + ', ' + b + ') = ' + got + ', want ' + want); }\nfor (const bad of [['abc', '1s'], ['1s', '5 fortnights'], ['', '1s'], ['1s', '1 s s']]) {\n  let threw = false; try { fn(bad[0], bad[1]); } catch (e) { threw = e instanceof RangeError; }\n  if (!threw) throw new Error('must throw RangeError for ' + JSON.stringify(bad));\n}"
+}

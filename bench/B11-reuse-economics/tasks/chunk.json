@@ -1,5 +1,6 @@
 {
   "id": "chunk",
+  "difficulty": "single",
   "spec": "Write `export function chunk<T>(items: readonly T[], size: number): T[][]` that splits items into consecutive groups of at most `size`. Throw a RangeError if size is not a positive integer.",
   "reference": "export function chunk<T>(items: readonly T[], size: number): T[][] {\n  if (!Number.isInteger(size) || size < 1) throw new RangeError('size must be a positive integer');\n  const out: T[][] = [];\n  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));\n  return out;\n}",
   "slice": [

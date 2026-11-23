@@ -1,5 +1,6 @@
 {
   "id": "parse-int-strict",
+  "difficulty": "single",
   "entry": "parseIntStrict",
   "spec": "Write `export function parseIntStrict(s: string): number` that returns the integer the whole string denotes (optional sign, digits only), and throws a SyntaxError for anything else, including surrounding spaces or decimals.",
   "reference": "export function parseIntStrict(s: string): number {\n  if (!/^[+-]?\\d+$/.test(s)) throw new SyntaxError('not an integer: ' + s);\n  return Number(s);\n}",

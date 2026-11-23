@@ -1,0 +1,78 @@
+{
+  "id": "uuid-version",
+  "entry": "uuidVersion",
+  "difficulty": "compose-2",
+  "atoms": [
+    "uuid-11.1.1:dist/esm/validate.js#validate",
+    "uuid-11.1.1:dist/esm/version.js#version"
+  ],
+  "spec": "Write `export function uuidVersion(value: string): number` that returns the version of a UUID string. A valid UUID is 8-4-4-4-12 hexadecimal digits separated by hyphens, in any letter case, whose version digit (the first digit of the third group) is 1 to 8 and whose variant digit (the first digit of the fourth group) is 8, 9, a or b; the nil UUID (all zeros) and the max UUID (all f) are also valid. The version is the version digit as a number, which is 0 for the nil UUID and 15 for the max UUID. Throw a TypeError for anything else, including surrounding spaces or braces.",
+  "reference": "const RE = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/i;\nexport function uuidVersion(value: string): number {\n  if (typeof value !== 'string' || !RE.test(value)) throw new TypeError('invalid UUID');\n  return parseInt(value.slice(14, 15), 16);\n}",
+  "slice": [
+    {
+      "id": "uuid-version-fn",
+      "score": 0.9,
+      "ref": {
+        "file": "uuid-11.1.1/dist/esm/version.js",
+        "name": "version"
+      },
+      "sourcePkg": "uuid-11.1.1",
+      "text": "function version(uuid) {\n    if (!validate(uuid)) {\n        throw TypeError('Invalid UUID');\n    }\n    return parseInt(uuid.slice(14, 15), 16);\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-53a7f35bf6f18119",
+        "sourceFile": "uuid-11.1.1/dist/esm/version.js",
+        "lineStart": 2,
+        "lineEnd": 7
+      }
+    },
+    {
+      "id": "uuid-validate",
+      "score": 0.88,
+      "ref": {
+        "file": "uuid-11.1.1/dist/esm/validate.js",
+        "name": "validate"
+      },
+      "sourcePkg": "uuid-11.1.1",
+      "text": "function validate(uuid) {\n    return typeof uuid === 'string' && REGEX.test(uuid);\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-36c8a48f8810eb96",
+        "sourceFile": "uuid-11.1.1/dist/esm/validate.js",
+        "lineStart": 2,
+        "lineEnd": 4
+      }
+    },
+    {
+      "id": "uuid-parse",
+      "score": 0.7,
+      "ref": {
+        "file": "uuid-11.1.1/dist/esm/parse.js",
+        "name": "parse"
+      },
+      "sourcePkg": "uuid-11.1.1",
+      "text": "function parse(uuid) {\n    if (!validate(uuid)) {\n        throw TypeError('Invalid UUID');\n    }\n    let v;\n    return Uint8Array.of((v = parseInt(uuid.slice(0, 8), 16)) >>> 24, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff, (v = parseInt(uuid.slice(9, 13), 16)) >>> 8, v & 0xff, (v = parseInt(uuid.slice(14, 18), 16)) >>> 8, v & 0xff, (v = parseInt(uuid.slice(19, 23), 16)) >>> 8, v & 0xff, ((v = parseInt(uuid.slice(24, 36), 16)) / 0x10000000000) & 0xff, (v / 0x100000000) & 0xff, (v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff);\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-0bbde2d3c2ddafbd",
+        "sourceFile": "uuid-11.1.1/dist/esm/parse.js",
+        "lineStart": 2,
+        "lineEnd": 8
+      }
+    },
+    {
+      "id": "semver-compare-identifiers",
+      "score": 0.32,
+      "ref": {
+        "file": "semver-7.8.0/internal/identifiers.js",
+        "name": "compareIdentifiers"
+      },
+      "sourcePkg": "semver-7.8.0",
+      "text": "const compareIdentifiers = (a, b) => {\n  if (typeof a === 'number' && typeof b === 'number') {\n    return a === b ? 0 : a < b ? -1 : 1\n  }\n\n  const anum = numeric.test(a)\n  const bnum = numeric.test(b)\n\n  if (anum && bnum) {\n    a = +a\n    b = +b\n  }\n\n  return a === b ? 0\n    : (anum && !bnum) ? -1\n    : (bnum && !anum) ? 1\n    : a < b ? -1\n    : 1\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-f5225623bb7c25fb",
+        "sourceFile": "semver-7.8.0/internal/identifiers.js",
+        "lineStart": 4,
+        "lineEnd": 22
+      }
+    }
+  ],
+  "heldOut": "const cases = [\n  ['6ba7b810-9dad-11d1-80b4-00c04fd430c8', 1], ['a3bb189e-8bf9-3888-9912-ace4e6543002', 3],\n  ['109156be-c4fb-41ea-b1b4-efe1671c5836', 4], ['A3BB189E-8BF9-5888-9912-ACE4E6543002', 5],\n  ['1ef21d2f-1207-6660-8c4f-419efbd44d48', 6], ['017f22e2-79b0-7cc3-98c4-dc0c0c07398f', 7],\n  ['320c3d4d-cc00-875b-8ec9-32d5f69181c0', 8], ['00000000-0000-0000-0000-000000000000', 0],\n  ['FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF', 15],\n];\nfor (const [u, want] of cases) { const got = fn(u); if (got !== want) throw new Error('uuidVersion(' + u + ') = ' + got + ', want ' + want); }\nfor (const bad of ['', '109156be-c4fb-01ea-b1b4-efe1671c5836', '109156be-c4fb-91ea-b1b4-efe1671c5836', '109156be-c4fb-41ea-c1b4-efe1671c5836', '109156bec4fb41eab1b4efe1671c5836', ' 109156be-c4fb-41ea-b1b4-efe1671c5836', '{109156be-c4fb-41ea-b1b4-efe1671c5836}', '109156be-c4fb-41ea-b1b4-efe1671c583g', '00000000-0000-0000-0000-00000000000f']) {\n  let threw = false; try { fn(bad); } catch (e) { threw = e instanceof TypeError; }\n  if (!threw) throw new Error('must throw TypeError for ' + JSON.stringify(bad));\n}"
+}
