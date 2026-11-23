@@ -34,12 +34,38 @@ function inlineLiteralCaptures(nodes: DucNode[]): DucNode[] {
   for (const n of nodes) if (n.kind === "literal-source") literal.set(n.outputs[0] as ValueId, n);
   return nodes.map((node) => {
     if (node.closure === undefined) return node;
-    const drop = node.inputs.flatMap((v, i) => (literal.has(v) ? [i] : []));
-    if (drop.length === 0) return node;
     const captures = node.inputs.length;
-    const inner = node.closure.nodes.map((n): DucNode => {
+    // A capture its graph never reads is no capture.
+    const read = new Set<ValueId>([
+      ...node.closure.obs,
+      ...(node.closure.branches ?? []).map((b) => b.cond),
+    ]);
+    for (const n of node.closure.nodes) {
+      for (const v of n.inputs) read.add(v);
+      if (n.loop !== undefined)
+        for (const v of [...n.loop.next, ...(n.loop.cond !== undefined ? [n.loop.cond] : [])])
+          read.add(v);
+    }
+    const unread = new Set(
+      node.closure.nodes
+        .filter(
+          (n) =>
+            n.kind === "param-source" &&
+            paramIndex(n.label) < captures &&
+            !read.has(n.outputs[0] as ValueId),
+        )
+        .map((n) => paramIndex(n.label)),
+    );
+    const drop = node.inputs.flatMap((v, i) => (literal.has(v) || unread.has(i) ? [i] : []));
+    if (drop.length === 0) return node;
+    const inner = node.closure.nodes.flatMap((n): DucNode[] => {
+      const one = rewrite(n);
+      return one === undefined ? [] : [one];
+    });
+    function rewrite(n: DucNode): DucNode | undefined {
       if (n.kind !== "param-source") return n;
       const at = paramIndex(n.label);
+      if (at < captures && drop.includes(at) && unread.has(at)) return undefined;
       if (at < captures && drop.includes(at)) {
         const l = literal.get(node.inputs[at] as ValueId) as DucNode;
         return {
@@ -53,7 +79,7 @@ function inlineLiteralCaptures(nodes: DucNode[]): DucNode[] {
       }
       const shift = drop.filter((d) => d < at).length;
       return shift === 0 ? n : { ...n, label: `${at - shift}${isRestParam(n.label) ? "..." : ""}` };
-    });
+    }
     return {
       ...node,
       inputs: node.inputs.filter((_, i) => !drop.includes(i)),

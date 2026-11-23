@@ -202,4 +202,11 @@ describe("captures that change (#1276)", () => {
     const g = liftAtom(src);
     expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
   });
+
+  it("a capture the closure never reads is no capture", () => {
+    const id = (src: string): string => graphIdentity(liftAtom(src));
+    expect(id("export function f(p: any) { const g = () => { if (p) { } }; return g; }")).toBe(
+      id("export function f(p: any) { const g = () => {}; return g; }"),
+    );
+  });
 });

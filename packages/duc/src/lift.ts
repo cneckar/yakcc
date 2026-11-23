@@ -3136,6 +3136,16 @@ function declaredWithin(id: Node, fn: Node): boolean {
   return false;
 }
 
+/** Whether a scope strictly inside `top` (not `top` itself) declares the name `id` reads. */
+function declaredBelow(id: Node, top: Node): boolean {
+  const name = id.getText();
+  for (let p: Node | undefined = id.getParent(); p !== undefined; p = p.getParent()) {
+    if (p.compilerNode === top.compilerNode) return false;
+    if (scopeNames(p).has(name)) return true;
+  }
+  return false;
+}
+
 const scopeNamesCache = new WeakMap<object, Set<string>>();
 const NO_NAMES: Set<string> = new Set();
 
@@ -4023,9 +4033,12 @@ function jumpsSupported(loop: Node): boolean {
               ? st.getDeclarations().flatMap((d) => patternNames(d.getNameNode()))
               : [],
           );
+        // A read outside the block of a name some scope inside the body declares (a sibling
+        // block's own declaration) is not the name moved into the block.
         const outside = body
           .getDescendantsOfKind(SyntaxKind.Identifier)
-          .filter((id) => !id.getAncestors().some((a) => a.compilerNode === p?.compilerNode));
+          .filter((id) => !id.getAncestors().some((a) => a.compilerNode === p?.compilerNode))
+          .filter((id) => isValueRead(id) && !declaredBelow(id, body));
         if (lexical.some((n) => outside.some((id) => id.getText() === n))) return false;
       }
     }

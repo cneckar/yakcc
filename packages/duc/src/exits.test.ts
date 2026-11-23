@@ -466,4 +466,14 @@ describe("do loops (#1276)", () => {
       expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
     });
   }
+
+  describe("a block with a jump, and names elsewhere in the body (#1276)", () => {
+    it("a sibling block's own declaration, or a property name, does not keep the loop opaque", () => {
+      const g = liftAtom(
+        "export function f(xs: any[], o: any) { let n = 0; for (const x of xs) { if (x > 1) { const err = x * 2; if (err > 10) continue; n = n + err; } { const err = o.info; n = n + err; } } return n; }",
+      );
+      expect(g.nodes.some((n) => (n.label ?? "").includes("#"))).toBe(false);
+      expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+    });
+  });
 });
