@@ -275,6 +275,9 @@ export type {
 // ---------------------------------------------------------------------------
 
 export { slice } from "./universalize/slicer.js";
+// A package shaved module by module: each file's slice plan, its entries in source order (#1290).
+export { collectForestSlicePlans, shavePackage } from "./universalize/module-graph.js";
+export type { ModuleForest } from "./universalize/module-graph.js";
 export type {
   SlicePlan,
   SlicePlanEntry,

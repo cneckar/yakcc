@@ -30,6 +30,7 @@ import {
   isWellFormed,
   nondeterministicObservations,
   parseType,
+  platformModule,
   primitiveReport,
   printLineForm,
   unpackGraph,
@@ -112,12 +113,60 @@ export interface ImplementationVerdict {
 }
 
 export interface SubmissionVerdict {
-  /** True when every implementation in the batch was admitted (reached at least `claimed`). */
+  /**
+   * True when every implementation in the batch was admitted (reached at least `claimed`), and no
+   * module's evidence failed.
+   */
   readonly accepted: boolean;
   readonly implementations: readonly ImplementationVerdict[];
+  /** One per module that has evidence of its own. */
+  readonly modules: readonly ModuleVerdict[];
+}
+
+/** One statement of a module, in the module's order (#1290). */
+export interface ModuleStatement {
+  readonly specHash: string;
+  readonly identity: string;
+  /**
+   * "function": a function the module defines under `declares[0]` (none when anonymous).
+   * "statement": module statements whose graph observes `declares`, in the graph's order.
+   */
+  readonly kind: "function" | "statement";
+  readonly declares: readonly string[];
+}
+
+/**
+ * A module as the ordered list of its statements (#1290): outside identity, like links. A free
+ * name a statement reads is the module's when a statement of the module declares it; `exports` and
+ * `module` are the module's own objects; and `require` of a specifier in `requires` is the exports
+ * of that module of the submission.
+ */
+export interface ModuleRecord {
+  readonly id: string;
+  readonly statements: readonly ModuleStatement[];
+  /** A relative `require` specifier the statements use, to the id of the module it names. */
+  readonly requires?: Readonly<Record<string, string>>;
+  /**
+   * Evidence for the module as a whole: each vector calls an exported member (`module.exports`
+   * itself when `member` is absent) once the module's statements have run.
+   */
+  readonly evidence?: readonly (ConformanceVector & { readonly member?: string })[];
+}
+
+/** The verdict on a module's own evidence. */
+export interface ModuleVerdict {
+  readonly id: string;
+  /** True when every vector of the module's evidence gives its output. */
+  readonly conforming: boolean;
+  /** The first vector that does not. */
+  readonly reason?: string;
+  /** Why the module could not run here (its evidence is then unchecked, not wrong). */
+  readonly unchecked?: string;
 }
 
 export interface ReceiverOptions {
+  /** The modules the batch's implementations are statements of (#1290). */
+  readonly modules?: readonly ModuleRecord[];
   /** The base sets the receiver knows, by target (default: ECMAScript and Node). */
   readonly baseSets?: readonly BaseSet[];
   /** The cap on a structure's decompressed size, in bytes (default 4 MiB). */
@@ -164,6 +213,48 @@ function linksOf(g: DucGraph, into = new Map<string, string>()): Map<string, str
     }
   }
   return into;
+}
+
+/**
+ * The specifiers a graph passes to `require`, closures included: a literal string, or null for one
+ * that is not a literal.
+ */
+function requireSpecifiers(g: DucGraph, into: (string | null)[] = []): (string | null)[] {
+  const requireValues = new Set<string>();
+  const literal = new Map<string, string>();
+  for (const n of g.nodes) {
+    if (n.kind === "diamond-source" && n.diamond?.symbol === "require")
+      requireValues.add(n.outputs[0] as string);
+    if (n.kind === "literal-source") {
+      try {
+        const v = JSON.parse(n.label ?? "") as unknown;
+        if (typeof v === "string") literal.set(n.outputs[0] as string, v);
+      } catch {
+        // not a string literal
+      }
+    }
+  }
+  for (const n of g.nodes) {
+    if (n.closure !== undefined) requireSpecifiers(n.closure, into);
+    if (n.kind === "op" && n.label === "CallExpression" && requireValues.has(n.inputs[0] as string))
+      into.push(literal.get(n.inputs[1] as string) ?? null);
+  }
+  return into;
+}
+
+/**
+ * Names a module provides its statements (#1290): what its statements declare, its `exports` and
+ * `module`, and `require` when every specifier the graph requires is a module of the submission or
+ * one the target's platform provides.
+ */
+function moduleProvides(record: ModuleRecord, graph: DucGraph, base: BaseSet): Set<string> {
+  const names = new Set<string>(["exports", "module"]);
+  for (const st of record.statements) for (const d of st.declares) names.add(d);
+  const specs = requireSpecifiers(graph);
+  const resolvable = (x: string | null): boolean =>
+    x !== null && (record.requires?.[x] !== undefined || platformModule(base, x) !== undefined);
+  if (specs.length > 0 && specs.every(resolvable)) names.add("require");
+  return names;
 }
 
 function admits(effects: readonly string[], capability: string): boolean {
@@ -246,6 +337,25 @@ function checkCapabilitiesAndTypes(
       }
     }
   }
+  // A platform module carries its labels: what it grants, and whether it is nondeterministic.
+  let moduleNondeterministic: string | undefined;
+  for (const spec of requireSpecifiers(graph)) {
+    const labels = spec !== null ? platformModule(base, spec) : undefined;
+    if (labels === undefined) continue;
+    if (labels.capability !== undefined && !admits(effects, labels.capability)) {
+      throw new Refusal(
+        "capabilities",
+        `require("${spec}") grants "${labels.capability}", which the contract's effects do not declare`,
+      );
+    }
+    if (labels.nondeterministic) moduleNondeterministic ??= `require("${spec}")`;
+  }
+  if (moduleNondeterministic !== undefined && !admits(effects, "nondeterministic")) {
+    throw new Refusal(
+      "capabilities",
+      `${moduleNondeterministic} is nondeterministic, and the contract does not declare it`,
+    );
+  }
   const nondeterministic = nondeterministicObservations(graph, base);
   if (nondeterministic.length > 0 && !admits(effects, "nondeterministic")) {
     throw new Refusal(
@@ -265,6 +375,7 @@ function checkCapabilitiesAndTypes(
 }
 
 const SUBJECT = "__yakccSubject";
+let subjects = 0;
 
 /** One vector's run: its value, what it threw, or the name the context could not provide. */
 export interface RunResult {
@@ -295,8 +406,10 @@ export function lowerForConformance(
   graph: DucGraph,
   timeoutMs = 1000,
   resolve: (spec: string) => DucGraph | undefined = () => undefined,
+  moduleContext?: vm.Context,
 ): (inputs: readonly unknown[]) => Promise<RunResult> {
-  const context = vm.createContext({ __yakccTry, __yakccTryAsync });
+  // In a module's context, the module defines what its statements read (#1290).
+  const context = moduleContext ?? vm.createContext({ __yakccTry, __yakccTryAsync });
   const defined = new Set<string>();
   const define = (g: DucGraph): void => {
     for (const [symbol, spec] of linksOf(g)) {
@@ -313,10 +426,12 @@ export function lowerForConformance(
       define(linked);
     }
   };
-  define(graph);
-  vm.runInContext(scriptOf(graph, SUBJECT), context, { timeout: timeoutMs });
+  if (moduleContext === undefined) define(graph);
+  // Each lowering has its own name: a module's context holds several.
+  const subject = `${SUBJECT}${subjects++}`;
+  vm.runInContext(scriptOf(graph, subject), context, { timeout: timeoutMs });
   const call = vm.runInContext(
-    `(inputsJson) => ${SUBJECT}(...JSON.parse(inputsJson))`,
+    `(inputsJson) => ${subject}(...JSON.parse(inputsJson))`,
     context,
   ) as (json: string) => unknown;
   const runner = vm.createContext({ call });
@@ -349,6 +464,89 @@ export function lowerForConformance(
   };
 }
 
+/** A module statement's observed values, run in the module's context: its declared names' values. */
+function runStatement(graph: DucGraph, context: vm.Context, timeoutMs: number): unknown[] {
+  const code = emitTypeScript(graph, undefined, { name: "__yakccStatement" });
+  const lines = code.split("\n").filter((line) => !/^import\s/.test(line));
+  if (lines.some((line) => line.startsWith("export function __yakccStatement("))) {
+    vm.runInContext(stripTypeScriptTypes(lines.join("\n").replace(/^export\s+/m, "")), context, {
+      timeout: timeoutMs,
+    });
+    const value = vm.runInContext("__yakccStatement()", context, { timeout: timeoutMs }) as unknown;
+    return graph.obs.length === 1 ? [value] : [];
+  }
+  // The module form: its statements in a block, each result through `$outK`, then an export list.
+  const outs = graph.obs.map((_, k) => `$out${k}`);
+  const body = lines.filter((line) => !/^export\s*\{/.test(line)).join("\n");
+  return vm.runInContext(
+    stripTypeScriptTypes(`(() => {\n${body}\nreturn [${outs.join(", ")}];\n})()`),
+    context,
+    { timeout: timeoutMs },
+  ) as unknown[];
+}
+
+type ModuleState = { context: vm.Context } | { unrunnable: string };
+
+/**
+ * A module run in its own context (#1290): its own `exports`, `module` and `require`; its functions
+ * defined first (a function declaration is hoisted), then its statements in order, each statement's
+ * results bound to the names it declares. A module that cannot run says why.
+ */
+function moduleRunner(
+  records: readonly ModuleRecord[],
+  graphOf: (st: ModuleStatement) => DucGraph | undefined,
+  timeoutMs: number,
+): (id: string) => ModuleState {
+  const states = new Map<string, ModuleState>();
+  const run = (id: string): ModuleState => {
+    const known = states.get(id);
+    if (known !== undefined) return known;
+    const record = records.find((r) => r.id === id);
+    if (record === undefined) return { unrunnable: `the module ${id} is not in the submission` };
+    const context = vm.createContext({ __yakccTry, __yakccTryAsync });
+    const moduleObject = { exports: {} as Record<string, unknown> };
+    context.module = moduleObject;
+    context.exports = moduleObject.exports;
+    context.require = (spec: string): unknown => {
+      const target = record.requires?.[spec];
+      if (target === undefined)
+        throw new ReferenceError(`require("${spec}") is not in the submission`);
+      const state = run(target);
+      if ("unrunnable" in state) throw new ReferenceError(state.unrunnable);
+      return (state.context.module as { exports: unknown }).exports;
+    };
+    // Set before running: a cycle sees the module's exports as they are so far, as in CommonJS.
+    const state: ModuleState = { context };
+    states.set(id, state);
+    try {
+      for (const st of record.statements) {
+        if (st.kind !== "function" || st.declares[0] === undefined) continue;
+        const g = graphOf(st);
+        if (g === undefined) throw new ReferenceError(`statement ${st.identity} is not available`);
+        vm.runInContext(scriptOf(g, st.declares[0]), context, { timeout: timeoutMs });
+      }
+      for (const st of record.statements) {
+        if (st.kind !== "statement") continue;
+        const g = graphOf(st);
+        if (g === undefined) throw new ReferenceError(`statement ${st.identity} is not available`);
+        const values = runStatement(g, context, timeoutMs);
+        st.declares.forEach((name, k) => {
+          context[name] = values[k];
+        });
+      }
+    } catch (e) {
+      const message = (e as { message?: unknown } | null)?.message;
+      const failed: ModuleState = {
+        unrunnable: `the module ${id} does not run: ${typeof message === "string" ? message : String(e)}`,
+      };
+      states.set(id, failed);
+      return failed;
+    }
+    return state;
+  };
+  return run;
+}
+
 function same(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b) && (a === undefined) === (b === undefined);
 }
@@ -378,7 +576,12 @@ export async function checkSharedSubmission(
     }
   });
 
-  // Check 5, over the batch: links close within the batch's admitted contracts and the store.
+  // Check 5, over the batch: links close within the batch's admitted contracts and the store, and
+  // a module's statements read what the module provides.
+  const keyOf = (x: { specHash: string; identity: string }): string =>
+    `${x.specHash}|${x.identity}`;
+  const moduleOf = new Map<string, ModuleRecord>();
+  for (const m of options.modules ?? []) for (const st of m.statements) moduleOf.set(keyOf(st), m);
   const admitted = [...graphs.keys()];
   const baseOf = (i: number): BaseSet | undefined => {
     const want = batch[i]?.baseSet;
@@ -402,9 +605,16 @@ export async function checkSharedSubmission(
       base,
     );
     const own = report.atoms.find((a) => a.identity === impl.identity && a.spec === impl.specHash);
-    if (own !== undefined && !own.closed) {
+    // A name the implementation's module provides is not a hole (#1290).
+    const record = moduleOf.get(keyOf(impl));
+    const provided =
+      record !== undefined
+        ? moduleProvides(record, graphs.get(i) as DucGraph, base)
+        : new Set<string>();
+    const holes = (own?.holes ?? []).filter((h) => !provided.has(h));
+    if (own !== undefined && (holes.length > 0 || own.unresolved.length > 0)) {
       const parts = [
-        own.holes.length > 0 ? `unlinked or not on the target: ${own.holes.join(", ")}` : "",
+        holes.length > 0 ? `unlinked or not on the target: ${holes.join(", ")}` : "",
         own.unresolved.length > 0 ? `links to contracts absent: ${own.unresolved.join(", ")}` : "",
       ].filter((p) => p !== "");
       refused.set(i, { check: "closure", reason: `the graph is not closed (${parts.join("; ")})` });
@@ -416,6 +626,13 @@ export async function checkSharedSubmission(
     for (const [j, g] of graphs) if (!refused.has(j) && batch[j]?.specHash === spec) return g;
     return store.implementationsOf(spec)[0]?.graph;
   };
+  // A module statement's graph: an admitted one of the batch, or a stored one.
+  const graphOf = (st: ModuleStatement): DucGraph | undefined => {
+    for (const [j, g] of graphs)
+      if (!refused.has(j) && keyOf(batch[j] as SharedImplementation) === keyOf(st)) return g;
+    return store.implementationsOf(st.specHash).find((o) => o.identity === st.identity)?.graph;
+  };
+  const runModule = moduleRunner(options.modules ?? [], graphOf, timeoutMs);
   const verdicts: ImplementationVerdict[] = [];
   for (const [i, impl] of batch.entries()) {
     const graph = graphs.get(i);
@@ -442,10 +659,28 @@ export async function checkSharedSubmission(
       });
       continue;
     }
-    // Check 8: the submitter's evidence, run on the receiver's own lowering.
+    // Check 8: the submitter's evidence, run on the receiver's own lowering. A module's statement
+    // runs in its module's context.
+    const record = moduleOf.get(keyOf(impl));
+    const moduleState = record !== undefined ? runModule(record.id) : undefined;
+    if (moduleState !== undefined && "unrunnable" in moduleState && impl.evidence.length > 0) {
+      verdicts.push({
+        specHash: impl.specHash,
+        identity: impl.identity,
+        level: "claimed",
+        unchecked: moduleState.unrunnable,
+        disagreements: [],
+      });
+      continue;
+    }
     let run: ReturnType<typeof lowerForConformance>;
     try {
-      run = lowerForConformance(graph, timeoutMs, resolve);
+      run = lowerForConformance(
+        graph,
+        timeoutMs,
+        resolve,
+        moduleState !== undefined && "context" in moduleState ? moduleState.context : undefined,
+      );
     } catch {
       // A graph the receiver cannot lower stays a claim: there is nothing to run its evidence on.
       verdicts.push({
@@ -529,5 +764,46 @@ export async function checkSharedSubmission(
           : "claimed";
     verdicts.push({ specHash: impl.specHash, identity: impl.identity, level, disagreements });
   }
-  return { accepted: verdicts.every((v) => v.refused === undefined), implementations: verdicts };
+  // A module's own evidence, against its exports once its statements have run (#1290).
+  const moduleVerdicts: ModuleVerdict[] = [];
+  for (const m of options.modules ?? []) {
+    if (m.evidence === undefined || m.evidence.length === 0) continue;
+    const state = runModule(m.id);
+    if ("unrunnable" in state) {
+      moduleVerdicts.push({ id: m.id, conforming: false, unchecked: state.unrunnable });
+      continue;
+    }
+    let reason: string | undefined;
+    for (const v of m.evidence) {
+      const target = `module.exports${v.member !== undefined ? `[${JSON.stringify(v.member)}]` : ""}`;
+      let got: RunResult;
+      try {
+        state.context.__yakccInputs = JSON.stringify(v.inputs);
+        const value = vm.runInContext(`${target}(...JSON.parse(__yakccInputs))`, state.context, {
+          timeout: timeoutMs,
+        }) as unknown;
+        const json = value === undefined ? undefined : JSON.stringify(value);
+        got = { value: json === undefined ? undefined : (JSON.parse(json) as unknown) };
+      } catch (e) {
+        const message = (e as { message?: unknown } | null)?.message;
+        got = { threw: typeof message === "string" ? message : String(e) };
+      }
+      if (got.threw !== undefined || !same(got.value, v.output)) {
+        reason = `${target}(${JSON.stringify(v.inputs).slice(1, -1)}) gives ${got.threw !== undefined ? `a throw (${got.threw})` : JSON.stringify(got.value)}, and the evidence says ${JSON.stringify(v.output)}`;
+        break;
+      }
+    }
+    moduleVerdicts.push(
+      reason === undefined
+        ? { id: m.id, conforming: true }
+        : { id: m.id, conforming: false, reason },
+    );
+  }
+  return {
+    accepted:
+      verdicts.every((v) => v.refused === undefined) &&
+      moduleVerdicts.every((m) => m.conforming || m.unchecked !== undefined),
+    implementations: verdicts,
+    modules: moduleVerdicts,
+  };
 }

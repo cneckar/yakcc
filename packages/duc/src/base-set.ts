@@ -25,6 +25,20 @@ export interface BaseSet {
   readonly target: string;
   readonly version: number;
   readonly primitives: Readonly<Record<string, PrimitiveLabels>>;
+  /**
+   * The modules the platform provides to `require` (#1290), with their labels: a module's
+   * labels cover everything reached through it. A `node:` prefix names the same module.
+   */
+  readonly modules?: Readonly<Record<string, Omit<PrimitiveLabels, "members">>>;
+}
+
+/** The base set's labels for a module specifier, or undefined when the platform does not provide it. */
+export function platformModule(
+  base: BaseSet,
+  specifier: string,
+): Omit<PrimitiveLabels, "members"> | undefined {
+  const name = specifier.startsWith("node:") ? specifier.slice(5) : specifier;
+  return base.modules?.[name];
 }
 
 const pure = (names: readonly string[]): Record<string, PrimitiveLabels> =>
@@ -105,10 +119,44 @@ export const ECMASCRIPT: BaseSet = {
   },
 };
 
-/** Node.js: ECMAScript, plus the host's data APIs and its authority-bearing APIs. */
+/** Node.js: ECMAScript, plus the host's data APIs and its authority-bearing APIs, and its modules. */
 export const NODE: BaseSet = {
   target: "node",
-  version: 1,
+  version: 2,
+  modules: {
+    ...pure([
+      "assert",
+      "buffer",
+      "events",
+      "path",
+      "querystring",
+      "string_decoder",
+      "url",
+      "util",
+      "zlib",
+    ]),
+    // A module that reaches the environment carries the authority it grants.
+    fs: { capability: "io" },
+    stream: { capability: "io" },
+    readline: { capability: "io" },
+    tty: { capability: "io" },
+    http: { capability: "network" },
+    https: { capability: "network" },
+    http2: { capability: "network" },
+    net: { capability: "network" },
+    tls: { capability: "network" },
+    dgram: { capability: "network" },
+    dns: { capability: "network" },
+    os: { capability: "process" },
+    process: { capability: "process" },
+    child_process: { capability: "process" },
+    cluster: { capability: "process" },
+    worker_threads: { capability: "process" },
+    module: { capability: "module-location" },
+    timers: { capability: "timers" },
+    crypto: { nondeterministic: true },
+    perf_hooks: { nondeterministic: true },
+  },
   primitives: {
     ...ECMASCRIPT.primitives,
     ...pure([

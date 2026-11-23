@@ -146,7 +146,28 @@ Points the design left open, as built:
 - **Check 9** runs each other stored implementation of the contract on both sides' vectors. A
   vector either side cannot run is skipped.
 
-**Measured on the shaved corpus** (one batch per package; each original source run on sample
+**Modules (#1290).** A submission carries a `ModuleRecord` per file. It sits outside identity,
+like links, and holds:
+- the file's statements in order, each with its contract, identity, kind (`function` or
+  `statement`), and the names it declares in its graph's output order;
+- the module each relative `require` names;
+- optionally, evidence against the module's exports.
+
+How the receiver uses it:
+- **Check 5.** A name the module declares, its `exports` and `module`, and a `require` of a
+  module in the submission or of one the platform provides, are not holes.
+- **Platform modules.** The base set lists the platform's modules with their labels (`NODE`
+  version 2: `fs` grants `io`, `crypto` is nondeterministic, …). Check 6 holds those labels
+  against the contract's effects.
+- **Check 8.** A module runs in its own context: functions first (they hoist), then its
+  statements in order. Its members' evidence and its own evidence run there.
+- **Host modules.** These are never handed to the sandbox: evidence that needs one is unchecked.
+
+On the corpus, with module records, closure refusals fall from 1,065 to 62. The rest are mostly
+packages outside the submission (`require` of a dependency that was not shaved). base64-js and ms
+pass checks 1–8 against evidence taken from the real packages (`duc-module-submission.test.ts`).
+
+**Measured on the shaved corpus, before module records** (one batch per package; each original source run on sample
 inputs to give the evidence, so check 8 tests the graph against its source):
 
 | Outcome | Implementations |

@@ -98,6 +98,22 @@ export function liftAtom(source: string, options: LiftOptions = {}): DucGraph {
   // expression). Each form keeps the fragment's parameters as parameter-sources and
   // its returns as observations, so no influence edge is lost. The first form that
   // parses wins. If none parses, the error reported is for the source as written.
+  const parsed = parseAtomSource(source);
+  const project = parsed.project;
+  const file = normalizeJumps(project, parsed.file);
+  // Names a target provides are platform primitives (D5); which target is checked by the closure check.
+  const ambient = new Set(options.ambientGlobals ?? KNOWN_PRIMITIVES);
+  const builder = new Lifter(ambient);
+  builder.collectImports(file);
+  builder.run(file);
+  return builder.finish();
+}
+
+/**
+ * The atom's source parsed: as written, or else the first analysis form that parses (a named
+ * function, a function body, an expression). Throws DucLiftError when none parses.
+ */
+function parseAtomSource(source: string): { project: Project; file: SourceFile } {
   const forms = [source, ...wrapForms(source)];
   let file: SourceFile | undefined;
   let firstError: string[] = [];
@@ -132,13 +148,33 @@ export function liftAtom(source: string, options: LiftOptions = {}): DucGraph {
     );
   }
 
-  file = normalizeJumps(project, file);
-  // Names a target provides are platform primitives (D5); which target is checked by the closure check.
-  const ambient = new Set(options.ambientGlobals ?? KNOWN_PRIMITIVES);
-  const builder = new Lifter(ambient);
-  builder.collectImports(file);
-  builder.run(file);
-  return builder.finish();
+  return { project, file };
+}
+
+/** What an atom's source is, as a module sees it (#1290). */
+export type AtomShape =
+  | { readonly kind: "function"; readonly name?: string }
+  | { readonly kind: "statement"; readonly names: readonly string[] };
+
+/**
+ * Whether an atom is a function or module statements, and for statements the names its graph
+ * observes, in the graph's observation order: the exported names, then the names it declares.
+ */
+export function atomShape(source: string): AtomShape {
+  const { file } = parseAtomSource(source);
+  const primary = findPrimaryFunction(file);
+  if (primary !== undefined) {
+    const name = Node.isFunctionDeclaration(primary)
+      ? primary.getName()
+      : primary.getParentIfKind(SyntaxKind.VariableDeclaration)?.getName();
+    // `__atom__` is the analysis form's name for an anonymous function, not the atom's.
+    return name !== undefined && name !== "__atom__"
+      ? { kind: "function", name }
+      : { kind: "function" };
+  }
+  const names = exportedBindingNames(file);
+  for (const name of moduleDeclaredNames(file)) if (!names.includes(name)) names.push(name);
+  return { kind: "statement", names };
 }
 
 /**
@@ -446,11 +482,9 @@ class Lifter {
       // and treat every exported binding's final value as an observation.
       for (const name of cellNames(file)) this.cells.add(name);
       // Import declarations are the file's imports (recorded above), not statements it runs.
+      // Statements, not syntax-list children: those can include comment trivia.
       this.liftStatements(
-        file
-          .getChildSyntaxListOrThrow()
-          .getChildren()
-          .filter((stmt) => !Node.isImportDeclaration(stmt)),
+        (file as SourceFile).getStatements().filter((stmt) => !Node.isImportDeclaration(stmt)),
       );
       // An exported name is observed: one the file binds, an import exported again, or a name the
       // fragment exports without binding it (free). So is a name a module statement declares
@@ -3660,10 +3694,39 @@ function findPrimaryFunction(file: Node): FunctionLike | undefined {
     }
   }
 
-  if (exported.length === 1) return exported[0];
-  if (exported.length > 1) return undefined; // ambiguous entry point — top-level path
-  // No exported function-like: a lone bare function declaration is the atom.
-  return all.length === 1 ? all[0] : undefined;
+  // A function is the atom only when nothing else at the top level runs (#1290): other statements
+  // (module state, a call, an assignment) are part of the atom, and the module path lifts them all.
+  const only =
+    exported.length === 1
+      ? exported[0]
+      : exported.length === 0 && all.length === 1
+        ? all[0]
+        : undefined;
+  if (only === undefined) return undefined;
+  const own = Node.isFunctionDeclaration(only)
+    ? only
+    : only.getFirstAncestorByKind(SyntaxKind.VariableStatement);
+  for (const stmt of sourceFile.getStatements()) {
+    if (stmt === own || !runsAtModuleLevel(stmt)) continue;
+    return undefined;
+  }
+  return only;
+}
+
+/** Whether a top-level statement does anything when the module runs (#1290). */
+function runsAtModuleLevel(stmt: Node): boolean {
+  if (
+    Node.isImportDeclaration(stmt) ||
+    Node.isTypeAliasDeclaration(stmt) ||
+    Node.isInterfaceDeclaration(stmt) ||
+    Node.isEmptyStatement(stmt)
+  )
+    return false;
+  if (Node.isExportDeclaration(stmt)) return false; // export lists and re-exports bind nothing new
+  if (Node.isFunctionDeclaration(stmt) && !stmt.hasBody()) return false; // an overload signature
+  // A directive ("use strict") is a string expression statement.
+  if (Node.isExpressionStatement(stmt) && Node.isStringLiteral(stmt.getExpression())) return false;
+  return true;
 }
 
 /** Whether a function is async, a generator, or both (#1276). */

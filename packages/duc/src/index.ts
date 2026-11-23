@@ -30,7 +30,8 @@ export type {
 export { isWellFormed } from "./wellformed.js";
 
 export type { LiftOptions } from "./lift.js";
-export { DucLiftError, liftAtom } from "./lift.js";
+export type { AtomShape } from "./lift.js";
+export { DucLiftError, atomShape, liftAtom } from "./lift.js";
 export type { EmitSignature } from "./emit-ts.js";
 export { EmitError, emitTypeScript } from "./emit-ts.js";
 export type { PackedGraph, StoredLink } from "./store.js";
@@ -110,6 +111,7 @@ export {
   ECMASCRIPT,
   NODE,
   nondeterministicObservations,
+  platformModule,
   primitiveReport,
 } from "./base-set.js";
 export type { Ambiguity, DucType, Signature, TypeReport } from "./infer-types.js";

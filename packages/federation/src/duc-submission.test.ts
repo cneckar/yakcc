@@ -190,7 +190,7 @@ describe("the receiver's checks, in order (#1287)", () => {
   it("6 capabilities: a capability or nondeterminism the contract does not declare", async () => {
     const env = liftAtom("export function f(k: string) { return process.env[k]; }");
     const pure = contract("f", ["string"], "unknown");
-    const node = { baseSet: { target: "node", version: 1 } };
+    const node = { baseSet: { target: "node", version: 2 } };
     const v1 = await verdictOf(implementation(pure, env, [], node));
     expect(v1?.refused?.check).toBe("capabilities");
     expect(v1?.refused?.reason).toContain('"process"');
