@@ -78,3 +78,28 @@ describe("classes (#1276)", () => {
     expect(() => emitGo(g)).toThrow(GoEmitError);
   });
 });
+
+describe("object literal methods and accessors (#1276)", () => {
+  const src =
+    "export function f(k: number, key: string) { const o = { a: k, get double() { return this.a * 2; }, set double(v: number) { this.a = v / 2; }, add(x: number) { this.a = this.a + x; return this; }, [key]: 1 }; o.add(3).double = 20; return [o.a, o.double, o[key]]; }";
+
+  it("a method or accessor is a closure, not an opaque summary", () => {
+    const g = liftAtom(src);
+    expect(g.nodes.some((n) => (n.label ?? "").startsWith("Closure#"))).toBe(false);
+    expect(g.nodes.some((n) => (n.label ?? "").includes('{"get":"double"}'))).toBe(true);
+  });
+
+  it("round-trips, written in place, and computes the same", () => {
+    const g = liftAtom(src);
+    const code = emitTypeScript(g);
+    expect(code).toContain('get "double"()');
+    expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    expect(run(code)(1, "z")).toEqual([10, 20, 1]);
+  });
+
+  it("a getter and a method with the same body are different entries", () => {
+    expect(
+      graphIdentity(liftAtom("export function f() { return { get a() { return 1; } }; }")),
+    ).not.toBe(graphIdentity(liftAtom("export function f() { return { a() { return 1; } }; }")));
+  });
+});

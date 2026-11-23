@@ -126,6 +126,31 @@ export function emitTypeScript(g: DucGraph, signature?: EmitSignature): string {
   ].join("\n");
 }
 
+/**
+ * Where each entry of an object literal's label takes its inputs: a computed key's input, then the
+ * value's. A method or accessor (`{method|get|set: key}`) is a member written in place.
+ */
+function objectSlots(
+  entries: readonly unknown[],
+): { value: number; key?: number; name?: string; spread?: true; member?: string }[] {
+  let at = 0;
+  return entries.map((entry) => {
+    if (entry === null) return { value: at++, spread: true as const };
+    if (entry === 1) {
+      const key = at++;
+      return { key, value: at++ };
+    }
+    if (typeof entry === "string") return { value: at++, name: entry };
+    const [kind, k] = Object.entries(entry as Record<string, unknown>)[0] ?? [];
+    const member = kind === "method" || kind === "get" || kind === "set" ? kind : undefined;
+    if (k === 1) {
+      const key = at++;
+      return { key, value: at++, ...(member !== undefined ? { member } : {}) };
+    }
+    return { value: at++, name: String(k), ...(member !== undefined ? { member } : {}) };
+  });
+}
+
 /** The words before a function's name: `function`, `async function`, `function*`. */
 function modeHead(mode: DucGraph["mode"]): string {
   if (mode === undefined) return "function ";
@@ -202,6 +227,16 @@ function emitFunction(
     if (!(node.label ?? "").startsWith("class:")) continue;
     const extending = (node.label ?? "").startsWith('class:[["extends"]');
     for (const v of node.inputs.slice(extending ? 1 : 0)) {
+      const p = producer.get(v);
+      if (p?.closure !== undefined && (consumers.get(v) ?? []).length === 1) classMembers.add(p.id);
+    }
+  }
+  // So are an object literal's methods and accessors.
+  for (const node of g.nodes) {
+    if (!(node.label ?? "").startsWith("object:")) continue;
+    for (const slot of objectSlots(JSON.parse((node.label ?? "").slice("object:".length)))) {
+      if (slot.member === undefined) continue;
+      const v = node.inputs[slot.value] as ValueId;
       const p = producer.get(v);
       if (p?.closure !== undefined && (consumers.get(v) ?? []).length === 1) classMembers.add(p.id);
     }
@@ -393,6 +428,43 @@ function emitFunction(
     if (label === "throw") return [`throw ${arg(0)};`];
     if (out === undefined) throw new EmitError(`the statement "${label}" has no TypeScript form`);
     const name = nameOf(out);
+    if (
+      label.startsWith("object:") &&
+      objectSlots(JSON.parse(label.slice(7))).some((x) => x.member)
+    ) {
+      // `{ "k": v, name(..) {..}, get name() {..}, [key]: v }`: a member is written in place (#1276).
+      const lines = [`const ${name} = {`];
+      for (const slot of objectSlots(JSON.parse(label.slice("object:".length)))) {
+        const value = node.inputs[slot.value] as ValueId;
+        const key =
+          slot.key !== undefined
+            ? `[${ref(node.inputs[slot.key] as ValueId)}]`
+            : JSON.stringify(slot.name);
+        if (slot.member === undefined) {
+          lines.push(slot.spread ? `  ...${ref(value)},` : `  ${key}: ${ref(value)},`);
+          continue;
+        }
+        const c = producer.get(value);
+        if (c?.closure === undefined || !classMembers.has(c.id))
+          throw new EmitError(`member ${slot.name} of object ${node.id} is not its own closure`);
+        const inner = emitFunction(
+          c.closure,
+          `${prefix}${c.id}_`,
+          c.inputs.map((v) => ref(v)),
+          imports,
+        );
+        const own = c.label ?? "";
+        const mode = `${own.startsWith("async ") ? "async " : ""}${own.endsWith("*") ? "*" : ""}`;
+        const head = slot.member === "method" ? `${mode}${key}` : `${slot.member} ${key}`;
+        lines.push(
+          `  ${head}(${inner.params.join(", ")}) {`,
+          ...inner.body.map((l) => `    ${l}`),
+          "  },",
+        );
+      }
+      lines.push("};");
+      return lines;
+    }
     if (label.startsWith("class:")) {
       // `class Self_ { constructor(..) {..} [static] name(..) {..} get name() {..} }`
       const members = JSON.parse(label.slice("class:".length)) as [string, string?, boolean?][];
