@@ -918,9 +918,8 @@ class Lifter {
   /** Whether an `if` that exits on some paths can take `tail` onto its sides. */
   private canTakeTail(stmt: import("ts-morph").IfStatement, tail: readonly Node[]): boolean {
     if (this.exitMode !== "function" || !containsExitOrLoopReturn(stmt)) return false;
-    // A function declaration of the tail that its own list has not hoisted binds at its place.
-    if (tail.some((t) => Node.isFunctionDeclaration(t) && !this.hoisted.has(t.compilerNode)))
-      return false;
+    // A function declaration in the tail binds on each side: hoisted there when what it reads is
+    // bound, at its place otherwise.
     // A tail that both sides continue into is lifted twice: bound its size outside a total side.
     const elseNode = stmt.getElseStatement();
     const both =
@@ -951,6 +950,35 @@ class Lifter {
    * The rest of a statement list after an exit on some paths, as the else-side of a branch on the
    * exited flag: its effects happen, and its names change, only on the paths that have not exited.
    */
+  /**
+   * Whether lifting a node makes a heap operation: by its syntax, or by a name it reads or writes
+   * that is a cell or a binding outside the atom, whose reads and writes are heap operations.
+   */
+  private touchesHeap(node: Node): boolean {
+    if (touchesHeap(node)) return true;
+    return [node, ...node.getDescendantsOfKind(SyntaxKind.Identifier)].some(
+      (id) =>
+        Node.isIdentifier(id) &&
+        (this.bindings.has(id.getText()) ||
+          (this.cells.has(id.getText()) && this.env.has(id.getText()))),
+    );
+  }
+
+  /**
+   * Whether an expression only produces a value: inert syntax (isInert) that reads no cell and no
+   * binding outside the atom, whose reads are heap operations.
+   */
+  private inert(node: Node): boolean {
+    if (!isInert(node)) return false;
+    return ![node, ...node.getDescendantsOfKind(SyntaxKind.Identifier)].some(
+      (id) =>
+        Node.isIdentifier(id) &&
+        isValueRead(id) &&
+        (this.bindings.has(id.getText()) ||
+          (this.cells.has(id.getText()) && this.env.has(id.getText()))),
+    );
+  }
+
   /** The return flags of the guards the statement being lifted is under. */
   private readonly guardFlags: ValueId[] = [];
 
@@ -1797,7 +1825,7 @@ class Lifter {
       ...assigned.filter((name) => this.env.has(name)),
       ...exitNames,
       ...(firstName !== undefined ? [firstName] : []),
-      ...([cond, body, incrementor].some((part) => part !== undefined && touchesHeap(part))
+      ...([cond, body, incrementor].some((part) => part !== undefined && this.touchesHeap(part))
         ? [HEAP]
         : []),
     ];
@@ -1856,12 +1884,12 @@ class Lifter {
         // A guarded loop's condition needs the statements before its test.
         if (guard !== undefined) this.liftStatements(guard.prefix);
         // The written condition: a do loop's first pass does not test it (`first || cond`, lazily).
-        const condInert = cond === undefined || isInert(cond);
+        const condInert = cond === undefined || this.inert(cond);
         const liftCond = (): ValueId => {
           const c = cond as Node;
           if (firstName === undefined) return this.liftExpr(c);
           const first = this.env.get(firstName) as ValueId;
-          if (isInert(c)) {
+          if (this.inert(c)) {
             return this.emit("op", [first, this.liftExpr(c)], 1, {
               origin: { kind: "Binary", text: "||" },
               label: "||",
@@ -2220,7 +2248,7 @@ class Lifter {
       origin: { kind: "Binary", text: "===" },
       label: "===",
     })[0] as ValueId;
-    if (isInert(init)) {
+    if (this.inert(init)) {
       const d = this.liftExpr(init);
       return this.emit("sel", [missing, d, value], 1, {
         origin: { kind: "Conditional" },
@@ -2363,7 +2391,14 @@ class Lifter {
     const consider = (target: Node | undefined): void => {
       const base = baseIdentifierOfTarget(target);
       // A cell is one object for the whole scope: writing it rebinds nothing (#1276).
-      if (base !== undefined && this.env.has(base) && !this.cells.has(base)) names.add(base);
+      // So is a binding outside the atom: a write changes the binding, not a value carried here.
+      if (
+        base !== undefined &&
+        this.env.has(base) &&
+        !this.cells.has(base) &&
+        !this.bindings.has(base)
+      )
+        names.add(base);
     };
     // The node itself counts too: a loop's incrementor is often a bare assignment (`i = i + 1`).
     const bins = [
@@ -2451,7 +2486,7 @@ class Lifter {
     if (Node.isConditionalExpression(node)) {
       const cond = this.liftExpr(node.getCondition());
       // An arm that could do more than produce a value runs only when it is chosen: a branch.
-      if (!isInert(node.getWhenTrue()) || !isInert(node.getWhenFalse())) {
+      if (!this.inert(node.getWhenTrue()) || !this.inert(node.getWhenFalse())) {
         return this.liftLazy(
           cond,
           () => this.liftExpr(node.getWhenTrue()),
@@ -2759,7 +2794,7 @@ class Lifter {
       (op === SyntaxKind.AmpersandAmpersandToken ||
         op === SyntaxKind.BarBarToken ||
         op === SyntaxKind.QuestionQuestionToken) &&
-      !isInert(right)
+      !this.inert(right)
     ) {
       if (op === SyntaxKind.AmpersandAmpersandToken)
         return this.liftLazy(

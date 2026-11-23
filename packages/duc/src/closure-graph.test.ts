@@ -209,4 +209,15 @@ describe("captures that change (#1276)", () => {
       id("export function f(p: any) { const g = () => {}; return g; }"),
     );
   });
+
+  it("a loop over a cell carries the heap token, and its condition after a break is not run", () => {
+    for (const src of [
+      "export function f(r: number) { var i = 0; function next() { for (; i < r;) { i = i + 1; if (i > 5) break; } } next(); return i; }",
+      "export function f(r: number) { var i = 0; function next() { if (i < r) { for (; i < r;) { i = i + 1; } } } next(); return i; }",
+      "export function f(r: any, c: any, p: any) { if (c) { } else throw 1; var i = 0; k(); function next() { p(i); } return next; }",
+    ]) {
+      const g = liftAtom(src);
+      expect(graphIdentity(liftAtom(emitTypeScript(g))), src).toBe(graphIdentity(g));
+    }
+  });
 });
