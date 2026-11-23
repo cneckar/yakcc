@@ -10,9 +10,57 @@ the deck's numbers.
 
 | Arm | Context given to the model |
 |---|---|
-| `scratch` | the task specification only |
-| `slice` | the task spec plus the retrieved slice, filled under a token budget and spread across packages (`@yakcc/shave` `fill`, DEC-RETRIEVAL-FILL-001) |
-| `fallback` | the same slice, with the gap-gated decision (`decideFallback`, DEC-RETRIEVAL-GAP-GATE-001) recorded. A reuse decision would use the candidate's implementation. None of the seed blocks has one, so this arm synthesizes. |
+| `scratch` | The task spec only. |
+| `slice` | The task spec, plus the retrieved slice in rank order within the token budget. This is the default composition context. |
+| `slice-fill` | The task spec, plus the slice under the budgeted source-spread fill (#1271). |
+| `fallback` | Gap-gated (#1263). It composes from the rank-order slice, and synthesizes only on a measured gap, with the reason logged. See "Fallback policy". |
+
+Both slice arms choose their candidates with `selectCompositionContext` from
+`@yakcc/shave` (`packages/shave/src/retrieval/context.ts`, DEC-RETRIEVAL-CONTEXT-001). With
+`sourceSpread` absent it selects in rank order. With `sourceSpread: { maxPackageShare }` it
+applies the fill (DEC-RETRIEVAL-FILL-001). Defaults are a 1200-token budget and a share of
+0.5.
+
+### Fallback policy (#1263)
+
+`decideFallback` (DEC-RETRIEVAL-GAP-GATE-001) decides from the slice scores and the
+candidate, never from the held-out check:
+
+| Gap | Trigger reason | What the arm does |
+|---|---|---|
+| No candidate reaches the strong threshold (0.8) | `near-miss-only` | Writes from the spec alone (one turn). The slice is not worth its tokens. |
+| A strong candidate exists, and the reply has closure holes (names nothing defines, checked by the TypeScript checker against ES2022 only) | `unexplained-residual` | One repair turn, with the missing names. |
+| A strong candidate exists, and the reply has no holes | none | One turn. No synthesis. |
+
+Every trigger is written to `triggers` (task, seed, reason, best score, holes). The counts
+by reason and the synthesis rate are in `triggerCounts`. A reply that stops on a refusal or
+on the token cap fails with its stop reason, and is not read as a hole.
+
+This is the TypeScript-text form of the policy. The graph form is `composeMissing` in
+`packages/federation/src/authored.ts`, where the gaps are `no-match` and a failed check
+such as `closure`. Moving the arms to line-form composition is a design decision for the
+live run (see Limitations).
+
+### Fill on and off (#1271)
+
+`results/fill-selections.json` records each task's candidate set in rank order and under
+the fill, at budgets 600 and 1200 (`node harness/selections.mjs`). Every run also records
+both sets per task in `selections`.
+
+- At 1200 tokens the two sets agree on every task. The fill changes nothing there.
+- At 600 tokens they differ on five tasks. In each case one package held every candidate
+  that fit, and the fill capped it. For example, on `build-order`:
+
+| | Selected | Tokens by package |
+|---|---|---|
+| rank | `topo-toposort`, `topo-unique-nodes`, `topo-outgoing`, `topo-nodes-hash` | toposort 516 |
+| fill | `topo-unique-nodes`, `topo-outgoing`, `topo-nodes-hash`, `semver-lru` | toposort 162, semver 190 |
+
+  Spreading dropped `toposort`, the atom that does the sorting, and admitted an unrelated
+  LRU cache. The fill also drops a needed atom on `days-between`
+  (`differenceInMilliseconds`) and `uuid-normalize` (`unsafeStringify`). On these tasks
+  every needed atom comes from one package, so a share cap works against them. Whether
+  that costs pass rate is what the `slice` and `slice-fill` arms measure.
 
 ## Scoring
 
@@ -22,22 +70,48 @@ This removes the answer-key circularity the deck's own scoring has.
 
 ## Metrics
 
-Per row: pass, input and output tokens, turns, wall time. Per arm: pass rate, mean
-tokens, mean time. Cost is derived from tokens and the model's price, not stored here.
+| Scope | Metrics |
+|---|---|
+| Per row | arm, seed, model, pass, error, input and output tokens (all turns), turns, wall time, stop reason, selection mode, and for `fallback` the decision and trigger |
+| Per arm and per difficulty class | pass rate, total and mean tokens, mean time (`summary`, `byDifficulty`) |
+| Per model | input and output tokens and calls (`tokensByModel`), so runs with several models add up |
+| Break-even | see below |
+
+Cost is tokens times the model's price. Prices are not stored here.
+
+## Running
+
+```sh
+pnpm --filter @yakcc/shave build                 # the runner imports shave's retrieval code
+node --test harness/harness.test.mjs harness/run.test.mjs
+node harness/build-tasks.mjs --check             # corpus task files match their source
+node harness/run.mjs --dry-run --seeds 3         # plan and token upper bound; no calls
+node harness/run.mjs --client offline --seeds 3 --out results/offline-validation.json
+node harness/selections.mjs                      # fill on/off candidate sets
+```
+
+Options: `--seeds N`, `--arms scratch,slice,slice-fill,fallback`, `--budget`, `--share`,
+`--effort` (live only).
 
 ## Status
 
-- **Harness: built and tested.** `node --test harness/harness.test.mjs` passes every test (the reference solution of each task passes, and a stub fails each one). The offline
-  validation (`results/offline-validation.json`) exercises every arm end to end. It uses
-  reference solutions, so its numbers are **not** a measurement of reuse.
-- **Live run: blocked.** Every arm needs a model call. `ANTHROPIC_API_KEY` is not set
-  in this environment, and a live run costs money. Run it only with an approved key and
-  spend:
+- **Harness: built and tested.** 75 tests pass across `harness.test.mjs` and
+  `run.test.mjs`.
+- **Offline dry run:** `results/offline-validation.json`, with three seeds and every arm. The
+  offline client returns reference solutions, so every row passes and the token counts are
+  estimates. It checks that the harness runs end to end. It is **not** a measurement of
+  reuse.
+- **Live run: not run.** It needs a key and approved spend. `results/dry-run-plan.json`
+  bounds a three-seed run at 294 calls, about 218k input tokens, and at most 588k output
+  tokens (2000 per call, thinking included). Run it only with approval:
 
   ```sh
-  ANTHROPIC_API_KEY=... node harness/run.mjs --client anthropic --model claude-sonnet-5-5 --out results/<run>.json
+  ANTHROPIC_API_KEY=... node harness/run.mjs --client anthropic --model claude-sonnet-5-5 \
+    --seeds 3 --out results/<run>.json
   ```
 
+  The live client uses the Anthropic SDK that `@yakcc/shave` pins. It uses no server-side
+  model fallback, because every arm must run on the same model.
 - **Scale: 21 tasks** (#1272). There are ten single-function seed tasks and eleven
   composition tasks drawn from the shave corpus fixtures. See "Tasks" below.
 
@@ -105,6 +179,9 @@ self-tests confirm that a naive copy fails the held-out check:
 
 ## Break-even
 
-With a scratch cost `C_s` per task, a slice-arm cost `C_r` per reuse, and an up-front
-setup cost `S`, reuse pays once `n * (C_s - C_r) > S`, so `n* = S / (C_s - C_r)`.
-The harness reports per-arm means. Fitting `S` requires the live run.
+With a baseline (`scratch`) cost `C_s` per task, an arm cost `C_r` per task, and a
+one-time setup cost `S`, the arm pays once `n * (C_s - C_r) > S`, so
+`n* = ceil(S / (C_s - C_r))`. If `C_r >= C_s`, it never pays. `breakEven` reports this per
+arm with costs in mean tokens per task (`nStarByTask`). It also reports cost in tokens per
+passing task (`nStarByPass`), which charges an arm for its failures. The harness does not
+measure `S`, so `n*` is reported over a grid of S (0, 1k, 10k and 100k tokens).

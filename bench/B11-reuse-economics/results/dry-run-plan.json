@@ -1,0 +1,13 @@
+{
+  "tasks": 21,
+  "arms": [
+    "scratch",
+    "slice",
+    "slice-fill",
+    "fallback"
+  ],
+  "seeds": 3,
+  "maxCalls": 294,
+  "maxInputTokens": 218259,
+  "maxOutputTokens": 588000
+}
