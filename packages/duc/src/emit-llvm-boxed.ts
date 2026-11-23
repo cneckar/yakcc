@@ -131,7 +131,9 @@ const RUNTIME_DECLS: Readonly<Record<string, string>> = {
   yk_call_spread: "declare i64 @yk_call_spread(i64, i64, i64)",
   yk_call_method_spread: "declare i64 @yk_call_method_spread(i64, ptr, i64, i64)",
   yk_new_spread: "declare i64 @yk_new_spread(i64, i64)",
-  yk_class_new: "declare i64 @yk_class_new(i64, ptr, ptr, ptr, ptr)",
+  yk_class_new: "declare i64 @yk_class_new(i64, i64, ptr, ptr, ptr, ptr)",
+  yk_super_construct: "declare i64 @yk_super_construct(ptr, i64, i64, ptr)",
+  yk_super_get: "declare i64 @yk_super_get(ptr, i64, ptr, i64)",
   yk_closure_class: "declare i64 @yk_closure_class(ptr)",
   yk_closure_inherit: "declare i64 @yk_closure_inherit(i64, ptr)",
   yk_delete: "declare i64 @yk_delete(i64, i64)",
@@ -490,24 +492,58 @@ function lowerFunction(
       return;
     }
     if (lbl.startsWith("Class#"))
-      throw new LlvmEmitError("a derived class (extends, super) is not in the subset yet");
+      throw new LlvmEmitError(
+        "a class with a field, a static block, a computed or private name, or a parameter property is not in the subset yet",
+      );
+    if (lbl === "super") {
+      // A derived constructor's super(args): the parent's constructor on this receiver (#1294).
+      if (closure === undefined) throw new LlvmEmitError("super() outside a constructor");
+      if (ins.some(isSpread)) throw new LlvmEmitError("super(...spread) is not in the subset yet");
+      const args = ins.map(operand);
+      set(
+        out,
+        call(
+          "yk_super_construct",
+          `ptr %closure, i64 %this, i64 ${args.length}, ptr ${list(args)}`,
+        ),
+      );
+      return;
+    }
+    if (lbl.startsWith("super.")) {
+      // The parent's member, read with the receiver (#1294).
+      if (closure === undefined) throw new LlvmEmitError("super outside a class's member");
+      const key = m.constant(lbl.slice("super.".length));
+      set(
+        out,
+        call(
+          "yk_super_get",
+          `ptr %closure, i64 ${operand(ins[0] as ValueId)}, ptr ${key.ptr}, i64 ${key.length}`,
+        ),
+      );
+      return;
+    }
     if (lbl.startsWith("class:")) {
-      // [kind, name, static] per member; the inputs are the members' functions, in order.
-      const members = JSON.parse(lbl.slice("class:".length)) as [string, string?, boolean?][];
+      // [kind, name, static] per member; the inputs are the members' functions, in order. A derived
+      // class's parent is its first input (#1294).
+      const all = JSON.parse(lbl.slice("class:".length)) as [string, string?, boolean?][];
+      const derived = all[0]?.[0] === "extends";
+      const members = derived ? all.slice(1) : all;
+      const parent = derived ? operand(ins[0] as ValueId) : "0";
+      const memberIns = derived ? ins.slice(1) : ins;
       const KIND: Record<string, number> = { constructor: 0, method: 1, get: 2, set: 3 };
-      if (members.length !== ins.length || members.some(([k]) => KIND[k] === undefined))
+      if (members.length !== memberIns.length || members.some(([k]) => KIND[k] === undefined))
         throw new LlvmEmitError(
           `a class member of kind ${members.map(([k]) => k).find((k) => KIND[k] === undefined) ?? "(computed)"} is not in the subset yet`,
         );
       const kinds = members.map(([k]) => boxedNumber(KIND[k] as number));
       const names = members.map(([, name]) => (name === undefined ? UNDEFINED : str(name)));
       const statics = members.map(([, , isStatic]) => (isStatic === true ? TRUE : FALSE));
-      const fns = ins.map(operand);
+      const fns = memberIns.map(operand);
       set(
         out,
         call(
           "yk_class_new",
-          `i64 ${members.length}, ptr ${list(kinds)}, ptr ${list(names)}, ptr ${list(statics)}, ptr ${list(fns)}`,
+          `i64 ${parent}, i64 ${members.length}, ptr ${list(kinds)}, ptr ${list(names)}, ptr ${list(statics)}, ptr ${list(fns)}`,
         ),
       );
       return;
@@ -705,11 +741,17 @@ function lowerFunction(
         );
         return;
       }
+      // super.f(args): the parent's f, called with the receiver the read was made with (#1294).
+      const viaSuper = producer.get(resolve(ins[0] as ValueId));
+      const superRecv =
+        viaSuper?.kind === "op" && (viaSuper.label ?? "").startsWith("super.")
+          ? operand(viaSuper.inputs[0] as ValueId)
+          : UNDEFINED;
       if (callee === undefined && ins.slice(1).some(isSpread)) {
         const fn = operand(ins[0] as ValueId);
         set(
           out,
-          call("yk_call_spread", `i64 ${fn}, i64 ${UNDEFINED}, i64 ${spreadList(ins.slice(1))}`),
+          call("yk_call_spread", `i64 ${fn}, i64 ${superRecv}, i64 ${spreadList(ins.slice(1))}`),
         );
         return;
       }
@@ -729,7 +771,7 @@ function lowerFunction(
       const fn = operand(ins[0] as ValueId);
       set(
         out,
-        call("yk_call", `i64 ${fn}, i64 ${UNDEFINED}, i64 ${args.length}, ptr ${list(args)}`),
+        call("yk_call", `i64 ${fn}, i64 ${superRecv}, i64 ${args.length}, ptr ${list(args)}`),
       );
       return;
     }

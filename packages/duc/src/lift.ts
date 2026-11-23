@@ -1235,16 +1235,51 @@ class Lifter {
         statement?.getParent()?.getParent() === fn
       );
     };
-    if (supers.length > 0 && !(derived && supers.every(superStatement))) return undefined;
+    // `super.name` (read or called) in a member of a derived class, or an arrow inside one: the
+    // parent's member, with this function's receiver (#1294). A write through `super` is not.
+    const superMember = (k: Node): boolean => {
+      const access = k.getParent();
+      if (!Node.isPropertyAccessExpression(access) || access.getExpression() !== k) return false;
+      const up = access.getParent();
+      if (
+        Node.isBinaryExpression(up) &&
+        up.getLeft() === access &&
+        /^(=|[-+*/%&|^]=|\*\*=|<<=|>>>?=|&&=|\|\|=|\?\?=)$/.test(up.getOperatorToken().getText())
+      )
+        return false;
+      if (Node.isPrefixUnaryExpression(up) || Node.isPostfixUnaryExpression(up)) {
+        const op = up.getOperatorToken();
+        if (op === SyntaxKind.PlusPlusToken || op === SyntaxKind.MinusMinusToken) return false;
+      }
+      const owner = receiverOwner(k);
+      if (
+        !(
+          Node.isMethodDeclaration(owner) ||
+          Node.isGetAccessorDeclaration(owner) ||
+          Node.isSetAccessorDeclaration(owner) ||
+          Node.isConstructorDeclaration(owner)
+        )
+      )
+        return false;
+      const cls = owner.getParent();
+      return (
+        (Node.isClassDeclaration(cls) || Node.isClassExpression(cls)) &&
+        cls.getHeritageClauses().some((h) => h.getToken() === SyntaxKind.ExtendsKeyword)
+      );
+    };
+    if (supers.length > 0 && !supers.every((k) => (derived && superStatement(k)) || superMember(k)))
+      return undefined;
     // `this` in an arrow is the enclosing receiver, captured like a name; in a function it is the
     // caller's receiver, so the closure is a `function` (#1276).
-    const thisUses = fn
-      .getDescendantsOfKind(SyntaxKind.ThisKeyword)
-      .filter(
-        (t) =>
-          receiverOwner(t) === fn ||
-          (Node.isArrowFunction(fn) && receiverOwner(t) === receiverOwner(fn)),
-      );
+    const thisUses = [
+      ...fn.getDescendantsOfKind(SyntaxKind.ThisKeyword),
+      // `super.name` reads with the receiver: it uses `this` as much as `this.name` does.
+      ...supers.filter(superMember),
+    ].filter(
+      (t) =>
+        receiverOwner(t) === fn ||
+        (Node.isArrowFunction(fn) && receiverOwner(t) === receiverOwner(fn)),
+    );
     const lexicalThis = Node.isArrowFunction(fn) && thisUses.length > 0;
     // A derived constructor has its own receiver, made by its `super(..)`, used or not.
     const dynamicThis = !Node.isArrowFunction(fn) && (thisUses.length > 0 || derived);
@@ -2692,11 +2727,15 @@ class Lifter {
       if (callee !== undefined && Node.isPropertyAccessExpression(callee)) {
         // A method's lookup is ordered just before its call, after the arguments (#1285): a
         // lowering writes `o.f(args)`, the lookup inside the call, so that is the order it keeps.
-        const base = this.liftExpr(callee.getExpression());
+        // `super.f(args)` is the parent's f, called with this function's receiver (#1294).
+        const viaSuper = Node.isSuperExpression(callee.getExpression());
+        const base = viaSuper ? this.thisValue() : this.liftExpr(callee.getExpression());
         const args = this.liftElements(node.getArguments() as Node[]);
         const [method] = this.emit("op", [base], 1, {
           origin: { kind: "PropertyAccess", text: truncate(callee.getText()) },
-          label: `${callee.hasQuestionDotToken() ? "?." : "."}${callee.getName()}`,
+          label: viaSuper
+            ? `super.${callee.getName()}`
+            : `${callee.hasQuestionDotToken() ? "?." : "."}${callee.getName()}`,
         });
         inputs.push(method as ValueId, ...args);
       } else if (callee !== undefined && Node.isElementAccessExpression(callee)) {
@@ -2735,6 +2774,13 @@ class Lifter {
       return this.emit("op", inputs, 1, {
         origin: { kind: node.getKindName(), text: truncate(node.getText()) },
         ...(optional ? { label: `${node.getKindName()}?.` } : {}),
+      })[0] as ValueId;
+    }
+    if (Node.isPropertyAccessExpression(node) && Node.isSuperExpression(node.getExpression())) {
+      // `super.a`: the parent's member a, read with this function's receiver (#1294).
+      return this.emit("op", [this.thisValue()], 1, {
+        origin: { kind: "PropertyAccess", text: truncate(node.getText()) },
+        label: `super.${node.getName()}`,
       })[0] as ValueId;
     }
     if (Node.isPropertyAccessExpression(node)) {
@@ -3706,7 +3752,12 @@ function isValueRead(id: import("ts-morph").Identifier): boolean {
       Node.isFunctionDeclaration(parent) ||
       Node.isFunctionExpression(parent) ||
       Node.isClassDeclaration(parent) ||
-      Node.isMethodDeclaration(parent)) &&
+      Node.isClassExpression(parent) ||
+      Node.isMethodDeclaration(parent) ||
+      // A class member's own name (a field, an accessor) names it (#1294).
+      Node.isPropertyDeclaration(parent) ||
+      Node.isGetAccessorDeclaration(parent) ||
+      Node.isSetAccessorDeclaration(parent)) &&
     (parent as { getNameNode?: () => Node | undefined }).getNameNode?.() === id
   ) {
     return false;

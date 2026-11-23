@@ -71,7 +71,7 @@ for arrays). The inputs include:
 - booleans, `null` and `undefined`;
 - arrays of all of these.
 
-Eleven programs, each run on 500 generated inputs, cover:
+Fifteen programs, each run on 500 generated inputs, cover:
 - `+` on every pair of kinds, and every other operator with its coercions;
 - template literals;
 - the string methods, and arrays with a loop and `push`;
@@ -79,7 +79,11 @@ Eleven programs, each run on 500 generated inputs, cover:
 - objects: computed keys, reads and writes, own methods with `this`, chained;
 - closures: a counter cell, recursion, functions as values;
 - the array callbacks, including `sort` with and without a comparator;
-- an object's own `valueOf` and `toString`.
+- an object's own `valueOf` and `toString`;
+- classes, ES5 constructors and prototypes, spread, rest and `delete`;
+- derived classes over three levels: super calls, super getters, static super, `super` in an arrow,
+  default constructors;
+- an Error subclass, thrown and caught.
 
 **Other architectures.** The array program also runs on AArch64, ARMv7 and RISC-V. Each is
 cross-linked against the target's glibc, with the runtime compiled by clang for the target, and run
@@ -89,10 +93,34 @@ under QEMU, with the same agreement.
 - `null == undefined` took the same-tag shortcut to strict equality.
 - A write returned the assigned value instead of the object.
 
+## Derived classes (#1294)
+
+A class's parent is its class operation's first input (`["extends"]`). The runtime keeps it on the
+class closure:
+- **Prototypes:** the class's prototype inherits the parent's prototype, so `instanceof` and
+  inherited methods follow the chain.
+- **Statics:** a static member the class lacks is looked up on the parent.
+- **`super(args)`:** the graph's `super` operation. It runs the parent's constructor on the receiver
+  `new` made. An object the parent's constructor returns replaces the receiver.
+  - A derived class with no constructor of its own passes its arguments on, as ECMAScript's default
+    derived constructor does.
+  - An Error-family parent makes the receiver an error, with the parent's name and message.
+- **`super.name`:** the graph's `super.name` operation, whose input is the receiver. It reads the
+  parent's member: the parent's prototype's member from an instance member, the parent's own from a
+  static member. A getter runs with the receiver.
+  - A call through it passes the receiver.
+  - A closure made inside a member keeps the member's class and staticness, so an arrow's `super`
+    is its member's.
+
+Not yet:
+- a write through `super`;
+- extending a built-in other than the Error family (Array, Map, Set);
+- `super` in an object literal's method.
+
+The lifter keeps these opaque or the runtime refuses them by name.
+
 ## Next slices
 
-- Iteration (`for…of`, `for…in`).
-- `new`, classes, accessors, spread, and the prototype chain.
-- Exceptions: the try lowering's primitive, and the runtime's TypeErrors as thrown values.
+- Async functions, promises and generators (#1295).
 - A collector.
 - The boundary a contract's types give, so a typed caller need not box.

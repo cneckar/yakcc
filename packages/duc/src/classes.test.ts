@@ -58,10 +58,23 @@ describe("classes (#1276)", () => {
     );
   });
 
-  it("super anywhere but a derived constructor's own super(..) statement stays opaque", () => {
+  it("super.x in a derived class's member is structure: the parent's member, with the receiver (#1294)", () => {
     expect(
       opaque(
-        "export function f(m: string) { class E extends Error { describe() { return super.toString(); } } return new E(m); }",
+        "export function f(m: string) { class E extends Error { describe() { const up = () => super.toString(); return up() + super.message; } } return new E(m); }",
+      ),
+    ).toBe(false);
+  });
+
+  it("super anywhere else stays opaque: a write through it, a base class's, this before super(..)", () => {
+    expect(
+      opaque(
+        "export function f(m: string) { class A {} class E extends A { set(v: number) { super.x = v; } } return new E(); }",
+      ),
+    ).toBe(true);
+    expect(
+      opaque(
+        "export function f(m: string) { class E { describe() { return super.toString(); } } return new E(); }",
       ),
     ).toBe(true);
     expect(

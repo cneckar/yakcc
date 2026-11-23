@@ -59,6 +59,8 @@ typedef struct {
   int32_t is_class;  /* a class: called only with `new` */
   yk props;          /* its own properties (an object), or 0 until one is written */
   yk class_self;     /* for a class's member (and closures inside it): the class, or 0 */
+  yk parent;         /* a derived class: the class it extends (its statics' fallback), or 0 */
+  int32_t home_static; /* a static member (or a closure inside one): `super` is the parent itself */
   uint32_t n;
   yk captures[];
 } yk_closure;
@@ -760,7 +762,9 @@ static int chain_get(yk obj, yk key, yk *out) {
     yk_closure *c = (yk_closure *)PTR(obj);
     /* A function's prototype exists from its first use, as `F.prototype.m = …` needs. */
     if ((c->has_this || c->is_class) && key_is(key, "prototype")) ensure_prototype(obj);
-    return c->props != 0 && own_get((yk_object *)PTR(c->props), key, out);
+    if (c->props != 0 && own_get((yk_object *)PTR(c->props), key, out)) return 1;
+    /* A derived class inherits its parent's statics. */
+    return c->parent != 0 && is_closure(c->parent) && chain_get(c->parent, key, out);
   }
   for (yk v = obj; v != 0 && is_object(v); v = ((yk_object *)PTR(v))->proto)
     if (own_get((yk_object *)PTR(v), key, out)) return 1;
@@ -809,18 +813,75 @@ static yk default_constructor(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self, (void)argc, (void)argv;
   return YK_UNDEFINED;
 }
-yk yk_class_new(uint64_t n, const yk *kinds, const yk *names, const yk *statics, const yk *members) {
+static yk builtin_error(void *, yk, uint64_t, const yk *);
+static yk builtin_type_error(void *, yk, uint64_t, const yk *);
+static yk builtin_range_error(void *, yk, uint64_t, const yk *);
+static yk builtin_syntax_error(void *, yk, uint64_t, const yk *);
+static int is_error_constructor(yk f) {
+  if (!is_closure(f)) return 0;
+  yk_code code = ((yk_closure *)PTR(f))->code;
+  return code == builtin_error || code == builtin_type_error || code == builtin_range_error ||
+         code == builtin_syntax_error;
+}
+/* super(args) in a derived constructor: the parent's constructor run on this receiver (#1294). */
+yk yk_super_construct(void *closure, yk self, uint64_t argc, const yk *argv) {
+  yk cls = ((yk_closure *)closure)->class_self;
+  yk parent = cls == 0 ? 0 : ((yk_closure *)PTR(cls))->parent;
+  if (parent == 0) type_error("'super' keyword unexpected here");
+  if (is_error_constructor(parent)) {
+    /* An Error subclass: the receiver is made an error, with the parent's name and message. */
+    yk made = ((yk_closure *)PTR(parent))->code(NULL, YK_UNDEFINED, argc, argv);
+    yk_object *o = (yk_object *)PTR(self), *e = (yk_object *)PTR(made);
+    o->error = 1;
+    for (uint32_t i = 0; i < e->len; i++) own_set(o, e->keys[i], e->values[i]);
+    return self;
+  }
+  yk_closure *p = (yk_closure *)PTR(parent);
+  yk r = p->code(p, self, argc, argv);
+  return is_reference(r) ? r : self;
+}
+/* A derived class with no constructor of its own passes its arguments to its parent's. */
+static yk default_derived_constructor(void *c, yk self, uint64_t argc, const yk *argv) {
+  yk_super_construct(c, self, argc, argv);
+  return YK_UNDEFINED;
+}
+/* super.name: the parent's member (its prototype's, or for a static member the parent's own),
+   read with this function's receiver (#1294). */
+yk yk_super_get(void *closure, yk self, const char *name, uint64_t n) {
+  yk_closure *c = (yk_closure *)closure;
+  yk cls = c->class_self;
+  yk parent = cls == 0 ? 0 : ((yk_closure *)PTR(cls))->parent;
+  if (parent == 0 || !is_closure(parent)) return YK_UNDEFINED;
+  yk key = yk_string_utf8(name, n), slot;
+  yk_closure *p = (yk_closure *)PTR(parent);
+  yk base = c->home_static ? parent : (p->is_class || p->has_this) ? ensure_prototype(parent) : 0;
+  if (base == 0 || !chain_get(base, key, &slot)) return YK_UNDEFINED;
+  return resolve_slot(slot, self);
+}
+yk yk_class_new(yk parent, uint64_t n, const yk *kinds, const yk *names, const yk *statics,
+                const yk *members) {
+  if (parent != 0 && !is_closure(parent))
+    type_error("Class extends value is not a constructor or null");
+  if (parent != 0 && !is_error_constructor(parent)) {
+    yk_closure *p = (yk_closure *)PTR(parent);
+    if (!p->is_class && !p->has_this) type_error("extending this constructor is not in the runtime yet");
+  }
   yk cls = 0;
   for (uint64_t i = 0; i < n; i++)
     if (num(kinds[i]) == 0) cls = members[i];
-  if (cls == 0) cls = yk_closure_new(default_constructor, 1, 0, NULL);
+  if (cls == 0)
+    cls = yk_closure_new(parent != 0 ? default_derived_constructor : default_constructor, 1, 0, NULL);
   yk_closure *c = (yk_closure *)PTR(cls);
   c->is_class = 1;
   c->has_this = 1;
+  c->parent = parent;
   yk proto = ensure_prototype(cls);
+  if (parent != 0 && !is_error_constructor(parent))
+    ((yk_object *)PTR(proto))->proto = ensure_prototype(parent);
   for (uint64_t i = 0; i < n; i++) {
     int kind = (int)num(kinds[i]);
     ((yk_closure *)PTR(members[i]))->class_self = cls;
+    ((yk_closure *)PTR(members[i]))->home_static = kind != 0 && statics[i] == YK_TRUE;
     if (kind == 0) continue;
     yk_object *target = statics[i] == YK_TRUE ? own_props(cls) : (yk_object *)PTR(proto);
     yk name = to_string(names[i]);
@@ -837,6 +898,7 @@ yk yk_closure_class(void *closure) {
 /* A closure made inside a class's member knows the class too. */
 yk yk_closure_inherit(yk child, void *parent) {
   ((yk_closure *)PTR(child))->class_self = ((yk_closure *)parent)->class_self;
+  ((yk_closure *)PTR(child))->home_static = ((yk_closure *)parent)->home_static;
   return child;
 }
 
@@ -1068,6 +1130,8 @@ yk yk_closure_new(yk_code code, int32_t has_this, uint64_t n, const yk *captures
   c->is_class = 0;
   c->props = 0;
   c->class_self = 0;
+  c->parent = 0;
+  c->home_static = 0;
   c->n = (uint32_t)n;
   memcpy(c->captures, captures, (size_t)n * sizeof(yk));
   return BOX(T_CLOSURE, c);

@@ -164,6 +164,16 @@ const PROGRAMS: [string, string, number][] = [
     "export function f(a, b) { const xs = [a, ...(typeof b === 'string' ? b : [b]), a]; const join = (...parts) => parts.join('/'); const o = { first: 1, ...(typeof b === 'object' && b !== null ? b : {}), last: a, get both() { return [this.first, this.last]; } }; delete o.first; delete o['nope']; return [xs, join(...xs), xs.length, Object.keys(o), o.both, Math.max(...xs.filter((x) => typeof x === 'number'), -1)]; }",
     2,
   ],
+  [
+    "derived classes: super calls, super getters, static super, super in an arrow, default constructors (#1294)",
+    "export function f(a, b) { class Shape { constructor(n) { this.n = n; } area() { return 0; } describe() { return this.n + ':' + this.area(); } get label() { return 'shape ' + this.n; } static make(n) { return new this(n); } } class Sq extends Shape { constructor(s) { super('sq'); this.s = s; } area() { return this.s * this.s; } describe() { return '[' + super.describe() + ']'; } get label() { return super.label + '!'; } static make(s) { return super.make(s * 2); } } class Big extends Sq { area() { const up = () => super.area() * 10; return up(); } } class Plain extends Shape {} const q = new Sq(a); const g = new Big(b); const p = new Plain(a); return [q.describe(), q.label, g.describe(), g.label, g instanceof Sq, g instanceof Shape, q instanceof Big, Sq.make(3).s, Big.make(2).area(), Object.keys(g), p.n, p.describe(), p instanceof Shape]; }",
+    2,
+  ],
+  [
+    "an Error subclass: thrown, caught, its name, message and instanceof (#1294)",
+    "export function f(a, b) { class Bad extends Error { constructor(m, code) { super(m); this.name = 'Bad'; this.code = code; } } class Worse extends Bad {} try { if (typeof a === 'number' && a > 0) throw new Worse('too big: ' + a, b); throw new Bad(String(a), 1); } catch (e) { return [e.message, e.name, e.code, e instanceof Bad, e instanceof Worse, e instanceof Error, e instanceof TypeError, String(e)]; } }",
+    2,
+  ],
 ];
 
 describe.skipIf(!canRun("x86_64-linux"))("boxed values, natively on this host (#1292)", () => {
@@ -204,7 +214,7 @@ describe("what the boxed lowering refuses, for now (#1292)", () => {
     }
     return "lowered";
   };
-  it("free names, new, async functions, derived classes, approximated Math", () => {
+  it("free names, new, async functions, class fields, approximated Math", () => {
     expect(refusal("export function f(x) { return helper(x); }")).toMatch(
       /"helper" is not in the native base set/,
     );
@@ -212,11 +222,9 @@ describe("what the boxed lowering refuses, for now (#1292)", () => {
       /not in the native base set|not in the subset/,
     );
     expect(refusal("export function f(x) { return async () => x; }")).toMatch(/not in the subset/);
-    expect(
-      refusal(
-        "export function f(x) { class A { m() { return 1; } } class B extends A { m() { return super.m() + x; } } return new B().m(); }",
-      ),
-    ).toMatch(/derived class|not in the subset/);
+    expect(refusal("export function f(x) { class A { y = 1; } return new A().y + x; }")).toMatch(
+      /a class with a field|not in the subset/,
+    );
     expect(refusal("export function f(x) { return Math.sin(x); }")).toMatch(
       /implementation-approximated/,
     );
