@@ -166,17 +166,12 @@ export function parseAtomSource(source: string): { project: Project; file: Sourc
       /\bawait\b/.test(candidate) &&
       sf.getDescendantsOfKind(SyntaxKind.Identifier).some((id) => id.getText() === "await")
     ) {
+      // An empty export list makes the file a module, and lifts to nothing.
       const asModule = new Project({
         useInMemoryFileSystem: true,
-        compilerOptions: {
-          allowJs: false,
-          noEmit: true,
-          noLib: true,
-          skipLibCheck: true,
-          moduleDetection: ts.ModuleDetectionKind.Force,
-        },
+        compilerOptions: { allowJs: false, noEmit: true, noLib: true, skipLibCheck: true },
       });
-      const moduleFile = asModule.createSourceFile("atom.ts", candidate, {
+      const moduleFile = asModule.createSourceFile("atom.ts", `${candidate}\nexport {};`, {
         scriptKind: ScriptKind.TS,
       });
       if (asModule.getProgram().getSyntacticDiagnostics(moduleFile).length === 0) sf = moduleFile;
