@@ -49,6 +49,8 @@ export const ECMASCRIPT: BaseSet = {
   target: "ecmascript",
   version: 1,
   primitives: {
+    // What the language gives a call made with `new` (#1173).
+    "new.target": {},
     ...pure([
       "JSON",
       "Object",
@@ -148,6 +150,8 @@ export const NODE: BaseSet = {
     dgram: { capability: "network" },
     dns: { capability: "network" },
     os: { capability: "process" },
+    // An ES module's own URL (#1173).
+    "import.meta": { capability: "module-location" },
     process: { capability: "process" },
     child_process: { capability: "process" },
     cluster: { capability: "process" },

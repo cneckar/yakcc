@@ -534,6 +534,15 @@ describe("nested function declarations and JSDoc (residue defects found in bcryp
     const g = lift("function outer () { function f () { return K } const K = 1; return f() }");
     expect(diamondSymbols(g)).toContain("K");
   });
+  it("a function hoisted over a later `var` reads it through a cell, as JavaScript does (#1173)", () => {
+    // `var` is hoisted as undefined: f, called after the declarations, sees their values.
+    const g = lift(
+      "function outer (i) { var r = f(i); function f (j) { return t[j] + k } var t = [5, 6]; var k = 1; return f(i) }",
+    );
+    expect(diamondSymbols(g)).not.toContain("t");
+    expect(diamondSymbols(g)).not.toContain("k");
+    expect(g.nodes.some((n) => n.label === 'object:["value"]')).toBe(true);
+  });
 });
 
 describe("labels, class self-reference, and pure legacy globals (residue defects)", () => {

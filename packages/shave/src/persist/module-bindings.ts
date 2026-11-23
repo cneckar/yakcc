@@ -390,6 +390,13 @@ export function moduleBindingsOf(moduleSource: string): Map<string, ModuleBindin
         vars.set(name, { declHash, init, statement: stmt });
     }
   }
+  // A class declaration binds its name to the class, classified as a variable would be: a class
+  // whose statics are written after it (`ZodError.create = ...`) is module state (#1173).
+  for (const cls of sf.getClasses()) {
+    const name = cls.getName();
+    if (name === undefined || vars.has(name)) continue;
+    vars.set(name, { declHash: sha(cls.getText()), init: cls, statement: cls });
+  }
 
   const fns = new Map<
     string,

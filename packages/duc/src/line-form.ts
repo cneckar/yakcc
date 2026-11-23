@@ -85,7 +85,8 @@ export class LineFormError extends Error {
 }
 
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const SYMBOL = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+// A name, or one of the language's meta-properties (`new.target`, `import.meta`).
+const SYMBOL = /^(?:[A-Za-z_$][A-Za-z0-9_$]*|new\.target|import\.meta)$/;
 const LIT = /^lit\s+("(?:[^"\\]|\\.)*")\s*->\s*(\S+)\s*$/;
 const LABEL = /^\S+$/;
 

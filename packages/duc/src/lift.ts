@@ -332,6 +332,11 @@ class Lifter {
   private env = new Map<string, ValueId>();
   /** Function declarations already bound by hoisting (compiler nodes). */
   private readonly hoisted = new Set<unknown>();
+  /**
+   * Names made cells ahead of their declaration, for a function hoisted above it (#1173): the
+   * declaration writes the cell, which the function captured.
+   */
+  private readonly hoistedCells = new Set<string>();
   /** The `if` branches recorded so far, in lifting order (ids are assigned here). */
   private readonly branches: DucBranch[] = [];
   private branchCount = 0;
@@ -577,22 +582,55 @@ class Lifter {
       }
     }
     const hoistedNames = new Set<string>();
+    // Names declared in the list by `var`: hoisted as undefined, as JavaScript hoists them. A `let`,
+    // `const` or class read before its declaration throws, so a function reading one is not hoisted
+    // over it: it is bound where it stands, and the name stays reported.
+    const declaredValues = new Set<string>();
     for (const stmt of stmts) {
-      if (!Node.isFunctionDeclaration(stmt)) continue;
-      const name = stmt.getName();
-      if (name === undefined) continue;
-      // Already bound by the list it was hoisted in (a tail lifted again on a side).
-      if (this.hoisted.has(stmt.compilerNode)) {
+      if (
+        Node.isVariableStatement(stmt) &&
+        stmt.getDeclarationKind() === VariableDeclarationKind.Var
+      )
+        for (const decl of stmt.getDeclarations())
+          for (const name of patternNames(decl.getNameNode())) declaredValues.add(name);
+    }
+    // A function declaration is hoisted, as JavaScript hoists it (#1173). A later-declared value it
+    // reads is a cell from here, holding undefined until its declaration writes it, so the function
+    // sees the value it has when it runs. One that reads a later function waits for it: passes repeat
+    // until no more can be hoisted, and the rest are bound where they stand.
+    let progress = true;
+    while (progress) {
+      progress = false;
+      for (const stmt of stmts) {
+        if (!Node.isFunctionDeclaration(stmt)) continue;
+        const name = stmt.getName();
+        if (name === undefined || hoistedNames.has(name)) continue;
+        // Already bound by the list it was hoisted in (a tail lifted again on a side).
+        if (this.hoisted.has(stmt.compilerNode)) {
+          hoistedNames.add(name);
+          progress = true;
+          continue;
+        }
+        const reads = this.readNamesOf(stmt).filter(
+          (read) => read !== name && declared.has(read) && !hoistedNames.has(read),
+        );
+        if (reads.some((read) => !declaredValues.has(read))) continue;
+        for (const read of reads) {
+          if (this.hoistedCells.has(read)) continue;
+          if (this.env.has(read) && !this.cells.has(read)) continue;
+          this.cells.add(read);
+          this.hoistedCells.add(read);
+          const [cell] = this.emit("op", [this.undefinedValue()], 1, {
+            origin: { kind: "ObjectLiteral", text: truncate(read) },
+            label: 'object:["value"]',
+          });
+          this.env.set(read, cell as ValueId);
+        }
+        this.bindFunctionDeclaration(stmt, name);
+        this.hoisted.add(stmt.compilerNode);
         hoistedNames.add(name);
-        continue;
+        progress = true;
       }
-      const pending = this.readNamesOf(stmt).some(
-        (read) => read !== name && declared.has(read) && !hoistedNames.has(read),
-      );
-      if (pending) continue;
-      this.bindFunctionDeclaration(stmt, name);
-      this.hoisted.add(stmt.compilerNode);
-      hoistedNames.add(name);
     }
     for (const [i, written] of stmts.entries()) {
       // A switch whose clauses each end in an exit is the if chain it means (#1276).
@@ -2235,6 +2273,11 @@ class Lifter {
   private bindPattern(nameNode: Node, value: ValueId): void {
     if (Node.isIdentifier(nameNode)) {
       const name = nameNode.getText();
+      // A cell made ahead of the declaration, for a hoisted function: the declaration writes it.
+      if (this.hoistedCells.has(name) && this.env.has(name)) {
+        this.writeCell(name, value);
+        return;
+      }
       if (this.cells.has(name)) {
         // A name a closure rebinds is declared as a new cell holding its first value.
         const [cell] = this.emit("op", [value], 1, {
@@ -2496,6 +2539,9 @@ class Lifter {
   // --- expressions ---
   private liftExpr(node: Node): ValueId {
     if (node.getKind() === SyntaxKind.ThisKeyword) return this.thisValue();
+    // `new.target` and `import.meta` are what the platform gives the call or the module, read like
+    // a platform primitive by their text (#1173).
+    if (Node.isMetaProperty(node)) return this.resolveName(node.getText());
     if (Node.isIdentifier(node)) {
       // `undefined`, unless a binding shadows it, is the literal: the same value a bare `return;` has.
       if (node.getText() === "undefined" && !this.env.has("undefined"))

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 // SPDX-License-Identifier: MIT
 /**
  * duc-module-submission.test.ts — a corpus package as a shared submission (#1287, #1290).
@@ -16,6 +16,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { type SpecYak, specHash } from "@yakcc/contracts";
 import { atomShape, liftAtom, packGraph } from "@yakcc/duc";
 import { collectForestSlicePlans, shavePackage, slice } from "@yakcc/shave";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import {
   type ConformanceVector,
@@ -133,7 +134,12 @@ function oneStatementModule(
             specHash: specHash(spec),
             identity: packed.identity,
             kind: shape.kind,
-            declares: shape.kind === "statement" ? shape.names : [],
+            declares:
+              shape.kind === "statement"
+                ? shape.names
+                : shape.name !== undefined
+                  ? [shape.name]
+                  : [],
           },
         ],
       },
@@ -146,38 +152,36 @@ const json = (v: unknown): unknown =>
   v === undefined ? undefined : (JSON.parse(JSON.stringify(v)) as unknown);
 
 describe("a corpus package as a shared submission (#1287, #1290)", () => {
+  const BASE64 = join(FIXTURES, "base64-js-1.5.1/index.js");
+  const real64 = (): Record<string, (x: unknown) => unknown> =>
+    createRequire(__filename)(BASE64) as Record<string, (x: unknown) => unknown>;
+  const STRINGS = ["", "QQ==", "QUI=", "YWJj", "SGVsbG8sIHdvcmxkIQ==", "-_-_"];
+  const BYTES = [[], [65], [65, 66], [97, 98, 99], [0, 255, 128, 64, 32, 16, 8]];
+  /** base64-js's exports on the inputs, as module evidence: computed by Node's own require. */
+  const base64Evidence = (): NonNullable<ModuleRecord["evidence"]> => {
+    const real = real64();
+    return ["byteLength", "toByteArray", "fromByteArray"].flatMap((member) =>
+      (member === "fromByteArray" ? BYTES : STRINGS).map((x) => ({
+        member,
+        inputs: [x],
+        output: json(real[member]?.(x)),
+      })),
+    );
+  };
+
   it("base64-js passes checks 1-8, its exports computing what the real package computes", async () => {
-    const real = createRequire(__filename)(join(FIXTURES, "base64-js-1.5.1/index.js")) as Record<
-      string,
-      (x: unknown) => unknown
-    >;
-    const STRINGS = ["", "QQ==", "QUI=", "YWJj", "SGVsbG8sIHdvcmxkIQ==", "-_-_"];
-    const BYTES = [[], [65], [65, 66], [97, 98, 99], [0, 255, 128, 64, 32, 16, 8]];
-    const evidenceFor = (name: string): ConformanceVector[] => {
-      const fn = real[name];
-      if (fn === undefined) return [];
-      const inputs = name === "fromByteArray" ? BYTES : STRINGS;
-      return inputs.map((x) => ({ inputs: [x], output: json(fn(x)) }));
-    };
-    const { batch, modules, names } = await submissionOf("base64-js-1.5.1", evidenceFor);
+    // The graph decides what is stored: base64-js lifts whole, one module statement.
+    const { batch, modules } = await submissionOf("base64-js-1.5.1", () => []);
     expect(modules).toHaveLength(1);
     expect(modules[0]?.statements.length).toBe(batch.length);
-
     const verdict = await checkSharedSubmission(
       batch,
       { contracts: new Set(), implementationsOf: () => [] },
-      { modules },
+      { modules: modules.map((m) => ({ ...m, evidence: base64Evidence() })) },
     );
-    const refused = verdict.implementations.filter((v) => v.refused !== undefined);
-    expect(refused).toEqual([]);
+    expect(verdict.implementations.filter((v) => v.refused !== undefined)).toEqual([]);
+    expect(verdict.modules).toEqual([{ id: "index.js", conforming: true }]);
     expect(verdict.accepted).toBe(true);
-    // The package's exports reach conforming: their evidence runs in the module's context, after
-    // the statements that fill the lookup tables.
-    for (const name of ["byteLength", "toByteArray", "fromByteArray"]) {
-      const at = names.indexOf(name);
-      expect(at, name).toBeGreaterThanOrEqual(0);
-      expect(verdict.implementations[at]?.level, name).toBe("conforming");
-    }
   });
 
   it("without its module record, the same batch is not closed", async () => {
@@ -188,36 +192,39 @@ describe("a corpus package as a shared submission (#1287, #1290)", () => {
     });
     expect(verdict.accepted).toBe(false);
     const reasons = verdict.implementations.map((v) => v.refused?.reason ?? "").join("\n");
-    expect(reasons).toContain("lookup");
     expect(reasons).toContain("exports");
   });
 
   it("a module whose statements are out of order does not compute what the package does", async () => {
-    const real = createRequire(__filename)(join(FIXTURES, "base64-js-1.5.1/index.js")) as Record<
-      string,
-      (x: unknown) => unknown
-    >;
-    const evidenceFor = (name: string): ConformanceVector[] =>
-      name === "fromByteArray"
-        ? [{ inputs: [[97, 98, 99]], output: json(real.fromByteArray?.([97, 98, 99])) }]
-        : [];
-    const { batch, modules, names } = await submissionOf("base64-js-1.5.1", evidenceFor);
-    // The statements that declare nothing are dropped from the record, among them the loop that
-    // fills the lookup tables: the tables stay empty.
-    const record = modules[0] as ModuleRecord;
-    const emptied: ModuleRecord = {
-      ...record,
-      statements: record.statements.filter(
-        (st) => st.kind === "function" || st.declares.length > 0,
-      ),
-    };
-    const verdict = await checkSharedSubmission(
-      batch,
-      { contracts: new Set(), implementationsOf: () => [] },
-      { modules: [emptied] },
+    // base64-js as its top-level statements, one implementation each.
+    const sf = ts.createSourceFile(
+      "index.js",
+      readFileSync(BASE64, "utf8"),
+      ts.ScriptTarget.ES2022,
     );
-    const at = names.indexOf("fromByteArray");
-    expect(verdict.implementations[at]?.refused?.check).toBe("conformance");
+    const lines = sf.statements
+      .map((st) => st.getText(sf))
+      .filter((t) => !/^['"]use strict['"]/.test(t));
+    const batch: SharedImplementation[] = [];
+    const statements: ModuleRecord["statements"][number][] = [];
+    for (const line of lines) {
+      const m = oneStatementModule(line);
+      batch.push(...m.batch);
+      statements.push(...(m.modules[0]?.statements ?? []));
+    }
+    const store = { contracts: new Set<string>(), implementationsOf: () => [] };
+    const inOrder: ModuleRecord = { id: "index.js", statements, evidence: base64Evidence() };
+    const ok = await checkSharedSubmission(batch, store, { modules: [inOrder] });
+    expect(ok.modules).toEqual([{ id: "index.js", conforming: true }]);
+    // Without the statements that declare nothing (the loop that fills the tables), the tables
+    // stay empty and the exports compute something else.
+    const emptied: ModuleRecord = {
+      ...inOrder,
+      statements: statements.filter((st) => st.kind === "function" || st.declares.length > 0),
+    };
+    const wrong = await checkSharedSubmission(batch, store, { modules: [emptied] });
+    expect(wrong.modules[0]?.conforming).toBe(false);
+    expect(wrong.accepted).toBe(false);
   });
 
   it("ms: one whole-file statement, its module.exports computing what the real package computes", async () => {
