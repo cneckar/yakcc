@@ -183,6 +183,15 @@ function emitFunction(
   const inline = new Set<NodeId>();
   // Branches written as the `&&`, `||` or `?:` of the select that joins them.
   const lazyBranches = new Set<string>();
+  // A class's members are written inside the class, not as statements of their own (#1276).
+  const classMembers = new Set<NodeId>();
+  for (const node of g.nodes) {
+    if (!(node.label ?? "").startsWith("class:")) continue;
+    for (const v of node.inputs) {
+      const p = producer.get(v);
+      if (p?.closure !== undefined && (consumers.get(v) ?? []).length === 1) classMembers.add(p.id);
+    }
+  }
   for (const node of g.nodes) {
     // A literal is a constant, written where it is used.
     if (node.kind === "literal-source" && node.label !== "Uninitialized") inline.add(node.id);
@@ -303,6 +312,8 @@ function emitFunction(
     if (label === "...") return `...${arg(0)}`;
     if (label.startsWith("OmittedExpression#")) return "";
     if (label === "this" || label.startsWith("ThisKeyword#")) return "this";
+    // The class a member belongs to: the class expression's own name (#1276).
+    if (label === "class-self") return "Self_";
     if (label.startsWith("object:")) {
       const entries = JSON.parse(label.slice("object:".length)) as unknown[];
       let at = 0;
@@ -348,6 +359,33 @@ function emitFunction(
     if (label === "throw") return [`throw ${arg(0)};`];
     if (out === undefined) throw new EmitError(`the statement "${label}" has no TypeScript form`);
     const name = nameOf(out);
+    if (label.startsWith("class:")) {
+      // `class Self_ { constructor(..) {..} [static] name(..) {..} get name() {..} }`
+      const members = JSON.parse(label.slice("class:".length)) as [string, string?, boolean?][];
+      const lines = [`const ${name} = class Self_ {`];
+      members.forEach(([kind, member, isStatic], i) => {
+        const c = producer.get(node.inputs[i] as ValueId);
+        if (c?.closure === undefined || !classMembers.has(c.id))
+          throw new EmitError(`member ${i} of class ${node.id} is not its own closure`);
+        const inner = emitFunction(
+          c.closure,
+          `${prefix}${c.id}_`,
+          c.inputs.map((v) => ref(v)),
+          imports,
+        );
+        const head =
+          kind === "constructor"
+            ? "constructor"
+            : `${isStatic === true ? "static " : ""}${kind === "method" ? "" : `${kind} `}${member}`;
+        lines.push(
+          `  ${head}(${inner.params.join(", ")}) {`,
+          ...inner.body.map((l) => `    ${l}`),
+          "  }",
+        );
+      });
+      lines.push("};");
+      return lines;
+    }
     if (node.closure !== undefined) {
       const inner = emitFunction(
         node.closure,
@@ -391,7 +429,8 @@ function emitFunction(
   const needs = (node: DucNode): ValueId[] =>
     [...node.inputs, ...(after.get(node.id) ?? [])].flatMap((v) => {
       const p = producer.get(v);
-      return p !== undefined && inline.has(p.id) ? needs(p) : [v];
+      // A class needs what its members capture.
+      return p !== undefined && (inline.has(p.id) || classMembers.has(p.id)) ? needs(p) : [v];
     });
   /** The values made inside a region (a branch side or a loop body), nested regions included. */
   const madeWithin = (path: string): ValueId[] =>
@@ -473,7 +512,13 @@ function emitFunction(
     }
     const items: Item[] = [];
     for (const node of g.nodes) {
-      if (node.region !== scope || owners.has(node.id) || inline.has(node.id)) continue;
+      if (
+        node.region !== scope ||
+        owners.has(node.id) ||
+        inline.has(node.id) ||
+        classMembers.has(node.id)
+      )
+        continue;
       if (
         node.kind === "param-source" ||
         node.kind === "diamond-source" ||

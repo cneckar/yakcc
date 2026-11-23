@@ -197,6 +197,10 @@ class Lifter {
   private readonly imports = new Map<string, ImportBinding>();
   /** Memoized diamond-sources, keyed by symbol so one unknown = one source. */
   private readonly diamonds = new Map<string, ValueId>();
+  /** The name of the class whose member this graph is: it reads as `class-self` (#1276). */
+  private classSelf: string | undefined;
+  private classSelfValue: ValueId | undefined;
+
   private readonly obs: ValueId[] = [];
 
   /**
@@ -487,6 +491,60 @@ class Lifter {
   private tryCount = 0;
 
   /**
+   * A class as one operation over its members' closures (#1276): the constructor, then each method
+   * and accessor in order, its label naming each member's kind, name and whether it is static. A
+   * member reads the class's own name as `class-self`. Undefined when it is not that: a heritage
+   * clause (`super` needs the parent), a field, a static block, a computed or private name, a
+   * parameter property, or a member that is not a closure (async, a generator).
+   */
+  private liftClass(
+    node: import("ts-morph").ClassDeclaration | import("ts-morph").ClassExpression,
+  ): ValueId | undefined {
+    if (node.getHeritageClauses().length > 0) return undefined;
+    const self = node.getName();
+    const members: unknown[] = [];
+    const closures: FunctionLike[] = [];
+    for (const m of node.getMembers()) {
+      if (Node.isConstructorDeclaration(m)) {
+        if (m.getBody() === undefined) continue;
+        if (m.getParameters().some((p) => p.getScope() !== undefined || p.isReadonly()))
+          return undefined;
+        members.unshift(["constructor"]);
+        closures.unshift(m);
+        continue;
+      }
+      if (
+        !(
+          Node.isMethodDeclaration(m) ||
+          Node.isGetAccessorDeclaration(m) ||
+          Node.isSetAccessorDeclaration(m)
+        )
+      )
+        return undefined;
+      const nameNode = m.getNameNode();
+      if (!Node.isIdentifier(nameNode)) return undefined;
+      if (m.getBody() === undefined) return undefined;
+      const kind = Node.isMethodDeclaration(m)
+        ? "method"
+        : Node.isGetAccessorDeclaration(m)
+          ? "get"
+          : "set";
+      members.push([kind, nameNode.getText(), m.isStatic()]);
+      closures.push(m);
+    }
+    const values: ValueId[] = [];
+    for (const fn of closures) {
+      const value = this.liftClosure(fn, undefined, self);
+      if (value === undefined) return undefined;
+      values.push(value);
+    }
+    return this.emit("op", values, 1, {
+      origin: { kind: "Class", text: truncate(self ?? "class") },
+      label: `class:${labelJson(members)}`,
+    })[0] as ValueId;
+  }
+
+  /**
    * A try statement as the call it means (#1276): `__yakccTry(() => { body }, (e) => { handler })`, a
    * platform primitive that runs the body and, when it throws, the handler on what it threw. A return
    * inside returns `[1, value]` from its closure, and the call is followed by
@@ -702,8 +760,18 @@ class Lifter {
     return value as ValueId;
   }
 
-  private liftClosure(fn: FunctionLike, selfName?: string): ValueId | undefined {
-    if (fn.isAsync() || (!Node.isArrowFunction(fn) && fn.isGenerator())) return undefined;
+  private liftClosure(
+    fn: FunctionLike,
+    selfName?: string,
+    classSelf?: string,
+  ): ValueId | undefined {
+    const asyncOrGenerator =
+      (Node.isFunctionDeclaration(fn) ||
+        Node.isFunctionExpression(fn) ||
+        Node.isArrowFunction(fn) ||
+        Node.isMethodDeclaration(fn)) &&
+      (fn.isAsync() || (!Node.isArrowFunction(fn) && fn.isGenerator()));
+    if (asyncOrGenerator) return undefined;
     if (fn.getDescendantsOfKind(SyntaxKind.SuperKeyword).length > 0) return undefined;
     // `this` in an arrow is the enclosing receiver, captured like a name; in a function it is the
     // caller's receiver, so the closure is a `function` (#1276).
@@ -717,7 +785,16 @@ class Lifter {
     const lexicalThis = Node.isArrowFunction(fn) && thisUses.length > 0;
     const dynamicThis = !Node.isArrowFunction(fn) && thisUses.length > 0;
     const locals = closureLocals(fn);
-    const reads = fn.getDescendantsOfKind(SyntaxKind.Identifier);
+    // A member's own name (a method's, an accessor's) names it; it is not a read.
+    const ownName =
+      Node.isMethodDeclaration(fn) ||
+      Node.isGetAccessorDeclaration(fn) ||
+      Node.isSetAccessorDeclaration(fn)
+        ? fn.getNameNode().compilerNode
+        : undefined;
+    const reads = fn
+      .getDescendantsOfKind(SyntaxKind.Identifier)
+      .filter((id) => id.compilerNode !== ownName);
     if (reads.some((id) => id.getText() === "arguments" && !locals.has("arguments")))
       return undefined;
     // A closure that rebinds a name outside itself needs a shared cell, which the graph does not
@@ -736,6 +813,11 @@ class Lifter {
       if (!isValueRead(id)) continue;
       const name = id.getText();
       if (!locals.has(name) && !outerReads.includes(name)) outerReads.push(name);
+    }
+    // A class's own name in its members is the class (`class-self`), not a capture.
+    if (classSelf !== undefined) {
+      const at = outerReads.indexOf(classSelf);
+      if (at !== -1) outerReads.splice(at, 1);
     }
     if (selfName !== undefined && outerReads.includes(selfName)) return undefined;
     // A platform primitive the scope does not bind is a source of its own in the closure's graph, so
@@ -796,6 +878,8 @@ class Lifter {
     try {
       const inner = new Lifter(this.ambient);
       for (const [name, binding] of this.imports) inner.imports.set(name, binding);
+      // A member reads its class as `class-self`; a closure inside it captures that value.
+      inner.classSelf = classSelf;
       graph = inner.liftClosureBody(
         fn,
         captures,
@@ -908,10 +992,12 @@ class Lifter {
       // A named class is bound at its own position. Its own name inside its body is
       // a self-reference, not an external read, as with a recursive function.
       const name = node.getName() as string;
-      const value = this.emit("op", this.collectReads(node, new Set([name])), 1, {
-        origin: { kind: "Class", text: truncate(name) },
-        label: this.opaqueLabel("Class", node, new Set([name])),
-      })[0] as ValueId;
+      const value =
+        this.liftClass(node) ??
+        (this.emit("op", this.collectReads(node, new Set([name])), 1, {
+          origin: { kind: "Class", text: truncate(name) },
+          label: this.opaqueLabel("Class", node, new Set([name])),
+        })[0] as ValueId);
       this.env.set(name, value);
       return;
     }
@@ -2060,6 +2146,10 @@ class Lifter {
       const inputs = inner !== undefined ? [this.liftExpr(inner)] : [];
       return this.emit("op", inputs, 1, { origin: { kind: node.getKindName() } })[0] as ValueId;
     }
+    if (Node.isClassExpression(node)) {
+      const lifted = this.liftClass(node);
+      if (lifted !== undefined) return lifted;
+    }
     if (Node.isArrowFunction(node) || Node.isFunctionExpression(node)) {
       const lifted = this.liftClosure(node);
       if (lifted !== undefined) return lifted;
@@ -2339,6 +2429,21 @@ class Lifter {
   private resolveName(name: string): ValueId {
     const bound = this.env.get(name);
     if (bound !== undefined) return bound;
+    if (name === this.classSelf) {
+      // The class itself, one source per graph, at its top level.
+      if (this.classSelfValue === undefined) {
+        const saved = this.regionStack.splice(0);
+        try {
+          [this.classSelfValue] = this.emit("op", [], 1, {
+            origin: { kind: "ClassSelf", text: truncate(name) },
+            label: "class-self",
+          }) as [ValueId];
+        } finally {
+          this.regionStack.push(...saved);
+        }
+      }
+      return this.classSelfValue;
+    }
 
     const existingDiamond = this.diamonds.get(name);
     if (existingDiamond !== undefined) return existingDiamond;
@@ -2556,7 +2661,11 @@ function assignmentTargetsOf(node: Node): Node[] {
 type FunctionLike =
   | import("ts-morph").FunctionDeclaration
   | import("ts-morph").ArrowFunction
-  | import("ts-morph").FunctionExpression;
+  | import("ts-morph").FunctionExpression
+  | import("ts-morph").MethodDeclaration
+  | import("ts-morph").ConstructorDeclaration
+  | import("ts-morph").GetAccessorDeclaration
+  | import("ts-morph").SetAccessorDeclaration;
 
 const COMPOUND_ASSIGN = new Set<SyntaxKind>([
   SyntaxKind.PlusEqualsToken,
