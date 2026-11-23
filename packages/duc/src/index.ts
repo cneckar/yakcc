@@ -100,7 +100,7 @@ export type {
   SubmissionReport,
   SubmittedAtom,
 } from "./closure.js";
-export { checkSubmission, closureOf, linkReferences } from "./closure.js";
+export { checkSubmission, closureOf, linkReferences, requireSpecifiers } from "./closure.js";
 export { LineFormError, parseLineForm, printLineForm } from "./line-form.js";
 export type { RetrievalSignatureOptions } from "./retrieval-signature.js";
 export { retrievalSignature } from "./retrieval-signature.js";

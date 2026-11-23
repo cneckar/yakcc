@@ -469,6 +469,8 @@ describe("external surface from the sidecar (WI-EXPLAIN-03, #1172)", () => {
       ambient: [],
       captures: [],
       moduleState: [],
+      moduleScope: [],
+      requires: [],
       compositions: [],
       unexplained: [],
     });
@@ -536,5 +538,32 @@ describe("primitive initializers are inert under hand-off (ms unit constants)", 
   it("an object initializer is still mutable under hand-off", () => {
     const b = moduleBindingsOf("const O = [];\nexport const r = g(O);");
     expect(b.get("O")?.binding).toBe("mutable");
+  });
+});
+
+describe("CommonJS module scope (#1173, DEC-DUC-MODULE-SCOPE-001)", () => {
+  const bindings = moduleBindingsOf("const T = 1;\nexports.x = T;");
+  it("in a module, exports, module and literal requires are the module's, with its dependencies", () => {
+    const src =
+      'const jws = require("jws");\nconst t = require("./lib/timespan");\nmodule.exports = function (a) { return jws(t(a)); };\nexports.y = 1;';
+    const { ducUsupp, result } = enforceDucGate(src, "m", "reject", undefined, new Set(), bindings);
+    expect(result.unexplained).toEqual([]);
+    expect(result.moduleScope.map((u) => u.symbol).sort()).toEqual([
+      "exports",
+      "module",
+      "require",
+    ]);
+    const surface = externalSurfaceOf(ducUsupp);
+    expect(surface?.requires).toEqual(["jws", "./lib/timespan"]);
+    expect(surface?.moduleScope.sort()).toEqual(["exports", "module", "require"]);
+  });
+  it("a require with a computed specifier stays unexplained", () => {
+    const src = "function load(name) { return require(name); }";
+    const result = runDucConservationGate(src, new Set(), bindings);
+    expect(result.unexplained.map((u) => u.symbol)).toEqual(["require"]);
+  });
+  it("without a module, the names are unexplained as before", () => {
+    const result = runDucConservationGate('exports.y = require("x");');
+    expect(result.unexplained.map((u) => u.symbol).sort()).toEqual(["exports", "require"]);
   });
 });

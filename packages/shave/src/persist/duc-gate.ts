@@ -39,6 +39,18 @@
 //   composition edges, this is classification only. The atom's bytes and content
 //   address are unchanged.
 //
+// @decision DEC-DUC-MODULE-SCOPE-001 (#1173)
+// title: CommonJS module scope is the module's, recorded with the module's dependencies
+// status: decided
+// rationale:
+//   Under D5 (#1275), `require`, `module` and `exports` are not primitives: they are the
+//   module's own scope. When the gate knows the atom's module, `exports` and `module` are
+//   explained by the module record (#1290), and `require` with literal specifiers is
+//   explained, its specifiers recorded as the module's dependencies: a relative one is a
+//   module of the package, a platform one is in the target's base set, and any other is a
+//   dependency, like an ESM import (`unlinked-reference`). A `require` with a computed
+//   specifier stays unexplained: what it loads is not in the graph.
+//
 // @decision DEC-DUC-MODULE-STATE-001 (#1266)
 // title: A free identifier naming a mutable module binding is recorded module state
 // status: decided
@@ -58,6 +70,7 @@ import {
   influenceAttestation,
   isWellFormed,
   liftAtom,
+  requireSpecifiers,
 } from "@yakcc/duc";
 import {
   Node,
@@ -99,6 +112,15 @@ export interface DucUnknown {
    */
   readonly moduleState?: boolean;
   readonly declHash?: string;
+  /**
+   * True for CommonJS module scope (DEC-DUC-MODULE-SCOPE-001, #1173): `exports` and `module`
+   * are the module's own objects, and `require` resolves through the module record (#1290),
+   * the target's platform modules, or a dependency. Set only when the gate knows the atom's
+   * module, and for `require` only when every specifier is a literal.
+   */
+  readonly moduleScope?: boolean;
+  /** For `require`: the specifiers it is called with (the module's dependencies). */
+  readonly requires?: readonly string[];
 }
 
 import type { ModuleBindingInfo } from "./module-bindings.js";
@@ -125,6 +147,8 @@ export interface DucGateResult {
   readonly captures: readonly DucUnknown[];
   /** Mutable module bindings the atom reads: module state (recorded, never a gate problem). */
   readonly moduleState: readonly DucUnknown[];
+  /** CommonJS module scope the atom uses: `exports`, `module`, `require` (recorded). */
+  readonly moduleScope: readonly DucUnknown[];
   /** Present when the fragment could not be lifted (a syntax/analysis failure). */
   readonly liftError?: string;
   /**
@@ -184,11 +208,26 @@ export function runDucConservationGate(
     // Every ♦-source, not only those reaching an observation: an unresolved use is a
     // defect even when it does not reach the result (it can still have effects).
     const seen = new Map<string, DucUnknown>();
+    // CommonJS module scope is the module's when the gate knows the atom's module (#1173).
+    const inModule = moduleBindings !== NO_MODULE_BINDINGS;
+    const specifiers = requireSpecifiers(graph);
     for (const node of graph.nodes) {
       if (node.diamond === undefined) continue;
       const { symbol, reason, module } = node.diamond;
       if (seen.has(symbol)) continue;
       const isFree = reason === "free-identifier";
+      const scope =
+        isFree && inModule && !moduleBindings.has(symbol)
+          ? symbol === "exports" || symbol === "module"
+            ? {}
+            : symbol === "require" && specifiers.every((x) => x !== null)
+              ? { requires: [...new Set(specifiers as string[])] }
+              : undefined
+          : undefined;
+      if (scope !== undefined) {
+        seen.set(symbol, { symbol, reason, moduleScope: true, ...scope });
+        continue;
+      }
       const isComposition = isFree && internalSymbols.has(symbol);
       const binding = isFree && !isComposition ? moduleBindings.get(symbol) : undefined;
       const isCapture = binding?.binding === "pure";
@@ -212,16 +251,30 @@ export function runDucConservationGate(
       composition: [],
       captures: [],
       moduleState: [],
+      moduleScope: [],
       liftError,
     };
   }
   const isExplained = (u: DucUnknown): boolean =>
-    u.composition === true || u.capture === true || u.moduleState === true;
+    u.composition === true ||
+    u.capture === true ||
+    u.moduleState === true ||
+    u.moduleScope === true;
   const unexplained = unknowns.filter((u) => u.reason === "free-identifier" && !isExplained(u));
   const composition = unknowns.filter((u) => u.composition === true);
   const captures = unknowns.filter((u) => u.capture === true);
   const moduleState = unknowns.filter((u) => u.moduleState === true);
-  return { wellFormed, unknowns, unexplained, composition, captures, moduleState, influence };
+  const moduleScope = unknowns.filter((u) => u.moduleScope === true);
+  return {
+    wellFormed,
+    unknowns,
+    unexplained,
+    composition,
+    captures,
+    moduleState,
+    moduleScope,
+    influence,
+  };
 }
 
 /** The outcome of enforcing the gate: what to persist plus the raw result. */
@@ -345,6 +398,10 @@ export interface ExternalSurface {
   readonly captures: readonly { readonly symbol: string; readonly declHash?: string }[];
   /** Mutable module bindings read: module state, explained by the module record (#1266). */
   readonly moduleState: readonly { readonly symbol: string; readonly declHash?: string }[];
+  /** CommonJS module scope used (`exports`, `module`, `require`). */
+  readonly moduleScope: readonly string[];
+  /** The specifiers `require` is called with: the module's dependencies. */
+  readonly requires: readonly string[];
   readonly compositions: readonly string[];
   readonly unexplained: readonly string[];
 }
@@ -367,6 +424,8 @@ export function externalSurfaceOf(ducUsupp: string | null | undefined): External
   const ambient: string[] = [];
   const captures: { symbol: string; declHash?: string }[] = [];
   const moduleState: { symbol: string; declHash?: string }[] = [];
+  const moduleScope: string[] = [];
+  const requires: string[] = [];
   const compositions: string[] = [];
   const unexplained: string[] = [];
   for (const u of unknowns) {
@@ -381,6 +440,9 @@ export function externalSurfaceOf(ducUsupp: string | null | undefined): External
         symbol: u.symbol,
         ...(u.declHash !== undefined ? { declHash: u.declHash } : {}),
       });
+    } else if (u.moduleScope === true) {
+      moduleScope.push(u.symbol);
+      for (const r of u.requires ?? []) if (!requires.includes(r)) requires.push(r);
     } else if (u.moduleState === true) {
       moduleState.push({
         symbol: u.symbol,
@@ -390,5 +452,14 @@ export function externalSurfaceOf(ducUsupp: string | null | undefined): External
       unexplained.push(u.symbol);
     }
   }
-  return { foreign, ambient, captures, moduleState, compositions, unexplained };
+  return {
+    foreign,
+    ambient,
+    captures,
+    moduleState,
+    moduleScope,
+    requires,
+    compositions,
+    unexplained,
+  };
 }

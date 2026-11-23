@@ -33,6 +33,7 @@ import {
   platformModule,
   primitiveReport,
   printLineForm,
+  requireSpecifiers,
   unpackGraph,
 } from "@yakcc/duc";
 import { __yakccTry, __yakccTryAsync } from "@yakcc/duc/runtime";
@@ -211,33 +212,6 @@ function linksOf(g: DucGraph, into = new Map<string, string>()): Map<string, str
     if (d !== undefined && d.reason !== "platform-primitive" && d.spec !== undefined) {
       into.set(d.symbol, d.spec);
     }
-  }
-  return into;
-}
-
-/**
- * The specifiers a graph passes to `require`, closures included: a literal string, or null for one
- * that is not a literal.
- */
-function requireSpecifiers(g: DucGraph, into: (string | null)[] = []): (string | null)[] {
-  const requireValues = new Set<string>();
-  const literal = new Map<string, string>();
-  for (const n of g.nodes) {
-    if (n.kind === "diamond-source" && n.diamond?.symbol === "require")
-      requireValues.add(n.outputs[0] as string);
-    if (n.kind === "literal-source") {
-      try {
-        const v = JSON.parse(n.label ?? "") as unknown;
-        if (typeof v === "string") literal.set(n.outputs[0] as string, v);
-      } catch {
-        // not a string literal
-      }
-    }
-  }
-  for (const n of g.nodes) {
-    if (n.closure !== undefined) requireSpecifiers(n.closure, into);
-    if (n.kind === "op" && n.label === "CallExpression" && requireValues.has(n.inputs[0] as string))
-      into.push(literal.get(n.inputs[1] as string) ?? null);
   }
   return into;
 }
