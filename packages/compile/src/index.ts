@@ -32,6 +32,8 @@ export { assemble, resolveGranularity } from "./assemble.js";
 
 // Compiling from the stored graphs (#1279, DEC-COMPILE-GRAPH-SOURCE-001)
 export { graphSourceOf, withGraphSources } from "./graph-sources.js";
+export type { GraphSearchOptions, GraphSearchResult } from "./graph-search.js";
+export { searchGraphs } from "./graph-search.js";
 
 // Resolution types (exported for advanced callers and testing)
 export type { ResolvedBlock, ResolutionResult, SubBlockResolver } from "./resolve.js";

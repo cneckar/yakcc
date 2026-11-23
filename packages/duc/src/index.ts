@@ -100,3 +100,8 @@ export type {
   SubmittedAtom,
 } from "./closure.js";
 export { checkSubmission, closureOf, linkReferences } from "./closure.js";
+export { parseLineForm, printLineForm } from "./line-form.js";
+export type { RetrievalSignatureOptions } from "./retrieval-signature.js";
+export { retrievalSignature } from "./retrieval-signature.js";
+export type { Candidate } from "./similarity.js";
+export { bagDistance, rankStructurally, structuralBag, structuralDistance } from "./similarity.js";

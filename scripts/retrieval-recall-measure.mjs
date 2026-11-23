@@ -11,6 +11,9 @@
 //   R3 negated subtraction a - b written as a + (neg b)
 //   R4 redundant identity  r written as r + 0 at its definition
 //   R5 flipped comparison  a < b written as b > a
+// Families "<fam>+select" rerank the vector top 10 structurally in this script; families
+// "<fam>+registry" go through the production path (#1280): every atom is stored in an in-memory
+// registry with its retrieval signature, and each query is a searchGraphs() call.
 // Usage: node scripts/retrieval-recall-measure.mjs <outDir> <atomsCache.json>
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -22,6 +25,10 @@ import { graphIdentity } from "../packages/duc/dist/canonical.js";
 import { rankStructurally, structuralBag } from "../packages/duc/dist/similarity.js";
 import { shavePackage, collectForestSlicePlans } from "../packages/shave/dist/universalize/module-graph.js";
 import { slice } from "../packages/shave/dist/universalize/slicer.js";
+import { packGraph } from "../packages/duc/dist/store.js";
+import { openRegistry } from "../packages/registry/dist/index.js";
+import { createLocalEmbeddingProvider } from "../packages/contracts/dist/index.js";
+import { searchGraphs } from "../packages/compile/dist/graph-search.js";
 
 const OUT = process.argv[2];
 const CACHE = process.argv[3];
@@ -149,6 +156,24 @@ for (const a of atoms) {
   a.identity = graphIdentity(g);
   index.push({ id: a.id, identity: a.identity, bag: structuralBag(g), vec: await embed(a.sig) });
 }
+// The production path: the same atoms in a registry, with the local embedding provider.
+const registry = await openRegistry(":memory:", { embeddings: createLocalEmbeddingProvider() });
+const storedIdentities = new Set();
+for (const a of atoms) {
+  if (a.identity === undefined || storedIdentities.has(a.identity)) continue;
+  storedIdentities.add(a.identity);
+  const g = liftAtom(a.source);
+  const packed = packGraph(g);
+  await registry.storeDucImplementation({
+    specHash: `atom-${a.id}`,
+    graphIdentity: packed.identity,
+    formatVersion: packed.formatVersion,
+    lifterVersion: packed.lifterVersion,
+    structure: packed.structure,
+    links: packed.links,
+    signature: a.sig,
+  });
+}
 const dot = (x, y) => { let s = 0; for (let i = 0; i < x.length; i++) s += x[i] * y[i]; return s; };
 
 // 5. Queries.
@@ -201,6 +226,9 @@ for (const a of atoms) {
     const reranked = rankStructurally(graphIdentity(qGraph), structuralBag(qGraph), top);
     const at = reranked.findIndex((c) => c.identity === a.identity);
     note(`${fam}+select`, at === -1 ? RERANK_K + 1 + hit : at + 1, a.id);
+    const found = await searchGraphs(registry, qGraph, { k: RERANK_K });
+    const atReg = found.findIndex((r) => r.graphIdentity === a.identity);
+    note(`${fam}+registry`, atReg === -1 ? RERANK_K + 1 : atReg + 1, a.id);
   }
 }
 

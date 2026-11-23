@@ -27,7 +27,13 @@
 //     that have a full Registry pass it directly.
 
 import type { BlockMerkleRoot, CanonicalAstHash } from "@yakcc/contracts";
-import { emitTypeScript, liftAtom, linkReferences, packGraph } from "@yakcc/duc";
+import {
+  emitTypeScript,
+  liftAtom,
+  linkReferences,
+  packGraph,
+  retrievalSignature,
+} from "@yakcc/duc";
 import type { BlockTripletRow, DucImplementationRow } from "@yakcc/registry";
 import type { Registry } from "@yakcc/registry";
 import { runMutationTesting } from "@yakcc/variance";
@@ -367,6 +373,8 @@ export function ducImplementationOf(
     annotations: packed.annotations ?? null,
     blockMerkleRoot,
     tsCache,
+    // The unlinked graph's signature, as a query's graph is unlinked (#1280).
+    signature: retrievalSignature(graph),
   };
 }
 
