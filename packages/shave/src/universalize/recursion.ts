@@ -1025,6 +1025,19 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
     return [paren.getExpression()];
   }
 
+  // Type assertions wrap an expression and change nothing it computes, as parentheses do:
+  // `x as T`, `x satisfies T`, `x!` and `<T>x` descend into x (DEC-SLICER-ARRAY-LITERAL-001: the
+  // self-shave bootstrap failed on `{ ...(c ? { a } : {}) } as T` in @yakcc/duc/compact.ts).
+  if (
+    kind === SyntaxKind.AsExpression ||
+    kind === SyntaxKind.SatisfiesExpression ||
+    kind === SyntaxKind.NonNullExpression ||
+    kind === SyntaxKind.TypeAssertionExpression
+  ) {
+    const wrapped = node as Node & { getExpression(): Node };
+    return [wrapped.getExpression()];
+  }
+
   // ExpressionStatement: the statement is a thin wrapper — the expression is
   // the carrier of decomposable behavior. Descend into [expression].
   // (DEC-SLICER-CHILDREN-CLASS-EXPR-VAR-001)

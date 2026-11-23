@@ -1371,6 +1371,22 @@ function partsOf(): string[] {
     }
     expect(hasSourceContaining(tree.root, "finalizer !== undefined")).toBe(true);
   });
+  it("a type assertion around an object literal with conditional spreads descends into it", async () => {
+    const src = `
+declare const a: number;
+declare const b: number;
+interface Loop { readonly x?: number; readonly y?: number }
+
+function loopOf(): Loop {
+  return {
+    ...(a !== -1 ? { x: a } : {}),
+    ...(b !== -1 ? { y: b } : {}),
+  } as Loop;
+}
+`.trim();
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
