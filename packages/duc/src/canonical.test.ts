@@ -91,3 +91,21 @@ describe("D6 identity is structure only (#1275)", () => {
     expect(texts).toContain("a");
   });
 });
+
+describe("closures nested deep, capturing values the outer graph cannot tell apart (#1173)", () => {
+  // Hoisted `var` cells all look alike from outside: a cell holding undefined. Four levels of
+  // closures each capture six of them, used alike, so every order of the six is a candidate.
+  const source = (names: readonly string[]): string =>
+    `function outer () { function a () { return function () { return function () { return function () { return ${names[0]} === ${names[1]} && ${names[2]} === ${names[3]} && ${names[4]} === ${names[5]} } } } } var x1 = 1, x2 = 2, x3 = 3, x4 = 4, x5 = 5, x6 = 6; return a }`;
+  it("lifts in bounded time: each closure is canonicalized once per order, not once per level", () => {
+    const t = Date.now();
+    const g = liftAtom(source(["x1", "x2", "x3", "x4", "x5", "x6"]));
+    expect(isWellFormed(g).wellFormed).toBe(true);
+    expect(Date.now() - t).toBeLessThan(20_000);
+  }, 60_000);
+  it("the identity is the structure's: renaming every variable leaves it unchanged", () => {
+    const a = graphIdentity(liftAtom(source(["x1", "x2", "x3", "x4", "x5", "x6"])));
+    const renamed = source(["x1", "x2", "x3", "x4", "x5", "x6"]).replace(/\bx(\d)\b/g, "q$1");
+    expect(graphIdentity(liftAtom(renamed))).toBe(a);
+  }, 60_000);
+});

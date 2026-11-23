@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import type { IntentCard } from "../intent/types.js";
 import type { NovelGlueEntry } from "../universalize/types.js";
 import { persistNovelGlueAtom } from "./atom-persist.js";
-import { externalSurfaceOf, moduleBindingsOf } from "./duc-gate.js";
+import { DucGateRejection, externalSurfaceOf, moduleBindingsOf } from "./duc-gate.js";
 
 const HASH = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890" as CanonicalAstHash;
 
@@ -77,6 +77,45 @@ describe("external surface survives a real registry round trip (#1172)", () => {
       // The capture hashes survive the round trip.
       expect(surface?.captures.every((c) => /^[0-9a-f]{64}$/.test(c.declHash ?? ""))).toBe(true);
     } finally {
+      await registry.close();
+    }
+  });
+});
+
+describe("the gate rejects by default at persist time (#1173, DEC-DUC-GATE-REJECT-001)", () => {
+  it("an atom with an unexplained reference is not persisted, with no mode given", async () => {
+    const saved = process.env.YAKCC_DUC_GATE;
+    // biome-ignore lint/performance/noDelete: an unset variable is the case under test.
+    delete process.env.YAKCC_DUC_GATE;
+    const atomSource = "function tally(xs) { return mystery(xs) + xs.length; }";
+    const entry: NovelGlueEntry = {
+      kind: "novel-glue",
+      sourceRange: { start: 0, end: atomSource.length },
+      source: atomSource,
+      canonicalAstHash: HASH,
+      intentCard,
+    };
+    const registry = await openRegistry(":memory:", { embeddings: mockEmbeddings() });
+    try {
+      await expect(persistNovelGlueAtom(entry, registry, {})).rejects.toBeInstanceOf(
+        DucGateRejection,
+      );
+      await expect(persistNovelGlueAtom(entry, registry, {})).rejects.toThrow(/mystery/);
+      // The escape hatch admits it.
+      process.env.YAKCC_DUC_GATE = "warn";
+      const warned: string[] = [];
+      const original = console.warn;
+      console.warn = (m: string) => void warned.push(m);
+      try {
+        expect(await persistNovelGlueAtom(entry, registry, {})).toBeDefined();
+      } finally {
+        console.warn = original;
+      }
+      expect(warned.join("\n")).toContain("mystery");
+    } finally {
+      // biome-ignore lint/performance/noDelete: assigning undefined would set the string "undefined".
+      if (saved === undefined) delete process.env.YAKCC_DUC_GATE;
+      else process.env.YAKCC_DUC_GATE = saved;
       await registry.close();
     }
   });

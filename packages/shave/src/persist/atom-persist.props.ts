@@ -45,6 +45,13 @@ import type { NovelGlueEntry } from "../universalize/types.js";
 import { maybePersistNovelGlueAtom, persistNovelGlueAtom } from "./atom-persist.js";
 import type { PersistOptions } from "./atom-persist.js";
 
+/**
+ * These properties are about persistence (one store per call, determinism, lineage), not about the
+ * gate: their sources are arbitrary strings, which the gate rejects by default (DEC-DUC-GATE-REJECT-001,
+ * tested in duc-gate.test.ts). So the gate runs in warn mode here, and still records what it finds.
+ */
+const MECHANICS = { ducGateMode: "warn" } as const;
+
 // ---------------------------------------------------------------------------
 // Shared arbitraries
 // ---------------------------------------------------------------------------
@@ -152,7 +159,7 @@ export const prop_persistNovelGlueAtom_skips_no_intent_card = fc.asyncProperty(
   async (entry) => {
     const stub = makeStoreStub();
     const registry = { storeBlock: stub.storeBlock } as never;
-    const result = await persistNovelGlueAtom(entry, registry);
+    const result = await persistNovelGlueAtom(entry, registry, MECHANICS);
     return result === undefined && stub.calls.length === 0;
   },
 );
@@ -175,7 +182,7 @@ export const prop_persistNovelGlueAtom_calls_store_block_once = fc.asyncProperty
   async (entry) => {
     const stub = makeStoreStub();
     const registry = { storeBlock: stub.storeBlock } as never;
-    await persistNovelGlueAtom(entry, registry);
+    await persistNovelGlueAtom(entry, registry, MECHANICS);
     return stub.calls.length === 1;
   },
 );
@@ -199,7 +206,7 @@ export const prop_persistNovelGlueAtom_return_equals_stored_merkle_root = fc.asy
   async (entry) => {
     const stub = makeStoreStub();
     const registry = { storeBlock: stub.storeBlock } as never;
-    const result = await persistNovelGlueAtom(entry, registry);
+    const result = await persistNovelGlueAtom(entry, registry, MECHANICS);
     return result !== undefined && stub.calls[0]?.blockMerkleRoot === result;
   },
 );
@@ -223,8 +230,16 @@ export const prop_persistNovelGlueAtom_is_deterministic = fc.asyncProperty(
   async (entry) => {
     const stub1 = makeStoreStub();
     const stub2 = makeStoreStub();
-    const r1 = await persistNovelGlueAtom(entry, { storeBlock: stub1.storeBlock } as never);
-    const r2 = await persistNovelGlueAtom(entry, { storeBlock: stub2.storeBlock } as never);
+    const r1 = await persistNovelGlueAtom(
+      entry,
+      { storeBlock: stub1.storeBlock } as never,
+      MECHANICS,
+    );
+    const r2 = await persistNovelGlueAtom(
+      entry,
+      { storeBlock: stub2.storeBlock } as never,
+      MECHANICS,
+    );
     return r1 !== undefined && r1 === r2;
   },
 );
@@ -257,7 +272,7 @@ export const prop_persistNovelGlueAtom_forwards_parent_block_root = fc.asyncProp
       },
     } as never;
     const opts: PersistOptions = { parentBlockRoot: parentBlockRoot ?? null };
-    await persistNovelGlueAtom(entry, registry, opts);
+    await persistNovelGlueAtom(entry, registry, { ...opts, ...MECHANICS });
     return calls[0]?.parentBlockRoot === (parentBlockRoot ?? null);
   },
 );
@@ -283,7 +298,7 @@ export const prop_persistNovelGlueAtom_stored_row_level_is_L0 = fc.asyncProperty
         calls.push(row);
       },
     } as never;
-    await persistNovelGlueAtom(entry, registry);
+    await persistNovelGlueAtom(entry, registry, MECHANICS);
     return calls[0]?.level === "L0";
   },
 );
@@ -324,8 +339,16 @@ export const prop_persistNovelGlueAtom_distinct_sources_yield_distinct_merkle_ro
       };
       const stub1 = makeStoreStub();
       const stub2 = makeStoreStub();
-      const r1 = await persistNovelGlueAtom(entryA, { storeBlock: stub1.storeBlock } as never);
-      const r2 = await persistNovelGlueAtom(entryB, { storeBlock: stub2.storeBlock } as never);
+      const r1 = await persistNovelGlueAtom(
+        entryA,
+        { storeBlock: stub1.storeBlock } as never,
+        MECHANICS,
+      );
+      const r2 = await persistNovelGlueAtom(
+        entryB,
+        { storeBlock: stub2.storeBlock } as never,
+        MECHANICS,
+      );
       // Different source bytes → different content address → different merkleRoot.
       return r1 !== undefined && r2 !== undefined && r1 !== r2;
     },
@@ -348,7 +371,7 @@ export const prop_maybePersistNovelGlueAtom_returns_undefined_when_no_store_bloc
   fc.asyncProperty(novelGlueEntryArb, async (entry) => {
     // Registry view with no storeBlock method.
     const registryView = {} as never;
-    const result = await maybePersistNovelGlueAtom(entry, registryView);
+    const result = await maybePersistNovelGlueAtom(entry, registryView, MECHANICS);
     return result === undefined;
   });
 
@@ -371,7 +394,7 @@ export const prop_maybePersistNovelGlueAtom_delegates_when_store_block_present =
   async (entry) => {
     const stub = makeStoreStub();
     const registryView = { storeBlock: stub.storeBlock } as never;
-    const result = await maybePersistNovelGlueAtom(entry, registryView);
+    const result = await maybePersistNovelGlueAtom(entry, registryView, MECHANICS);
     return result !== undefined && stub.calls.length === 1;
   },
 );
@@ -395,7 +418,7 @@ export const prop_maybePersistNovelGlueAtom_skips_no_intent_card = fc.asyncPrope
   async (entry) => {
     const stub = makeStoreStub();
     const registryView = { storeBlock: stub.storeBlock } as never;
-    const result = await maybePersistNovelGlueAtom(entry, registryView);
+    const result = await maybePersistNovelGlueAtom(entry, registryView, MECHANICS);
     return result === undefined && stub.calls.length === 0;
   },
 );
@@ -427,8 +450,16 @@ export const prop_persist_atom_compound_interaction = fc.asyncProperty(
   async (entry) => {
     const stub1 = makeStoreStub();
     const stub2 = makeStoreStub();
-    const r1 = await persistNovelGlueAtom(entry, { storeBlock: stub1.storeBlock } as never);
-    const r2 = await maybePersistNovelGlueAtom(entry, { storeBlock: stub2.storeBlock } as never);
+    const r1 = await persistNovelGlueAtom(
+      entry,
+      { storeBlock: stub1.storeBlock } as never,
+      MECHANICS,
+    );
+    const r2 = await maybePersistNovelGlueAtom(
+      entry,
+      { storeBlock: stub2.storeBlock } as never,
+      MECHANICS,
+    );
     return r1 !== undefined && r2 !== undefined && r1 === r2;
   },
 );

@@ -68,6 +68,7 @@ import { sourceHash } from "../cache/key.js";
 import { STATIC_MODEL_TAG, STATIC_PROMPT_VERSION } from "../intent/constants.js";
 import type { IntentCard } from "../intent/types.js";
 import { maybePersistNovelGlueAtom } from "../persist/atom-persist.js";
+import { forestGateContext } from "../persist/duc-gate.js";
 import type { ShaveRegistryView } from "../types.js";
 import {
   collectForestSlicePlans,
@@ -307,10 +308,12 @@ describe("bcryptjs-package-atom -- per-entry shave (WI-510 Slice 6)", () => {
         // persistedCount > 0; each persisted merkle root is retrievable via registry.getBlock.
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
         let persistedCount = 0;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 expect(await registry.getBlock(mr)).not.toBeNull();
@@ -356,7 +359,9 @@ describe("bcryptjs hash section F -- combinedScore quality gate", () => {
           entryPath: join(BCRYPTJS_FIXTURE_ROOT, "dist", "bcrypt.js"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue")
               await maybePersistNovelGlueAtom(
@@ -370,6 +375,7 @@ describe("bcryptjs hash section F -- combinedScore quality gate", () => {
                   ],
                 ),
                 registry,
+                gate,
               );
           }
         }
@@ -408,7 +414,9 @@ describe("bcryptjs verify section F -- combinedScore quality gate", () => {
           entryPath: join(BCRYPTJS_FIXTURE_ROOT, "dist", "bcrypt.js"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue")
               await maybePersistNovelGlueAtom(
@@ -422,6 +430,7 @@ describe("bcryptjs verify section F -- combinedScore quality gate", () => {
                   ],
                 ),
                 registry,
+                gate,
               );
           }
         }
@@ -480,10 +489,12 @@ describe("bcryptjs headline bindings -- compound interaction (real production se
         // At least 1 novel-glue entry produced and persisted.
         let persistedCount = 0;
         const atomMerkleRoots: string[] = [];
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 atomMerkleRoots.push(mr);

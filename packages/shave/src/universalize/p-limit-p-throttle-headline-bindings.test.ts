@@ -100,6 +100,7 @@ import { sourceHash } from "../cache/key.js";
 import { STATIC_MODEL_TAG, STATIC_PROMPT_VERSION } from "../intent/constants.js";
 import type { IntentCard } from "../intent/types.js";
 import { maybePersistNovelGlueAtom } from "../persist/atom-persist.js";
+import { forestGateContext } from "../persist/duc-gate.js";
 import type { ShaveRegistryView } from "../types.js";
 import {
   collectForestSlicePlans,
@@ -297,10 +298,12 @@ describe("p-limit/index.js -- per-entry shave (WI-510 Slice 9)", () => {
         ).toBeGreaterThan(0);
         let persistedCount = 0;
         let headlineMerkleRoot: string | undefined;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 if (headlineMerkleRoot === undefined) headlineMerkleRoot = mr;
@@ -480,10 +483,12 @@ describe("p-throttle/index.js -- per-entry shave (WI-510 Slice 9)", () => {
         ).toBeGreaterThan(0);
         let persistedCount = 0;
         let headlineMerkleRoot: string | undefined;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 if (headlineMerkleRoot === undefined) headlineMerkleRoot = mr;
@@ -535,12 +540,15 @@ describe("p-limit + p-throttle section F -- combinedScore quality gates (WI-510 
           entryPath: join(P_LIMIT_FIXTURE_ROOT, "index.js"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
               await maybePersistNovelGlueAtom(
                 withSemanticIntentCard(entry, P_LIMIT_BEHAVIOR),
                 registry,
+                gate,
               );
             }
           }
@@ -589,12 +597,15 @@ describe("p-limit + p-throttle section F -- combinedScore quality gates (WI-510 
           entryPath: join(P_THROTTLE_FIXTURE_ROOT, "index.js"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
               await maybePersistNovelGlueAtom(
                 withSemanticIntentCard(entry, P_THROTTLE_BEHAVIOR),
                 registry,
+                gate,
               );
             }
           }
@@ -680,10 +691,16 @@ describe("p-limit + p-throttle -- compound interaction: both bindings end-to-end
 
           let persistedCount = 0;
           let firstMerkleRoot: string | undefined;
-          for (const { slicePlan } of plans) {
+          for (const { filePath, slicePlan } of plans) {
+            // The gate is given what universalize gives it: the forest's names and the module's bindings.
+            const gate = forestGateContext(plans, filePath);
             for (const entry of slicePlan.entries) {
               if (entry.kind === "novel-glue") {
-                const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+                const mr = await maybePersistNovelGlueAtom(
+                  withStubIntentCard(entry),
+                  registry,
+                  gate,
+                );
                 if (mr !== undefined) {
                   persistedCount++;
                   if (firstMerkleRoot === undefined) firstMerkleRoot = mr;

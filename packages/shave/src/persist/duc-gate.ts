@@ -19,12 +19,19 @@
 //   records usupp from day one) but starts in **warn** mode: an unexplained
 //   unknown or a lift failure logs a loud warning and the atom is still admitted.
 //   It tightens to **reject** only once the seed + shadow-npm corpora shave clean
-//   under a recorded ♦-support baseline; the flip's default is a follow-up DEC.
-//   Mode is `YAKCC_DUC_GATE=warn|reject` (default warn), overridable per call.
+//   under a recorded ♦-support baseline.
 //
-//   Non-breaking by design: any failure to lift/analyze a fragment degrades to a
-//   recorded lift error (warn) rather than throwing — the gate must never break
-//   the existing shave pipeline in its default mode.
+// @decision DEC-DUC-GATE-REJECT-001 (#1173)
+// title: The gate rejects by default
+// status: decided
+// rationale:
+//   The fixture corpus shaves clean: every free reference of every atom is explained
+//   (composition, capture, module state, module scope, platform primitive, or a probe),
+//   no atom fails to lift, and every lift is faithful (DEC-DUC-LIFT-FIDELITY-001). The
+//   allowlist of unliftable constructs is empty. So the default is now **reject**: an
+//   atom with an unexplained reference, a lift error or an unfaithful lift is not
+//   persisted. `YAKCC_DUC_GATE=warn` remains the escape hatch; any other value rejects,
+//   so a typo fails closed. Overridable per call.
 //
 // @decision DEC-DUC-MODULE-CAPTURE-001 (wi-duc-influence-layer #1171)
 // title: A free identifier naming a pure module-scope constant is a recorded capture
@@ -63,13 +70,17 @@
 //   the atoms that depend on module state stay visible to an audit.
 
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   type DiamondReason,
   type DucInfluenceAttestation,
   DucLiftError,
+  type LiftFidelity,
   influenceAttestation,
   isWellFormed,
   liftAtom,
+  liftFidelity,
+  probedNames,
   requireSpecifiers,
 } from "@yakcc/duc";
 import {
@@ -121,6 +132,12 @@ export interface DucUnknown {
   readonly moduleScope?: boolean;
   /** For `require`: the specifiers it is called with (the module's dependencies). */
   readonly requires?: readonly string[];
+  /**
+   * True for a name the atom only probes for (DEC-DUC-FEATURE-DETECTION-001, #1173): every read is
+   * `typeof name`, or lies under a test that it is present, so the atom itself decides what to do
+   * when the platform lacks it (a UMD wrapper's `define`).
+   */
+  readonly probe?: boolean;
 }
 
 import type { ModuleBindingInfo } from "./module-bindings.js";
@@ -152,6 +169,11 @@ export interface DucGateResult {
   /** Present when the fragment could not be lifted (a syntax/analysis failure). */
   readonly liftError?: string;
   /**
+   * Lift fidelity (DUC Norm 3, DEC-DUC-LIFT-FIDELITY-001): the graph references exactly the names
+   * the source reads without declaring. A failure is a lifter defect, and a gate problem (#1173).
+   */
+  readonly fidelity?: LiftFidelity;
+  /**
    * The `duc_influence` attestation of the lifted atom (DEC-DUC-ATTESTATION-SIDECAR-001).
    * Absent when the fragment could not be lifted.
    */
@@ -169,9 +191,12 @@ export class DucGateRejection extends Error {
   }
 }
 
-/** Resolve the gate mode from the environment (`YAKCC_DUC_GATE`), defaulting to warn. */
+/**
+ * Resolve the gate mode from the environment (`YAKCC_DUC_GATE`): reject unless it is exactly
+ * `warn` (DEC-DUC-GATE-REJECT-001).
+ */
 export function ducGateModeFromEnv(env: NodeJS.ProcessEnv = process.env): DucGateMode {
-  return env.YAKCC_DUC_GATE === "reject" ? "reject" : "warn";
+  return env.YAKCC_DUC_GATE === "warn" ? "warn" : "reject";
 }
 
 const NO_INTERNAL_SYMBOLS: ReadonlySet<string> = new Set();
@@ -201,9 +226,11 @@ export function runDucConservationGate(
   let unknowns: DucUnknown[];
   let wellFormed: boolean;
   let influence: DucInfluenceAttestation;
+  let fidelity: LiftFidelity;
   try {
     const graph = liftAtom(source);
     wellFormed = isWellFormed(graph).wellFormed;
+    fidelity = liftFidelity(source, graph);
     influence = influenceAttestation(graph);
     // Every ♦-source, not only those reaching an observation: an unresolved use is a
     // defect even when it does not reach the result (it can still have effects).
@@ -211,6 +238,7 @@ export function runDucConservationGate(
     // CommonJS module scope is the module's when the gate knows the atom's module (#1173).
     const inModule = moduleBindings !== NO_MODULE_BINDINGS;
     const specifiers = requireSpecifiers(graph);
+    const probed = probedNames(source);
     for (const node of graph.nodes) {
       if (node.diamond === undefined) continue;
       const { symbol, reason, module } = node.diamond;
@@ -226,6 +254,10 @@ export function runDucConservationGate(
           : undefined;
       if (scope !== undefined) {
         seen.set(symbol, { symbol, reason, moduleScope: true, ...scope });
+        continue;
+      }
+      if (isFree && probed.has(symbol)) {
+        seen.set(symbol, { symbol, reason, probe: true });
         continue;
       }
       const isComposition = isFree && internalSymbols.has(symbol);
@@ -259,7 +291,8 @@ export function runDucConservationGate(
     u.composition === true ||
     u.capture === true ||
     u.moduleState === true ||
-    u.moduleScope === true;
+    u.moduleScope === true ||
+    u.probe === true;
   const unexplained = unknowns.filter((u) => u.reason === "free-identifier" && !isExplained(u));
   const composition = unknowns.filter((u) => u.composition === true);
   const captures = unknowns.filter((u) => u.capture === true);
@@ -274,6 +307,7 @@ export function runDucConservationGate(
     moduleState,
     moduleScope,
     influence,
+    fidelity,
   };
 }
 
@@ -293,8 +327,8 @@ export interface EnforceDucGateResult {
  *
  * - Always computes usupp; returns it serialized for the registry row.
  * - A *problem* is a lift failure or any unexplained (`free-identifier`) unknown.
- * - `warn` (default): a problem logs a loud warning; the atom is still admitted.
- * - `reject`: a problem throws {@link DucGateRejection}, aborting the persist.
+ * - `reject` (default): a problem throws {@link DucGateRejection}, aborting the persist.
+ * - `warn`: a problem logs a loud warning; the atom is still admitted.
  *
  * @throws {DucGateRejection} in `reject` mode when the atom has a problem.
  */
@@ -329,17 +363,27 @@ export function enforceDucGate(
       : {}),
   });
 
-  const hasProblem = result.liftError !== undefined || result.unexplained.length > 0;
+  const unfaithful = result.fidelity !== undefined && !result.fidelity.holds;
+  const hasProblem = result.liftError !== undefined || result.unexplained.length > 0 || unfaithful;
   if (hasProblem) {
     const detail =
       result.liftError !== undefined
         ? `could not be lifted for analysis (${result.liftError})`
-        : `has unresolved references with no declared source: ${result.unexplained.map((u) => u.symbol).join(", ")} (a structural finding, not a feasibility claim)`;
+        : result.unexplained.length > 0
+          ? `has unresolved references with no declared source: ${result.unexplained.map((u) => u.symbol).join(", ")} (a structural finding, not a feasibility claim)`
+          : `was lifted unfaithfully: its graph ${[
+              ...(result.fidelity?.missing.length
+                ? [`drops ${result.fidelity.missing.join(", ")}`]
+                : []),
+              ...(result.fidelity?.extra.length
+                ? [`reports ${result.fidelity.extra.join(", ")} as free`]
+                : []),
+            ].join(" and ")} (a lifter defect, DEC-DUC-LIFT-FIDELITY-001)`;
     const message = `[duc-gate] atom "${atomName}" ${detail}`;
     if (mode === "reject") {
       throw new DucGateRejection(`${message} — rejected (YAKCC_DUC_GATE=reject)`, result);
     }
-    warn(`${message} — admitted (warn mode; set YAKCC_DUC_GATE=reject to enforce)`);
+    warn(`${message} — admitted (YAKCC_DUC_GATE=warn)`);
   }
   return { ducUsupp, result };
 }
@@ -462,4 +506,56 @@ export function externalSurfaceOf(ducUsupp: string | null | undefined): External
     compositions,
     unexplained,
   };
+}
+
+// ---------------------------------------------------------------------------
+// The gate's context for a shaved forest (#1173)
+// ---------------------------------------------------------------------------
+
+/** A forest's slice plans, as `collectForestSlicePlans` gives them. */
+export interface ForestPlans {
+  readonly filePath: string;
+  readonly slicePlan: {
+    readonly entries: readonly { readonly kind: string; readonly source?: unknown }[];
+  };
+}
+
+/** What the gate is given for an atom: its forest's composition names and its module's bindings. */
+export interface DucGateContext {
+  readonly internalSymbols: ReadonlySet<string>;
+  readonly moduleBindings: ReadonlyMap<string, ModuleBindingInfo>;
+}
+
+const forestContexts = new WeakMap<
+  readonly ForestPlans[],
+  { internal: Set<string>; bindings: Map<string, Map<string, ModuleBindingInfo>> }
+>();
+
+/**
+ * The gate's context for the atoms of one module of a shaved forest, as `universalize` gives it to
+ * a single module (DEC-DUC-GATE-REJECT-001): the names every novel-glue atom of the forest defines
+ * (composition edges), and the module's own top-level bindings (captures, module state). A forest
+ * persisted without it has every sibling reference unexplained, which the gate now rejects.
+ */
+export function forestGateContext(
+  plans: readonly ForestPlans[],
+  filePath: string,
+  readSource: (file: string) => string = (file) => readFileSync(file, "utf8"),
+): DucGateContext {
+  let ctx = forestContexts.get(plans);
+  if (ctx === undefined) {
+    const sources = plans.flatMap(({ slicePlan }) =>
+      slicePlan.entries.flatMap((e) =>
+        e.kind === "novel-glue" && typeof e.source === "string" ? [e.source] : [],
+      ),
+    );
+    ctx = { internal: collectInternalSymbols(sources), bindings: new Map() };
+    forestContexts.set(plans, ctx);
+  }
+  let moduleBindings = ctx.bindings.get(filePath);
+  if (moduleBindings === undefined) {
+    moduleBindings = moduleBindingsOf(readSource(filePath));
+    ctx.bindings.set(filePath, moduleBindings);
+  }
+  return { internalSymbols: ctx.internal, moduleBindings };
 }

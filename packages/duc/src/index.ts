@@ -32,6 +32,14 @@ export { isWellFormed } from "./wellformed.js";
 export type { LiftOptions } from "./lift.js";
 export type { AtomShape } from "./lift.js";
 export { DucLiftError, atomShape, liftAtom } from "./lift.js";
+export type { LiftFidelity } from "./fidelity.js";
+export {
+  graphFreeNames,
+  liftFidelity,
+  probedNames,
+  sourceFreeNames,
+  topLevelNames,
+} from "./fidelity.js";
 export type { EmitSignature } from "./emit-ts.js";
 export { EmitError, emitTypeScript } from "./emit-ts.js";
 export type { PackedGraph, StoredLink } from "./store.js";
@@ -110,6 +118,7 @@ export type { BaseSet, PrimitiveLabels, PrimitiveReport, PrimitiveUse } from "./
 export {
   ECMASCRIPT,
   NODE,
+  WEB,
   nondeterministicObservations,
   platformModule,
   primitiveReport,

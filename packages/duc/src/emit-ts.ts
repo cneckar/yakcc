@@ -173,6 +173,7 @@ function emitFunction(
   bound: readonly string[],
   imports: Map<string, Set<string>>,
   asModule = false,
+  selfName = "Fn_",
 ): { params: string[]; body: string[] } {
   // The heap token orders the statements and is not written (#1285).
   const { graph: g, after } = loweringView(source);
@@ -388,8 +389,9 @@ function emitFunction(
     if (label === "delete[]") return `delete ${arg(0)}[${arg(1)}]`;
     // The class a member belongs to: the class expression's own name (#1276).
     if (label === "class-self") return "Self_";
-    // The function this graph is: the function expression's own name (#1276).
-    if (label === "function-self") return "Fn_";
+    // The function this graph is: the function expression's own name, or for an arrow the const it
+    // initializes (#1276, #1173).
+    if (label === "function-self") return selfName;
     if (label.startsWith("object:")) {
       const entries = JSON.parse(label.slice("object:".length)) as unknown[];
       let at = 0;
@@ -515,25 +517,30 @@ function emitFunction(
       return lines;
     }
     if (node.closure !== undefined) {
+      const recursive = node.closure.nodes.some((n) => n.label === "function-self");
+      const arrow = label === "closure" || label === "async closure";
+      // A recursive arrow is the const it initializes, and reads itself by that name, as written.
       const inner = emitFunction(
         node.closure,
         `${prefix}${node.id}_`,
         node.inputs.map((v) => ref(v)),
         imports,
+        false,
+        recursive && arrow ? name : "Fn_",
       );
       // A function sees its caller's receiver; an arrow sees the enclosing one, as a capture. A
       // function that reads itself is named, `function Fn_(..)`, and reads that name.
       // `async`, and a generator's `*`, are in the label (#1276); a generator is always a function.
-      const recursive = node.closure.nodes.some((n) => n.label === "function-self");
       const isAsync = label.startsWith("async ");
       const base = isAsync ? label.slice("async ".length) : label;
       const fn = `${isAsync ? "async " : ""}function${base === "function*" ? "*" : ""}`;
       const params = inner.params.join(", ");
-      const head = recursive
-        ? `${fn} Fn_(${params}) {`
-        : base === "closure"
-          ? `${isAsync ? "async " : ""}(${params}) => {`
-          : `${fn} (${params}) {`;
+      const head =
+        recursive && !arrow
+          ? `${fn} Fn_(${params}) {`
+          : base === "closure"
+            ? `${isAsync ? "async " : ""}(${params}) => {`
+            : `${fn} (${params}) {`;
       return [`const ${name} = ${head}`, ...inner.body.map((l) => `  ${l}`), "};"];
     }
     // A reassigned variable is a temporary, and the value's own name is a const: a closure that

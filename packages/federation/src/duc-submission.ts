@@ -22,6 +22,7 @@ import {
   type DucGraph,
   ECMASCRIPT,
   NODE,
+  WEB,
   type StoredLink,
   checkSubmission,
   emitTypeScript,
@@ -534,7 +535,7 @@ export async function checkSharedSubmission(
   store: ReceiverStore,
   options: ReceiverOptions = {},
 ): Promise<SubmissionVerdict> {
-  const baseSets = options.baseSets ?? [ECMASCRIPT, NODE];
+  const baseSets = options.baseSets ?? [ECMASCRIPT, NODE, WEB];
   const maxBytes = options.maxStructureBytes ?? 4 * 1024 * 1024;
   const timeoutMs = options.vectorTimeoutMs ?? 1000;
   const refused = new Map<number, { check: CheckName; reason: string }>();

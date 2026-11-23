@@ -93,13 +93,52 @@ function inlineLiteralCaptures(nodes: DucNode[]): DucNode[] {
  * captures are the closure graph's first parameters, one per input of the closure node.
  */
 function withCaptureOrder(closure: DucGraph, order: readonly number[]): DucGraph {
+  // Graphs are immutable, so a closure renumbered one way is canonicalized once: without this, each
+  // level of nesting canonicalizes the levels below it again, exponentially in the depth.
+  let byOrder = renumbered.get(closure);
+  if (byOrder === undefined) {
+    byOrder = new Map();
+    renumbered.set(closure, byOrder);
+  }
+  const key = order.join(",");
+  const hit = byOrder.get(key);
+  if (hit !== undefined) return hit;
   const position = new Map(order.map((old, pos) => [old, pos] as const));
   const nodes = closure.nodes.map((n) => {
     if (n.kind !== "param-source") return n;
     const at = position.get(Number(n.label));
     return at === undefined ? n : { ...n, label: String(at) };
   });
-  return canonicalizeGraph(nodes, closure.obs, closure.branches ?? []);
+  const graph = canonicalizeGraph(nodes, closure.obs, closure.branches ?? []);
+  byOrder.set(key, graph);
+  return graph;
+}
+const renumbered = new WeakMap<DucGraph, Map<string, DucGraph>>();
+
+/**
+ * How a closure uses its capture `k`: the operations that read it, and at which input (any input,
+ * where canonicalization reorders the inputs). Captures the outer graph cannot tell apart are told apart by this first,
+ * which is structure, and cheap; only those used alike are left to the search over orders.
+ */
+function captureUseOf(closure: DucGraph, k: number): string {
+  const param = closure.nodes.find((n) => n.kind === "param-source" && n.label === String(k));
+  const value = param?.outputs[0];
+  if (value === undefined) return "";
+  const uses: string[] = [];
+  for (const n of closure.nodes)
+    n.inputs.forEach((v, i) => {
+      if (v !== value) return;
+      // Positions canonicalization reorders are not structure: a commutative operand, a loop's
+      // invariant, a nested closure's capture.
+      const at =
+        (n.kind === "op" && COMMUTATIVE.has(n.label ?? "")) ||
+        n.closure !== undefined ||
+        (n.loop !== undefined && i >= invariantOffset(n))
+          ? "*"
+          : String(i);
+      uses.push(`${n.kind}:${n.label ?? ""}:${at}:${structuralDiamond(n.diamond)?.symbol ?? ""}`);
+    });
+  return uses.sort().join("|");
 }
 
 /** Where a loop's invariants start among its inputs: after the carries' initial values and the iterable. */
@@ -399,7 +438,11 @@ export function canonicalizeGraph(
   const captureOrderOf = (node: DucNode): number[] => {
     const cached = captureOrders.get(node);
     if (cached !== undefined) return cached;
-    const sigs = node.inputs.map(sigOfValue);
+    const sigs = node.inputs.map((v, k) =>
+      node.closure === undefined
+        ? sigOfValue(v)
+        : `${sigOfValue(v)}/${captureUseOf(node.closure, k)}`,
+    );
     let order = sigs
       .map((_, i) => i)
       .sort((a, b) => {
@@ -741,6 +784,15 @@ export function canonicalizeGraph(
  * branches and observations are hashed. Origin annotations are excluded.
  */
 export function graphIdentity(g: DucGraph): string {
+  const known = identities.get(g);
+  if (known !== undefined) return known;
+  const id = computeIdentity(g);
+  identities.set(g, id);
+  return id;
+}
+const identities = new WeakMap<DucGraph, string>();
+
+function computeIdentity(g: DucGraph): string {
   const canon = canonicalizeGraph(g.nodes, g.obs, g.branches ?? []);
   const structure = {
     nodes: canon.nodes.map((n) => ({

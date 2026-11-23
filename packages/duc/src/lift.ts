@@ -122,7 +122,14 @@ export function liftAtom(source: string, options: LiftOptions = {}): DucGraph {
  * The atom's source parsed: as written, or else the first analysis form that parses (a named
  * function, a function body, an expression). Throws DucLiftError when none parses.
  */
-function parseAtomSource(source: string): { project: Project; file: SourceFile } {
+/** The functions in a statement, itself included: each makes a closure when it runs. */
+function functionsWithin(node: Node): Node[] {
+  const fns: Node[] = node.getDescendants().filter(isFunctionLikeNode);
+  if (isFunctionLikeNode(node)) fns.unshift(node);
+  return fns;
+}
+
+export function parseAtomSource(source: string): { project: Project; file: SourceFile } {
   const forms = [source, ...wrapForms(source)];
   let file: SourceFile | undefined;
   let firstError: string[] = [];
@@ -615,22 +622,31 @@ class Lifter {
           (read) => read !== name && declared.has(read) && !hoistedNames.has(read),
         );
         if (reads.some((read) => !declaredValues.has(read))) continue;
-        for (const read of reads) {
-          if (this.hoistedCells.has(read)) continue;
-          if (this.env.has(read) && !this.cells.has(read)) continue;
-          this.cells.add(read);
-          this.hoistedCells.add(read);
-          const [cell] = this.emit("op", [this.undefinedValue()], 1, {
-            origin: { kind: "ObjectLiteral", text: truncate(read) },
-            label: 'object:["value"]',
-          });
-          this.env.set(read, cell as ValueId);
-        }
+        for (const read of reads) this.hoistCell(read);
         this.bindFunctionDeclaration(stmt, name);
         this.hoisted.add(stmt.compilerNode);
         hoistedNames.add(name);
         progress = true;
       }
+    }
+    // A closure made before a later `var` it reads (`o.f = function () { return K }; … var K = 10`),
+    // or in the `var`'s own initializer (`var m = function () { return m.cache }`), reads the binding
+    // when it runs, not the value when it is made: the name is a cell from here.
+    for (const [j, stmt] of stmts.entries()) {
+      if (
+        !Node.isVariableStatement(stmt) ||
+        stmt.getDeclarationKind() !== VariableDeclarationKind.Var
+      )
+        continue;
+      for (const decl of stmt.getDeclarations())
+        for (const name of patternNames(decl.getNameNode())) {
+          const readEarlier = stmts
+            .slice(0, j + 1)
+            .some((earlier) =>
+              functionsWithin(earlier).some((fn) => this.readNamesOf(fn).includes(name)),
+            );
+          if (readEarlier) this.hoistCell(name);
+        }
     }
     for (const [i, written] of stmts.entries()) {
       // A switch whose clauses each end in an exit is the if chain it means (#1276).
@@ -1247,6 +1263,10 @@ class Lifter {
       if (at !== -1) outerReads.splice(at, 1);
     }
     // A function's own name inside it is the function (`function-self`), not a capture (#1276).
+    // So is the name of the const it initializes directly: `const f = (n) => f(n - 1)` can only ever
+    // read the function itself, as a named function expression does (#1173).
+    if (selfName === undefined && !(Node.isFunctionExpression(fn) && fn.getName() !== undefined))
+      selfName = constInitializedBy(fn);
     const selfOf: string | undefined =
       selfName ?? (Node.isFunctionExpression(fn) ? fn.getName() : undefined);
     if (selfName !== undefined) {
@@ -1347,6 +1367,22 @@ class Lifter {
     });
     (this.nodes[this.nodes.length - 1] as MutableNode).closure = graph;
     return value as ValueId;
+  }
+
+  /**
+   * Makes a later-declared `var` a cell from here, holding undefined until its declaration writes
+   * it (#1173), so a closure made before the declaration reads the value it has when it runs.
+   */
+  private hoistCell(name: string): void {
+    if (this.hoistedCells.has(name)) return;
+    if (this.env.has(name) && !this.cells.has(name)) return;
+    this.cells.add(name);
+    this.hoistedCells.add(name);
+    const [cell] = this.emit("op", [this.undefinedValue()], 1, {
+      origin: { kind: "ObjectLiteral", text: truncate(name) },
+      label: 'object:["value"]',
+    });
+    this.env.set(name, cell as ValueId);
   }
 
   /** The graph of a closure's body: its captures are its first parameters, then its own. */
@@ -3621,6 +3657,8 @@ function isValueRead(id: import("ts-morph").Identifier): boolean {
   if (id.getFirstAncestor((n) => n.getKindName().startsWith("JSDoc")) !== undefined) return false;
   const parent = id.getParent();
   if (parent === undefined) return false;
+  // `new.target` and `import.meta` are one name, read as a whole (#1173): `target` is not a variable.
+  if (Node.isMetaProperty(parent)) return false;
   // Statement labels (`outer:` and `break outer` / `continue outer`) name a statement,
   // not a value.
   if (
@@ -3824,6 +3862,22 @@ function functionModeOf(fn: FunctionLike): FunctionMode | undefined {
  * A closure's label: `function` when it has its own receiver, else `closure`; `async ` before it
  * when it is async. A generator is always a `function*`: it has no arrow form.
  */
+/** The const a function expression or arrow initializes directly, when it does. */
+function constInitializedBy(fn: Node): string | undefined {
+  if (!Node.isFunctionExpression(fn) && !Node.isArrowFunction(fn)) return undefined;
+  let up = fn.getParent();
+  while (up !== undefined && Node.isParenthesizedExpression(up)) up = up.getParent();
+  if (!Node.isVariableDeclaration(up)) return undefined;
+  const list = up.getParent();
+  if (
+    !Node.isVariableDeclarationList(list) ||
+    list.getDeclarationKind() !== VariableDeclarationKind.Const
+  )
+    return undefined;
+  const nameNode = up.getNameNode();
+  return Node.isIdentifier(nameNode) ? nameNode.getText() : undefined;
+}
+
 export function closureLabel(dynamicThis: boolean, mode: FunctionMode | undefined): string {
   const generator = mode === "generator" || mode === "async generator";
   const base = generator ? "function*" : dynamicThis ? "function" : "closure";

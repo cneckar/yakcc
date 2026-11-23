@@ -677,9 +677,17 @@ declared `♦`-source. The gate records the atom's unknown-support (`usupp`) in
 the sidecar `ducUsupp` provenance. That sidecar is not part of the
 `BlockMerkleRoot`.
 
-- `warn` (default): a `free-identifier` unknown logs a warning, and the atom is admitted.
-- `reject` (`YAKCC_DUC_GATE=reject`): an atom with an unexplained unknown is refused.
-  The default flip waits on the corpus baseline (`WI-EXPLAIN-04`).
+- `reject` (default, `DEC-DUC-GATE-REJECT-001`): an atom with an unexplained unknown, a lift
+  error, or an unfaithful lift is refused. Any value of `YAKCC_DUC_GATE` other than `warn` rejects.
+- `warn` (`YAKCC_DUC_GATE=warn`, the escape hatch): the problem logs a warning, and the atom is admitted.
+
+Every lift is checked for fidelity (`DEC-DUC-LIFT-FIDELITY-001`). The names the source reads without
+declaring them (by TypeScript's binder) must be exactly the names the graph reports as references.
+A name the atom declares at its own top level is a module binding, read live and linked by the module
+record. A name the atom only probes for (`typeof name`, or under a test that it is present) is
+explained as feature detection (`DEC-DUC-FEATURE-DETECTION-001`). A read inside a `try` is not a
+probe. The fixture corpus shaves with 0 unexplained references, 0 lift errors and 0 unfaithful
+lifts, and the allowlist of unliftable constructs is empty.
 
 Unknowns are classified by reason. `foreign-import` and `ambient-read` are
 explained by construction. A `free-identifier` that names a sibling atom in the

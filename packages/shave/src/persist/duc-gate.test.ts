@@ -209,11 +209,12 @@ describe("composition-edge resolution (WI-EXPLAIN-01, #1170)", () => {
 });
 
 describe("ducGateModeFromEnv", () => {
-  it("defaults to warn and only rejects on the explicit opt-in", () => {
-    expect(ducGateModeFromEnv({} as NodeJS.ProcessEnv)).toBe("warn");
+  it("defaults to reject; only an explicit warn admits a problem (DEC-DUC-GATE-REJECT-001)", () => {
+    expect(ducGateModeFromEnv({} as NodeJS.ProcessEnv)).toBe("reject");
     expect(ducGateModeFromEnv({ YAKCC_DUC_GATE: "warn" } as NodeJS.ProcessEnv)).toBe("warn");
     expect(ducGateModeFromEnv({ YAKCC_DUC_GATE: "reject" } as NodeJS.ProcessEnv)).toBe("reject");
-    expect(ducGateModeFromEnv({ YAKCC_DUC_GATE: "nonsense" } as NodeJS.ProcessEnv)).toBe("warn");
+    // A typo fails closed.
+    expect(ducGateModeFromEnv({ YAKCC_DUC_GATE: "nonsense" } as NodeJS.ProcessEnv)).toBe("reject");
   });
 });
 
@@ -583,5 +584,34 @@ describe("CommonJS imports and destructured declarations bind module names (#117
     const b = moduleBindingsOf("const { a, b: [c] } = { a: 1, b: [2] };\nexports.x = a;");
     expect(b.has("a")).toBe(true);
     expect(b.has("c")).toBe(true);
+  });
+});
+
+describe("feature detection and lift fidelity (#1173)", () => {
+  it("a name the atom only probes for with typeof is explained, not a hole", () => {
+    const umd =
+      "function wrap (factory) { if (typeof define === 'function' && define.amd) define([], factory); else return factory(); }";
+    const r = runDucConservationGate(umd);
+    expect(r.unexplained).toEqual([]);
+    expect(r.unknowns.find((u) => u.symbol === "define")?.probe).toBe(true);
+  });
+  it("a probe must test that the name is present: a test for its absence explains nothing", () => {
+    const wrong =
+      "function f () { if (typeof define === 'undefined') return define.amd; return 1 }";
+    expect(runDucConservationGate(wrong).unexplained.map((u) => u.symbol)).toEqual(["define"]);
+  });
+  it("a read inside a try is not a probe: the catch would hide a real hole", () => {
+    const hidden = "function f (x) { try { return helper(x) } catch (e) { return null } }";
+    expect(runDucConservationGate(hidden).unexplained.map((u) => u.symbol)).toEqual(["helper"]);
+  });
+  it("a web global is a platform primitive of the web target, not unexplained", () => {
+    const r = runDucConservationGate(
+      "function rand (n) { var a = new Uint32Array(n); (self.crypto || self.msCrypto).getRandomValues(a); return a }",
+    );
+    expect(r.unexplained).toEqual([]);
+  });
+  it("every lift is checked for fidelity, and a faithful one holds", () => {
+    const r = runDucConservationGate("function f (a) { return helper(a) + K }");
+    expect(r.fidelity).toEqual({ holds: true, missing: [], extra: [] });
   });
 });

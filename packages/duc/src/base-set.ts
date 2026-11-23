@@ -201,9 +201,60 @@ export const NODE: BaseSet = {
   },
 };
 
+/**
+ * Browsers and workers (#1173): ECMAScript, plus the web platform's globals. A package written for
+ * several platforms names them (`self.crypto` in a worker, a UMD wrapper's `window`); on Node they
+ * are not on the target, and the closure check says so.
+ */
+export const WEB: BaseSet = {
+  target: "web",
+  version: 1,
+  primitives: {
+    ...ECMASCRIPT.primitives,
+    ...pure([
+      "TextEncoder",
+      "TextDecoder",
+      "URL",
+      "URLSearchParams",
+      "structuredClone",
+      "atob",
+      "btoa",
+      "AbortController",
+      "Event",
+      "EventTarget",
+      "Blob",
+    ]),
+    // The global object, by its web names: what is reached through it carries its own labels.
+    self: {},
+    window: {},
+    document: { capability: "io" },
+    navigator: { capability: "process" },
+    location: { capability: "module-location" },
+    localStorage: { capability: "io" },
+    sessionStorage: { capability: "io" },
+    console: { capability: "io" },
+    setTimeout: { capability: "timers" },
+    setInterval: { capability: "timers" },
+    clearTimeout: { capability: "timers" },
+    clearInterval: { capability: "timers" },
+    queueMicrotask: { capability: "timers" },
+    requestAnimationFrame: { capability: "timers" },
+    fetch: { capability: "network" },
+    XMLHttpRequest: { capability: "network" },
+    WebSocket: { capability: "network" },
+    performance: { nondeterministic: true },
+    crypto: {
+      members: {
+        randomUUID: { nondeterministic: true },
+        getRandomValues: { nondeterministic: true },
+      },
+    },
+  },
+};
+
 /** Every name that is a primitive on some target: the lifter classifies these as platform primitives. */
 export const KNOWN_PRIMITIVES: readonly string[] = [
-  ...new Set([...Object.keys(ECMASCRIPT.primitives), ...Object.keys(NODE.primitives)]),
+  ...new Set([ECMASCRIPT, NODE, WEB].flatMap((base) => Object.keys(base.primitives))),
 ];
 
 export interface PrimitiveUse {
