@@ -10,6 +10,12 @@ export interface Case {
 
 export const EMIT_CASES: Case[] = [
   {
+    name: "a try whose loop declares a var the function reads after it",
+    source:
+      "export function f(xs: number[]) { var failed = false; try { for (var i = 0; i < xs.length; i++) { var x = xs[i]; if (x < 0) { failed = true; break; } } } catch (e) { failed = true; } return [failed, x]; }",
+    args: [[[1, 2]], [[1, -2, 3]], [[]]],
+  },
+  {
     name: "a switch whose clauses fall into the next, and a default that is not last",
     source:
       "export function f(k: any, o: any): string[] { const out: string[] = []; switch (k) { case o.a: out.push('a'); case 2: out.push('two'); break; default: out.push('d'); case 3: out.push('three'); if (k === 3) break; out.push('after'); } return out; }",

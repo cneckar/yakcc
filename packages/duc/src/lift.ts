@@ -668,13 +668,13 @@ class Lifter {
     for (const name of vars) {
       if (this.env.has(name)) continue;
       const start = this.undefinedValue();
-      if (this.cells.has(name)) {
-        const [cell] = this.emit("op", [start], 1, {
-          origin: { kind: "ObjectLiteral", text: truncate(name) },
-          label: 'object:["value"]',
-        });
-        this.env.set(name, cell as ValueId);
-      } else this.env.set(name, start);
+      // A block's closure assigns it, so it is a cell, a var in a loop inside the block included.
+      this.cells.add(name);
+      const [cell] = this.emit("op", [start], 1, {
+        origin: { kind: "ObjectLiteral", text: truncate(name) },
+        label: 'object:["value"]',
+      });
+      this.env.set(name, cell as ValueId);
     }
     const file = t
       .getSourceFile()
