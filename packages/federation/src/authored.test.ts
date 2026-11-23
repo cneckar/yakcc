@@ -282,4 +282,66 @@ describe("the composition loop (#1288)", () => {
       triggers: { "no-match": 1, closure: 1 },
     });
   });
+
+  it("the retrieved context reaches the model on a gap, and the outcome records it (#1271)", async () => {
+    const item = (id: string, sourcePkg: string) => ({
+      id,
+      sourcePkg,
+      text: `kept work ${id}`,
+      citation: {
+        merkleRoot: `root-${id}`,
+        sourceFile: `${sourcePkg}/x.js`,
+        lineStart: 1,
+        lineEnd: 3,
+      },
+    });
+    const context = [item("c1", "p"), item("c2", "q")];
+    const asked: SpecYak[] = [];
+    const model = scripted([ADD, SUB]);
+    const [out] = await composeMissing([need], {
+      search: async () => undefined,
+      model,
+      context: async (c) => {
+        asked.push(c);
+        return context;
+      },
+    });
+    expect(out?.outcome).toBe("authored");
+    expect(out?.contextIds).toEqual(["c1", "c2"]);
+    expect(asked).toHaveLength(1);
+    // Every attempt, including the retry with findings, carries the same cited context.
+    expect(model.requests.map((r) => r.context?.map((c) => c.id))).toEqual([
+      ["c1", "c2"],
+      ["c1", "c2"],
+    ]);
+    expect(model.requests[1]?.findings?.[0]?.check).toBe("conformance");
+  });
+
+  it("no context dependency, or an empty context, leaves the request as before (#1271)", async () => {
+    const plain = scripted([SUB]);
+    const [a] = await composeMissing([need], { search: async () => undefined, model: plain });
+    expect(plain.requests[0]).not.toHaveProperty("context");
+    expect(a).not.toHaveProperty("contextIds");
+    const empty = scripted([SUB]);
+    const [b] = await composeMissing([need], {
+      search: async () => undefined,
+      model: empty,
+      context: async () => [],
+    });
+    expect(empty.requests[0]).not.toHaveProperty("context");
+    expect(b).not.toHaveProperty("contextIds");
+  });
+
+  it("a found atom asks for no context (#1271)", async () => {
+    let calls = 0;
+    await composeMissing([need], {
+      search: async () => ({ identity: "g-sub", lineForm: SUB }),
+      model: scripted([ADD]),
+      context: async () => {
+        calls++;
+        return [];
+      },
+    });
+    expect(calls).toBe(0);
+  });
 });
