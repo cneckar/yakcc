@@ -228,6 +228,46 @@ pub fn num_str(f: f64) -> String {
     format!("{}", f)
 }
 
+pub fn json_quote(t: &str) -> String {
+    let mut o = String::from("\"");
+    for c in t.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            '\u{8}' => o.push_str("\\b"),
+            '\u{c}' => o.push_str("\\f"),
+            '\n' => o.push_str("\\n"),
+            '\r' => o.push_str("\\r"),
+            '\t' => o.push_str("\\t"),
+            c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
+
+/// JSON.stringify's SerializeJSONProperty: the text, or None where JavaScript gives undefined.
+pub fn json_str(x: &V) -> Option<String> {
+    match x {
+        V::Undef | V::Fun(_) => None,
+        V::Null => Some("null".to_string()),
+        V::Bool(b) => Some(b.to_string()),
+        V::Num(f) => Some(if f.is_finite() { num_str(*f) } else { "null".to_string() }),
+        V::Str(t) => Some(json_quote(t)),
+        V::Arr(a) => Some(format!("[{}]", a.borrow().iter().map(|e| json_str(e).unwrap_or_else(|| "null".to_string())).collect::<Vec<_>>().join(","))),
+        V::Obj(o) => {
+            let o = o.borrow();
+            Some(format!("{{{}}}", o.keys.iter().filter_map(|k| json_str(&o.vals[k]).map(|t| format!("{}:{}", json_quote(k), t))).collect::<Vec<_>>().join(",")))
+        }
+        V::Err(_) | V::Re(_) => Some("{}".to_string()),
+    }
+}
+
+pub fn json_stringify(x: V) -> V {
+    match json_str(&x) { Some(t) => s(&t), None => V::Undef }
+}
+
 pub fn str_of(x: &V) -> String {
     match x {
         V::Str(t) => t.to_string(),

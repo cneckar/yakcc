@@ -91,7 +91,18 @@ const AMBIENT_MEMBERS: Record<string, Record<string, (args: readonly string[]) =
     freeze: (a) => `freeze(${a[0] ?? NONE})`,
   },
   Array: { isArray: (a) => `is_array(${a[0] ?? NONE})` },
+  JSON: {
+    stringify: (a) => {
+      if (a.length > 1)
+        throw new RustEmitError(
+          "JSON.stringify with a replacer or an indent has no Rust form here",
+        );
+      return `json_stringify(${a[0] ?? NONE})`;
+    },
+  },
   Number: {
+    // Number.parseInt is the global parseInt (ECMA-262 21.1.2.13).
+    parseInt: (a) => `parse_int(${a[0] ?? NONE}, ${a[1] ?? NONE})`,
     isFinite: (a) => `is_finite_number(${a[0] ?? NONE})`,
     isInteger: (a) => `is_integer_number(${a[0] ?? NONE})`,
     isNaN: (a) => `is_nan_number(${a[0] ?? NONE})`,
