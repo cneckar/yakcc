@@ -1337,6 +1337,43 @@ function executeWithTelemetry(toolName: string): void {
 });
 
 // ---------------------------------------------------------------------------
+// DEC-SLICER-ARRAY-LITERAL-001: ArrayLiteralExpression decomposes via its elements
+// ---------------------------------------------------------------------------
+
+describe("decompose — array literals with conditional spreads (DEC-SLICER-ARRAY-LITERAL-001)", () => {
+  /**
+   * The shape from packages/duc/src/lift.ts that failed the self-shave bootstrap with
+   * DidNotReachAtomError: an array literal whose spreads are conditionals, so isAtom()
+   * classifies it as non-atomic and the slicer must descend through its elements.
+   */
+  it("an array literal with conditional spreads decomposes to atoms without DidNotReachAtomError", async () => {
+    const src = `
+declare const handler: { getBlock(): string } | undefined;
+declare const finalizer: string | undefined;
+declare function tryBlock(): string;
+
+function partsOf(): string[] {
+  const parts = [
+    tryBlock(),
+    ...(handler !== undefined ? [handler.getBlock()] : []),
+    ...(finalizer !== undefined ? [finalizer] : []),
+  ];
+  return parts;
+}
+`.trim();
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.root).toBeDefined();
+    expect(tree.leafCount).toBeGreaterThan(0);
+    function hasSourceContaining(node: typeof tree.root, text: string): boolean {
+      if (node.source.includes(text)) return true;
+      if (node.kind === "branch") return node.children.some((c) => hasSourceContaining(c, text));
+      return false;
+    }
+    expect(hasSourceContaining(tree.root, "finalizer !== undefined")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // #1035: TemplateExpression decomposes via span expressions
 // ---------------------------------------------------------------------------
 

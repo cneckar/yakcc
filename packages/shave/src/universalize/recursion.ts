@@ -1232,6 +1232,41 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
     return result;
   }
 
+  // ArrayLiteralExpression: descend into its elements, a spread element's expression in place of the
+  // spread (the array counterpart of the ObjectLiteralExpression policy above).
+  //
+  // @decision DEC-SLICER-ARRAY-LITERAL-001
+  // title: ArrayLiteralExpression decomposes via its elements and its spreads' expressions
+  // status: accepted
+  // rationale:
+  //   An array literal with conditional spreads, `[a, ...(c ? [b] : []), d]`, holds CF
+  //   boundaries in its elements, so isAtom() classifies it as non-atomic. With no branch here
+  //   it fell through to return [] and recurse() threw DidNotReachAtomError: the self-shave
+  //   bootstrap failed on four @yakcc/duc files of this shape (compact.ts, emit-py.ts, lift.ts,
+  //   line-form.ts). Each element is now a decomposable child, and a spread's expression (the
+  //   ConditionalExpression carrying the boundary) routes through the existing branches.
+  // alternatives:
+  //   A. Rewrite the source sites to build the arrays imperatively — rejected: it moves a
+  //      pipeline gap into source-style discipline, as DEC-SLICER-TEMPLATE-EXPRESSION-001 argued.
+  //   B. Make array literals always atomic — rejected: a large array of conditional parts
+  //      should decompose, as for object literals.
+  // consequences:
+  //   - Array literals with conditional spreads shave like object literals with them.
+  //   - Only consulted when isAtom() returns false, so atomic array literals are unaffected.
+  if (kind === SyntaxKind.ArrayLiteralExpression) {
+    const arr = node as Node & { getElements(): readonly Node[] };
+    const result: Node[] = [];
+    for (const el of arr.getElements()) {
+      if (el.getKind() === SyntaxKind.SpreadElement) {
+        const expr = (el as Node & { getExpression?(): Node | undefined }).getExpression?.();
+        if (expr !== undefined) result.push(expr);
+      } else if (el.getKind() !== SyntaxKind.OmittedExpression) {
+        result.push(el);
+      }
+    }
+    return result;
+  }
+
   // TemplateExpression: `\`prefix${expr1}middle${expr2}suffix\`` — decompose to
   // [expr1, expr2, ...] so each interpolation expression can be atomized
   // individually. The TemplateHead and TemplateMiddle/Tail string fragments
