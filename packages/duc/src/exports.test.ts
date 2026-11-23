@@ -17,6 +17,13 @@ describe("export lists (#1276)", () => {
     expect(id("const a = 1; export { a };")).toBe(id("export const a = 1;"));
   });
 
+  it("export default observes the value it exports", () => {
+    const g = liftAtom("const a = 1; export default a;");
+    expect(g.nodes.some((n) => (n.label ?? "").startsWith("ExportAssignment#"))).toBe(false);
+    expect(g.obs.length).toBe(1);
+    expect(id("export default 2;")).not.toBe(id("export default 3;"));
+  });
+
   it("exporting other names is another graph, a fragment's free names and imports included", () => {
     expect(id("export { parse };")).not.toBe(id("export { transform };"));
     expect(id('import { x } from "./m"; export { x };')).not.toBe(

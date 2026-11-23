@@ -1068,6 +1068,11 @@ class Lifter {
     }
     // An empty statement computes nothing.
     if (Node.isEmptyStatement(node)) return;
+    // `export default x` (and `export = x`) exports one value: it is observed (#1276).
+    if (Node.isExportAssignment(node)) {
+      this.obs.push(this.liftExpr(node.getExpression()));
+      return;
+    }
     // A local export list computes nothing: the names it exports are observed (exportedBindingNames).
     if (Node.isExportDeclaration(node) && node.getModuleSpecifier() === undefined) return;
     if (Node.isThrowStatement(node)) {
