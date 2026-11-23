@@ -48,6 +48,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { createLocalEmbeddingProvider } from "@yakcc/contracts";
 import { openRegistry } from "@yakcc/registry";
 import type { BlockTripletRow, Registry, RegistryOptions } from "@yakcc/registry";
 import type { Logger } from "../index.js";
@@ -68,20 +69,18 @@ const DEFAULT_OUTPUT_DIR = "dist-recompiled";
 const DEFAULT_REGISTRY_PATH = "bootstrap/yakcc.registry.sqlite";
 
 // ---------------------------------------------------------------------------
-// Embedding provider for read-only registry open
+// Embedding provider for the registry open
 //
-// Bootstrap uses zero-vector embeddings (DEC-V2-BOOTSTRAP-EMBEDDING-001).
-// compile-self also uses zero-vector embeddings: we only enumerate atoms,
-// never run vector search. Deterministic zero vectors avoid any network dependency.
+// The registry compile-self reads is the one `yakcc bootstrap` writes, which embeds with the local
+// BGE provider on disk (DEC-V2-BOOTSTRAP-EMBEDDING-002). Opening it with any other provider trips
+// the registry's cross-provider gate ("Registry was embedded with model …"). compile-self only
+// enumerates atoms and never embeds, and the provider loads its model lazily, so opening with the
+// same provider costs nothing (#1297).
 // ---------------------------------------------------------------------------
 
-const NULL_EMBEDDING_OPTS = {
-  embeddings: {
-    dimension: 384,
-    modelId: "compile-self/null-zero",
-    embed: async (_text: string): Promise<Float32Array> => new Float32Array(384),
-  },
-} as const;
+function registryEmbeddingOpts(): Pick<RegistryOptions, "embeddings"> {
+  return { embeddings: createLocalEmbeddingProvider() };
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -352,7 +351,7 @@ async function _runPipeline(
   const airgapped = rc?.mode === "airgapped";
   const commonsBinding = makeCommonsBinding({ registryPath, airgapped });
 
-  const openOpts: RegistryOptions = { ...NULL_EMBEDDING_OPTS };
+  const openOpts: RegistryOptions = { ...registryEmbeddingOpts() };
   if (commonsBinding.commonsSubmit !== undefined) {
     openOpts.commonsSubmit = commonsBinding.commonsSubmit;
   }
