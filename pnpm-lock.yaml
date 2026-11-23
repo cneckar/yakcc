@@ -695,6 +695,9 @@ importers:
       '@yakcc/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@yakcc/duc':
+        specifier: workspace:*
+        version: link:../duc
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

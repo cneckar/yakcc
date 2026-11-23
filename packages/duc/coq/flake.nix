@@ -5,13 +5,12 @@
   # `nix develop`  -> a shell with coq + make on PATH (for local proving).
   # `nix build`    -> runs `make verify` hermetically; fails on any proof hole.
   #
-  # NOTE: flake.lock is generated with `nix flake lock` in a Nix environment.
-  # This flake was authored against Coq 8.18 (Ubuntu universe) but has NOT been
-  # evaluated with Nix in the dev container that produced it (no nix available);
-  # the apt path in .github/workflows/duc-coq.yml is the CI-verified route.
+  # The pin: nixpkgs is the NixOS 25.05 release tarball below (an immutable URL), and
+  # flake.lock records its content hash. Its `coq` is Rocq 9.0.0 with its standard library.
+  # The release server is used rather than `github:` so the pin resolves without GitHub's API.
   description = "DUC Coq proof harness — reproducible Rocq/Coq toolchain (S6).";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+  inputs.nixpkgs.url = "https://releases.nixos.org/nixos/25.05/nixos-25.05.813814.ac62194c3917/nixexprs.tar.xz";
 
   outputs = { self, nixpkgs }:
     let
@@ -21,7 +20,7 @@
     {
       devShells = forAll (pkgs: {
         default = pkgs.mkShell {
-          packages = [ pkgs.coq pkgs.gnumake ];
+          packages = [ pkgs.coq pkgs.rocqPackages.stdlib pkgs.gnumake ];
         };
       });
 
@@ -31,7 +30,7 @@
           pname = "duc-coq-verify";
           version = "0.6.0";
           src = ./.;
-          nativeBuildInputs = [ pkgs.coq pkgs.gnumake ];
+          nativeBuildInputs = [ pkgs.coq pkgs.rocqPackages.stdlib pkgs.gnumake ];
           buildPhase = "make verify";
           installPhase = "mkdir -p $out && cp -f *.vo $out/ 2>/dev/null || true; touch $out/verified";
         };

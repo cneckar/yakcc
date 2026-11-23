@@ -30,8 +30,30 @@ export type { LeanRunResult } from "./lean-runner.js";
 export {
   runVerifierForClaim,
   signAttestation,
+  signPayload,
   verifyAttestation,
 } from "./verifier.js";
+
+// The DUC mechanization as a verifier-as-block (#1167)
+export {
+  DUC_PINNED_TOOLCHAIN,
+  DUC_THEOREM,
+  DUC_VERIFIER_FILES,
+  claimedTheorems,
+  coreProgram,
+  ducVerifierHash,
+  issueDucAttestation,
+  mechanizedAttestation,
+  mechanizedDepmap,
+  runDucMechanization,
+} from "./duc.js";
+export type {
+  CoreInstr,
+  DucI1Attestation,
+  DucI1Payload,
+  DucIssueResult,
+  DucMechanizationRun,
+} from "./duc.js";
 export type {
   Attestation,
   AttestationPayload,
