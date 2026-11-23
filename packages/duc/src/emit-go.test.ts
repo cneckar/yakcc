@@ -10,9 +10,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { EMIT_CASES } from "./__fixtures__/emit-cases.js";
 import { runnable } from "./__fixtures__/runnable.js";
+import { graphIdentity } from "./canonical.js";
 import { GO_PRELUDE, GoEmitError, emitGo } from "./emit-go.js";
 import { emitTypeScript } from "./emit-ts.js";
 import { liftAtom } from "./lift.js";
+import { raiseGo } from "./raise-go.js";
 
 /** Reads one JSON array of arguments per line, keeps object key order, prints each result as JSON. */
 const DRIVER = `
@@ -307,4 +309,23 @@ describe("lowering to Go: refusals (#1278)", () => {
       ),
     ).toThrow(GoEmitError);
   });
+});
+
+describe("raising the Go lowering: round trip (#1278)", () => {
+  const sources: [string, string][] = [
+    ...EMIT_CASES.map((c): [string, string] => [c.name, c.source]),
+    [
+      "operations the lowering keeps apart",
+      "export function f(o: any, xs: number[], k: string) { let n = 0; n += xs.length; n++; const t = `a${n}b`; o.k = t; o[k] = n; const e = new Error('x'); const c = Error('y'); return [o?.k, xs?.[0], (0, o.g)?.(1), String(n), n.toString(16), Object.freeze(o), void n, (n, k), Math.pow(n, 2), n ** 2, /a+b/gi.test(k), e, c]; }",
+    ],
+    ["an unread free name, and nothing returned", "const g = strict ? a : b;"],
+  ];
+  for (const [name, source] of sources) {
+    it(`lowers, raises and lifts to the same identity: ${name}`, () => {
+      const g = liftAtom(source);
+      const go = emitGo(g);
+      const ts = raiseGo(go);
+      expect(graphIdentity(liftAtom(ts)), `${go}\n${ts}`).toBe(graphIdentity(g));
+    });
+  }
 });

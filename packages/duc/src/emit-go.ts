@@ -25,35 +25,38 @@ export class GoEmitError extends Error {
   }
 }
 
+/** A missing argument: undefined, written apart from an undefined passed, so the raiser keeps arity. */
+const NONE = "NONE";
+
 const METHODS: Record<string, (recv: string, args: readonly string[]) => string> = {
-  trim: (r) => `any(strings.TrimSpace(strMethod(${r})))`,
-  toUpperCase: (r) => `any(strings.ToUpper(strMethod(${r})))`,
-  toLowerCase: (r) => `any(strings.ToLower(strMethod(${r})))`,
-  startsWith: (r, a) => `any(strings.HasPrefix(strMethod(${r}), str(${a[0] ?? '""'})))`,
-  endsWith: (r, a) => `any(strings.HasSuffix(strMethod(${r}), str(${a[0] ?? '""'})))`,
-  includes: (r, a) => `includes(${r}, ${a[0] ?? "Undefined"})`,
-  indexOf: (r, a) => `indexOf(${r}, ${a[0] ?? "Undefined"})`,
-  slice: (r, a) => `slice(${r}, ${a[0] ?? "Undefined"}, ${a[1] ?? "Undefined"})`,
-  split: (r, a) => `split(${r}, ${a[0] ?? "Undefined"})`,
-  join: (r, a) => `join(${r}, ${a[0] ?? "Undefined"})`,
+  trim: (r) => `trim(${r})`,
+  toUpperCase: (r) => `toUpper(${r})`,
+  toLowerCase: (r) => `toLower(${r})`,
+  startsWith: (r, a) => `startsWith(${r}, ${a[0] ?? NONE})`,
+  endsWith: (r, a) => `endsWith(${r}, ${a[0] ?? NONE})`,
+  includes: (r, a) => `includes(${r}, ${a[0] ?? NONE})`,
+  indexOf: (r, a) => `indexOf(${r}, ${a[0] ?? NONE})`,
+  slice: (r, a) => `slice(${r}, ${a[0] ?? NONE}, ${a[1] ?? NONE})`,
+  split: (r, a) => `split(${r}, ${a[0] ?? NONE})`,
+  join: (r, a) => `join(${r}, ${a[0] ?? NONE})`,
   push: (r, a) => `push(${[r, ...a].join(", ")})`,
-  map: (r, a) => `mapArr(${r}, ${a[0]})`,
-  filter: (r, a) => `filterArr(${r}, ${a[0]})`,
-  some: (r, a) => `someArr(${r}, ${a[0]})`,
-  every: (r, a) => `everyArr(${r}, ${a[0]})`,
+  map: (r, a) => `mapArr(${r}, ${a[0] ?? NONE})`,
+  filter: (r, a) => `filterArr(${r}, ${a[0] ?? NONE})`,
+  some: (r, a) => `someArr(${r}, ${a[0] ?? NONE})`,
+  every: (r, a) => `everyArr(${r}, ${a[0] ?? NONE})`,
   reduce: (r, a) => `reduceArr(${[r, ...a].join(", ")})`,
-  toString: (r: string) => `any(str(${r}))`,
-  test: (r, a) => `reTest(${r}, ${a[0] ?? "Undefined"})`,
-  replace: (r, a) => `replace(${r}, ${a[0] ?? "Undefined"}, ${a[1] ?? "Undefined"})`,
+  toString: (r: string, a: readonly string[]) => `toStringM(${[r, ...a].join(", ")})`,
+  test: (r, a) => `reTest(${r}, ${a[0] ?? NONE})`,
+  replace: (r, a) => `replace(${r}, ${a[0] ?? NONE}, ${a[1] ?? NONE})`,
   concat: (r, a) => `concat(${[r, ...a].join(", ")})`,
-  substring: (r, a) => `substring(${r}, ${a[0] ?? "Undefined"}, ${a[1] ?? "Undefined"})`,
-  forEach: (r, a) => `forEachArr(${r}, ${a[0]})`,
-  find: (r, a) => `findArr(${r}, ${a[0]})`,
-  findIndex: (r, a) => `findIndexArr(${r}, ${a[0]})`,
-  charAt: (r, a) => `charAt(${r}, ${a[0] ?? "Undefined"})`,
-  charCodeAt: (r, a) => `charCodeAt(${r}, ${a[0] ?? "Undefined"})`,
-  at: (r, a) => `at(${r}, ${a[0] ?? "Undefined"})`,
-  match: (r, a) => `match(${r}, ${a[0] ?? "Undefined"})`,
+  substring: (r, a) => `substring(${r}, ${a[0] ?? NONE}, ${a[1] ?? NONE})`,
+  forEach: (r, a) => `forEachArr(${r}, ${a[0] ?? NONE})`,
+  find: (r, a) => `findArr(${r}, ${a[0] ?? NONE})`,
+  findIndex: (r, a) => `findIndexArr(${r}, ${a[0] ?? NONE})`,
+  charAt: (r, a) => `charAt(${r}, ${a[0] ?? NONE})`,
+  charCodeAt: (r, a) => `charCodeAt(${r}, ${a[0] ?? NONE})`,
+  at: (r, a) => `at(${r}, ${a[0] ?? NONE})`,
+  match: (r, a) => `match(${r}, ${a[0] ?? NONE})`,
   pop: (r) => `pop(${r})`,
   shift: (r) => `shift(${r})`,
   reverse: (r) => `reverse(${r})`,
@@ -61,39 +64,37 @@ const METHODS: Record<string, (recv: string, args: readonly string[]) => string>
 
 const AMBIENT_MEMBERS: Record<string, Record<string, (args: readonly string[]) => string>> = {
   Math: {
-    abs: (a) => `any(math.Abs(num(${a[0]})))`,
-    floor: (a) => `any(math.Floor(num(${a[0]})))`,
-    ceil: (a) => `any(math.Ceil(num(${a[0]})))`,
-    trunc: (a) => `any(math.Trunc(num(${a[0]})))`,
-    round: (a) => `round(${a[0]})`,
-    sqrt: (a) => `any(math.Sqrt(num(${a[0]})))`,
+    abs: (a) => `mathAbs(${a[0] ?? NONE})`,
+    floor: (a) => `mathFloor(${a[0] ?? NONE})`,
+    ceil: (a) => `mathCeil(${a[0] ?? NONE})`,
+    trunc: (a) => `mathTrunc(${a[0] ?? NONE})`,
+    round: (a) => `round(${a[0] ?? NONE})`,
+    sqrt: (a) => `mathSqrt(${a[0] ?? NONE})`,
     max: (a) => `mathMax(${a.join(", ")})`,
     min: (a) => `mathMin(${a.join(", ")})`,
-    pow: (a) => `pow(${a[0]}, ${a[1]})`,
+    pow: (a) => `mathPow(${a[0] ?? NONE}, ${a[1] ?? NONE})`,
   },
   Object: {
-    keys: (a) => `arr(keys(${a[0]})...)`,
+    keys: (a) => `objectKeys(${a[0] ?? NONE})`,
     // Freezing changes nothing a lowered function can observe without a write to the frozen value.
-    freeze: (a) => a[0] ?? "Undefined",
+    freeze: (a) => `freeze(${a[0] ?? NONE})`,
   },
-  Array: { isArray: (a) => `any(isArray(${a[0] ?? "Undefined"}))` },
+  Array: { isArray: (a) => `isArrayV(${a[0] ?? NONE})` },
   Number: {
-    isFinite: (a) => `isFiniteNumber(${a[0] ?? "Undefined"})`,
-    isInteger: (a) => `isIntegerNumber(${a[0] ?? "Undefined"})`,
-    isNaN: (a) =>
-      `any(func(x any) bool { f, ok := x.(float64); return ok && math.IsNaN(f) }(${a[0] ?? "Undefined"}))`,
+    isFinite: (a) => `isFiniteNumber(${a[0] ?? NONE})`,
+    isInteger: (a) => `isIntegerNumber(${a[0] ?? NONE})`,
+    isNaN: (a) => `isNaNNumber(${a[0] ?? NONE})`,
   },
 };
 
 const AMBIENT_CALLS: Record<string, (args: readonly string[]) => string> = {
   __yakccTry: (a) => `tryCatch(${a.join(", ")})`,
-  String: (a) => `any(str(${a[0] ?? '""'}))`,
-  Number: (a) => `any(num(${a[0] ?? "float64(0)"}))`,
-  Boolean: (a) => `any(truthy(${a[0] ?? "Undefined"}))`,
-  parseInt: (a) => `parseInt(${a[0] ?? "Undefined"}, ${a[1] ?? "Undefined"})`,
-  isNaN: (a) => `any(math.IsNaN(num(${a[0] ?? "Undefined"})))`,
-  isFinite: (a) =>
-    `any(func(f float64) bool { return !math.IsNaN(f) && !math.IsInf(f, 0) }(num(${a[0] ?? "Undefined"})))`,
+  String: (a) => `stringOf(${a.join(", ")})`,
+  Number: (a) => `numberOf(${a.join(", ")})`,
+  Boolean: (a) => `booleanOf(${a[0] ?? NONE})`,
+  parseInt: (a) => `parseInt(${a[0] ?? NONE}, ${a[1] ?? NONE})`,
+  isNaN: (a) => `globalIsNaN(${a[0] ?? NONE})`,
+  isFinite: (a) => `globalIsFinite(${a[0] ?? NONE})`,
 };
 
 const PLATFORM_VALUES: Record<string, string> = {
@@ -101,8 +102,8 @@ const PLATFORM_VALUES: Record<string, string> = {
   String: "fnString",
   Number: "fnNumber",
   Boolean: "fnBoolean",
-  Infinity: "any(math.Inf(1))",
-  NaN: "any(math.NaN())",
+  Infinity: "jsInfinity",
+  NaN: "jsNaN",
 };
 
 /** A regular expression literal as Go's RE2, where the two mean the same (see regexToPython). */
@@ -131,7 +132,8 @@ const isMemberRead = (label: string): boolean =>
 function literal(label: string): string {
   if (label.startsWith("/") && label.lastIndexOf("/") > 0) {
     const r = regexToGo(label);
-    return `re(${JSON.stringify(r.pattern)}, ${r.global})`;
+    // The JavaScript literal is kept beside its RE2 form, for the raiser.
+    return `reJs(${JSON.stringify(label)}, ${JSON.stringify(r.pattern)}, ${r.global})`;
   }
   if (label === "true" || label === "false") return `any(${label})`;
   if (label === "null") return "any(nil)";
@@ -264,7 +266,7 @@ function goFunction(
     const p = producer.get(v);
     if (p === undefined || !inline.has(p.id)) {
       const name = nameOf(v);
-      if (name === "@arguments" && bound.length === 0) return "any(&Array{Items: args})";
+      if (name === "@arguments" && bound.length === 0) return "argumentsOf(args)";
       const platformValue = name.startsWith("@") ? PLATFORM_VALUES[name.slice(1)] : undefined;
       if (platformValue !== undefined) return platformValue;
       if (name.startsWith("@"))
@@ -330,30 +332,36 @@ function goFunction(
       };
       const cmp = compare[label];
       if (cmp !== undefined) return `any(${cmp}(${arg(0)}, ${arg(1)}))`;
-      if (label === "!==") return `any(!seq(${arg(0)}, ${arg(1)}))`;
+      if (label === "!==") return `sne(${arg(0)}, ${arg(1)})`;
       if (label === "==" && producer.get(ins[1] as ValueId)?.label === "null")
         return `any(isNullish(${arg(0)}))`;
       if (label === "ElementAccess") return `idx(${arg(0)}, ${arg(1)})`;
-      if (label === ",") return `func() any { _ = ${arg(0)}; return ${arg(1)} }()`;
+      if (label === "ElementAccess?.") return `idxOpt(${arg(0)}, ${arg(1)})`;
+      if (label === ",") return `comma(${arg(0)}, ${arg(1)})`;
     }
     if (ins.length === 1) {
-      if (label === "!") return `any(!truthy(${arg(0)}))`;
+      if (label === "!") return `not(${arg(0)})`;
       if (label === "~") return `bnot(${arg(0)})`;
       if (label === "-") return `neg(${arg(0)})`;
-      if (label === "+") return `any(num(${arg(0)}))`;
+      if (label === "+") return `pos(${arg(0)})`;
       if (label === "TypeOfExpression") return `any(typeOf(${arg(0)}))`;
-      if (label === "VoidExpression") return "Undefined";
+      if (label === "VoidExpression") return `voidOf(${arg(0)})`;
       if (isMemberRead(label))
-        return `get(${arg(0)}, ${JSON.stringify(label.replace(/^\??\./, ""))})`;
+        return `${label.startsWith("?.") ? "getOpt" : "get"}(${arg(0)}, ${JSON.stringify(label.replace(/^\??\./, ""))})`;
     }
-    if (label === "CallExpression" || label === "NewExpression") {
+    if (label === "CallExpression" || label === "CallExpression?." || label === "NewExpression") {
       let callee = ins[0] as ValueId;
       const viaComma = producer.get(callee);
+      // (0, f)(args): f called with no receiver.
+      let detached = false;
       if (
         viaComma?.label === "," &&
-        producer.get(viaComma.inputs[0] as ValueId)?.kind === "literal-source"
-      )
+        producer.get(viaComma.inputs[0] as ValueId)?.kind === "literal-source" &&
+        inline.has(viaComma.id)
+      ) {
         callee = viaComma.inputs[1] as ValueId;
+        detached = true;
+      }
       const args = ins.slice(1).map((v) => ref(v));
       const amb = ambientMember(callee);
       if (amb !== undefined) {
@@ -367,13 +375,16 @@ function goFunction(
         platform.diamond?.reason === "platform-primitive"
       ) {
         const sym = platform.diamond.symbol;
-        if (ERRORS.has(sym)) return `newError(${JSON.stringify(sym)}, ${args[0] ?? "Undefined"})`;
+        if (ERRORS.has(sym))
+          return `${label === "NewExpression" ? "newError" : "callError"}(${JSON.stringify(sym)}, ${args[0] ?? NONE})`;
         const call = AMBIENT_CALLS[sym];
         if (call === undefined) throw new GoEmitError(`${sym}(...) has no Go form here`);
         return call(args);
       }
       const cp = producer.get(callee);
       if (cp !== undefined && inline.has(cp.id) && isMemberRead(cp.label ?? "")) {
+        if ((cp.label ?? "").startsWith("?."))
+          throw new GoEmitError("an optional method call has no Go form here");
         const method = (cp.label ?? "").replace(/^\??\./, "");
         const fn = METHODS[method];
         if (fn === undefined) throw new GoEmitError(`the method ${method} has no Go form here`);
@@ -381,7 +392,8 @@ function goFunction(
       }
       if (label === "NewExpression")
         throw new GoEmitError("new of a value other than an Error has no Go form here");
-      return `call(${[ref(callee), ...args].join(", ")})`;
+      if (label === "CallExpression?.") return `callOpt(${[ref(callee), ...args].join(", ")})`;
+      return `${detached ? "callDetached" : "call"}(${[ref(callee), ...args].join(", ")})`;
     }
     if (label === "ArrayLiteral") {
       if (!ins.some((v) => producer.get(v)?.label === "..."))
@@ -409,12 +421,7 @@ function goFunction(
     }
     if (label.startsWith("template:")) {
       const texts = JSON.parse(label.slice("template:".length)) as string[];
-      const pieces: string[] = [];
-      texts.forEach((t, i) => {
-        if (t !== "") pieces.push(JSON.stringify(t));
-        if (i < ins.length) pieces.push(`str(${arg(i)})`);
-      });
-      return `any(${pieces.length > 0 ? pieces.join(" + ") : '""'})`;
+      return `template([]string{${texts.map((t) => JSON.stringify(t)).join(", ")}}${ins.map((v) => `, ${ref(v)}`).join("")})`;
     }
     throw new GoEmitError(`the operation "${label}" has no Go form`);
   };
@@ -427,7 +434,7 @@ function goFunction(
   const statementsOf = (node: DucNode): string[] => {
     const out = node.outputs[0];
     const label = node.label ?? "";
-    if (node.kind === "literal-source") return declare(nameOf(out as ValueId), "Undefined");
+    if (node.kind === "literal-source") return declare(nameOf(out as ValueId), "uninit()");
     if (node.kind === "sel") return declare(nameOf(out as ValueId), render(node));
     if (node.kind !== "op") throw new GoEmitError(`a ${node.kind} is not a statement`);
     const arg = (i: number): string => ref(node.inputs[i] as ValueId);
@@ -453,21 +460,29 @@ function goFunction(
         `_ = ${name}`,
       ];
     }
+    // A compound assignment and a step are operations of their own, as the graph has them.
     const compound: Record<string, string> = {
-      "+=": "add",
-      "-=": "sub",
-      "*=": "mul",
-      "/=": "div",
-      "%=": "rem",
+      "+=": "addAssign",
+      "-=": "subAssign",
+      "*=": "mulAssign",
+      "/=": "divAssign",
+      "%=": "remAssign",
     };
     const fn = compound[label];
     if (fn !== undefined) return declare(name, `${fn}(${arg(0)}, ${arg(1)})`);
-    if (label === "++" || label === "post++")
-      return declare(name, `add(num(${arg(0)}), float64(1))`);
-    if (label === "--" || label === "post--")
-      return declare(name, `sub(num(${arg(0)}), float64(1))`);
+    const steps: Record<string, string> = {
+      "++": "preInc",
+      "post++": "postInc",
+      "--": "preDec",
+      "post--": "postDec",
+    };
+    const step = steps[label];
+    if (step !== undefined) return declare(name, `${step}(${arg(0)})`);
     if (label.startsWith(".") && label.endsWith("="))
-      return declare(name, `put(${arg(0)}, ${JSON.stringify(label.slice(1, -1))}, ${arg(1)})`);
+      return declare(
+        name,
+        `putMember(${arg(0)}, ${JSON.stringify(label.slice(1, -1))}, ${arg(1)})`,
+      );
     if (label === "[]=") return declare(name, `put(${arg(0)}, ${arg(1)}, ${arg(2)})`);
     return declare(name, render(node));
   };
@@ -638,8 +653,20 @@ function goFunction(
       : `var ${nameOf(n.outputs[0] as ValueId)} any = arg(args, ${i})`,
     `_ = ${nameOf(n.outputs[0] as ValueId)}`,
   ]);
-  const body = [...bindings, ...emitScope(undefined)];
+  // A free or ambient name that nothing uses is still part of the atom: it is read on its own.
+  const used = new Set<ValueId>([...g.obs, ...branches.map((b) => b.cond)]);
+  for (const node of g.nodes) for (const v of node.inputs) used.add(v);
+  const unread = g.nodes
+    .filter((n) => n.kind === "diamond-source" && !used.has(n.outputs[0] as ValueId))
+    .map((n) => {
+      const d = n.diamond as { reason: string; symbol: string };
+      return d.reason === "platform-primitive"
+        ? `_ = platform(${JSON.stringify(d.symbol)})`
+        : `_ = ${nameOf(n.outputs[0] as ValueId)}`;
+    });
+  const body = [...bindings, ...unread, ...emitScope(undefined)];
   const obs = g.obs[0];
-  body.push(obs !== undefined ? `return ${ref(obs)}` : "return Undefined");
+  // No observation: the function computes nothing it returns (NONE, not an undefined returned).
+  body.push(obs !== undefined ? `return ${ref(obs)}` : "return NONE");
   return { body };
 }

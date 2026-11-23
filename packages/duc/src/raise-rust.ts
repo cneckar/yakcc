@@ -84,7 +84,7 @@ function tokenize(src: string): Tok[] {
 }
 
 /** An expression of the dialect: a name, a literal, a call, a closure `|| e`, a reference `&e`. */
-type Expr =
+export type Expr =
   | { readonly t: "name"; readonly name: string }
   | { readonly t: "num"; readonly v: string }
   | { readonly t: "str"; readonly v: string }
@@ -96,7 +96,7 @@ type Expr =
   | { readonly t: "field"; readonly e: Expr; readonly field: string }
   | { readonly t: "neg"; readonly e: Expr };
 
-type Stmt =
+export type Stmt =
   | { readonly t: "let"; readonly name: string; readonly e: Expr }
   | {
       readonly t: "closure";
@@ -490,7 +490,7 @@ const PLATFORM: Record<string, string> = {
 
 const isIdent = (k: string): boolean => /^[A-Za-z_$][\w$]*$/.test(k);
 
-class Writer {
+export class Writer {
   private nexts = 0;
   constructor(private readonly assigned: Set<string>) {}
 
@@ -508,6 +508,7 @@ class Writer {
       case "name":
         if (x.name === "V::Undef" || x.name === "NONE") return "undefined";
         if (x.name === "V::Null") return "null";
+        if (x.name.startsWith("Ref_")) return x.name.slice("Ref_".length);
         return x.name;
       case "num":
         return String(Number(x.v));
@@ -552,6 +553,7 @@ class Writer {
       return this.e(inner);
     }
     if (fn === "uninit") return "undefined";
+    if (fn === "is_nullish") return `(${a(0)} == null)`;
     if (fn === "get") return `${a(0)}.${(args[1] as { v: string }).v}`;
     if (fn === "get_opt") return `${a(0)}?.${(args[1] as { v: string }).v}`;
     if (fn === "idx") return `${a(0)}[${a(1)}]`;
@@ -757,6 +759,14 @@ function assignedNames(list: readonly Stmt[], out = new Set<string>()): Set<stri
 export function raiseRust(rust: string): string {
   const p = new Parser(tokenize(rust));
   const { params, body } = p.fn();
+  return writeFunction(params, body);
+}
+
+/** `export function f(..) {..}` from a lowering's parameters and statements, read as the dialect. */
+export function writeFunction(
+  params: readonly { name: string; rest: boolean }[],
+  body: readonly Stmt[],
+): string {
   const names = assignedNames(body);
   const collect = (list: readonly Stmt[]): void => {
     for (const st of list) {
