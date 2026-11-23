@@ -522,9 +522,13 @@ function liftsWholeNode(node: RecursionNode, alone = true): boolean {
  * own children still do (#1173).
  */
 function childLiftsWhole(node: RecursionNode): boolean {
-  if (parsesAlone(node.source)) return liftsWholeNode(node, false);
+  // A statement that jumps out of itself (`return`, `break`, `continue`) means something only in
+  // its parent, and is never dead there; like a fragment, its own children decide.
+  if (parsesAlone(node.source) && !JUMP.test(node.source)) return liftsWholeNode(node, false);
   return node.kind === "atom" || (node as BranchNode).children.every(childLiftsWhole);
 }
+
+const JUMP = /\b(?:return|break|continue)\b/;
 
 function parsesAlone(source: string): boolean {
   try {
