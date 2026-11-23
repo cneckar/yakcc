@@ -33,8 +33,8 @@ afterEach(async () => {
 });
 
 describe("DUC implementations (#1279)", () => {
-  it("is at schema 17", () => {
-    expect(SCHEMA_VERSION).toBe(17);
+  it("is at schema 18", () => {
+    expect(SCHEMA_VERSION).toBe(18);
   });
 
   it("stores and loads an implementation by its pair", async () => {
@@ -75,5 +75,47 @@ describe("DUC implementations (#1279)", () => {
       { reason: "unlinked-reference", symbol: "x", module: "./m", spec: "spec-x" },
     ]);
     expect(await registry.listDucImplementations("spec-a")).toEqual(["graph-1"]);
+  });
+});
+
+describe("graph search by retrieval signature (#1280)", () => {
+  // A deterministic embedder: each character's count, folded into 384 dimensions.
+  const counting: EmbeddingProvider = {
+    dimension: 384,
+    modelId: "test/counting",
+    embed: async (text) => {
+      const v = new Float32Array(384);
+      for (const ch of text)
+        v[(ch.codePointAt(0) ?? 0) % 384] = (v[(ch.codePointAt(0) ?? 0) % 384] ?? 0) + 1;
+      return v;
+    },
+  };
+  let reg: Registry;
+  beforeEach(async () => {
+    reg = await openRegistry(":memory:", { embeddings: counting });
+  });
+  afterEach(async () => {
+    await reg.close();
+  });
+
+  it("finds the stored graphs nearest a signature, with the contracts each implements", async () => {
+    await reg.storeDucImplementation(row({ graphIdentity: "g-add", signature: "ops + + +" }));
+    await reg.storeDucImplementation(
+      row({ specHash: "spec-b", graphIdentity: "g-add", signature: "ops + + +" }),
+    );
+    await reg.storeDucImplementation(row({ graphIdentity: "g-mul", signature: "ops * * *" }));
+    await reg.storeDucImplementation(row({ graphIdentity: "g-none" }));
+    const found = await reg.findDucGraphsBySignature("ops + +", 5);
+    expect(found.map((m) => m.graphIdentity)).toEqual(["g-add", "g-mul"]);
+    expect(found[0]?.specHashes).toEqual(["spec-a", "spec-b"]);
+    expect(found[0]?.distance).toBeLessThan(found[1]?.distance ?? 0);
+    expect(await reg.findDucGraphsBySignature("ops * *", 1)).toEqual([
+      expect.objectContaining({ graphIdentity: "g-mul", specHashes: ["spec-a"] }),
+    ]);
+  });
+
+  it("a graph stored without a signature is not indexed", async () => {
+    await reg.storeDucImplementation(row());
+    expect(await reg.findDucGraphsBySignature("anything", 3)).toEqual([]);
   });
 });

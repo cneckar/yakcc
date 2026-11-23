@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Canonical forms for DUC graphs (P1, #1275).
@@ -14,7 +15,7 @@
  * `graphIdentity` hashes the structure alone. Renaming a local or changing a comment changes
  * annotations only, so the identity does not change.
  */
-import { createHash } from "node:crypto";
+import { isRestParam, paramIndex } from "./params.js";
 import type { DiamondLabel, DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
 
 /**
@@ -24,17 +25,120 @@ import type { DiamondLabel, DucBranch, DucGraph, DucLoop, DucNode, ValueId } fro
 const COMMUTATIVE = new Set(["===", "!=="]);
 
 /**
+ * A closure that captures a constant has the constant in its own graph instead (#1276): the capture
+ * becomes a literal there, and the captures after it move up one. A lowering writes a captured
+ * constant where it is used, so this is the graph that lowering lifts back to.
+ */
+function inlineLiteralCaptures(nodes: DucNode[]): DucNode[] {
+  const literal = new Map<ValueId, DucNode>();
+  for (const n of nodes) if (n.kind === "literal-source") literal.set(n.outputs[0] as ValueId, n);
+  return nodes.map((node) => {
+    if (node.closure === undefined) return node;
+    const captures = node.inputs.length;
+    // A capture its graph never reads is no capture.
+    const read = new Set<ValueId>([
+      ...node.closure.obs,
+      ...(node.closure.branches ?? []).map((b) => b.cond),
+    ]);
+    for (const n of node.closure.nodes) {
+      for (const v of n.inputs) read.add(v);
+      if (n.loop !== undefined)
+        for (const v of [...n.loop.next, ...(n.loop.cond !== undefined ? [n.loop.cond] : [])])
+          read.add(v);
+    }
+    const unread = new Set(
+      node.closure.nodes
+        .filter(
+          (n) =>
+            n.kind === "param-source" &&
+            paramIndex(n.label) < captures &&
+            !read.has(n.outputs[0] as ValueId),
+        )
+        .map((n) => paramIndex(n.label)),
+    );
+    const drop = node.inputs.flatMap((v, i) => (literal.has(v) || unread.has(i) ? [i] : []));
+    if (drop.length === 0) return node;
+    const inner = node.closure.nodes.flatMap((n): DucNode[] => {
+      const one = rewrite(n);
+      return one === undefined ? [] : [one];
+    });
+    function rewrite(n: DucNode): DucNode | undefined {
+      if (n.kind !== "param-source") return n;
+      const at = paramIndex(n.label);
+      if (at < captures && drop.includes(at) && unread.has(at)) return undefined;
+      if (at < captures && drop.includes(at)) {
+        const l = literal.get(node.inputs[at] as ValueId) as DucNode;
+        return {
+          id: n.id,
+          inputs: [],
+          outputs: n.outputs,
+          kind: "literal-source",
+          ...(l.label !== undefined ? { label: l.label } : {}),
+          ...(l.origin !== undefined ? { origin: l.origin } : {}),
+        };
+      }
+      const shift = drop.filter((d) => d < at).length;
+      return shift === 0 ? n : { ...n, label: `${at - shift}${isRestParam(n.label) ? "..." : ""}` };
+    }
+    return {
+      ...node,
+      inputs: node.inputs.filter((_, i) => !drop.includes(i)),
+      closure: { ...node.closure, nodes: inner },
+    };
+  });
+}
+
+/**
  * A closure's graph with its captures renumbered: capture `order[k]` becomes capture k. The
  * captures are the closure graph's first parameters, one per input of the closure node.
  */
 function withCaptureOrder(closure: DucGraph, order: readonly number[]): DucGraph {
+  // Graphs are immutable, so a closure renumbered one way is canonicalized once: without this, each
+  // level of nesting canonicalizes the levels below it again, exponentially in the depth.
+  let byOrder = renumbered.get(closure);
+  if (byOrder === undefined) {
+    byOrder = new Map();
+    renumbered.set(closure, byOrder);
+  }
+  const key = order.join(",");
+  const hit = byOrder.get(key);
+  if (hit !== undefined) return hit;
   const position = new Map(order.map((old, pos) => [old, pos] as const));
   const nodes = closure.nodes.map((n) => {
     if (n.kind !== "param-source") return n;
     const at = position.get(Number(n.label));
     return at === undefined ? n : { ...n, label: String(at) };
   });
-  return canonicalizeGraph(nodes, closure.obs, closure.branches ?? []);
+  const graph = canonicalizeGraph(nodes, closure.obs, closure.branches ?? []);
+  byOrder.set(key, graph);
+  return graph;
+}
+const renumbered = new WeakMap<DucGraph, Map<string, DucGraph>>();
+
+/**
+ * How a closure uses its capture `k`: the operations that read it, and at which input (any input,
+ * where canonicalization reorders the inputs). Captures the outer graph cannot tell apart are told apart by this first,
+ * which is structure, and cheap; only those used alike are left to the search over orders.
+ */
+function captureUseOf(closure: DucGraph, k: number): string {
+  const param = closure.nodes.find((n) => n.kind === "param-source" && n.label === String(k));
+  const value = param?.outputs[0];
+  if (value === undefined) return "";
+  const uses: string[] = [];
+  for (const n of closure.nodes)
+    n.inputs.forEach((v, i) => {
+      if (v !== value) return;
+      // Positions canonicalization reorders are not structure: a commutative operand, a loop's
+      // invariant, a nested closure's capture.
+      const at =
+        (n.kind === "op" && COMMUTATIVE.has(n.label ?? "")) ||
+        n.closure !== undefined ||
+        (n.loop !== undefined && i >= invariantOffset(n))
+          ? "*"
+          : String(i);
+      uses.push(`${n.kind}:${n.label ?? ""}:${at}:${structuralDiamond(n.diamond)?.symbol ?? ""}`);
+    });
+  return uses.sort().join("|");
 }
 
 /** Where a loop's invariants start among its inputs: after the carries' initial values and the iterable. */
@@ -257,7 +361,9 @@ export function canonicalizeGraph(
   rawObs: readonly ValueId[],
   rawBranches: readonly DucBranch[] = [],
 ): DucGraph {
-  const { nodes, obs, branches } = hoistLiterals(rawNodes, rawObs, rawBranches);
+  const hoisted = hoistLiterals(rawNodes, rawObs, rawBranches);
+  const { obs, branches } = hoisted;
+  const nodes = inlineLiteralCaptures(hoisted.nodes);
   const producer = new Map<ValueId, { node: DucNode; index: number }>();
   for (const node of nodes) node.outputs.forEach((v, index) => producer.set(v, { node, index }));
 
@@ -332,14 +438,50 @@ export function canonicalizeGraph(
   const captureOrderOf = (node: DucNode): number[] => {
     const cached = captureOrders.get(node);
     if (cached !== undefined) return cached;
-    const sigs = node.inputs.map(sigOfValue);
-    const order = sigs
+    const sigs = node.inputs.map((v, k) =>
+      node.closure === undefined
+        ? sigOfValue(v)
+        : `${sigOfValue(v)}/${captureUseOf(node.closure, k)}`,
+    );
+    let order = sigs
       .map((_, i) => i)
       .sort((a, b) => {
         const sa = sigs[a] as string;
         const sb = sigs[b] as string;
         return sa < sb ? -1 : sa > sb ? 1 : a - b;
       });
+    // Captures the outer graph cannot tell apart (equal signatures) are ordered by how the closure
+    // uses them: of the orders the ties allow, the one that gives the closure the least identity.
+    // Otherwise their order would be the source's, and two lifts of one closure could differ.
+    const runs: [number, number][] = [];
+    for (let i = 0; i < order.length; ) {
+      let j = i + 1;
+      while (j < order.length && sigs[order[j] as number] === sigs[order[i] as number]) j++;
+      if (j - i > 1) runs.push([i, j]);
+      i = j;
+    }
+    const factorial = (k: number): number => (k <= 1 ? 1 : k * factorial(k - 1));
+    const choices = runs.reduce((n, [i, j]) => n * factorial(j - i), 1);
+    if (runs.length > 0 && choices <= 720 && node.closure !== undefined) {
+      const permutations = (xs: readonly number[]): number[][] =>
+        xs.length <= 1
+          ? [[...xs]]
+          : xs.flatMap((x, k) =>
+              permutations([...xs.slice(0, k), ...xs.slice(k + 1)]).map((p) => [x, ...p]),
+            );
+      let candidates: number[][] = [order];
+      for (const [i, j] of runs) {
+        candidates = candidates.flatMap((c) =>
+          permutations(c.slice(i, j)).map((p) => [...c.slice(0, i), ...p, ...c.slice(j)]),
+        );
+      }
+      let best: { order: number[]; id: string } | undefined;
+      for (const c of candidates) {
+        const id = graphIdentity(withCaptureOrder(node.closure, c));
+        if (best === undefined || id < best.id) best = { order: c, id };
+      }
+      if (best !== undefined) order = best.order;
+    }
     captureOrders.set(node, order);
     return order;
   };
@@ -455,8 +597,8 @@ export function canonicalizeGraph(
       if (aParam !== bParam) return aParam ? -1 : 1;
       if (aParam && bParam) {
         // A parameter's label is its index in the interface.
-        const la = Number(a.node.label);
-        const lb = Number(b.node.label);
+        const la = paramIndex(a.node.label);
+        const lb = paramIndex(b.node.label);
         if (!Number.isNaN(la) && !Number.isNaN(lb) && la !== lb) return la - lb;
         return (originalIndex.get(a.node) ?? 0) - (originalIndex.get(b.node) ?? 0);
       }
@@ -479,12 +621,34 @@ export function canonicalizeGraph(
   // conditions in the same place are the same structure, so the tie does not affect identity).
   const branchKey = (b: DucBranch): string =>
     `${branchSigOf(b.id) ?? ""}|${regionSig(b.within) ?? ""}`;
+  const contentsMemo = new Map<string, string>();
+  const contentsKey = (b: DucBranch): string => {
+    const known = contentsMemo.get(b.id);
+    if (known !== undefined) return known;
+    const side = (s: "t" | "e"): string =>
+      nodes
+        .filter(
+          (n) => n.region === `${b.id}.${s}` || n.region?.startsWith(`${b.id}.${s}/`) === true,
+        )
+        .map((n) => key.get(n) ?? "")
+        .sort()
+        .join(",");
+    const k = createHash("sha256")
+      .update(`${side("t")}|${side("e")}`)
+      .digest("hex");
+    contentsMemo.set(b.id, k);
+    return k;
+  };
   const branchRank = new Map<string, string>();
   [...branches]
     .sort((a, b) => {
       const ka = branchKey(a);
       const kb = branchKey(b);
       if (ka !== kb) return ka < kb ? -1 : 1;
+      // Branches on the same condition are told apart by what their sides hold.
+      const ca = contentsKey(a);
+      const cb = contentsKey(b);
+      if (ca !== cb) return ca < cb ? -1 : 1;
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     })
     .forEach((b, i) => branchRank.set(b.id, `b${i}`));
@@ -620,6 +784,15 @@ export function canonicalizeGraph(
  * branches and observations are hashed. Origin annotations are excluded.
  */
 export function graphIdentity(g: DucGraph): string {
+  const known = identities.get(g);
+  if (known !== undefined) return known;
+  const id = computeIdentity(g);
+  identities.set(g, id);
+  return id;
+}
+const identities = new WeakMap<DucGraph, string>();
+
+function computeIdentity(g: DucGraph): string {
   const canon = canonicalizeGraph(g.nodes, g.obs, g.branches ?? []);
   const structure = {
     nodes: canon.nodes.map((n) => ({
@@ -635,6 +808,7 @@ export function graphIdentity(g: DucGraph): string {
     })),
     obs: canon.obs,
     ...(canon.branches !== undefined ? { branches: canon.branches } : {}),
+    ...(g.mode !== undefined ? { mode: g.mode } : {}),
   };
   return createHash("sha256").update(canonicalJson(structure)).digest("hex");
 }

@@ -10,6 +10,68 @@ export interface Case {
 
 export const EMIT_CASES: Case[] = [
   {
+    name: "a loop that returns, inside an else, after an if that throws",
+    source:
+      "export function f(n: number, cb: any) { if (n < 0) throw new Error('negative'); if (cb === 1) { n = n + 1; } else { let i = 0; while (true) { if (i * i >= n) return i; i = i + 1; } } return -n; }",
+    args: [
+      [10, 0],
+      [10, 1],
+      [0, 0],
+    ],
+  },
+  {
+    name: "a labelled continue and break of an outer loop, and a return from an inner one",
+    source:
+      "export function f(xs: number[][], k: number) { let n = 0; outer: for (const row of xs) { for (const x of row) { if (x < 0) continue outer; if (x === k) return [n, x]; if (x > 100) break outer; n = n + x; } n = n * 2; } return n; }",
+    args: [
+      [[[1, 2], [3]], 9],
+      [[[1, -1, 5], [2]], 9],
+      [
+        [
+          [1, 2],
+          [3, 9],
+        ],
+        9,
+      ],
+      [[[1, 200], [3]], 9],
+    ],
+  },
+  {
+    name: "a return from a loop three deep",
+    source:
+      "export function f(n: number) { let i = 0; while (i < n) { let j = 0; while (j < n) { let k = 0; while (k < n) { if (i * j * k === 8) return [i, j, k]; k = k + 1; } j = j + 1; } i = i + 1; } return null; }",
+    args: [[2], [3], [5]],
+  },
+  {
+    name: "rest parameters, of the function and of a closure",
+    source:
+      "export function f(a: number, ...xs: number[]) { const g = (...ys: number[]) => ys.length + a; return [xs, g(1, 2), g()]; }",
+    args: [[1], [1, 2, 3]],
+  },
+  {
+    name: "a try whose loop declares a var the function reads after it",
+    source:
+      "export function f(xs: number[]) { var failed = false; try { for (var i = 0; i < xs.length; i++) { var x = xs[i]; if (x < 0) { failed = true; break; } } } catch (e) { failed = true; } return [failed, x]; }",
+    args: [[[1, 2]], [[1, -2, 3]], [[]]],
+  },
+  {
+    name: "a switch whose clauses fall into the next, and a default that is not last",
+    source:
+      "export function f(k: any, o: any): string[] { const out: string[] = []; switch (k) { case o.a: out.push('a'); case 2: out.push('two'); break; default: out.push('d'); case 3: out.push('three'); if (k === 3) break; out.push('after'); } return out; }",
+    args: [
+      [1, { a: 1 }],
+      [2, { a: 1 }],
+      [3, { a: 1 }],
+      [9, { a: 1 }],
+    ],
+  },
+  {
+    name: "a switch that falls through and throws in its default",
+    source:
+      "export function f(k: number): number { let n = 0; switch (k) { case 1: n = n + 1; case 2: n = n + 10; break; default: throw new Error('no ' + k); } return n; }",
+    args: [[1], [2]],
+  },
+  {
     name: "arithmetic",
     source: "export function f(a: number, b: number): number { return (a + b) * (a - b); }",
     args: [
@@ -147,6 +209,18 @@ export const EMIT_CASES: Case[] = [
       [0, 2],
       [3, 2],
     ],
+  },
+  {
+    name: "a closure that reads a variable reassigned after it is made",
+    source:
+      "export function f(xs: number[]): number[] { let last = 0; const get = (): number => last; const out: number[] = []; for (const x of xs) { last = x; out.push(get()); } return out; }",
+    args: [[[]], [[3, 1, 4]]],
+  },
+  {
+    name: "a condition that assigns, and a postfix step's value",
+    source:
+      "export function f(xs: number[]): number[] { let i = 0; let v = 0; let n = 0; while ((v = xs[i++]) !== undefined) { n = n + v; } return [n, i, v === undefined ? -1 : v]; }",
+    args: [[[]], [[2, 3]]],
   },
   // A try statement is a call of the try primitive over two closures (#1276).
   {

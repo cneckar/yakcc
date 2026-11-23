@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
+import { NODE } from "./base-set.js";
 import { renderWitness } from "./influence.js";
+import { liftAtom } from "./lift.js";
 import { graphNI, labelBySymbol } from "./ni.js";
 import { N, V, mkGraph } from "./testkit.js";
 
@@ -103,5 +105,31 @@ describe("graphNI edge cases", () => {
     );
     const result = graphNI(backdoor, labelBySymbol(backdoor, new Set(["S"]), [V("out")]));
     expect(result.holds).toBe(false);
+  });
+});
+
+describe("nondeterministic ambient reads (#1270, DEC-DUC-NI-DETERMINISM-001)", () => {
+  it("a verdict that rests on a nondeterministic read names it; one that does not, does not", () => {
+    const g = liftAtom(
+      "export function f(secret: number, x: number) { return [x + Date.now(), x * 2]; }",
+    );
+    // The returned array is the atom's one observation, and it is low.
+    const labeling = labelBySymbol(g, new Set(), g.obs);
+    const plain = graphNI(g, labeling);
+    expect(plain.nondeterministic).toBeUndefined();
+    const qualified = graphNI(g, labeling, NODE);
+    expect(qualified.holds).toBe(true);
+    expect(qualified.nondeterministic).toEqual([{ obs: g.obs[0], source: "Date" }]);
+    const pure = liftAtom("export function f(x: number) { return x * 2 + Math.floor(x); }");
+    expect(graphNI(pure, labelBySymbol(pure, new Set(), pure.obs), NODE)).toEqual({
+      holds: true,
+      nondeterministic: [],
+    });
+  });
+
+  it("Math.random is named as the member it is; Math itself is deterministic", () => {
+    const g = liftAtom("export function f(n: number) { return Math.floor(Math.random() * n); }");
+    const r = graphNI(g, labelBySymbol(g, new Set(), g.obs), NODE);
+    expect(r.nondeterministic).toEqual([{ obs: g.obs[0], source: "Math.random" }]);
   });
 });

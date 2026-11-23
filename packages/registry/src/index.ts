@@ -775,7 +775,21 @@ export interface DucImplementationRow {
   readonly blockMerkleRoot?: string | null;
   /** The emitted TypeScript, a cache of the graph. */
   readonly tsCache?: string | null;
+  /**
+   * The graph's retrieval signature (#1280), the text its search vector is embedded from. When
+   * given, the store embeds it and the graph becomes findable by findDucGraphsBySignature.
+   */
+  readonly signature?: string | null;
   readonly createdAt?: number;
+}
+
+/** A stored graph found by its retrieval signature (#1280). */
+export interface DucSignatureMatch {
+  readonly graphIdentity: string;
+  /** The cosine distance between the query's signature vector and the graph's. */
+  readonly distance: number;
+  /** The contracts this graph implements. */
+  readonly specHashes: readonly string[];
 }
 
 export interface Registry {
@@ -1240,6 +1254,12 @@ export interface Registry {
 
   /** The graph identities that implement a contract, oldest first. */
   listDucImplementations(specHash: string): Promise<readonly string[]>;
+
+  /**
+   * The k stored graphs whose retrieval signatures are nearest the given one, nearest first (#1280).
+   * The vectors are an index for candidates only: selection among them is a structural check.
+   */
+  findDucGraphsBySignature(signature: string, k: number): Promise<readonly DucSignatureMatch[]>;
 
   close(): Promise<void>;
 

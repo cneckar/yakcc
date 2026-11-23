@@ -16,6 +16,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
+    // Fixture packages are shaving input, vendored as published (zod ships its own tests, which
+    // import its dev dependencies). They are not this package's tests.
+    exclude: ["**/node_modules/**", "src/__fixtures__/**"],
     pool: "forks",
     maxWorkers: 2,
     minWorkers: 1,

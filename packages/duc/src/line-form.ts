@@ -1,3 +1,6 @@
+import { canonicalizeGraph } from "./canonical.js";
+import { isHeapLabel } from "./heap-labels.js";
+import { normalizeLiteral } from "./literal.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The line form: the authoring format a model writes (#1275). One directive per line, in
@@ -58,8 +61,7 @@
  * inside a branch or a loop is not visible after its end: only a join or a loop's results carry a
  * value out. A free or ambient source is one per symbol, so it is top level wherever it is written.
  */
-import { canonicalizeGraph } from "./canonical.js";
-import { normalizeLiteral } from "./literal.js";
+import { isRestParam } from "./params.js";
 import type {
   DiamondLabel,
   DiamondReason,
@@ -67,6 +69,7 @@ import type {
   DucGraph,
   DucLoop,
   DucNode,
+  FunctionMode,
   NodeId,
   ValueId,
 } from "./types.js";
@@ -82,7 +85,8 @@ export class LineFormError extends Error {
 }
 
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const SYMBOL = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+// A name, or one of the language's meta-properties (`new.target`, `import.meta`).
+const SYMBOL = /^(?:[A-Za-z_$][A-Za-z0-9_$]*|new\.target|import\.meta)$/;
 const LIT = /^lit\s+("(?:[^"\\]|\\.)*")\s*->\s*(\S+)\s*$/;
 const LABEL = /^\S+$/;
 
@@ -171,6 +175,11 @@ export function parseLineForm(text: string): DucGraph {
   let paramCount = 0;
   let branchCount = 0;
   let loopCount = 0;
+  let mode: FunctionMode | undefined;
+  // A program that writes no heap token (#1288): its top-level heap operations are ordered as they
+  // are written, as the lifter orders them. A program that writes one is taken as written.
+  const implicitHeap = !/(^|\s)\^/.test(text);
+  let lastHeap: ValueId | undefined;
 
   const currentRegion = (): string | undefined => {
     if (open.length === 0) return undefined;
@@ -256,7 +265,21 @@ export function parseLineForm(text: string): DucGraph {
     if (trimmed === "" || trimmed.startsWith("#")) return;
     const follows = pendingJoin;
     pendingJoin = undefined;
-    const [head = "", ...rest] = trimmed.split(/\s+/);
+    const [first = "", ...words] = trimmed.split(/\s+/);
+    // `async function`, `async method`, `async generator`: one head of two words.
+    const asyncHead = first === "async" && CLOSURE_HEADS.has(words[0] ?? "");
+    const head = asyncHead ? `async ${words[0]}` : first;
+    const rest = asyncHead ? words.slice(1) : words;
+
+    if (head === "mode") {
+      const m = rest.join(" ");
+      if (m !== "async" && m !== "generator" && m !== "async generator")
+        throw new LineFormError(line, "expected: mode async | generator | async generator");
+      if (nodes.length > 0 || mode !== undefined)
+        throw new LineFormError(line, "mode is the program's first line");
+      mode = m;
+      return;
+    }
 
     // A loop's header lines (carry, invariant, element) come first, in any order; the body follows.
     const top = open[open.length - 1];
@@ -293,10 +316,18 @@ export function parseLineForm(text: string): DucGraph {
 
     if (head === "param") {
       if (open.length > 0) throw new LineFormError(line, "param must come before any if or loop");
-      if (rest.length !== 1) throw new LineFormError(line, "expected: param <name>");
+      // `param xs ...` is a rest parameter: the arguments from there on, as an array.
+      const restParam = rest.length === 2 && rest[1] === "...";
+      if (rest.length !== 1 && !restParam)
+        throw new LineFormError(line, "expected: param <name> [...]");
       const out = define(rest[0] as string, line);
       add(
-        { kind: "param-source", inputs: [], outputs: [out], label: String(paramCount++) },
+        {
+          kind: "param-source",
+          inputs: [],
+          outputs: [out],
+          label: `${paramCount++}${restParam ? "..." : ""}`,
+        },
         undefined,
       );
       return;
@@ -319,8 +350,22 @@ export function parseLineForm(text: string): DucGraph {
         throw new LineFormError(line, "only the last operand may be the heap token (^<name>)");
       const inputs = operands.map((n) => use(n.replace(/^\^/, ""), line));
       const outputs = results.map((n) => define(n, line));
+      let ordered = marked !== -1;
+      if (
+        implicitHeap &&
+        currentRegion() === undefined &&
+        (isHeapLabel(label) || label === "throw")
+      ) {
+        if (lastHeap !== undefined) {
+          inputs.push(lastHeap);
+          ordered = true;
+        }
+        // Every heap operation is a token, as in the lifter: one with no result gets one.
+        if (outputs.length === 0) outputs.push(fresh(0));
+        lastHeap = outputs[0];
+      }
       add(
-        { kind: "op", inputs, outputs, label, ...(marked !== -1 ? { order: 1 as const } : {}) },
+        { kind: "op", inputs, outputs, label, ...(ordered ? { order: 1 as const } : {}) },
         currentRegion(),
       );
       return;
@@ -671,7 +716,7 @@ export function parseLineForm(text: string): DucGraph {
       return;
     }
 
-    if (head === "function" || head === "method") {
+    if (CLOSURE_LABELS.has(head)) {
       const usage = `expected: ${head} <name> [with <name> ...]`;
       const withAt = rest.indexOf("with");
       if (
@@ -688,8 +733,8 @@ export function parseLineForm(text: string): DucGraph {
       for (; j < lines.length; j++) {
         const t = (lines[j] as string).trim();
         if (t === "" || t.startsWith("#")) continue;
-        const h = t.split(/\s+/)[0];
-        if (h === "if" || h === "loop" || h === "function" || h === "method") depth++;
+        const h = t.split(/\s+/)[0] ?? "";
+        if (h === "if" || h === "loop" || h === "async" || CLOSURE_HEADS.has(h)) depth++;
         else if (h === "end") {
           if (depth === 0) break;
           depth--;
@@ -718,7 +763,7 @@ export function parseLineForm(text: string): DucGraph {
           kind: "op",
           inputs: captures,
           outputs: [out],
-          label: head === "method" ? "function" : "closure",
+          label: CLOSURE_LABELS.get(head) as string,
           closure: inner,
         },
         currentRegion(),
@@ -745,8 +790,21 @@ export function parseLineForm(text: string): DucGraph {
       unclosed.kind === "if" ? "if is not closed by end" : "loop is not closed by end",
     );
   }
-  return canonicalizeGraph(nodes, obs, branches);
+  const graph = canonicalizeGraph(nodes, obs, branches);
+  return mode !== undefined ? { ...graph, mode } : graph;
 }
+
+/** A closure's line-form head, by its label: a `method` has its own receiver (#1276). */
+const CLOSURE_LABELS = new Map([
+  ["function", "closure"],
+  ["method", "function"],
+  ["generator", "function*"],
+  ["async function", "async closure"],
+  ["async method", "async function"],
+  ["async generator", "async function*"],
+]);
+const CLOSURE_HEADS = new Set(["function", "method", "generator"]);
+const HEAD_OF_LABEL = new Map([...CLOSURE_LABELS].map(([head, label]) => [label, head] as const));
 
 /** `prefix` is a region path or the top level; `region` is a node's region. */
 export function isPrefix(prefix: string | undefined, region: string | undefined): boolean {
@@ -934,7 +992,7 @@ export function printLineForm(g: DucGraph): string {
     switch (node.kind) {
       case "param-source": {
         if (out === undefined) throw new Error("param-source without an output");
-        return `param ${out}`;
+        return `param ${out}${isRestParam(node.label) ? " ..." : ""}`;
       }
       case "literal-source": {
         if (out === undefined || node.label === undefined)
@@ -986,8 +1044,11 @@ export function printLineForm(g: DucGraph): string {
   /** The lines of a closure: its header, its own program, and its end. */
   const printClosure = (node: DucNode): string[] => {
     printed.add(node.id);
+    const head = HEAD_OF_LABEL.get(node.label ?? "");
+    if (head === undefined)
+      throw new Error(`closure ${node.id} has the unknown label "${node.label}"`);
     const header = [
-      node.label === "function" ? "method" : "function",
+      head,
       node.outputs[0] as string,
       ...(node.inputs.length > 0 ? ["with", ...node.inputs] : []),
     ];
@@ -1129,5 +1190,6 @@ export function printLineForm(g: DucGraph): string {
     throw new Error("some node or branch is not reachable from the top level");
   }
   for (const v of g.obs) lines.push(`out ${v}`);
+  if (g.mode !== undefined) lines.unshift(`mode ${g.mode}`);
   return `${lines.join("\n")}\n`;
 }

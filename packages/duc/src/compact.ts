@@ -7,7 +7,15 @@
  * (kinds, origin texts, diamond symbols) are interned into one table. `decodeGraph` reverses
  * `encodeGraph` exactly, and `encodeGraph` refuses a graph that is not in canonical numbering.
  */
-import type { DiamondLabel, DucGraph, DucLoop, DucNode, NodeOrigin, ValueId } from "./types.js";
+import type {
+  DiamondLabel,
+  DucGraph,
+  DucLoop,
+  DucNode,
+  FunctionMode,
+  NodeOrigin,
+  ValueId,
+} from "./types.js";
 
 export interface CompactGraph {
   /** Format version. */
@@ -18,6 +26,8 @@ export interface CompactGraph {
   readonly n: readonly CompactNode[];
   /** Observations, as value indices. */
   readonly o: readonly number[];
+  /** The atom's function mode (async, a generator), when it has one. */
+  readonly m?: FunctionMode;
   /**
    * Branches, as `[branchNumber, conditionValueIndex, withinIndex]`; branch ids are canonical
    * `b<number>`. `withinIndex` is the string index of the enclosing region, or -1 at the top level.
@@ -127,7 +137,14 @@ export function encodeGraph(g: DucGraph): CompactGraph {
     if (m === null) throw new Error(`encodeGraph: branch ${br.id} is not in canonical numbering`);
     return [Number(m[1]), valueIndex(br.cond), br.within === undefined ? -1 : intern(br.within)];
   });
-  return { v: 2, s: table, n: nodes, o: g.obs.map(valueIndex), b: branches };
+  return {
+    v: 2,
+    s: table,
+    n: nodes,
+    o: g.obs.map(valueIndex),
+    b: branches,
+    ...(g.mode !== undefined ? { m: g.mode } : {}),
+  };
 }
 
 export function decodeGraph(c: CompactGraph): DucGraph {
@@ -197,5 +214,11 @@ export function decodeGraph(c: CompactGraph): DucGraph {
     cond: value(cond),
     ...(within !== -1 ? { within: str(within) } : {}),
   }));
-  return { nodes, values, obs: c.o.map(value), ...(branches.length > 0 ? { branches } : {}) };
+  return {
+    nodes,
+    values,
+    obs: c.o.map(value),
+    ...(branches.length > 0 ? { branches } : {}),
+    ...(c.m !== undefined ? { mode: c.m } : {}),
+  };
 }

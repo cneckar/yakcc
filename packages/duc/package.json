@@ -17,7 +17,7 @@
     }
   },
   "private": true,
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": ["dist", "runtime", "README.md", "LICENSE"],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/cneckar/yakcc.git",

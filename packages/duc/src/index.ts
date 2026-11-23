@@ -30,7 +30,16 @@ export type {
 export { isWellFormed } from "./wellformed.js";
 
 export type { LiftOptions } from "./lift.js";
-export { DucLiftError, liftAtom } from "./lift.js";
+export type { AtomShape } from "./lift.js";
+export { DECLARES, DucLiftError, atomShape, declaredNamesOf, liftAtom } from "./lift.js";
+export type { LiftFidelity } from "./fidelity.js";
+export {
+  graphFreeNames,
+  liftFidelity,
+  probedNames,
+  sourceFreeNames,
+  topLevelNames,
+} from "./fidelity.js";
 export type { EmitSignature } from "./emit-ts.js";
 export { EmitError, emitTypeScript } from "./emit-ts.js";
 export type { PackedGraph, StoredLink } from "./store.js";
@@ -79,7 +88,7 @@ export {
 export type { AuthorityDelta, AuthorityEdge } from "./authority.js";
 export { authorityDelta } from "./authority.js";
 export type { GuardedFlow } from "./guard.js";
-export { guardedInfluence } from "./guard.js";
+export { controlInfluence, guardedInfluence } from "./guard.js";
 export type {
   CheckerFinding,
   CheckerSpec,
@@ -92,3 +101,41 @@ export {
   validateCheckerSpec,
 } from "./checker.js";
 export { isHeapToken, type LoweringView, loweringView } from "./ordering.js";
+export type {
+  AtomSubmission,
+  ClosureOptions,
+  ClosureReport,
+  SubmissionReport,
+  SubmittedAtom,
+} from "./closure.js";
+export { checkSubmission, closureOf, linkReferences, requireSpecifiers } from "./closure.js";
+export { LineFormError, parseLineForm, printLineForm } from "./line-form.js";
+export type { RetrievalSignatureOptions } from "./retrieval-signature.js";
+export { retrievalSignature } from "./retrieval-signature.js";
+export type { Candidate } from "./similarity.js";
+export { bagDistance, rankStructurally, structuralBag, structuralDistance } from "./similarity.js";
+export type { BaseSet, PrimitiveLabels, PrimitiveReport, PrimitiveUse } from "./base-set.js";
+export {
+  ECMASCRIPT,
+  NODE,
+  WEB,
+  nondeterministicObservations,
+  platformModule,
+  primitiveReport,
+} from "./base-set.js";
+export type { Ambiguity, DucType, Signature, TypeReport } from "./infer-types.js";
+export { assignable, inferTypes, parseType, typeToText } from "./infer-types.js";
+export type { WasmModule, WasmSignature } from "./emit-wasm.js";
+export { WASM_HOST, WasmEmitError, emitWasm, instantiateWasm } from "./emit-wasm.js";
+export type { LlvmModule, NativeSignature, NativeType } from "./emit-llvm.js";
+export { LlvmEmitError, emitLlvm } from "./emit-llvm.js";
+export type { ObjectOptions } from "./native.js";
+export {
+  NATIVE_TARGETS,
+  NativeToolError,
+  RUNTIME_SOURCE,
+  compileObject,
+  compileRuntime,
+} from "./native.js";
+export type { NativeModule, NativeModuleStatement, NativeModules } from "./emit-llvm-boxed.js";
+export { emitLlvmBoxed, emitNativeModules, moduleSymbol } from "./emit-llvm-boxed.js";

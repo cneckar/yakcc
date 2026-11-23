@@ -26,7 +26,7 @@ export const GRAPH_FORMAT_VERSION = 2;
  * same source (a new construct lifted, a canonical rule) changes identities, so it bumps this: a
  * stored graph from an older lifter is still valid, but relifting its source may give another.
  */
-export const LIFTER_VERSION = 8;
+export const LIFTER_VERSION = 36;
 
 /** One reference's link: the reference, by reason, symbol and module, and the contract it links to. */
 export interface StoredLink {
@@ -104,7 +104,8 @@ function linksOf(g: DucGraph, out: Map<string, StoredLink>): void {
 
 /** Pack a graph for the store: its identity, its compressed structure, its links and annotations. */
 export function packGraph(graph: DucGraph): PackedGraph {
-  const canon = canonicalizeGraph(graph.nodes, graph.obs, graph.branches ?? []);
+  const canonical = canonicalizeGraph(graph.nodes, graph.obs, graph.branches ?? []);
+  const canon = graph.mode !== undefined ? { ...canonical, mode: graph.mode } : canonical;
   const structure = structureOf(canon);
   const links = new Map<string, StoredLink>();
   linksOf(canon, links);

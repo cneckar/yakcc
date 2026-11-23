@@ -1,0 +1,52 @@
+=== task 1 ===
+param a
+lit "2" -> two
+op * a two -> r
+out r
+
+=== task 2 ===
+param a
+param b
+op - a b -> r
+out r
+
+=== task 3 ===
+param a
+param b
+op < a b -> r
+out r
+
+=== task 4 ===
+param s
+ambient encodeURI -> enc
+op CallExpression enc s -> r
+out r
+
+=== task 5 ===
+param xs
+lit "0" -> zero
+lit "1" -> one
+op ElementAccess xs zero -> x
+op ElementAccess xs one -> y
+op - x y -> r
+out r
+
+=== task 6 ===
+param a
+param b
+lit "2" -> two
+op * a two -> x
+op + x b -> r
+out r
+
+=== task 7 ===
+param a
+param b
+op + b a -> r
+out r
+
+=== task 8 ===
+param a
+lit "1" -> one
+op - a one -> r
+out r

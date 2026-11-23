@@ -209,11 +209,12 @@ describe("composition-edge resolution (WI-EXPLAIN-01, #1170)", () => {
 });
 
 describe("ducGateModeFromEnv", () => {
-  it("defaults to warn and only rejects on the explicit opt-in", () => {
-    expect(ducGateModeFromEnv({} as NodeJS.ProcessEnv)).toBe("warn");
+  it("defaults to reject; only an explicit warn admits a problem (DEC-DUC-GATE-REJECT-001)", () => {
+    expect(ducGateModeFromEnv({} as NodeJS.ProcessEnv)).toBe("reject");
     expect(ducGateModeFromEnv({ YAKCC_DUC_GATE: "warn" } as NodeJS.ProcessEnv)).toBe("warn");
     expect(ducGateModeFromEnv({ YAKCC_DUC_GATE: "reject" } as NodeJS.ProcessEnv)).toBe("reject");
-    expect(ducGateModeFromEnv({ YAKCC_DUC_GATE: "nonsense" } as NodeJS.ProcessEnv)).toBe("warn");
+    // A typo fails closed.
+    expect(ducGateModeFromEnv({ YAKCC_DUC_GATE: "nonsense" } as NodeJS.ProcessEnv)).toBe("reject");
   });
 });
 
@@ -368,12 +369,14 @@ describe("module-scope captures (DEC-DUC-MODULE-CAPTURE-001, #1171)", () => {
     expect(result.captures[0]?.declHash).toBe(bindings.get("TABLE")?.declHash);
   });
 
-  it("a free read of a mutable module binding stays unexplained", () => {
+  it("a free read of a mutable module binding is recorded module state (#1266)", () => {
     const bindings = moduleBindingsOf(MODULE);
     const src = "function pick(i: number): number { return MUTABLE_TABLE[i]; }";
     const result = runDucConservationGate(src, new Set(), bindings);
-    expect(result.unexplained.map((u) => u.symbol)).toEqual(["MUTABLE_TABLE"]);
+    expect(result.unexplained).toEqual([]);
     expect(result.captures).toEqual([]);
+    expect(result.moduleState.map((u) => u.symbol)).toEqual(["MUTABLE_TABLE"]);
+    expect(result.moduleState[0]?.declHash).toBe(bindings.get("MUTABLE_TABLE")?.declHash);
   });
 
   it("reject mode admits an atom whose only free reference is a pure capture", () => {
@@ -384,9 +387,18 @@ describe("module-scope captures (DEC-DUC-MODULE-CAPTURE-001, #1171)", () => {
     ).not.toThrow();
   });
 
-  it("reject mode still rejects an atom that captures a mutable binding", () => {
+  it("reject mode admits an atom that reads module state, and the sidecar records it (#1266)", () => {
     const bindings = moduleBindingsOf(MODULE);
     const src = "function pick(i: number): number { return COUNTER + i; }";
+    const { ducUsupp } = enforceDucGate(src, "pick", "reject", undefined, new Set(), bindings);
+    const surface = externalSurfaceOf(ducUsupp);
+    expect(surface?.moduleState.map((m) => m.symbol)).toEqual(["COUNTER"]);
+    expect(surface?.unexplained).toEqual([]);
+  });
+
+  it("reject mode still rejects a free name the module does not declare", () => {
+    const bindings = moduleBindingsOf(MODULE);
+    const src = "function pick(i: number): number { return NOT_DECLARED + i; }";
     expect(() => enforceDucGate(src, "pick", "reject", undefined, new Set(), bindings)).toThrow(
       DucGateRejection,
     );
@@ -457,6 +469,9 @@ describe("external surface from the sidecar (WI-EXPLAIN-03, #1172)", () => {
       foreign: [],
       ambient: [],
       captures: [],
+      moduleState: [],
+      moduleScope: [],
+      requires: [],
       compositions: [],
       unexplained: [],
     });
@@ -524,5 +539,79 @@ describe("primitive initializers are inert under hand-off (ms unit constants)", 
   it("an object initializer is still mutable under hand-off", () => {
     const b = moduleBindingsOf("const O = [];\nexport const r = g(O);");
     expect(b.get("O")?.binding).toBe("mutable");
+  });
+});
+
+describe("CommonJS module scope (#1173, DEC-DUC-MODULE-SCOPE-001)", () => {
+  const bindings = moduleBindingsOf("const T = 1;\nexports.x = T;");
+  it("in a module, exports, module and literal requires are the module's, with its dependencies", () => {
+    const src =
+      'const jws = require("jws");\nconst t = require("./lib/timespan");\nmodule.exports = function (a) { return jws(t(a)); };\nexports.y = 1;';
+    const { ducUsupp, result } = enforceDucGate(src, "m", "reject", undefined, new Set(), bindings);
+    expect(result.unexplained).toEqual([]);
+    expect(result.moduleScope.map((u) => u.symbol).sort()).toEqual([
+      "exports",
+      "module",
+      "require",
+    ]);
+    const surface = externalSurfaceOf(ducUsupp);
+    expect(surface?.requires).toEqual(["jws", "./lib/timespan"]);
+    expect(surface?.moduleScope.sort()).toEqual(["exports", "module", "require"]);
+  });
+  it("a require with a computed specifier stays unexplained", () => {
+    const src = "function load(name) { return require(name); }";
+    const result = runDucConservationGate(src, new Set(), bindings);
+    expect(result.unexplained.map((u) => u.symbol)).toEqual(["require"]);
+  });
+  it("without a module, the names are unexplained as before", () => {
+    const result = runDucConservationGate('exports.y = require("x");');
+    expect(result.unexplained.map((u) => u.symbol).sort()).toEqual(["exports", "require"]);
+  });
+});
+
+describe("CommonJS imports and destructured declarations bind module names (#1173)", () => {
+  it("a destructured require binds each name as an import", () => {
+    const b = moduleBindingsOf(
+      'const { FLAG_LOOSE, safeRe: re } = require("../internal/constants");\nconst ms = require("ms");',
+    );
+    expect(b.get("FLAG_LOOSE")?.binding).toBe("pure");
+    expect(b.get("re")?.binding).toBe("pure");
+    expect(b.get("ms")?.binding).toBe("pure");
+    const src = "function f(o) { return (o.loose && FLAG_LOOSE) || re; }";
+    expect(runDucConservationGate(src, new Set(), b).unexplained).toEqual([]);
+  });
+  it("a destructuring declaration binds each of its names", () => {
+    const b = moduleBindingsOf("const { a, b: [c] } = { a: 1, b: [2] };\nexports.x = a;");
+    expect(b.has("a")).toBe(true);
+    expect(b.has("c")).toBe(true);
+  });
+});
+
+describe("feature detection and lift fidelity (#1173)", () => {
+  it("a name the atom only probes for with typeof is explained, not a hole", () => {
+    const umd =
+      "function wrap (factory) { if (typeof define === 'function' && define.amd) define([], factory); else return factory(); }";
+    const r = runDucConservationGate(umd);
+    expect(r.unexplained).toEqual([]);
+    expect(r.unknowns.find((u) => u.symbol === "define")?.probe).toBe(true);
+  });
+  it("a probe must test that the name is present: a test for its absence explains nothing", () => {
+    const wrong =
+      "function f () { if (typeof define === 'undefined') return define.amd; return 1 }";
+    expect(runDucConservationGate(wrong).unexplained.map((u) => u.symbol)).toEqual(["define"]);
+  });
+  it("a read inside a try is not a probe: the catch would hide a real hole", () => {
+    const hidden = "function f (x) { try { return helper(x) } catch (e) { return null } }";
+    expect(runDucConservationGate(hidden).unexplained.map((u) => u.symbol)).toEqual(["helper"]);
+  });
+  it("a web global is a platform primitive of the web target, not unexplained", () => {
+    const r = runDucConservationGate(
+      "function rand (n) { var a = new Uint32Array(n); (self.crypto || self.msCrypto).getRandomValues(a); return a }",
+    );
+    expect(r.unexplained).toEqual([]);
+  });
+  it("every lift is checked for fidelity, and a faithful one holds", () => {
+    const r = runDucConservationGate("function f (a) { return helper(a) + K }");
+    expect(r.fidelity).toEqual({ holds: true, missing: [], extra: [] });
   });
 });

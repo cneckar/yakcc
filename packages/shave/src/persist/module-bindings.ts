@@ -351,14 +351,51 @@ export function moduleBindingsOf(moduleSource: string): Map<string, ModuleBindin
     for (const local of locals) imports.set(local, declHash);
   }
 
+  // A CommonJS import (#1173): `require("x")`, or a member of it, binds an imported value, as an
+  // import declaration does, whether the name is an identifier or a destructuring pattern.
+  const isRequireOf = (init: Node | undefined): boolean => {
+    let e = init;
+    while (e !== undefined && Node.isPropertyAccessExpression(e)) e = e.getExpression();
+    if (e === undefined || !Node.isCallExpression(e)) return false;
+    const callee = e.getExpression();
+    const [arg] = e.getArguments();
+    return (
+      Node.isIdentifier(callee) &&
+      callee.getText() === "require" &&
+      e.getArguments().length === 1 &&
+      arg !== undefined &&
+      Node.isStringLiteral(arg)
+    );
+  };
+  const bindingNames = (n: Node): string[] => {
+    if (Node.isIdentifier(n)) return [n.getText()];
+    if (Node.isObjectBindingPattern(n) || Node.isArrayBindingPattern(n))
+      return n
+        .getElements()
+        .flatMap((el) => (Node.isBindingElement(el) ? bindingNames(el.getNameNode()) : []));
+    return [];
+  };
   const vars = new Map<string, { declHash: string; init: Node | undefined; statement: Node }>();
   for (const stmt of sf.getVariableStatements()) {
     const declHash = sha(stmt.getText());
     for (const decl of stmt.getDeclarations()) {
       const nameNode = decl.getNameNode();
-      if (!Node.isIdentifier(nameNode)) continue;
-      vars.set(nameNode.getText(), { declHash, init: decl.getInitializer(), statement: stmt });
+      const init = decl.getInitializer();
+      if (isRequireOf(init)) {
+        for (const name of bindingNames(nameNode)) imports.set(name, declHash);
+        continue;
+      }
+      // A destructuring declaration binds each name in it, from the same initializer.
+      for (const name of bindingNames(nameNode))
+        vars.set(name, { declHash, init, statement: stmt });
     }
+  }
+  // A class declaration binds its name to the class, classified as a variable would be: a class
+  // whose statics are written after it (`ZodError.create = ...`) is module state (#1173).
+  for (const cls of sf.getClasses()) {
+    const name = cls.getName();
+    if (name === undefined || vars.has(name)) continue;
+    vars.set(name, { declHash: sha(cls.getText()), init: cls, statement: cls });
   }
 
   const fns = new Map<

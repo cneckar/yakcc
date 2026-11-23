@@ -144,9 +144,9 @@ export function classify(x: i32): i32 {
     const fn = instance.exports.classify as (x: number) => number;
 
     // Fixed branch-coverage checks before property testing
-    expect(fn(-1)).toBe(-1);   // negative branch
-    expect(fn(0)).toBe(0);     // zero branch
-    expect(fn(1)).toBe(1);     // positive branch
+    expect(fn(-1)).toBe(-1); // negative branch
+    expect(fn(0)).toBe(0); // zero branch
+    expect(fn(1)).toBe(1); // positive branch
     expect(fn(-999)).toBe(-1);
     expect(fn(999)).toBe(1);
   }, 30_000);
@@ -221,11 +221,11 @@ export function sumToN(n: i32): i32 {
     const { instance } = await WebAssembly.instantiate(wasmBytes, {});
     const fn = instance.exports.sumToN as (n: number) => number;
 
-    expect(fn(0)).toBe(0);           // loop not entered
-    expect(fn(1)).toBe(0);           // 0 only (sum of [0])
-    expect(fn(5)).toBe(10);          // 0+1+2+3+4 = 10
-    expect(fn(10)).toBe(45);         // 0+1+...+9 = 45
-    expect(fn(100)).toBe(4950);      // 0+...+99 = 4950
+    expect(fn(0)).toBe(0); // loop not entered
+    expect(fn(1)).toBe(0); // 0 only (sum of [0])
+    expect(fn(5)).toBe(10); // 0+1+2+3+4 = 10
+    expect(fn(10)).toBe(45); // 0+1+...+9 = 45
+    expect(fn(100)).toBe(4950); // 0+...+99 = 4950
   }, 30_000);
 
   it("CF2: sumToN — value parity vs triangular formula (20 fast-check cases)", async () => {
@@ -240,8 +240,9 @@ export function sumToN(n: i32): i32 {
         // n in [0, 10_000]: max sum = 49_995_000 < INT32_MAX, no overflow
         fc.integer({ min: 0, max: 10_000 }),
         async (n) => {
-          // TS reference: Gauss triangular formula
-          const tsRef = (n * (n - 1)) / 2;
+          // TS reference: Gauss triangular formula, as an i32 like the function's result. Without
+          // `| 0`, n = 0 gives (0 * -1) / 2 = -0, which toBe (Object.is) tells apart from 0.
+          const tsRef = ((n * (n - 1)) / 2) | 0;
           expect(fn(n)).toBe(tsRef);
         },
       ),
@@ -297,7 +298,9 @@ export function product(n: i32): i32 {
     const fn = instance.exports.product as (n: number) => number;
 
     // Known factorial values within i32 range
-    const FACTORIALS = [1, 1, 2, 6, 24, 120, 720, 5040, 40320, 362880, 3628800, 39916800, 479001600];
+    const FACTORIALS = [
+      1, 1, 2, 6, 24, 120, 720, 5040, 40320, 362880, 3628800, 39916800, 479001600,
+    ];
     for (let n = 0; n <= 12; n++) {
       expect(fn(n)).toBe(FACTORIALS[n]);
     }
@@ -469,17 +472,26 @@ export function dayName(d: i32): i32 {
       fc.asyncProperty(
         // Mix of in-range and out-of-range values to exercise both explicit cases and default
         fc.oneof(
-          fc.constantFrom(0, 1, 2),                          // explicit cases
-          fc.integer({ min: -100, max: 100 }).filter(d => d < 0 || d > 2), // default branch
+          fc.constantFrom(0, 1, 2), // explicit cases
+          fc
+            .integer({ min: -100, max: 100 })
+            .filter((d) => d < 0 || d > 2), // default branch
         ),
         async (d) => {
           // TS reference: inline switch equivalent
           let tsRef: number;
           switch (d) {
-            case 0: tsRef = 100; break;
-            case 1: tsRef = 101; break;
-            case 2: tsRef = 102; break;
-            default: tsRef = 99;
+            case 0:
+              tsRef = 100;
+              break;
+            case 1:
+              tsRef = 101;
+              break;
+            case 2:
+              tsRef = 102;
+              break;
+            default:
+              tsRef = 99;
           }
           expect(fn(d)).toBe(tsRef);
         },
@@ -537,11 +549,11 @@ export function sumToN(n: i32): i32 {
     const { instance } = await WebAssembly.instantiate(wasmBytes, {});
     const fn = instance.exports.sumToN as (n: number) => number;
 
-    expect(fn(0)).toBe(0);       // loop not entered
-    expect(fn(1)).toBe(0);       // single iteration: s += 0, i++ → exit
-    expect(fn(5)).toBe(10);      // 0+1+2+3+4
-    expect(fn(10)).toBe(45);     // Gauss: 10*9/2
-    expect(fn(100)).toBe(4950);  // Gauss: 100*99/2
+    expect(fn(0)).toBe(0); // loop not entered
+    expect(fn(1)).toBe(0); // single iteration: s += 0, i++ → exit
+    expect(fn(5)).toBe(10); // 0+1+2+3+4
+    expect(fn(10)).toBe(45); // Gauss: 10*9/2
+    expect(fn(100)).toBe(4950); // Gauss: 100*99/2
 
     // Step 5: backend identity
     expect(backend.name).toBe("as");

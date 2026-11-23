@@ -25,6 +25,20 @@ export interface BaseSet {
   readonly target: string;
   readonly version: number;
   readonly primitives: Readonly<Record<string, PrimitiveLabels>>;
+  /**
+   * The modules the platform provides to `require` (#1290), with their labels: a module's
+   * labels cover everything reached through it. A `node:` prefix names the same module.
+   */
+  readonly modules?: Readonly<Record<string, Omit<PrimitiveLabels, "members">>>;
+}
+
+/** The base set's labels for a module specifier, or undefined when the platform does not provide it. */
+export function platformModule(
+  base: BaseSet,
+  specifier: string,
+): Omit<PrimitiveLabels, "members"> | undefined {
+  const name = specifier.startsWith("node:") ? specifier.slice(5) : specifier;
+  return base.modules?.[name];
 }
 
 const pure = (names: readonly string[]): Record<string, PrimitiveLabels> =>
@@ -35,6 +49,8 @@ export const ECMASCRIPT: BaseSet = {
   target: "ecmascript",
   version: 1,
   primitives: {
+    // What the language gives a call made with `new` (#1173).
+    "new.target": {},
     ...pure([
       "JSON",
       "Object",
@@ -100,13 +116,51 @@ export const ECMASCRIPT: BaseSet = {
     Atomics: {},
     // A try statement as the lifter writes it (#1276): the body's result, or the handler's for a throw.
     __yakccTry: {},
+    // A try statement whose blocks await: the same, over async closures, as a promise.
+    __yakccTryAsync: {},
   },
 };
 
-/** Node.js: ECMAScript, plus the host's data APIs and its authority-bearing APIs. */
+/** Node.js: ECMAScript, plus the host's data APIs and its authority-bearing APIs, and its modules. */
 export const NODE: BaseSet = {
   target: "node",
-  version: 1,
+  version: 2,
+  modules: {
+    ...pure([
+      "assert",
+      "buffer",
+      "events",
+      "path",
+      "querystring",
+      "string_decoder",
+      "url",
+      "util",
+      "zlib",
+    ]),
+    // A module that reaches the environment carries the authority it grants.
+    fs: { capability: "io" },
+    stream: { capability: "io" },
+    readline: { capability: "io" },
+    tty: { capability: "io" },
+    http: { capability: "network" },
+    https: { capability: "network" },
+    http2: { capability: "network" },
+    net: { capability: "network" },
+    tls: { capability: "network" },
+    dgram: { capability: "network" },
+    dns: { capability: "network" },
+    os: { capability: "process" },
+    // An ES module's own URL (#1173).
+    "import.meta": { capability: "module-location" },
+    process: { capability: "process" },
+    child_process: { capability: "process" },
+    cluster: { capability: "process" },
+    worker_threads: { capability: "process" },
+    module: { capability: "module-location" },
+    timers: { capability: "timers" },
+    crypto: { nondeterministic: true },
+    perf_hooks: { nondeterministic: true },
+  },
   primitives: {
     ...ECMASCRIPT.primitives,
     ...pure([
@@ -147,9 +201,60 @@ export const NODE: BaseSet = {
   },
 };
 
+/**
+ * Browsers and workers (#1173): ECMAScript, plus the web platform's globals. A package written for
+ * several platforms names them (`self.crypto` in a worker, a UMD wrapper's `window`); on Node they
+ * are not on the target, and the closure check says so.
+ */
+export const WEB: BaseSet = {
+  target: "web",
+  version: 1,
+  primitives: {
+    ...ECMASCRIPT.primitives,
+    ...pure([
+      "TextEncoder",
+      "TextDecoder",
+      "URL",
+      "URLSearchParams",
+      "structuredClone",
+      "atob",
+      "btoa",
+      "AbortController",
+      "Event",
+      "EventTarget",
+      "Blob",
+    ]),
+    // The global object, by its web names: what is reached through it carries its own labels.
+    self: {},
+    window: {},
+    document: { capability: "io" },
+    navigator: { capability: "process" },
+    location: { capability: "module-location" },
+    localStorage: { capability: "io" },
+    sessionStorage: { capability: "io" },
+    console: { capability: "io" },
+    setTimeout: { capability: "timers" },
+    setInterval: { capability: "timers" },
+    clearTimeout: { capability: "timers" },
+    clearInterval: { capability: "timers" },
+    queueMicrotask: { capability: "timers" },
+    requestAnimationFrame: { capability: "timers" },
+    fetch: { capability: "network" },
+    XMLHttpRequest: { capability: "network" },
+    WebSocket: { capability: "network" },
+    performance: { nondeterministic: true },
+    crypto: {
+      members: {
+        randomUUID: { nondeterministic: true },
+        getRandomValues: { nondeterministic: true },
+      },
+    },
+  },
+};
+
 /** Every name that is a primitive on some target: the lifter classifies these as platform primitives. */
 export const KNOWN_PRIMITIVES: readonly string[] = [
-  ...new Set([...Object.keys(ECMASCRIPT.primitives), ...Object.keys(NODE.primitives)]),
+  ...new Set([ECMASCRIPT, NODE, WEB].flatMap((base) => Object.keys(base.primitives))),
 ];
 
 export interface PrimitiveUse {

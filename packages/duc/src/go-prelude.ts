@@ -399,6 +399,13 @@ func arg(args []any, i int) any {
 	return Undefined
 }
 
+func restArgs(args []any, i int) any {
+	if i >= len(args) {
+		return &Array{Items: []any{}}
+	}
+	return &Array{Items: append([]any{}, args[i:]...)}
+}
+
 func round(x any) any { return math.Floor(num(x) + 0.5) }
 
 func mathMax(xs ...any) any {
@@ -1025,4 +1032,144 @@ func catchOnly(body any, handler any) (out any) {
 }
 
 var _ = sort.Strings
+
+// Each graph operation has a function of its own, so the lowering can be raised back (#1278).
+
+var NONE any = Undefined
+var jsInfinity any = math.Inf(1)
+var jsNaN any = math.NaN()
+
+func uninit() any                 { return Undefined }
+func platform(name string) any    { return Undefined }
+func argumentsOf(args []any) any  { return &Array{Items: args} }
+func not(a any) any               { return !truthy(a) }
+func pos(a any) any               { return num(a) }
+func sne(a, b any) any            { return !seq(a, b) }
+func comma(a, b any) any          { return b }
+func voidOf(a any) any            { return Undefined }
+func addAssign(a, b any) any      { return add(a, b) }
+func subAssign(a, b any) any      { return sub(a, b) }
+func mulAssign(a, b any) any      { return mul(a, b) }
+func divAssign(a, b any) any      { return div(a, b) }
+func remAssign(a, b any) any      { return rem(a, b) }
+func preInc(a any) any            { return num(a) + 1 }
+func postInc(a any) any           { return num(a) + 1 }
+func preDec(a any) any            { return num(a) - 1 }
+func postDec(a any) any           { return num(a) - 1 }
+func putMember(o any, k string, v any) any { return put(o, k, v) }
+func freeze(x any) any            { return x }
+func mathAbs(x any) any           { return math.Abs(num(x)) }
+func mathFloor(x any) any         { return math.Floor(num(x)) }
+func mathCeil(x any) any          { return math.Ceil(num(x)) }
+func mathTrunc(x any) any         { return math.Trunc(num(x)) }
+func mathSqrt(x any) any          { return math.Sqrt(num(x)) }
+func mathPow(a, b any) any        { return pow(a, b) }
+func objectKeys(x any) any        { return arr(keys(x)...) }
+func isArrayV(x any) any          { return isArray(x) }
+func isNaNNumber(x any) any       { f, ok := x.(float64); return ok && math.IsNaN(f) }
+func globalIsNaN(x any) any       { return math.IsNaN(num(x)) }
+func globalIsFinite(x any) any    { f := num(x); return !math.IsNaN(f) && !math.IsInf(f, 0) }
+func booleanOf(x any) any         { return truthy(x) }
+func trim(x any) any              { return strings.TrimSpace(strMethod(x)) }
+func toUpper(x any) any           { return strings.ToUpper(strMethod(x)) }
+func toLower(x any) any           { return strings.ToLower(strMethod(x)) }
+func startsWith(x, y any) any     { return strings.HasPrefix(strMethod(x), str(y)) }
+func endsWith(x, y any) any       { return strings.HasSuffix(strMethod(x), str(y)) }
+
+func stringOf(args ...any) any {
+	if len(args) == 0 {
+		return ""
+	}
+	return str(args[0])
+}
+
+func numberOf(args ...any) any {
+	if len(args) == 0 {
+		return float64(0)
+	}
+	return num(args[0])
+}
+
+func reJs(js string, pattern string, global bool) any { return re(pattern, global) }
+
+func getOpt(o any, k string) any {
+	if o == nil || o == Undefined {
+		return Undefined
+	}
+	return get(o, k)
+}
+
+func idxOpt(o any, i any) any {
+	if o == nil || o == Undefined {
+		return Undefined
+	}
+	return idx(o, i)
+}
+
+func callOpt(f any, args ...any) any {
+	if f == nil || f == Undefined {
+		return Undefined
+	}
+	return call(f, args...)
+}
+
+func callDetached(f any, args ...any) any { return call(f, args...) }
+
+func callError(kind string, msg any) any { return newError(kind, msg) }
+
+func template(texts []string, vals ...any) any {
+	var b strings.Builder
+	for i, t := range texts {
+		b.WriteString(t)
+		if i < len(vals) {
+			b.WriteString(str(vals[i]))
+		}
+	}
+	return b.String()
+}
+
+func toStringM(x any, rest ...any) any {
+	if x == nil || x == Undefined {
+		return throw(&JsError{"TypeError", "Cannot read properties of " + str(x) + " (reading 'toString')"})
+	}
+	f, isNum := x.(float64)
+	if !isNum || len(rest) == 0 || rest[0] == Undefined {
+		return str(x)
+	}
+	radix := int(num(rest[0]))
+	if radix < 2 || radix > 36 {
+		return throw(&JsError{"RangeError", "toString() radix must be between 2 and 36"})
+	}
+	if radix == 10 || math.IsNaN(f) || math.IsInf(f, 0) {
+		return str(x)
+	}
+	digits := "0123456789abcdefghijklmnopqrstuvwxyz"
+	neg := f < 0
+	a := math.Abs(f)
+	ip := math.Trunc(a)
+	frac := a - ip
+	var intDigits []byte
+	if ip == 0 {
+		intDigits = []byte{'0'}
+	}
+	for ip >= 1 {
+		d := int(math.Mod(ip, float64(radix)))
+		intDigits = append([]byte{digits[d]}, intDigits...)
+		ip = math.Trunc(ip / float64(radix))
+	}
+	out := string(intDigits)
+	if frac > 0 {
+		out += "."
+		for count := 0; frac > 0 && count < 52; count++ {
+			frac *= float64(radix)
+			d := int(math.Trunc(frac))
+			out += string(digits[d])
+			frac -= float64(d)
+		}
+	}
+	if neg {
+		out = "-" + out
+	}
+	return out
+}
 `;

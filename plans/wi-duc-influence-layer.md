@@ -210,7 +210,7 @@ Recorded 2026-11-22, checked against the code. Commits are on `claude/tender-tho
 | Slice | Issue | Delivered | Open |
 |---|---|---|---|
 | S1 graph model + lifter | #1162 | `68550d1`, `c74dd94`, `1aa29cf` (bare-function primary) | closed |
-| S2 conservation gate | #1163 | `bb23b97`; warn default; captures and host globals (`3193431`) | reject flip (#1173), gated on the full corpus run |
+| S2 conservation gate | #1163 | `bb23b97`; captures and host globals (`3193431`); reject by default, with lift fidelity checked on every atom (#1173) | closed |
 | S3 may-influence + witness + `duc_influence` | #1164 | `68550d1`, `d5cd2c3` (sidecar) | closed |
 | S4 graph-NI + `duc_ni` | #1165 | `68550d1`, `d5cd2c3` (API + validator) | persistence of `duc_ni` waits on a declared labeling (checker specs, #1256) |
 | S5 composition + strictness falsifier | #1166 | `3b30a2b` | closed |
@@ -225,18 +225,21 @@ Recorded 2026-11-22, checked against the code. Commits are on `claude/tender-tho
 - **Added:** `DEC-DUC-MODULE-INIT-CLOSURE-001` (a binding filled by top-level writes during module initialization is pure, when every write is top-level and every writing statement reads only allowed names; an alias or hand-off disqualifies it).
 - **Added:** `DEC-DUC-HOST-GLOBALS-001` (pure host data is an explained ambient read; authority-bearing names are not).
 - **Added:** `DEC-DUC-AUTHORITY-DELTA-001`, `DEC-DUC-GUARD-LABELS-001`, `DEC-DUC-CHECKER-SPEC-001` (WI-GUARD).
+- **Added:** `DEC-DUC-MODULE-STATE-001` (#1266). A free read of a mutable module binding (a table filled after its declaration, a counter, an alias or hand-off of a shared object) is recorded module state, with its declaration hash. It is no longer unexplained. The module record (#1290) holds the statements that declare and change the binding and runs them in the module's order. The gate result and the external surface list `moduleState` apart from pure captures.
+- **Assumption, stated (#1267).** The initialization-closure rule treats a binding as pure only when the module is observed after it has loaded. An initializer that reads a later-declared binding, or an imported one (the cyclic-import window), is classified mutable, so it is module state. Module state is checked by running the module's statements in order: a read before initialization, and a `require` cycle that sees partial exports, behave as they do in Node. That is tested on a two-module cycle in `packages/federation/src/duc-module-submission.test.ts`, against Node's own `require`. The window is reproduced, not assumed away.
+- **Added:** `DEC-DUC-CONTROL-DEPENDENCE-001` (#1269). A node inside a branch depends on whatever reaches the branch's condition. `controlInfluence` reports it, and the checker reports such a sink call as a `control` finding, separate from `data`. Earlier this was listed as deferred: the call was reported unguarded. It annotates only; may-influence is unchanged.
+- **Added:** `DEC-DUC-GATE-REJECT-001` (#1173). The gate rejects by default; `YAKCC_DUC_GATE=warn` is the escape hatch. Terminal state of the two-phase rollout in `DEC-DUC-CONSERVATION-GATE-001`: the fixture corpus shaves with 0 unexplained references, 0 lift errors and 0 unfaithful lifts, and the allowlist is empty. With it, `DEC-DUC-LIFT-FIDELITY-001` (every lift references exactly the names its source reads without declaring) and `DEC-DUC-FEATURE-DETECTION-001` (a name only probed for with `typeof` is explained). The `WEB` base set makes browser and worker globals platform primitives of their target. Full record: `docs/decisions/DEC-DUC-GATE-REJECT-001.md`.
+- **Added:** `DEC-DUC-NI-DETERMINISM-001` (#1270). Influence and graph-NI assume an ambient read is one unknown value per run. Nondeterministic primitives (`Date`, `Math.random`, `performance`, `crypto.randomUUID` / `getRandomValues`) are labelled in each target's base set, apart from capabilities. `graphNI(…, base)` qualifies its verdict with the low observations such a read reaches. It does not weaken the verdict.
 
 ### Deferred register (named, not forgotten)
 
 - Side-channel and timing analysis (discipline 3).
 - Path-sensitive guard layer (DUC §7). Partly addressed by guard labels (`DEC-DUC-GUARD-LABELS-001`), as annotations only.
-- Control dependence of a sink call under a branch: the call node is emitted unconditionally, so such a call is reported unguarded. Conservative, not unsound.
 - Authority-bearing host globals (`process`, `require`, `module`, `exports`, `__dirname`, `__filename`, the timers) stay unexplained until a checker classifies them.
-- Mutable module state that is not initialization-fixed (for example, a binding mutated from inside a function) stays unexplained.
 - Def-use-graph isomorphism strengthening `canonical_ast_hash` (W7).
 - Behavioral-embedding cross-wire (`DEC-VERIFY-010`).
 - Independence of depmap / valuation from the choice of well-ordered emission order. Not mechanized, not claimed.
-- Pointer and alias analysis. Neither the lifter nor the GFP prototype resolves aliasing.
+- Pointer and alias analysis. Neither the lifter nor the GFP prototype resolves aliasing. Since `DEC-DUC-MODULE-STATE-001`, an alias or hand-off only moves a binding from pure capture to module state. Both are explained, so alias analysis would sharpen the audit classification, not the explanation (#1268).
 - `duc_ni` persistence, pending checker-spec labelings (#1256).
 
 Acceptance sign-off: the per-slice Evaluation Contracts in §6 are met as stated in the rows above. Each open item is either tracked on a ticket or named in the register.

@@ -275,6 +275,11 @@ export type {
 // ---------------------------------------------------------------------------
 
 export { slice } from "./universalize/slicer.js";
+// A package shaved module by module: each file's slice plan, its entries in source order (#1290).
+export { collectForestSlicePlans, shavePackage } from "./universalize/module-graph.js";
+export { forestGateContext } from "./persist/duc-gate.js";
+export type { DucGateContext, ForestPlans } from "./persist/duc-gate.js";
+export type { ModuleForest } from "./universalize/module-graph.js";
 export type {
   SlicePlan,
   SlicePlanEntry,
@@ -361,7 +366,7 @@ import {
 import { extractIntent } from "./intent/extract.js";
 import type { IntentCard } from "./intent/types.js";
 import { locateProjectRoot } from "./locate-root.js";
-import { maybePersistNovelGlueAtom } from "./persist/atom-persist.js";
+import { linkPlanAtoms, maybePersistNovelGlueAtom } from "./persist/atom-persist.js";
 import { collectInternalSymbols, moduleBindingsOf } from "./persist/duc-gate.js";
 import { FOREIGN_POLICY_DEFAULT } from "./types.js";
 import type {
@@ -651,6 +656,14 @@ export async function universalize(
       }
     }
     finalSlicePlan = enrichedWithMerkle;
+    // Links at persist time (#1279): each atom's references to the atoms of this module that
+    // declare them are stored as links to their contracts.
+    await linkPlanAtoms(
+      enrichedWithMerkle.flatMap((e) =>
+        e.kind === "novel-glue" ? [{ source: e.source, merkleRoot: e.merkleRoot }] : [],
+      ),
+      registry as Parameters<typeof linkPlanAtoms>[1],
+    );
   }
 
   // DEC-LICENSE-GATE-REMOVE-001: licenseDetection field removed from result (WI-682, 2026-05-17).

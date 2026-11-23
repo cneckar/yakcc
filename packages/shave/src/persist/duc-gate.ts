@@ -19,12 +19,19 @@
 //   records usupp from day one) but starts in **warn** mode: an unexplained
 //   unknown or a lift failure logs a loud warning and the atom is still admitted.
 //   It tightens to **reject** only once the seed + shadow-npm corpora shave clean
-//   under a recorded ♦-support baseline; the flip's default is a follow-up DEC.
-//   Mode is `YAKCC_DUC_GATE=warn|reject` (default warn), overridable per call.
+//   under a recorded ♦-support baseline.
 //
-//   Non-breaking by design: any failure to lift/analyze a fragment degrades to a
-//   recorded lift error (warn) rather than throwing — the gate must never break
-//   the existing shave pipeline in its default mode.
+// @decision DEC-DUC-GATE-REJECT-001 (#1173)
+// title: The gate rejects by default
+// status: decided
+// rationale:
+//   The fixture corpus shaves clean: every free reference of every atom is explained
+//   (composition, capture, module state, module scope, platform primitive, or a probe),
+//   no atom fails to lift, and every lift is faithful (DEC-DUC-LIFT-FIDELITY-001). The
+//   allowlist of unliftable constructs is empty. So the default is now **reject**: an
+//   atom with an unexplained reference, a lift error or an unfaithful lift is not
+//   persisted. `YAKCC_DUC_GATE=warn` remains the escape hatch; any other value rejects,
+//   so a typo fails closed. Overridable per call.
 //
 // @decision DEC-DUC-MODULE-CAPTURE-001 (wi-duc-influence-layer #1171)
 // title: A free identifier naming a pure module-scope constant is a recorded capture
@@ -35,18 +42,46 @@
 //   contain that binding, so the lifter reports it as a `free-identifier`. Its value
 //   is fixed only if the binding is a `const` with a literal initializer and the
 //   module never mutates it. Such a capture is explained: it is recorded with a hash
-//   of its declaration, so a consumer can see exactly what the atom depends on. A
-//   mutable module binding stays unexplained. Like composition edges, this is
-//   classification only. The atom's bytes and content address are unchanged.
+//   of its declaration, so a consumer can see exactly what the atom depends on. Like
+//   composition edges, this is classification only. The atom's bytes and content
+//   address are unchanged.
+//
+// @decision DEC-DUC-MODULE-SCOPE-001 (#1173)
+// title: CommonJS module scope is the module's, recorded with the module's dependencies
+// status: decided
+// rationale:
+//   Under D5 (#1275), `require`, `module` and `exports` are not primitives: they are the
+//   module's own scope. When the gate knows the atom's module, `exports` and `module` are
+//   explained by the module record (#1290), and `require` with literal specifiers is
+//   explained, its specifiers recorded as the module's dependencies: a relative one is a
+//   module of the package, a platform one is in the target's base set, and any other is a
+//   dependency, like an ESM import (`unlinked-reference`). A `require` with a computed
+//   specifier stays unexplained: what it loads is not in the graph.
+//
+// @decision DEC-DUC-MODULE-STATE-001 (#1266)
+// title: A free identifier naming a mutable module binding is recorded module state
+// status: decided
+// rationale:
+//   A mutable module binding (a table filled after its declaration, a counter, an alias
+//   or hand-off of a shared object) is module state. The module record (#1290) holds the
+//   statements that declare and change it, in the module's order, and a receiver runs
+//   them before the atom: the state is part of what is checked, so it is explained. It
+//   is recorded apart from pure captures (`moduleState`, with its declaration hash), so
+//   the atoms that depend on module state stay visible to an audit.
 
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   type DiamondReason,
   type DucInfluenceAttestation,
   DucLiftError,
+  type LiftFidelity,
   influenceAttestation,
   isWellFormed,
   liftAtom,
+  liftFidelity,
+  probedNames,
+  requireSpecifiers,
 } from "@yakcc/duc";
 import {
   Node,
@@ -80,7 +115,29 @@ export interface DucUnknown {
    * captures (DEC-DUC-MODULE-CAPTURE-001). `declHash` is the hash of its declaration.
    */
   readonly capture?: boolean;
+  /**
+   * True when this `free-identifier` names a mutable module binding: module state
+   * (DEC-DUC-MODULE-STATE-001, #1266). It is explained by the module record (#1290), which
+   * holds the statements that declare and change it and runs them in order; it is recorded
+   * apart from pure captures, so the atoms that read module state are visible.
+   */
+  readonly moduleState?: boolean;
   readonly declHash?: string;
+  /**
+   * True for CommonJS module scope (DEC-DUC-MODULE-SCOPE-001, #1173): `exports` and `module`
+   * are the module's own objects, and `require` resolves through the module record (#1290),
+   * the target's platform modules, or a dependency. Set only when the gate knows the atom's
+   * module, and for `require` only when every specifier is a literal.
+   */
+  readonly moduleScope?: boolean;
+  /** For `require`: the specifiers it is called with (the module's dependencies). */
+  readonly requires?: readonly string[];
+  /**
+   * True for a name the atom only probes for (DEC-DUC-FEATURE-DETECTION-001, #1173): every read is
+   * `typeof name`, or lies under a test that it is present, so the atom itself decides what to do
+   * when the platform lacks it (a UMD wrapper's `define`).
+   */
+  readonly probe?: boolean;
 }
 
 import type { ModuleBindingInfo } from "./module-bindings.js";
@@ -105,8 +162,17 @@ export interface DucGateResult {
   readonly composition: readonly DucUnknown[];
   /** Module-scope pure constants the atom captures (recorded, never a gate problem). */
   readonly captures: readonly DucUnknown[];
+  /** Mutable module bindings the atom reads: module state (recorded, never a gate problem). */
+  readonly moduleState: readonly DucUnknown[];
+  /** CommonJS module scope the atom uses: `exports`, `module`, `require` (recorded). */
+  readonly moduleScope: readonly DucUnknown[];
   /** Present when the fragment could not be lifted (a syntax/analysis failure). */
   readonly liftError?: string;
+  /**
+   * Lift fidelity (DUC Norm 3, DEC-DUC-LIFT-FIDELITY-001): the graph references exactly the names
+   * the source reads without declaring. A failure is a lifter defect, and a gate problem (#1173).
+   */
+  readonly fidelity?: LiftFidelity;
   /**
    * The `duc_influence` attestation of the lifted atom (DEC-DUC-ATTESTATION-SIDECAR-001).
    * Absent when the fragment could not be lifted.
@@ -125,9 +191,12 @@ export class DucGateRejection extends Error {
   }
 }
 
-/** Resolve the gate mode from the environment (`YAKCC_DUC_GATE`), defaulting to warn. */
+/**
+ * Resolve the gate mode from the environment (`YAKCC_DUC_GATE`): reject unless it is exactly
+ * `warn` (DEC-DUC-GATE-REJECT-001).
+ */
 export function ducGateModeFromEnv(env: NodeJS.ProcessEnv = process.env): DucGateMode {
-  return env.YAKCC_DUC_GATE === "reject" ? "reject" : "warn";
+  return env.YAKCC_DUC_GATE === "warn" ? "warn" : "reject";
 }
 
 const NO_INTERNAL_SYMBOLS: ReadonlySet<string> = new Set();
@@ -157,27 +226,51 @@ export function runDucConservationGate(
   let unknowns: DucUnknown[];
   let wellFormed: boolean;
   let influence: DucInfluenceAttestation;
+  let fidelity: LiftFidelity;
   try {
     const graph = liftAtom(source);
     wellFormed = isWellFormed(graph).wellFormed;
+    fidelity = liftFidelity(source, graph);
     influence = influenceAttestation(graph);
     // Every ♦-source, not only those reaching an observation: an unresolved use is a
     // defect even when it does not reach the result (it can still have effects).
     const seen = new Map<string, DucUnknown>();
+    // CommonJS module scope is the module's when the gate knows the atom's module (#1173).
+    const inModule = moduleBindings !== NO_MODULE_BINDINGS;
+    const specifiers = requireSpecifiers(graph);
+    const probed = probedNames(source);
     for (const node of graph.nodes) {
       if (node.diamond === undefined) continue;
       const { symbol, reason, module } = node.diamond;
       if (seen.has(symbol)) continue;
       const isFree = reason === "free-identifier";
+      const scope =
+        isFree && inModule && !moduleBindings.has(symbol)
+          ? symbol === "exports" || symbol === "module"
+            ? {}
+            : symbol === "require" && specifiers.every((x) => x !== null)
+              ? { requires: [...new Set(specifiers as string[])] }
+              : undefined
+          : undefined;
+      if (scope !== undefined) {
+        seen.set(symbol, { symbol, reason, moduleScope: true, ...scope });
+        continue;
+      }
+      if (isFree && probed.has(symbol)) {
+        seen.set(symbol, { symbol, reason, probe: true });
+        continue;
+      }
       const isComposition = isFree && internalSymbols.has(symbol);
       const binding = isFree && !isComposition ? moduleBindings.get(symbol) : undefined;
       const isCapture = binding?.binding === "pure";
+      const isModuleState = binding?.binding === "mutable";
       seen.set(symbol, {
         symbol,
         reason,
         ...(module !== undefined ? { module } : {}),
         ...(isComposition ? { composition: true } : {}),
         ...(isCapture ? { capture: true, declHash: binding.declHash } : {}),
+        ...(isModuleState ? { moduleState: true, declHash: binding.declHash } : {}),
       });
     }
     unknowns = [...seen.values()];
@@ -189,14 +282,33 @@ export function runDucConservationGate(
       unexplained: [],
       composition: [],
       captures: [],
+      moduleState: [],
+      moduleScope: [],
       liftError,
     };
   }
-  const isExplained = (u: DucUnknown): boolean => u.composition === true || u.capture === true;
+  const isExplained = (u: DucUnknown): boolean =>
+    u.composition === true ||
+    u.capture === true ||
+    u.moduleState === true ||
+    u.moduleScope === true ||
+    u.probe === true;
   const unexplained = unknowns.filter((u) => u.reason === "free-identifier" && !isExplained(u));
   const composition = unknowns.filter((u) => u.composition === true);
   const captures = unknowns.filter((u) => u.capture === true);
-  return { wellFormed, unknowns, unexplained, composition, captures, influence };
+  const moduleState = unknowns.filter((u) => u.moduleState === true);
+  const moduleScope = unknowns.filter((u) => u.moduleScope === true);
+  return {
+    wellFormed,
+    unknowns,
+    unexplained,
+    composition,
+    captures,
+    moduleState,
+    moduleScope,
+    influence,
+    fidelity,
+  };
 }
 
 /** The outcome of enforcing the gate: what to persist plus the raw result. */
@@ -215,8 +327,8 @@ export interface EnforceDucGateResult {
  *
  * - Always computes usupp; returns it serialized for the registry row.
  * - A *problem* is a lift failure or any unexplained (`free-identifier`) unknown.
- * - `warn` (default): a problem logs a loud warning; the atom is still admitted.
- * - `reject`: a problem throws {@link DucGateRejection}, aborting the persist.
+ * - `reject` (default): a problem throws {@link DucGateRejection}, aborting the persist.
+ * - `warn`: a problem logs a loud warning; the atom is still admitted.
  *
  * @throws {DucGateRejection} in `reject` mode when the atom has a problem.
  */
@@ -241,22 +353,37 @@ export function enforceDucGate(
           captures: result.captures.map((c) => ({ symbol: c.symbol, declHash: c.declHash })),
         }
       : {}),
+    ...(result.moduleState.length > 0
+      ? {
+          moduleState: result.moduleState.map((c) => ({ symbol: c.symbol, declHash: c.declHash })),
+        }
+      : {}),
     ...(result.influence !== undefined
       ? { attestations: { duc_influence: result.influence } }
       : {}),
   });
 
-  const hasProblem = result.liftError !== undefined || result.unexplained.length > 0;
+  const unfaithful = result.fidelity !== undefined && !result.fidelity.holds;
+  const hasProblem = result.liftError !== undefined || result.unexplained.length > 0 || unfaithful;
   if (hasProblem) {
     const detail =
       result.liftError !== undefined
         ? `could not be lifted for analysis (${result.liftError})`
-        : `has unresolved references with no declared source: ${result.unexplained.map((u) => u.symbol).join(", ")} (a structural finding, not a feasibility claim)`;
+        : result.unexplained.length > 0
+          ? `has unresolved references with no declared source: ${result.unexplained.map((u) => u.symbol).join(", ")} (a structural finding, not a feasibility claim)`
+          : `was lifted unfaithfully: its graph ${[
+              ...(result.fidelity?.missing.length
+                ? [`drops ${result.fidelity.missing.join(", ")}`]
+                : []),
+              ...(result.fidelity?.extra.length
+                ? [`reports ${result.fidelity.extra.join(", ")} as free`]
+                : []),
+            ].join(" and ")} (a lifter defect, DEC-DUC-LIFT-FIDELITY-001)`;
     const message = `[duc-gate] atom "${atomName}" ${detail}`;
     if (mode === "reject") {
       throw new DucGateRejection(`${message} — rejected (YAKCC_DUC_GATE=reject)`, result);
     }
-    warn(`${message} — admitted (warn mode; set YAKCC_DUC_GATE=reject to enforce)`);
+    warn(`${message} — admitted (YAKCC_DUC_GATE=warn)`);
   }
   return { ducUsupp, result };
 }
@@ -313,6 +440,12 @@ export interface ExternalSurface {
   readonly foreign: readonly { readonly symbol: string; readonly module?: string }[];
   readonly ambient: readonly string[];
   readonly captures: readonly { readonly symbol: string; readonly declHash?: string }[];
+  /** Mutable module bindings read: module state, explained by the module record (#1266). */
+  readonly moduleState: readonly { readonly symbol: string; readonly declHash?: string }[];
+  /** CommonJS module scope used (`exports`, `module`, `require`). */
+  readonly moduleScope: readonly string[];
+  /** The specifiers `require` is called with: the module's dependencies. */
+  readonly requires: readonly string[];
   readonly compositions: readonly string[];
   readonly unexplained: readonly string[];
 }
@@ -334,6 +467,9 @@ export function externalSurfaceOf(ducUsupp: string | null | undefined): External
   const foreign: { symbol: string; module?: string }[] = [];
   const ambient: string[] = [];
   const captures: { symbol: string; declHash?: string }[] = [];
+  const moduleState: { symbol: string; declHash?: string }[] = [];
+  const moduleScope: string[] = [];
+  const requires: string[] = [];
   const compositions: string[] = [];
   const unexplained: string[] = [];
   for (const u of unknowns) {
@@ -348,9 +484,78 @@ export function externalSurfaceOf(ducUsupp: string | null | undefined): External
         symbol: u.symbol,
         ...(u.declHash !== undefined ? { declHash: u.declHash } : {}),
       });
+    } else if (u.moduleScope === true) {
+      moduleScope.push(u.symbol);
+      for (const r of u.requires ?? []) if (!requires.includes(r)) requires.push(r);
+    } else if (u.moduleState === true) {
+      moduleState.push({
+        symbol: u.symbol,
+        ...(u.declHash !== undefined ? { declHash: u.declHash } : {}),
+      });
     } else if (u.reason === "free-identifier") {
       unexplained.push(u.symbol);
     }
   }
-  return { foreign, ambient, captures, compositions, unexplained };
+  return {
+    foreign,
+    ambient,
+    captures,
+    moduleState,
+    moduleScope,
+    requires,
+    compositions,
+    unexplained,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The gate's context for a shaved forest (#1173)
+// ---------------------------------------------------------------------------
+
+/** A forest's slice plans, as `collectForestSlicePlans` gives them. */
+export interface ForestPlans {
+  readonly filePath: string;
+  readonly slicePlan: {
+    readonly entries: readonly { readonly kind: string; readonly source?: unknown }[];
+  };
+}
+
+/** What the gate is given for an atom: its forest's composition names and its module's bindings. */
+export interface DucGateContext {
+  readonly internalSymbols: ReadonlySet<string>;
+  readonly moduleBindings: ReadonlyMap<string, ModuleBindingInfo>;
+}
+
+const forestContexts = new WeakMap<
+  readonly ForestPlans[],
+  { internal: Set<string>; bindings: Map<string, Map<string, ModuleBindingInfo>> }
+>();
+
+/**
+ * The gate's context for the atoms of one module of a shaved forest, as `universalize` gives it to
+ * a single module (DEC-DUC-GATE-REJECT-001): the names every novel-glue atom of the forest defines
+ * (composition edges), and the module's own top-level bindings (captures, module state). A forest
+ * persisted without it has every sibling reference unexplained, which the gate now rejects.
+ */
+export function forestGateContext(
+  plans: readonly ForestPlans[],
+  filePath: string,
+  readSource: (file: string) => string = (file) => readFileSync(file, "utf8"),
+): DucGateContext {
+  let ctx = forestContexts.get(plans);
+  if (ctx === undefined) {
+    const sources = plans.flatMap(({ slicePlan }) =>
+      slicePlan.entries.flatMap((e) =>
+        e.kind === "novel-glue" && typeof e.source === "string" ? [e.source] : [],
+      ),
+    );
+    ctx = { internal: collectInternalSymbols(sources), bindings: new Map() };
+    forestContexts.set(plans, ctx);
+  }
+  let moduleBindings = ctx.bindings.get(filePath);
+  if (moduleBindings === undefined) {
+    moduleBindings = moduleBindingsOf(readSource(filePath));
+    ctx.bindings.set(filePath, moduleBindings);
+  }
+  return { internalSymbols: ctx.internal, moduleBindings };
 }

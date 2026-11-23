@@ -1,3 +1,5 @@
+import { ts } from "ts-morph";
+import { loweringView } from "./ordering.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Types over a DUC graph (#1277, decision T1). The graph stays type-free: its interface types come
@@ -13,8 +15,7 @@
  * (whose joins are selects), loops (to a fixpoint over the carried values) and closures (inferred at
  * each call, from the types of the captures and arguments).
  */
-import { ts } from "ts-morph";
-import { loweringView } from "./ordering.js";
+import { isRestParam, paramIndex } from "./params.js";
 import type { DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
 
 export type NumberKind = "integer" | "float" | "number";
@@ -382,7 +383,7 @@ function inferGraph(
     const at = (i: number): DucType => typeOf(n.inputs[i] as ValueId);
     switch (n.kind) {
       case "param-source":
-        return [inputs[Number(n.label)] ?? UNKNOWN];
+        return [inputs[paramIndex(n.label)] ?? UNKNOWN];
       case "literal-source":
         return [literalType(n.label ?? "")];
       case "diamond-source":
@@ -653,13 +654,20 @@ function callType(
   if (callee.k === "fn") {
     if (callee.closure !== undefined && depth < 4) {
       const inner = new Map<ValueId, DucType>();
-      const results = inferGraph(
-        callee.closure.graph,
-        [...callee.closure.captures, ...args],
-        inner,
-        ambiguities,
-        depth + 1,
+      // A rest parameter takes the arguments from its place on, as an array.
+      const given = [...callee.closure.captures, ...args];
+      const rest = callee.closure.graph.nodes.find(
+        (p) => p.kind === "param-source" && isRestParam(p.label),
       );
+      const at = rest !== undefined ? paramIndex(rest.label) : given.length;
+      const packed =
+        rest !== undefined
+          ? [
+              ...given.slice(0, at),
+              { k: "array", of: given.length > at ? union(given.slice(at)) : undefined } as DucType,
+            ]
+          : given;
+      const results = inferGraph(callee.closure.graph, packed, inner, ambiguities, depth + 1);
       return results[0] ?? UNDEFINED;
     }
     return callee.result;

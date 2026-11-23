@@ -77,6 +77,7 @@ import { sourceHash } from "../cache/key.js";
 import { STATIC_MODEL_TAG, STATIC_PROMPT_VERSION } from "../intent/constants.js";
 import type { IntentCard } from "../intent/types.js";
 import { maybePersistNovelGlueAtom } from "../persist/atom-persist.js";
+import { forestGateContext } from "../persist/duc-gate.js";
 import type { ShaveRegistryView } from "../types.js";
 import {
   collectForestSlicePlans,
@@ -284,10 +285,12 @@ describe("parseISO -- per-entry shave (WI-510 Slice 5)", () => {
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
         expect(plans.length).toBeGreaterThan(0);
         let persistedCount = 0;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 expect(await registry.getBlock(mr)).not.toBeNull();
@@ -443,10 +446,12 @@ describe("formatISO -- per-entry shave (WI-510 Slice 5)", () => {
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
         expect(plans.length).toBeGreaterThan(0);
         let persistedCount = 0;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 expect(await registry.getBlock(mr)).not.toBeNull();
@@ -596,10 +601,12 @@ describe("addDays -- per-entry shave (WI-510 Slice 5)", () => {
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
         expect(plans.length).toBeGreaterThan(0);
         let persistedCount = 0;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 expect(await registry.getBlock(mr)).not.toBeNull();
@@ -755,10 +762,12 @@ describe("differenceInMilliseconds -- per-entry shave (WI-510 Slice 5)", () => {
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
         expect(plans.length).toBeGreaterThan(0);
         let persistedCount = 0;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 expect(await registry.getBlock(mr)).not.toBeNull();
@@ -911,10 +920,12 @@ describe("parseJSON -- per-entry shave (WI-510 Slice 5)", () => {
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
         expect(plans.length).toBeGreaterThan(0);
         let persistedCount = 0;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 expect(await registry.getBlock(mr)).not.toBeNull();
@@ -953,7 +964,9 @@ describe("parseISO section F -- combinedScore quality gate", () => {
           entryPath: join(DATE_FNS_FIXTURE_ROOT, "parseISO.cjs"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue")
               await maybePersistNovelGlueAtom(
@@ -967,6 +980,7 @@ describe("parseISO section F -- combinedScore quality gate", () => {
                   ],
                 ),
                 registry,
+                gate,
               );
           }
         }
@@ -1004,7 +1018,9 @@ describe("formatISO section F -- combinedScore quality gate", () => {
           entryPath: join(DATE_FNS_FIXTURE_ROOT, "formatISO.cjs"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue")
               await maybePersistNovelGlueAtom(
@@ -1018,6 +1034,7 @@ describe("formatISO section F -- combinedScore quality gate", () => {
                   ],
                 ),
                 registry,
+                gate,
               );
           }
         }
@@ -1055,7 +1072,9 @@ describe("addDays section F -- combinedScore quality gate", () => {
           entryPath: join(DATE_FNS_FIXTURE_ROOT, "addDays.cjs"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue")
               await maybePersistNovelGlueAtom(
@@ -1069,6 +1088,7 @@ describe("addDays section F -- combinedScore quality gate", () => {
                   ],
                 ),
                 registry,
+                gate,
               );
           }
         }
@@ -1106,7 +1126,9 @@ describe("differenceInMilliseconds section F -- combinedScore quality gate", () 
           entryPath: join(DATE_FNS_FIXTURE_ROOT, "differenceInMilliseconds.cjs"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue")
               await maybePersistNovelGlueAtom(
@@ -1120,6 +1142,7 @@ describe("differenceInMilliseconds section F -- combinedScore quality gate", () 
                   ],
                 ),
                 registry,
+                gate,
               );
           }
         }
@@ -1160,7 +1183,9 @@ describe("parseJSON section F -- combinedScore quality gate", () => {
           entryPath: join(DATE_FNS_FIXTURE_ROOT, "parseJSON.cjs"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue")
               await maybePersistNovelGlueAtom(
@@ -1174,6 +1199,7 @@ describe("parseJSON section F -- combinedScore quality gate", () => {
                   ],
                 ),
                 registry,
+                gate,
               );
           }
         }
@@ -1290,10 +1316,16 @@ describe("date-fns headline bindings -- compound interaction (real production se
           const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
           expect(plans.length).toBeGreaterThan(0);
           let persistedCount = 0;
-          for (const { slicePlan } of plans) {
+          for (const { filePath, slicePlan } of plans) {
+            // The gate is given what universalize gives it: the forest's names and the module's bindings.
+            const gate = forestGateContext(plans, filePath);
             for (const entry of slicePlan.entries) {
               if (entry.kind === "novel-glue") {
-                const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+                const mr = await maybePersistNovelGlueAtom(
+                  withStubIntentCard(entry),
+                  registry,
+                  gate,
+                );
                 if (mr !== undefined) persistedCount++;
               }
             }

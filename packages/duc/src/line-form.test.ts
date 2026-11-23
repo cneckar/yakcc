@@ -89,3 +89,28 @@ describe("one unknown, one source (line form)", () => {
     );
   });
 });
+
+describe("heap order a program does not write (#1288)", () => {
+  it("top-level heap operations are ordered as written, as the lifter orders them", () => {
+    const written = parseLineForm(
+      'param xs\nlit "0" -> zero\nlit "1" -> one\nop ElementAccess xs zero -> x\nop ElementAccess xs one -> y\nop - x y -> r\nout r\n',
+    );
+    const lifted = liftAtom("export function f(xs: number[]) { return xs[0] - xs[1]; }");
+    expect(graphIdentity(written)).toBe(graphIdentity(lifted));
+  });
+
+  it("the order written is the order taken: reads swapped are another program", () => {
+    const swapped = parseLineForm(
+      'param xs\nlit "0" -> zero\nlit "1" -> one\nop ElementAccess xs one -> y\nop ElementAccess xs zero -> x\nop - x y -> r\nout r\n',
+    );
+    const lifted = liftAtom("export function f(xs: number[]) { return xs[0] - xs[1]; }");
+    expect(graphIdentity(swapped)).not.toBe(graphIdentity(lifted));
+  });
+
+  it("a program that writes a heap token is taken as written", () => {
+    const g = parseLineForm(
+      'param xs\nlit "0" -> zero\nlit "1" -> one\nop ElementAccess xs zero -> x\nop ElementAccess xs one ^x -> y\nop - x y -> r\nout r\n',
+    );
+    expect(g.nodes.filter((n) => n.order === 1)).toHaveLength(1);
+  });
+});

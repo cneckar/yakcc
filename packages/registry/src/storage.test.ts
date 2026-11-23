@@ -170,7 +170,7 @@ describe("schema migrations", () => {
     applyMigrations(db);
 
     // Version check.
-    expect(SCHEMA_VERSION).toBe(17);
+    expect(SCHEMA_VERSION).toBe(18);
     const row = db.prepare("SELECT version FROM schema_version LIMIT 1").get() as
       | { version: number }
       | undefined;
@@ -2006,7 +2006,7 @@ describe("WI-V2-04 L2: migration v5 → v6 and foreign-block primitives", () => 
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
     expect(vAfterFirst).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe(17);
+    expect(SCHEMA_VERSION).toBe(18);
 
     // Second run — must be a complete no-op; no throws; version stays at 10.
     expect(() => applyMigrations(db)).not.toThrow();
@@ -3824,7 +3824,7 @@ describe("migration 7: source-file provenance columns + workspace_plumbing (P1)"
       db.prepare("SELECT version FROM schema_version LIMIT 1").get() as { version: number }
     ).version;
     expect(v1).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe(17);
+    expect(SCHEMA_VERSION).toBe(18);
 
     // Second run — must be a complete no-op.
     expect(() => applyMigrations(db)).not.toThrow();

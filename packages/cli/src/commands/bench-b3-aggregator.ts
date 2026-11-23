@@ -183,7 +183,7 @@ function isHit(event: TelemetryEvent): boolean {
  *
  * NOTE: Order-invariant within a task window — events are filtered by
  * timestamp range, not by position in the JSONL file. This satisfies the
- * fast-check property test in bench-b3-aggregator.props.ts.
+ * fast-check property test in bench-b3-aggregator.props.test.ts.
  *
  * @param markers        - All task markers for the sprint (begin + end).
  * @param allEvents      - All telemetry events (from readTelemetrySessions).

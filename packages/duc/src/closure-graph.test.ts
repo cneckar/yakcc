@@ -48,18 +48,30 @@ describe("closures as graphs (#1275)", () => {
     });
   }
 
-  it("a closure that reads a variable assigned after it is made stays opaque", () => {
-    const node = closureNode(
-      "export function f(x: number): number { let k = 1; const g = () => k; k = x; return g(); }",
-    );
-    expect(node).toBeUndefined();
+  it("a closure that reads a variable assigned after it is made sees it through a cell (#1276)", () => {
+    const src =
+      "export function f(x: number): number { let k = 1; const g = () => k; k = x; return g(); }";
+    const g = liftAtom(src);
+    expect(closureNode(src)).toBeDefined();
+    const code = emitTypeScript(g);
+    const run = new Function(`${code.replace("export ", "")}; return f;`)() as (
+      x: number,
+    ) => number;
+    expect(run(7)).toBe(7);
+    expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
   });
 
-  it("a recursive function stays opaque", () => {
-    const node = closureNode(
-      "export function f(n: number): number { function fact(m: number): number { return m < 2 ? 1 : m * fact(m - 1); } return fact(n); }",
-    );
-    expect(node).toBeUndefined();
+  it("a recursive function reads itself as function-self, and computes the same (#1276)", () => {
+    const src =
+      "export function f(n: number): number { function fact(m: number): number { return m < 2 ? 1 : m * fact(m - 1); } return fact(n); }";
+    expect(closureNode(src)).toBeDefined();
+    const g = liftAtom(src);
+    const code = emitTypeScript(g);
+    const run = new Function(`${code.replace("export ", "")}; return f;`)() as (
+      n: number,
+    ) => number;
+    expect(run(5)).toBe(120);
+    expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
   });
 
   it("a function that uses this has its own receiver; an arrow captures the enclosing one", () => {
@@ -103,6 +115,16 @@ describe("closures as graphs (#1275)", () => {
   });
 });
 
+describe("captures the outer graph cannot tell apart", () => {
+  it("are ordered by how the closure uses them, so declaring them in another order is the same graph", () => {
+    const a =
+      "export function f(x: number) { let p; let q; const g = () => { p = x; q = x + 1; return [p, q]; }; return g(); }";
+    const b =
+      "export function f(x: number) { let q; let p; const g = () => { p = x; q = x + 1; return [p, q]; }; return g(); }";
+    expect(graphIdentity(liftAtom(a))).toBe(graphIdentity(liftAtom(b)));
+  });
+});
+
 describe("captures that change (#1276)", () => {
   it("a name reassigned before the closure is made is captured with that value", () => {
     const src =
@@ -110,9 +132,16 @@ describe("captures that change (#1276)", () => {
     expect(closureNode(src)).toBeDefined();
   });
 
-  it("a name reassigned after the closure is made keeps it opaque", () => {
-    const src = "export function f(x: number) { const g = () => x; x = x + 1; return g; }";
-    expect(closureNode(src)).toBeUndefined();
+  it("a name reassigned after the closure is made is a cell the closure reads when called", () => {
+    const src = "export function f(x: number) { const g = () => x; x = x + 1; return g(); }";
+    const g = liftAtom(src);
+    expect(g.nodes.some((n) => n.label?.startsWith("Closure#"))).toBe(false);
+    const code = emitTypeScript(g);
+    const run = new Function(`${code.replace("export ", "")}; return f;`)() as (
+      x: number,
+    ) => number;
+    expect(run(2)).toBe(3);
+    expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
   });
 
   it("a name another closure rebinds is a cell both closures share", () => {
@@ -147,5 +176,76 @@ describe("captures that change (#1276)", () => {
     const code = emitTypeScript(liftAtom(src));
     expect(closureNode(src)).toBeDefined();
     expect(new Function(`${code.replace("export ", "")}; return f()();`)()).toBe(1);
+  });
+
+  it("a name a nested function declares does not hide the outer one a closure reads", () => {
+    const g = liftAtom(
+      "export function f(s: number) { const a = () => { const b = (s: number) => s; return s + b(1); }; return a; }",
+    );
+    const walk = (x: typeof g): boolean =>
+      x.nodes.some(
+        (n) => n.diamond?.symbol === "s" || (n.closure !== undefined && walk(n.closure)),
+      );
+    expect(walk(g)).toBe(false);
+  });
+
+  it("a captured constant is part of the closure's own graph", () => {
+    const id = (src: string): string => graphIdentity(liftAtom(src));
+    expect(
+      id("export function f(c: any) { let r = 0; if (c) r = 10; else throw 1; return () => r; }"),
+    ).toBe(id("export function f(c: any) { if (c) {} else throw 1; return () => 10; }"));
+  });
+
+  it("two ifs on the same condition are numbered by what they hold, not by source order", () => {
+    const src =
+      "export function f(r: any, cb: any) { if (cb) r = 10; else if (r) throw 1; function g(c: any) { return r; } if (cb) { return g; } else return 1; }";
+    const g = liftAtom(src);
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+  });
+
+  it("a capture the closure never reads is no capture", () => {
+    const id = (src: string): string => graphIdentity(liftAtom(src));
+    expect(id("export function f(p: any) { const g = () => { if (p) { } }; return g; }")).toBe(
+      id("export function f(p: any) { const g = () => {}; return g; }"),
+    );
+  });
+
+  it("a loop over a cell carries the heap token, and its condition after a break is not run", () => {
+    for (const src of [
+      "export function f(r: number) { var i = 0; function next() { for (; i < r;) { i = i + 1; if (i > 5) break; } } next(); return i; }",
+      "export function f(r: number) { var i = 0; function next() { if (i < r) { for (; i < r;) { i = i + 1; } } } next(); return i; }",
+      "export function f(r: any, c: any, p: any) { if (c) { } else throw 1; var i = 0; k(); function next() { p(i); } return next; }",
+    ]) {
+      const g = liftAtom(src);
+      expect(graphIdentity(liftAtom(emitTypeScript(g))), src).toBe(graphIdentity(g));
+    }
+  });
+
+  it("a method looked up by a key is ordered just before its call, as a lowering writes it", () => {
+    const src =
+      "export function f(len: number) { (self['crypto'] || self['msCrypto'])['getRandomValues'](a = new Uint32Array(len)); }";
+    const g = liftAtom(src);
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+  });
+});
+
+describe("a capture rebound by destructuring (#1173)", () => {
+  const opaque = (src: string): boolean => /\S+#[0-9a-f]{16}/.test(printLineForm(liftAtom(src)));
+  it("before the closure is made: the closure is a graph", () => {
+    expect(opaque("export function f(c) { ({c} = c); const g = () => c; return g; }")).toBe(false);
+    expect(
+      opaque(
+        "export function f(c) { let r = false; ({c, r = false} = c); const g = () => r; return g(); }",
+      ),
+    ).toBe(false);
+  });
+  it("after it: the name is shared, and the closure sees the write", () => {
+    const src = "export function f(c) { const g = () => c; ({c} = {c: 2}); return g(); }";
+    expect(opaque(src)).toBe(false);
+    const code = emitTypeScript(liftAtom(src));
+    const f = new Function(`${code.replace(/^export /m, "")}; return f;`)() as (
+      c: number,
+    ) => number;
+    expect(f(5)).toBe(2);
   });
 });

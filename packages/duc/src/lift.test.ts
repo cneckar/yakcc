@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import { mayInfluence, usupp } from "./influence.js";
-import { DucLiftError, liftAtom } from "./lift.js";
+import { DucLiftError, declaredNamesOf, liftAtom } from "./lift.js";
 import type { DiamondReason, DucGraph } from "./types.js";
 import type { ValueId } from "./types.js";
 import { isWellFormed } from "./wellformed.js";
@@ -318,7 +318,8 @@ describe("no single exported function: top-level fallback", () => {
 
   it("multiple exported bindings are each observed", () => {
     const g = lift("export const A = 1;\nexport const B = A + 1;");
-    expect(g.obs.length).toBe(2);
+    // One result naming each declared value (#1292).
+    expect(declaredNamesOf(g)).toEqual(["A", "B"]);
   });
 
   it("multiple exported functions fall back and still resolve their reads", () => {
@@ -490,7 +491,10 @@ describe("region-scoped returns: a return belongs to its own scope (class method
   });
   it("a return inside a nested method is not an observation of the enclosing atom", () => {
     const g = lift("class A { m (y) { return y } }");
-    expect(g.obs).toHaveLength(0);
+    // The module's class A is observed (#1290); the method's `return y` is not.
+    expect(g.obs).toHaveLength(1);
+    const producer = g.nodes.find((n) => n.outputs.includes(g.obs[0] as never));
+    expect(producer?.kind).not.toBe("param-source");
   });
 });
 
@@ -531,6 +535,15 @@ describe("nested function declarations and JSDoc (residue defects found in bcryp
     const g = lift("function outer () { function f () { return K } const K = 1; return f() }");
     expect(diamondSymbols(g)).toContain("K");
   });
+  it("a function hoisted over a later `var` reads it through a cell, as JavaScript does (#1173)", () => {
+    // `var` is hoisted as undefined: f, called after the declarations, sees their values.
+    const g = lift(
+      "function outer (i) { var r = f(i); function f (j) { return t[j] + k } var t = [5, 6]; var k = 1; return f(i) }",
+    );
+    expect(diamondSymbols(g)).not.toContain("t");
+    expect(diamondSymbols(g)).not.toContain("k");
+    expect(g.nodes.some((n) => n.label === 'object:["value"]')).toBe(true);
+  });
 });
 
 describe("labels, class self-reference, and pure legacy globals (residue defects)", () => {
@@ -560,5 +573,16 @@ describe("labels, class self-reference, and pure legacy globals (residue defects
   it("WeakRef stays unexplained: its deref is not a pure function of its argument", () => {
     const g = lift("function f (x) { return new WeakRef(x) }");
     expect(diamondSymbols(g)).toContain("WeakRef");
+  });
+});
+
+describe("var is hoisted to its function (#1173)", () => {
+  it("a var declared in a block is the function's, not a free name", () => {
+    const g = lift("export function f(c) { if (c) var r = 1, n = 2; return [r, n]; }");
+    expect(g.nodes.some((n) => n.diamond?.symbol === "r" || n.diamond?.symbol === "n")).toBe(false);
+  });
+  it("a parameter of the same name keeps its value", () => {
+    const g = lift("export function f(r) { if (false) var r = 9; return r; }");
+    expect(g.nodes.some((n) => n.diamond?.symbol === "r")).toBe(false);
   });
 });

@@ -14,7 +14,7 @@
 
 import { createHash } from "node:crypto";
 import { canonicalJson } from "./canonical.js";
-import { guardedFlows } from "./guard.js";
+import { controlInfluence, guardedFlows } from "./guard.js";
 import { renderWitness, witness } from "./influence.js";
 import type { DiamondReason, DucGraph, DucNode, NodeId, ValueId } from "./types.js";
 import { defMap, nodeIndex } from "./types.js";
@@ -41,6 +41,11 @@ export interface CheckerSpec {
 
 /** One flow from a source to a sink that no declared sanitizer cuts. */
 export interface CheckerFinding {
+  /**
+   * "data": the source reaches an argument of the sink call. "control": the source reaches the
+   * condition of a branch the call is in, so whether the call happens depends on it (#1269).
+   */
+  readonly kind: "data" | "control";
   readonly sink: string;
   readonly sourceLabel: string;
   readonly node: NodeId;
@@ -141,14 +146,18 @@ function findFrom(
   const src = source.outputs[0];
   if (src === undefined) return out;
   const flows = guardedFlows(graph, src, blocked);
+  const control = controlInfluence(graph, src, blocked);
   for (const node of graph.nodes) {
     const symbol = calleeSymbolOf(node, def, nodes);
     if (symbol === undefined || !sinks.has(symbol)) continue;
-    // A sink's arguments are its inputs after the callee.
-    for (const arg of node.inputs.slice(1)) {
+    // A sink's arguments are its inputs after the callee; the heap token that orders the call
+    // (its last input, #1285) carries no value into it.
+    const args = node.order === 1 ? node.inputs.slice(1, -1) : node.inputs.slice(1);
+    for (const arg of args) {
       const flow = flows.get(arg);
       if (flow === undefined) continue;
       out.push({
+        kind: "data",
         sink: symbol,
         sourceLabel,
         node: node.id,
@@ -157,6 +166,19 @@ function findFrom(
         witness: renderWitness(witness(graph, arg)),
       });
       break; // one finding per sink call per source
+    }
+    // Whether the call happens at all depends on the source (#1269).
+    const conds = control.get(node.id);
+    if (conds !== undefined) {
+      out.push({
+        kind: "control",
+        sink: symbol,
+        sourceLabel,
+        node: node.id,
+        unguarded: false,
+        guards: conds.map((c) => renderWitness(witness(graph, c))),
+        witness: renderWitness(witness(graph, conds[0] as ValueId)),
+      });
     }
   }
   return out;

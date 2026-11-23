@@ -126,6 +126,60 @@ under another.
 - Conformance needs a trusted lowering per checked target. The TypeScript emitter (round-trip
   tested) and the Python lowering (conformance tested) exist; Go and Rust do not yet (#1278).
 
+## Implementation notes (#1287)
+
+`checkSharedSubmission` in `@yakcc/federation` (`src/duc-submission.ts`) implements checks 1–9.
+Points the design left open, as built:
+
+- **Check 4** also refuses `eval` and `Function` by name, linked or not: a link to a contract does
+  not stop them running text as code.
+- **Check 6.** A primitive's capability label `c` is admitted by a contract effect that is `c`, or
+  starts with `c:` (case-insensitive; `"network:api.example.com"` admits `network`). A result that
+  depends on a nondeterministic primitive is admitted by the effect `"nondeterministic"`.
+- **Check 8** runs the TypeScript lowering, with types stripped, in a fresh `vm` context. That
+  context holds the language's built-ins and the DUC runtime, nothing of the host, and each vector
+  has a time limit. Values are compared as JSON. Each linked reference is defined in the same
+  context from an implementation of its contract, from the batch or the store.
+  - A name the context cannot provide makes the evidence **unchecked**, not wrong, and the pair
+    stays `claimed`. This covers Node primitives, and a link to an atom that only declares a
+    value (a module statement).
+- **Check 9** runs each other stored implementation of the contract on both sides' vectors. A
+  vector either side cannot run is skipped.
+
+**Modules (#1290).** A submission carries a `ModuleRecord` per file. It sits outside identity,
+like links, and holds:
+- the file's statements in order, each with its contract, identity, kind (`function` or
+  `statement`), and the names it declares in its graph's output order;
+- the module each relative `require` names;
+- optionally, evidence against the module's exports.
+
+How the receiver uses it:
+- **Check 5.** A name the module declares, its `exports` and `module`, and a `require` of a
+  module in the submission or of one the platform provides, are not holes.
+- **Platform modules.** The base set lists the platform's modules with their labels (`NODE`
+  version 2: `fs` grants `io`, `crypto` is nondeterministic, …). Check 6 holds those labels
+  against the contract's effects.
+- **Check 8.** A module runs in its own context: functions first (they hoist), then its
+  statements in order. Its members' evidence and its own evidence run there.
+- **Host modules.** These are never handed to the sandbox: evidence that needs one is unchecked.
+
+On the corpus, with module records, closure refusals fall from 1,065 to 62. The rest are mostly
+packages outside the submission (`require` of a dependency that was not shaved). base64-js and ms
+pass checks 1–8 against evidence taken from the real packages (`duc-module-submission.test.ts`).
+
+**Measured on the shaved corpus, before module records** (one batch per package; each original source run on sample
+inputs to give the evidence, so check 8 tests the graph against its source):
+
+| Outcome | Implementations |
+|---|---|
+| `conforming` | 157 (1,639 vectors in all) |
+| `claimed` | 84 |
+| refused at capabilities | 3 (`Date` under a pure contract) |
+| refused at closure | 326 |
+| refused at conformance | 0 |
+
+Every closure refusal is a module-level name that is not an atom (#1290).
+
 ## Open questions
 
 1. **Link strength.** A link says "use contract S". It does not say that S's postconditions are

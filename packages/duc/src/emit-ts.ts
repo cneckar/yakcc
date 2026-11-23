@@ -1,3 +1,4 @@
+import { parseType, typeToTypeScript } from "./infer-types.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Lowering to TypeScript (#1275, decision 5A): a graph is emitted as a TypeScript function whose
@@ -13,9 +14,10 @@
  * that holds an opaque node (a closure, a class, a construct summarized by its text), or the return
  * state of returns on some paths, has no TypeScript form here: `emitTypeScript` throws EmitError.
  */
-import { parseType, typeToTypeScript } from "./infer-types.js";
+import { DECLARES, declaredNamesOf } from "./lift.js";
 import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
 import { loweringView } from "./ordering.js";
+import { isRestParam, paramIndex } from "./params.js";
 import { RUNTIME_MODULE } from "./runtime.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
@@ -85,11 +87,16 @@ export interface EmitSignature {
 }
 
 /**
- * Emits a graph as a TypeScript function. With a signature, the parameters and the result are
+ * Emits a graph as a TypeScript function, `f` unless `options.name` names it. With a signature, the
+ * parameters and the result are
  * annotated from the contract; the types inside are TypeScript's to infer. Throws EmitError for a
  * graph it cannot express.
  */
-export function emitTypeScript(g: DucGraph, signature?: EmitSignature): string {
+export function emitTypeScript(
+  g: DucGraph,
+  signature?: EmitSignature,
+  options: { readonly name?: string } = {},
+): string {
   // The structure must be expressible: the line form's checks hold here too, closures included.
   try {
     printLineForm(g);
@@ -97,7 +104,10 @@ export function emitTypeScript(g: DucGraph, signature?: EmitSignature): string {
     throw new EmitError(e instanceof Error ? e.message : String(e));
   }
   const imports = new Map<string, Set<string>>();
-  const { params, body } = emitFunction(g, "", [], imports);
+  // A module statement's graph is a module: its statements, then the names it declares (#1290).
+  const asModule =
+    declaredNamesOf(g) !== undefined && !g.nodes.some((n) => n.kind === "param-source");
+  const { params, body } = emitFunction(g, "", [], imports, asModule);
   const importLines = [...imports.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(
@@ -113,13 +123,45 @@ export function emitTypeScript(g: DucGraph, signature?: EmitSignature): string {
         });
   const result =
     signature?.output !== undefined ? `: ${typeToTypeScript(parseType(signature.output))}` : "";
+  if (asModule) return [...importLines, ...body, ""].join("\n");
   return [
     ...importLines,
-    `export function f(${typed.join(", ")})${result} {`,
+    `export ${modeHead(g.mode)}${options.name ?? "f"}(${typed.join(", ")})${result} {`,
     ...body.map((l) => `  ${l}`),
     "}",
     "",
   ].join("\n");
+}
+
+/**
+ * Where each entry of an object literal's label takes its inputs: a computed key's input, then the
+ * value's. A method or accessor (`{method|get|set: key}`) is a member written in place.
+ */
+function objectSlots(
+  entries: readonly unknown[],
+): { value: number; key?: number; name?: string; spread?: true; member?: string }[] {
+  let at = 0;
+  return entries.map((entry) => {
+    if (entry === null) return { value: at++, spread: true as const };
+    if (entry === 1) {
+      const key = at++;
+      return { key, value: at++ };
+    }
+    if (typeof entry === "string") return { value: at++, name: entry };
+    const [kind, k] = Object.entries(entry as Record<string, unknown>)[0] ?? [];
+    const member = kind === "method" || kind === "get" || kind === "set" ? kind : undefined;
+    if (k === 1) {
+      const key = at++;
+      return { key, value: at++, ...(member !== undefined ? { member } : {}) };
+    }
+    return { value: at++, name: String(k), ...(member !== undefined ? { member } : {}) };
+  });
+}
+
+/** The words before a function's name: `function`, `async function`, `function*`. */
+function modeHead(mode: DucGraph["mode"]): string {
+  if (mode === undefined) return "function ";
+  return `${mode.startsWith("async") ? "async " : ""}function${mode.endsWith("generator") ? "*" : ""} `;
 }
 
 /**
@@ -132,10 +174,12 @@ function emitFunction(
   prefix: string,
   bound: readonly string[],
   imports: Map<string, Set<string>>,
+  asModule = false,
+  selfName = "Fn_",
 ): { params: string[]; body: string[] } {
   // The heap token orders the statements and is not written (#1285).
   const { graph: g, after } = loweringView(source);
-  if (g.obs.length > 1) throw new EmitError("more than one observation");
+  if (g.obs.length > 1 && !asModule) throw new EmitError("more than one observation");
 
   const branches = g.branches ?? [];
   const producer = new Map<ValueId, DucNode>();
@@ -159,8 +203,8 @@ function emitFunction(
     const outer = invariantOuter.get(v);
     if (outer !== undefined) return nameOf(outer);
     const p = producer.get(v);
-    if (p?.kind === "param-source" && Number(p.label) < bound.length)
-      return bound[Number(p.label)] as string;
+    if (p?.kind === "param-source" && paramIndex(p.label) < bound.length)
+      return bound[paramIndex(p.label)] as string;
     if (p?.kind === "diamond-source" && p.diamond !== undefined) {
       if (p.diamond.reason === "unlinked-reference") {
         const module = p.diamond.module;
@@ -169,7 +213,7 @@ function emitFunction(
         imports.set(module, new Set([...(imports.get(module) ?? []), p.diamond.symbol]));
       }
       // A runtime primitive (a try statement's call) is imported from the DUC runtime (#1276).
-      if (p.diamond.reason === "platform-primitive" && p.diamond.symbol === "__yakccTry")
+      if (p.diamond.reason === "platform-primitive" && p.diamond.symbol.startsWith("__yakccTry"))
         imports.set(
           RUNTIME_MODULE,
           new Set([...(imports.get(RUNTIME_MODULE) ?? []), p.diamond.symbol]),
@@ -183,6 +227,28 @@ function emitFunction(
   const inline = new Set<NodeId>();
   // Branches written as the `&&`, `||` or `?:` of the select that joins them.
   const lazyBranches = new Set<string>();
+  // Loops whose condition is written in the body: `while (true) { ..c..; if (!(c)) break; ... }`.
+  const guardLoops = new Set<NodeId>();
+  // A class's members are written inside the class, not as statements of their own (#1276).
+  const classMembers = new Set<NodeId>();
+  for (const node of g.nodes) {
+    if (!(node.label ?? "").startsWith("class:")) continue;
+    const extending = (node.label ?? "").startsWith('class:[["extends"]');
+    for (const v of node.inputs.slice(extending ? 1 : 0)) {
+      const p = producer.get(v);
+      if (p?.closure !== undefined && (consumers.get(v) ?? []).length === 1) classMembers.add(p.id);
+    }
+  }
+  // So are an object literal's methods and accessors.
+  for (const node of g.nodes) {
+    if (!(node.label ?? "").startsWith("object:")) continue;
+    for (const slot of objectSlots(JSON.parse((node.label ?? "").slice("object:".length)))) {
+      if (slot.member === undefined) continue;
+      const v = node.inputs[slot.value] as ValueId;
+      const p = producer.get(v);
+      if (p?.closure !== undefined && (consumers.get(v) ?? []).length === 1) classMembers.add(p.id);
+    }
+  }
   for (const node of g.nodes) {
     // A literal is a constant, written where it is used.
     if (node.kind === "literal-source" && node.label !== "Uninitialized") inline.add(node.id);
@@ -248,7 +314,18 @@ function emitFunction(
       }
       for (const input of p.inputs) mark(input, region);
     };
-    mark(rec.cond, body);
+    // A condition that cannot be written in the loop's header (it shares a value with the body,
+    // or assigns a name) is written at the top of the body, before `if (!(c)) break;` (#1276).
+    const inlineBefore = new Set(inline);
+    const lazyBefore = new Set(lazyBranches);
+    try {
+      mark(rec.cond, body);
+    } catch (e) {
+      if (!(e instanceof EmitError) || rec.iterate !== undefined) throw e;
+      for (const id of [...inline]) if (!inlineBefore.has(id)) inline.delete(id);
+      for (const id of [...lazyBranches]) if (!lazyBefore.has(id)) lazyBranches.delete(id);
+      guardLoops.add(loop.id);
+    }
   }
 
   /** A value as an expression: its name, or its inline expression. */
@@ -285,6 +362,13 @@ function emitFunction(
     if (PREFIX.has(label) && ins.length === 1) return `${label}${arg(0)}`;
     if (label === "TypeOfExpression") return `typeof ${arg(0)}`;
     if (label === "VoidExpression") return `void ${arg(0)}`;
+    // A binding outside the atom, read by its name (#1276).
+    if (label === "binding") return arg(0);
+    // A derived constructor's `super(..)`: its value is the receiver it makes (#1276).
+    if (label === "super") return `super(${ins.map((v) => ref(v)).join(", ")})`;
+    if (label === "AwaitExpression") return `(await ${arg(0)})`;
+    if (label === "YieldExpression") return ins.length === 0 ? "(yield)" : `(yield ${arg(0)})`;
+    if (label === "YieldExpression*") return `(yield* ${arg(0)})`;
     if (isMemberRead(label)) {
       if (label === "ElementAccess") return `${arg(0)}[${arg(1)}]`;
       if (label === "ElementAccess?.") return `${arg(0)}?.[${arg(1)}]`;
@@ -303,6 +387,13 @@ function emitFunction(
     if (label === "...") return `...${arg(0)}`;
     if (label.startsWith("OmittedExpression#")) return "";
     if (label === "this" || label.startsWith("ThisKeyword#")) return "this";
+    if (label.startsWith("delete.")) return `delete ${arg(0)}.${label.slice("delete.".length)}`;
+    if (label === "delete[]") return `delete ${arg(0)}[${arg(1)}]`;
+    // The class a member belongs to: the class expression's own name (#1276).
+    if (label === "class-self") return "Self_";
+    // The function this graph is: the function expression's own name, or for an arrow the const it
+    // initializes (#1276, #1173).
+    if (label === "function-self") return selfName;
     if (label.startsWith("object:")) {
       const entries = JSON.parse(label.slice("object:".length)) as unknown[];
       let at = 0;
@@ -346,20 +437,114 @@ function emitFunction(
     if (node.kind !== "op") throw new EmitError(`a ${node.kind} is not a statement`);
     const arg = (i: number): string => ref(node.inputs[i] as ValueId);
     if (label === "throw") return [`throw ${arg(0)};`];
+    // A module statement's one result: written below, as its declared names.
+    if (label.startsWith(DECLARES)) return [];
+    // A write to a binding outside the atom: `name = value` (#1276).
+    if (label === "binding=") {
+      const written = node.outputs[0];
+      return [
+        `${arg(0)} = ${arg(1)};`,
+        ...(written !== undefined ? [`const ${nameOf(written)} = ${arg(1)};`] : []),
+      ];
+    }
     if (out === undefined) throw new EmitError(`the statement "${label}" has no TypeScript form`);
     const name = nameOf(out);
+    if (
+      label.startsWith("object:") &&
+      objectSlots(JSON.parse(label.slice(7))).some((x) => x.member)
+    ) {
+      // `{ "k": v, name(..) {..}, get name() {..}, [key]: v }`: a member is written in place (#1276).
+      const lines = [`const ${name} = {`];
+      for (const slot of objectSlots(JSON.parse(label.slice("object:".length)))) {
+        const value = node.inputs[slot.value] as ValueId;
+        const key =
+          slot.key !== undefined
+            ? `[${ref(node.inputs[slot.key] as ValueId)}]`
+            : JSON.stringify(slot.name);
+        if (slot.member === undefined) {
+          lines.push(slot.spread ? `  ...${ref(value)},` : `  ${key}: ${ref(value)},`);
+          continue;
+        }
+        const c = producer.get(value);
+        if (c?.closure === undefined || !classMembers.has(c.id))
+          throw new EmitError(`member ${slot.name} of object ${node.id} is not its own closure`);
+        const inner = emitFunction(
+          c.closure,
+          `${prefix}${c.id}_`,
+          c.inputs.map((v) => ref(v)),
+          imports,
+        );
+        const own = c.label ?? "";
+        const mode = `${own.startsWith("async ") ? "async " : ""}${own.endsWith("*") ? "*" : ""}`;
+        const head = slot.member === "method" ? `${mode}${key}` : `${slot.member} ${key}`;
+        lines.push(
+          `  ${head}(${inner.params.join(", ")}) {`,
+          ...inner.body.map((l) => `    ${l}`),
+          "  },",
+        );
+      }
+      lines.push("};");
+      return lines;
+    }
+    if (label.startsWith("class:")) {
+      // `class Self_ { constructor(..) {..} [static] name(..) {..} get name() {..} }`
+      const members = JSON.parse(label.slice("class:".length)) as [string, string?, boolean?][];
+      // `class Self_ extends P {`: the parent is the first input (#1276).
+      const lines = [
+        `const ${name} = class Self_${members[0]?.[0] === "extends" ? ` extends ${arg(0)}` : ""} {`,
+      ];
+      members.forEach(([kind, member, isStatic], i) => {
+        if (kind === "extends") return;
+        const c = producer.get(node.inputs[i] as ValueId);
+        if (c?.closure === undefined || !classMembers.has(c.id))
+          throw new EmitError(`member ${i} of class ${node.id} is not its own closure`);
+        const inner = emitFunction(
+          c.closure,
+          `${prefix}${c.id}_`,
+          c.inputs.map((v) => ref(v)),
+          imports,
+        );
+        // A method's `async` and `*` are in its closure's label.
+        const own = c.label ?? "";
+        const mode = `${own.startsWith("async ") ? "async " : ""}${own.endsWith("*") ? "*" : ""}`;
+        const head =
+          kind === "constructor"
+            ? "constructor"
+            : `${isStatic === true ? "static " : ""}${kind === "method" ? mode : `${kind} `}${member}`;
+        lines.push(
+          `  ${head}(${inner.params.join(", ")}) {`,
+          ...inner.body.map((l) => `    ${l}`),
+          "  }",
+        );
+      });
+      lines.push("};");
+      return lines;
+    }
     if (node.closure !== undefined) {
+      const recursive = node.closure.nodes.some((n) => n.label === "function-self");
+      const arrow = label === "closure" || label === "async closure";
+      // A recursive arrow is the const it initializes, and reads itself by that name, as written.
       const inner = emitFunction(
         node.closure,
         `${prefix}${node.id}_`,
         node.inputs.map((v) => ref(v)),
         imports,
+        false,
+        recursive && arrow ? name : "Fn_",
       );
-      // A function sees its caller's receiver; an arrow sees the enclosing one, as a capture.
+      // A function sees its caller's receiver; an arrow sees the enclosing one, as a capture. A
+      // function that reads itself is named, `function Fn_(..)`, and reads that name.
+      // `async`, and a generator's `*`, are in the label (#1276); a generator is always a function.
+      const isAsync = label.startsWith("async ");
+      const base = isAsync ? label.slice("async ".length) : label;
+      const fn = `${isAsync ? "async " : ""}function${base === "function*" ? "*" : ""}`;
+      const params = inner.params.join(", ");
       const head =
-        label === "function"
-          ? `function (${inner.params.join(", ")}) {`
-          : `(${inner.params.join(", ")}) => {`;
+        recursive && !arrow
+          ? `${fn} Fn_(${params}) {`
+          : base === "closure"
+            ? `${isAsync ? "async " : ""}(${params}) => {`
+            : `${fn} (${params}) {`;
       return [`const ${name} = ${head}`, ...inner.body.map((l) => `  ${l}`), "};"];
     }
     // A reassigned variable is a temporary, and the value's own name is a const: a closure that
@@ -391,7 +576,8 @@ function emitFunction(
   const needs = (node: DucNode): ValueId[] =>
     [...node.inputs, ...(after.get(node.id) ?? [])].flatMap((v) => {
       const p = producer.get(v);
-      return p !== undefined && inline.has(p.id) ? needs(p) : [v];
+      // A class needs what its members capture.
+      return p !== undefined && (inline.has(p.id) || classMembers.has(p.id)) ? needs(p) : [v];
     });
   /** The values made inside a region (a branch side or a loop body), nested regions included. */
   const madeWithin = (path: string): ValueId[] =>
@@ -446,23 +632,35 @@ function emitFunction(
     const count = rec.carry.length;
     const carried = rec.carry.map((v) => nameOf(v));
     const before = carried.map((name, i) => `let ${name} = ${ref(loop.inputs[i] as ValueId)};`);
+    const guarded = guardLoops.has(loop.id);
     const header =
       rec.iterate !== undefined
         ? `for (const ${nameOf(rec.iterate.element)} ${rec.iterate.of === "values" ? "of" : "in"} ${ref(loop.inputs[count] as ValueId)}) {`
-        : `while (${ref(rec.cond as ValueId)}) {`;
+        : guarded
+          ? "while (true) {"
+          : `while (${ref(rec.cond as ValueId)}) {`;
     // An iterating loop's condition stops it before an element's body (#1276).
     const guard =
       rec.iterate !== undefined && rec.cond !== undefined
         ? [`if (!(${ref(rec.cond)})) break;`]
         : [];
-    const body = emitScope(bodyPathOf(loop));
+    // A condition written in the body: what it needs, then the test, then the rest (#1276).
+    const body = emitScope(
+      bodyPathOf(loop),
+      guarded
+        ? { cond: rec.cond as ValueId, line: `if (!(${ref(rec.cond as ValueId)})) break;` }
+        : undefined,
+    );
     const next = rec.next.map((v, i) => `${carried[i]} = ${ref(v)};`);
     const after = loop.outputs.map((v, i) => `const ${nameOf(v)} = ${carried[i]};`);
     return [...before, header, ...indent([...guard, ...body, ...next]), "}", ...after];
   };
 
   /** The statements of one scope, each after the values it needs. */
-  function emitScope(scope: string | undefined): string[] {
+  function emitScope(
+    scope: string | undefined,
+    guard?: { readonly cond: ValueId; readonly line: string },
+  ): string[] {
     interface Item {
       readonly first: number;
       /** 0 for a statement, 1 for a branch that may throw, 2 for a throw: each waits for the ones before. */
@@ -473,7 +671,13 @@ function emitFunction(
     }
     const items: Item[] = [];
     for (const node of g.nodes) {
-      if (node.region !== scope || owners.has(node.id) || inline.has(node.id)) continue;
+      if (
+        node.region !== scope ||
+        owners.has(node.id) ||
+        inline.has(node.id) ||
+        classMembers.has(node.id)
+      )
+        continue;
       if (
         node.kind === "param-source" ||
         node.kind === "diamond-source" ||
@@ -537,20 +741,40 @@ function emitFunction(
     for (const [i, item] of items.entries()) for (const v of item.produces) producedBy.set(v, i);
     const done = new Set<number>();
     const lines: string[] = [];
-    while (done.size < items.length) {
-      const ready = (item: Item, i: number): boolean =>
-        !done.has(i) &&
-        item.requires.every((v) => {
-          const p = producedBy.get(v);
-          return p === undefined || done.has(p);
-        });
-      // The earliest rank that has a ready item: a later rank waits while an earlier one can run.
-      const rank = Math.min(...items.filter(ready).map((item) => item.last));
-      const next = items.findIndex((item, i) => ready(item, i) && item.last === rank);
-      if (next === -1) throw new EmitError("the graph has a cycle");
-      done.add(next);
-      lines.push(...(items[next] as Item).lines());
+    // With a guard: first the items the condition needs (its cone), then the test, then the rest.
+    const cone = new Set<number>();
+    if (guard !== undefined) {
+      const visit = (v: ValueId): void => {
+        const i = producedBy.get(v);
+        if (i === undefined || cone.has(i)) return;
+        cone.add(i);
+        for (const r of (items[i] as Item).requires) visit(r);
+      };
+      visit(guard.cond);
     }
+    const schedule = (allowed: (i: number) => boolean): void => {
+      for (;;) {
+        const ready = (item: Item, i: number): boolean =>
+          allowed(i) &&
+          !done.has(i) &&
+          item.requires.every((v) => {
+            const p = producedBy.get(v);
+            return p === undefined || done.has(p);
+          });
+        if (!items.some(ready)) return;
+        // The earliest rank that has a ready item: a later rank waits while an earlier one can run.
+        const rank = Math.min(...items.filter(ready).map((item) => item.last));
+        const next = items.findIndex((item, i) => ready(item, i) && item.last === rank);
+        done.add(next);
+        lines.push(...(items[next] as Item).lines());
+      }
+    };
+    if (guard !== undefined) {
+      schedule((i) => cone.has(i));
+      lines.push(guard.line);
+    }
+    schedule(() => true);
+    if (done.size < items.length) throw new EmitError("the graph has a cycle");
     return lines;
   }
 
@@ -562,10 +786,61 @@ function emitFunction(
     .map((n) => `${nameOf(n.outputs[0] as ValueId)};`);
 
   const params = g.nodes
-    .filter((n) => n.kind === "param-source" && Number(n.label) >= bound.length)
-    .sort((a, b) => Number(a.label) - Number(b.label))
-    .map((n) => nameOf(n.outputs[0] as ValueId));
+    .filter((n) => n.kind === "param-source" && paramIndex(n.label) >= bound.length)
+    .sort((a, b) => paramIndex(a.label) - paramIndex(b.label))
+    .map((n) => `${isRestParam(n.label) ? "..." : ""}${nameOf(n.outputs[0] as ValueId)}`);
   const body = [...unread, ...emitScope(undefined)];
+  if (asModule) {
+    // Each declared name is a module-level name, given its value at the end; the statements are in
+    // a block, so the emitter's temporaries are not the module's (#1290, #1292).
+    const names = declaredNamesOf(g) as string[];
+    const declares = g.nodes.find((n) => n.outputs.includes(g.obs[0] as ValueId)) as DucNode;
+    // `default` is not a variable: its value is held by the lowering's own name, exported as default.
+    const local = (name: string): string => (name === "default" ? "__yakccExportDefault" : name);
+    // A name exported as it is (`export { parse };` of a name the statement does not define) is
+    // the free name itself: no module-level name of its own, which would shadow it.
+    const itself = (name: string, k: number): boolean => {
+      const source = g.nodes.find((n) => n.outputs.includes(declares.inputs[k] as ValueId));
+      return (
+        source?.kind === "diamond-source" &&
+        source.diamond?.reason === "free-identifier" &&
+        source.diamond.symbol === name
+      );
+    };
+    const held = names.flatMap((name, k) => (itself(name, k) ? [] : [[name, k] as const]));
+    // A declared name the statements also read free (a function bound where it stands, read above
+    // its declaration) must not be in scope above it: the values are carried out of the block in
+    // the lowering's own names and declared after it.
+    const readFree = new Set(
+      g.nodes.flatMap((n) =>
+        n.kind === "diamond-source" && n.diamond?.reason === "free-identifier"
+          ? [n.diamond.symbol]
+          : [],
+      ),
+    );
+    const after = held.some(([name]) => readFree.has(name));
+    const carrier = (name: string, k: number): string =>
+      after ? `__yakccDeclared${k}` : local(name);
+    return {
+      params,
+      body: [
+        ...(held.length > 0
+          ? [`let ${held.map(([name, k]) => carrier(name, k)).join(", ")};`]
+          : []),
+        "{",
+        ...body.map((l) => `  ${l}`),
+        ...held.map(
+          ([name, k]) => `  ${carrier(name, k)} = ${ref(declares.inputs[k] as ValueId)};`,
+        ),
+        "}",
+        ...(after ? held.map(([name, k]) => `let ${local(name)} = ${carrier(name, k)};`) : []),
+        // Every declared name exported, in order: lifted again, the same names in the same order.
+        ...names.map((name) =>
+          name === "default" ? "export default __yakccExportDefault;" : `export { ${name} };`,
+        ),
+      ],
+    };
+  }
   const obs = g.obs[0];
   if (obs !== undefined) body.push(`return ${ref(obs)};`);
   return { params, body };

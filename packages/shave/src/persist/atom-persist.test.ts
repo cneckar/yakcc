@@ -10,6 +10,7 @@ import type { IntentCard } from "../intent/types.js";
 import type { NovelGlueEntry } from "../universalize/types.js";
 import {
   ducImplementationOf,
+  linkPlanAtoms,
   maybePersistNovelGlueAtom,
   persistNovelGlueAtom,
 } from "./atom-persist.js";
@@ -683,5 +684,47 @@ describe("#1279: the graph is stored beside the block", () => {
       ducImplementationOf("export function f(x: number) { return x + 1; }", "spec", null)
         ?.graphIdentity,
     ).toBe(graphIdentity(liftAtom("export function f(x: number) { return x + 1; }")));
+  });
+});
+
+describe("links at persist time (#1279)", () => {
+  it("a reference to another atom of the module is stored as a link to its contract", async () => {
+    const inc = "export function inc(x: number) { return x + 1; }";
+    const twice = "export function twice(x: number) { return inc(inc(x)); }";
+    const rows = new Map<string, { specHash: string }>([
+      ["root-inc", { specHash: "spec-inc" }],
+      ["root-twice", { specHash: "spec-twice" }],
+    ]);
+    const stored: DucImplementationRow[] = [];
+    const linked = await linkPlanAtoms(
+      [
+        { source: inc, merkleRoot: "root-inc" as BlockMerkleRoot },
+        { source: twice, merkleRoot: "root-twice" as BlockMerkleRoot },
+      ],
+      {
+        getBlock: async (root) => rows.get(root) as unknown as BlockTripletRow,
+        storeDucImplementation: async (row) => {
+          stored.push(row);
+        },
+      },
+    );
+    expect(linked).toBe(1);
+    expect(stored).toHaveLength(1);
+    const [row] = stored;
+    expect(row?.specHash).toBe("spec-twice");
+    expect(row?.blockMerkleRoot).toBe("root-twice");
+    expect(row?.links).toEqual([{ reason: "free-identifier", symbol: "inc", spec: "spec-inc" }]);
+    // Links are outside identity: the pair the implementation is keyed by does not change.
+    expect(row?.graphIdentity).toBe(graphIdentity(liftAtom(twice)));
+    expect(graphIdentity(unpackGraph(row as DucImplementationRow))).toBe(row?.graphIdentity);
+  });
+
+  it("a registry without the DUC methods links nothing", async () => {
+    expect(
+      await linkPlanAtoms(
+        [{ source: "export const a = b;", merkleRoot: "r" as BlockMerkleRoot }],
+        {},
+      ),
+    ).toBe(0);
   });
 });

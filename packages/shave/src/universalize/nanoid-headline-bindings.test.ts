@@ -57,6 +57,7 @@ import { sourceHash } from "../cache/key.js";
 import { STATIC_MODEL_TAG, STATIC_PROMPT_VERSION } from "../intent/constants.js";
 import type { IntentCard } from "../intent/types.js";
 import { maybePersistNovelGlueAtom } from "../persist/atom-persist.js";
+import { forestGateContext } from "../persist/duc-gate.js";
 import type { ShaveRegistryView } from "../types.js";
 import {
   collectForestSlicePlans,
@@ -264,10 +265,12 @@ describe("nanoid -- per-entry shave (WI-510 Slice 4)", () => {
       console.log("[nanoid sE] slicePlans.length:", slicePlans.length);
       expect(slicePlans.length).toBeGreaterThan(0);
       let persistedCount = 0;
-      for (const { slicePlan } of slicePlans) {
+      for (const { filePath, slicePlan } of slicePlans) {
+        // The gate is given what universalize gives it: the forest's names and the module's bindings.
+        const gate = forestGateContext(slicePlans, filePath);
         for (const entry of slicePlan.entries) {
           if (entry.kind === "novel-glue") {
-            const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+            const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
             if (mr !== undefined) persistedCount++;
           }
         }
@@ -296,7 +299,9 @@ describe("nanoid -- section F: combinedScore quality gate (DISCOVERY_EVAL_PROVID
         entryPath: join(NANOID_FIXTURE_ROOT, "index.cjs"),
       });
       const slicePlans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-      for (const { slicePlan } of slicePlans) {
+      for (const { filePath, slicePlan } of slicePlans) {
+        // The gate is given what universalize gives it: the forest's names and the module's bindings.
+        const gate = forestGateContext(slicePlans, filePath);
         for (const entry of slicePlan.entries) {
           if (entry.kind === "novel-glue") {
             const withCard = withSemanticIntentCard(
@@ -308,7 +313,7 @@ describe("nanoid -- section F: combinedScore quality gate (DISCOVERY_EVAL_PROVID
                 "No arguments required; customizable via customAlphabet or customRandom",
               ],
             );
-            const result = await maybePersistNovelGlueAtom(withCard, registry);
+            const result = await maybePersistNovelGlueAtom(withCard, registry, gate);
             if (result !== undefined) {
               console.log("[nanoid sF] combinedScore:", result.combinedScore);
               expect(
@@ -372,10 +377,12 @@ describe("nanoid -- compound interaction: full production sequence (WI-510 Slice
 
       // Step 4: persist all novel-glue entries
       const results: Array<{ combinedScore: number }> = [];
-      for (const { slicePlan } of nanoidPlans) {
+      for (const { filePath, slicePlan } of nanoidPlans) {
+        // The gate is given what universalize gives it: the forest's names and the module's bindings.
+        const gate = forestGateContext(nanoidPlans, filePath);
         for (const entry of slicePlan.entries) {
           if (entry.kind === "novel-glue") {
-            const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+            const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
             if (mr !== undefined) results.push(mr);
           }
         }

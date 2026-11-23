@@ -310,11 +310,16 @@ function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
+    let tooLarge = false;
     req.on("data", (chunk: Buffer) => {
+      if (tooLarge) return; // the rest is read and dropped, so the client can read the 413
       total += chunk.length;
       if (total > SUBMIT_MAX_BODY_BYTES) {
+        // Destroying the request here would close the socket before the 413 is written: the client
+        // would see a reset, not the response. Stop buffering and keep draining instead.
+        tooLarge = true;
+        chunks.length = 0;
         reject(new Error("body_too_large"));
-        req.destroy();
         return;
       }
       chunks.push(chunk);
@@ -353,6 +358,8 @@ async function handleSubmitBlock(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg === "body_too_large") {
+      // The connection is closed once the response is sent: the oversized upload is not kept.
+      res.setHeader("Connection", "close");
       sendError(res, 413, "body_too_large");
       return;
     }

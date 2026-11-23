@@ -1,3 +1,5 @@
+import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
+import { loweringView } from "./ordering.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Lowering a DUC graph to Python (#1278, vision 2: the graph is lowered directly to each target).
@@ -11,8 +13,7 @@
  * Anything else is refused with a reason (`PyEmitError`), never guessed: an unknown method, a
  * construct the line form does not express, an opaque node.
  */
-import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
-import { loweringView } from "./ordering.js";
+import { isRestParam, paramIndex } from "./params.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
 export class PyEmitError extends Error {
@@ -210,7 +211,7 @@ def _round(x):
     return math.floor(_num(x) + 0.5)
 
 
-def _index_of(s, x):
+def _index_of(s, x=UNDEFINED):
     if isinstance(s, str):
         return s.find(_str(x))
     for i, e in enumerate(s):
@@ -219,7 +220,7 @@ def _index_of(s, x):
     return -1
 
 
-def _includes(s, x):
+def _includes(s, x=UNDEFINED):
     if isinstance(s, str):
         return _str(x) in s
     return any(_seq(e, x) or (isinstance(e, float) and isinstance(x, float) and math.isnan(e) and math.isnan(x)) for e in s)
@@ -300,11 +301,11 @@ def _re(pattern, flags, is_global):
     return JsRegExp(re.compile(pattern, flags), is_global)
 
 
-def _test(r, s):
+def _test(r, s=UNDEFINED):
     return r.compiled.search(_str(s)) is not None
 
 
-def _replace(s, pattern, replacement):
+def _replace(s, pattern=UNDEFINED, replacement=UNDEFINED):
     if isinstance(pattern, JsRegExp):
         import re
         rep = _str(replacement)
@@ -403,80 +404,443 @@ def _try(body, handler, finalizer=UNDEFINED):
             done = finalizer()
             if isinstance(done, list) and len(done) > 0 and done[0] == 1:
                 return done
+
+
+# Each graph operation is a function of its own, so the lowering can be raised back (#1278).
+
+NONE = UNDEFINED
+_JS_NAN = math.nan
+_JS_INF = math.inf
+
+
+def _uninit():
+    return UNDEFINED
+
+
+def _platform(name):
+    return UNDEFINED
+
+
+def _unread(f):
+    return None
+
+
+def _sub(a, b):
+    return _num(a) - _num(b)
+
+
+def _mul(a, b):
+    return _num(a) * _num(b)
+
+
+def _pow(a, b):
+    return _num(a) ** _num(b)
+
+
+def _lt(a, b):
+    return a < b
+
+
+def _gt(a, b):
+    return a > b
+
+
+def _le(a, b):
+    return a <= b
+
+
+def _ge(a, b):
+    return a >= b
+
+
+def _sne(a, b):
+    return not _seq(a, b)
+
+
+def _and(a, b):
+    return b if _truthy(a) else a
+
+
+def _or(a, b):
+    return a if _truthy(a) else b
+
+
+def _is_nullish(a):
+    return a is None or a is UNDEFINED
+
+
+def _nullish(a, b):
+    return b if _is_nullish(a) else a
+
+
+def _has_key(k, o):
+    return _str(k) in o
+
+
+def _idx_opt(o, i):
+    return UNDEFINED if _is_nullish(o) else _idx(o, i)
+
+
+def _get_opt(o, k):
+    return UNDEFINED if _is_nullish(o) else _get(o, k)
+
+
+def _comma(a, b):
+    return b
+
+
+def _not(a):
+    return not _truthy(a)
+
+
+def _neg(a):
+    return -_num(a)
+
+
+def _pos(a):
+    return _num(a)
+
+
+def _void_of(a):
+    return UNDEFINED
+
+
+def _sel(c, a, b):
+    return a if _truthy(c) else b
+
+
+def _lazy_and(c, f):
+    return f() if _truthy(c) else c
+
+
+def _lazy_or(c, f):
+    return c if _truthy(c) else f()
+
+
+def _lazy_sel(c, f, g):
+    return f() if _truthy(c) else g()
+
+
+def _call(f, *args):
+    return f(*args)
+
+
+def _call_detached(f, *args):
+    return f(*args)
+
+
+def _call_opt(f, *args):
+    return UNDEFINED if _is_nullish(f) else f(*args)
+
+
+def _new_error(kind, message=UNDEFINED):
+    return JsError(message, kind)
+
+
+def _call_error(kind, message=UNDEFINED):
+    return JsError(message, kind)
+
+
+def _throw(x):
+    if isinstance(x, JsError):
+        raise x
+    raise JsThrow(x)
+
+
+def _trim(s):
+    return s.strip()
+
+
+def _trim_start(s):
+    return s.lstrip()
+
+
+def _trim_end(s):
+    return s.rstrip()
+
+
+def _to_upper(s):
+    return s.upper()
+
+
+def _to_lower(s):
+    return s.lower()
+
+
+def _starts_with(s, x=""):
+    return s.startswith(_str(x))
+
+
+def _ends_with(s, x=""):
+    return s.endswith(_str(x))
+
+
+def _repeat(s, n=0):
+    return s * int(_num(n))
+
+
+def _char_at(s, i=0):
+    return _str(_idx(s, i)).replace("undefined", "")
+
+
+def _char_code_at(s, i=0):
+    return ord(s[int(_num(i))])
+
+
+def _concat(s, *xs):
+    return s + "".join(_str(x) for x in xs)
+
+
+def _to_string_m(x, radix=UNDEFINED):
+    if radix is UNDEFINED or not _isnum(x) or _num(radix) == 10:
+        return _str(x)
+    r = int(_num(radix))
+    if r < 2 or r > 36:
+        raise JsError("toString() radix must be between 2 and 36", "RangeError")
+    if math.isnan(x) or math.isinf(x):
+        return _str(x)
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    neg = x < 0
+    a = abs(x)
+    ip = int(a)
+    frac = a - ip
+    out = ""
+    while True:
+        out = digits[ip % r] + out
+        ip //= r
+        if ip == 0:
+            break
+    if frac > 0:
+        out += "."
+        count = 0
+        while frac > 0 and count < 52:
+            frac *= r
+            d = int(frac)
+            out += digits[d]
+            frac -= d
+            count += 1
+    return "-" + out if neg else out
+
+
+def _math_abs(x):
+    return abs(_num(x))
+
+
+def _math_floor(x):
+    return math.floor(_num(x))
+
+
+def _math_ceil(x):
+    return math.ceil(_num(x))
+
+
+def _math_trunc(x):
+    return math.trunc(_num(x))
+
+
+def _math_sqrt(x):
+    return math.sqrt(_num(x))
+
+
+def _math_pow(a, b):
+    return _num(a) ** _num(b)
+
+
+def _object_keys(x):
+    return _keys(x)
+
+
+def _is_array(x):
+    return isinstance(x, list)
+
+
+def _string_of(*a):
+    return "" if len(a) == 0 else _str(a[0])
+
+
+def _number_of(*a):
+    return 0 if len(a) == 0 else _num(a[0])
+
+
+def _global_is_nan(x=UNDEFINED):
+    return _isnan(x)
+
+
+def _global_is_finite(x=UNDEFINED):
+    return not _isnan(x) and not math.isinf(_num(x))
+
+
+def _boolean_of(x=UNDEFINED):
+    return _truthy(x)
+
+
+_fn_parse_int = lambda s=UNDEFINED, radix=UNDEFINED, *_rest: _parse_int(s, radix)
+_fn_parse_float = lambda s=UNDEFINED, *_rest: _parse_float(s)
+_fn_string = lambda x="", *_rest: _str(x)
+_fn_number = lambda x=0, *_rest: _num(x)
+_fn_boolean = lambda x=UNDEFINED, *_rest: _truthy(x)
+_fn_is_nan = lambda x=UNDEFINED, *_rest: _isnan(x)
+
+
+def _arr(*items):
+    return list(items)
+
+
+class _OSpread:
+    def __init__(self, value):
+        self.value = value
+
+
+def _ospread(x):
+    return _OSpread(x)
+
+
+def _key(k, v):
+    return (k, v)
+
+
+def _obj(*parts):
+    out = {}
+    for p in parts:
+        if isinstance(p, _OSpread):
+            out.update(p.value)
+        else:
+            out[p[0]] = p[1]
+    return out
+
+
+def _template(texts, *vals):
+    out = ""
+    for i, t in enumerate(texts):
+        out += t
+        if i < len(vals):
+            out += _str(vals[i])
+    return out
+
+
+def _re_js(js, pattern, flags, is_global):
+    return _re(pattern, flags, is_global)
+
+
+def _add_assign(a, b):
+    return _add(a, b)
+
+
+def _sub_assign(a, b):
+    return _sub(a, b)
+
+
+def _mul_assign(a, b):
+    return _mul(a, b)
+
+
+def _div_assign(a, b):
+    return _div(a, b)
+
+
+def _rem_assign(a, b):
+    return _rem(a, b)
+
+
+def _pre_inc(a):
+    return _num(a) + 1
+
+
+def _post_inc(a):
+    return _num(a) + 1
+
+
+def _pre_dec(a):
+    return _num(a) - 1
+
+
+def _post_dec(a):
+    return _num(a) - 1
+
+
+def _put_member(o, k, v):
+    return _put(o, k, v)
 `;
 
+/** A table's own entry for a key: never one of Object.prototype's (`hasOwnProperty`, `constructor`). */
+function entry<T>(table: Readonly<Record<string, T>> | undefined, key: string): T | undefined {
+  return table !== undefined && Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
 /** String and array methods, as Python: `(receiver, args) => expression`. */
-const METHODS: Record<string, (recv: string, args: readonly string[]) => string> = {
-  trim: (r) => `${r}.strip()`,
-  trimStart: (r) => `${r}.lstrip()`,
-  trimEnd: (r) => `${r}.rstrip()`,
-  toUpperCase: (r) => `${r}.upper()`,
-  toLowerCase: (r) => `${r}.lower()`,
-  startsWith: (r, a) => `${r}.startswith(_str(${a[0] ?? '""'}))`,
-  endsWith: (r, a) => `${r}.endswith(_str(${a[0] ?? '""'}))`,
-  includes: (r, a) => `_includes(${r}, ${a[0] ?? "UNDEFINED"})`,
-  indexOf: (r, a) => `_index_of(${r}, ${a[0] ?? "UNDEFINED"})`,
-  slice: (r, a) => `_slice(${[r, ...a].join(", ")})`,
-  substring: (r, a) => `_substring(${[r, ...a].join(", ")})`,
-  split: (r, a) => `_split(${[r, ...a].join(", ")})`,
-  join: (r, a) => `_join(${[r, ...a].join(", ")})`,
-  repeat: (r, a) => `(${r} * int(_num(${a[0] ?? "0"})))`,
-  charAt: (r, a) => `_str(_idx(${r}, ${a[0] ?? "0"})).replace("undefined", "")`,
-  charCodeAt: (r, a) => `ord(${r}[int(_num(${a[0] ?? "0"}))])`,
-  concat: (r, a) => `(${r} + ${a.map((x) => `_str(${x})`).join(" + ") || '""'})`,
-  toString: (r: string) => `_str(${r})`,
-  test: (r, a) => `_test(${r}, ${a[0] ?? "UNDEFINED"})`,
-  map: (r, a) => `_map(${r}, ${a[0]})`,
-  filter: (r, a) => `_filter(${r}, ${a[0]})`,
-  forEach: (r, a) => `_for_each(${r}, ${a[0]})`,
-  some: (r, a) => `_some(${r}, ${a[0]})`,
-  every: (r, a) => `_every(${r}, ${a[0]})`,
-  find: (r, a) => `_find(${r}, ${a[0]})`,
-  findIndex: (r, a) => `_find_index(${r}, ${a[0]})`,
-  reduce: (r, a) => `_reduce(${[r, ...a].join(", ")})`,
-  replace: (r, a) => `_replace(${r}, ${a[0] ?? "UNDEFINED"}, ${a[1] ?? "UNDEFINED"})`,
-  push: (r, a) => `_push(${[r, ...a].join(", ")})`,
-  pop: (r) => `_pop(${r})`,
+/**
+ * Each graph operation is a prelude function of its own (#1278), so the lowering can be raised back:
+ * a method is called with its receiver first and the arguments as written (so their number is kept).
+ */
+const METHODS: Record<string, string> = {
+  trim: "_trim",
+  trimStart: "_trim_start",
+  trimEnd: "_trim_end",
+  toUpperCase: "_to_upper",
+  toLowerCase: "_to_lower",
+  startsWith: "_starts_with",
+  endsWith: "_ends_with",
+  includes: "_includes",
+  indexOf: "_index_of",
+  slice: "_slice",
+  substring: "_substring",
+  split: "_split",
+  join: "_join",
+  repeat: "_repeat",
+  charAt: "_char_at",
+  charCodeAt: "_char_code_at",
+  concat: "_concat",
+  toString: "_to_string_m",
+  test: "_test",
+  map: "_map",
+  filter: "_filter",
+  forEach: "_for_each",
+  some: "_some",
+  every: "_every",
+  find: "_find",
+  findIndex: "_find_index",
+  reduce: "_reduce",
+  replace: "_replace",
+  push: "_push",
+  pop: "_pop",
 };
 
 /** Members of platform namespaces, as Python. */
-const AMBIENT_MEMBERS: Record<string, Record<string, (args: readonly string[]) => string>> = {
+const AMBIENT_MEMBERS: Record<string, Record<string, string>> = {
   Math: {
-    abs: (a) => `abs(_num(${a[0]}))`,
-    floor: (a) => `math.floor(_num(${a[0]}))`,
-    ceil: (a) => `math.ceil(_num(${a[0]}))`,
-    trunc: (a) => `math.trunc(_num(${a[0]}))`,
-    round: (a) => `_round(${a[0]})`,
-    sqrt: (a) => `math.sqrt(_num(${a[0]}))`,
-    max: (a) => `_max(${a.join(", ")})`,
-    min: (a) => `_min(${a.join(", ")})`,
-    pow: (a) => `(_num(${a[0]}) ** _num(${a[1]}))`,
+    abs: "_math_abs",
+    floor: "_math_floor",
+    ceil: "_math_ceil",
+    trunc: "_math_trunc",
+    round: "_round",
+    sqrt: "_math_sqrt",
+    max: "_max",
+    min: "_min",
+    pow: "_math_pow",
   },
-  Object: { keys: (a) => `_keys(${a[0]})` },
-  Array: { isArray: (a) => `isinstance(${a[0]}, list)` },
+  Object: { keys: "_object_keys" },
+  Array: { isArray: "_is_array" },
 };
 
-const AMBIENT_CALLS: Record<string, (args: readonly string[]) => string> = {
-  __yakccTry: (a) => `_try(${a.join(", ")})`,
-  String: (a) => `_str(${a[0] ?? '""'})`,
-  Number: (a) => `_num(${a[0] ?? "0"})`,
-  parseInt: (a) => `_parse_int(${a.join(", ")})`,
-  parseFloat: (a) => `_parse_float(${a[0] ?? "UNDEFINED"})`,
-  isNaN: (a) => `_isnan(${a[0] ?? "UNDEFINED"})`,
-  isFinite: (a) =>
-    `(not _isnan(${a[0] ?? "UNDEFINED"}) and not math.isinf(_num(${a[0] ?? "UNDEFINED"})))`,
-  Boolean: (a) => `_truthy(${a[0] ?? "UNDEFINED"})`,
+const AMBIENT_CALLS: Record<string, string> = {
+  __yakccTry: "_try",
+  String: "_string_of",
+  Number: "_number_of",
+  parseInt: "_parse_int",
+  parseFloat: "_parse_float",
+  isNaN: "_global_is_nan",
+  isFinite: "_global_is_finite",
+  Boolean: "_boolean_of",
 };
 
 /** Platform functions used as values (passed, stored), as the prelude functions that are them. */
 const PLATFORM_VALUES: Record<string, string> = {
-  // Called back with (element, index, array), as JavaScript does; the rest is ignored.
-  parseInt: "(lambda s=UNDEFINED, radix=UNDEFINED, *_rest: _parse_int(s, radix))",
-  parseFloat: "(lambda s=UNDEFINED, *_rest: _parse_float(s))",
-  String: '(lambda x="", *_rest: _str(x))',
-  Number: "(lambda x=0, *_rest: _num(x))",
-  Boolean: "(lambda x=UNDEFINED, *_rest: _truthy(x))",
-  isNaN: "(lambda x=UNDEFINED, *_rest: _isnan(x))",
+  parseInt: "_fn_parse_int",
+  parseFloat: "_fn_parse_float",
+  String: "_fn_string",
+  Number: "_fn_number",
+  Boolean: "_fn_boolean",
+  isNaN: "_fn_is_nan",
 };
 
 const ERRORS = new Set(["Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError"]);
@@ -557,7 +921,8 @@ export function regexToPython(text: string): {
 function literal(label: string): string {
   if (label.startsWith("/") && label.lastIndexOf("/") > 0) {
     const r = regexToPython(label);
-    return `_re(${JSON.stringify(r.pattern)}, ${r.flags}, ${r.global ? "True" : "False"})`;
+    // The JavaScript literal is kept beside its Python form, for the raiser.
+    return `_re_js(${JSON.stringify(label)}, ${JSON.stringify(r.pattern)}, ${r.flags}, ${r.global ? "True" : "False"})`;
   }
   if (label === "true") return "True";
   if (label === "false") return "False";
@@ -565,8 +930,8 @@ function literal(label: string): string {
   if (label === "undefined" || label === "Uninitialized") return "UNDEFINED";
   if (label.startsWith('"')) return JSON.stringify(JSON.parse(label) as string);
   if (/^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(label)) return label;
-  if (label === "NaN") return "math.nan";
-  if (label === "Infinity") return "math.inf";
+  if (label === "NaN") return "_JS_NAN";
+  if (label === "Infinity") return "_JS_INF";
   throw new PyEmitError(`the literal ${label} has no Python form`);
 }
 
@@ -577,6 +942,8 @@ export function emitPython(g: DucGraph): string {
   } catch (e) {
     throw new PyEmitError(e instanceof Error ? e.message : String(e));
   }
+  if (g.mode !== undefined) throw new PyEmitError(`an ${g.mode} function has no form here`);
+  if (g.mode !== undefined) throw new PyEmitError(`an ${g.mode} function has no form here`);
   const { params, body } = pyFunction(g, "", []);
   return [`def f(${params.join(", ")}):`, ...indent(body.length > 0 ? body : ["pass"]), ""].join(
     "\n",
@@ -619,8 +986,8 @@ function pyFunction(
     const outer = invariantOuter.get(v);
     if (outer !== undefined) return nameOf(outer);
     const p = producer.get(v);
-    if (p?.kind === "param-source" && Number(p.label) < bound.length)
-      return bound[Number(p.label)] as string;
+    if (p?.kind === "param-source" && paramIndex(p.label) < bound.length)
+      return bound[paramIndex(p.label)] as string;
     if (p?.kind === "diamond-source" && p.diamond !== undefined) {
       // `arguments` is the list of what the function was called with.
       if (
@@ -707,7 +1074,7 @@ function pyFunction(
       const name = nameOf(v);
       if (name.startsWith("@")) {
         // A platform function passed as a value is its prelude helper.
-        const asValue = PLATFORM_VALUES[name.slice(1)];
+        const asValue = entry(PLATFORM_VALUES, name.slice(1));
         if (asValue === undefined) {
           throw new PyEmitError(
             `the platform name ${name.slice(1)} is used as a value; Python has no form for it`,
@@ -717,6 +1084,8 @@ function pyFunction(
       }
       return name;
     }
+    // A spread is written as it is: `*xs` is an argument, not an expression to parenthesize.
+    if (p.label === "...") return render(p);
     return `(${render(p)})`;
   };
 
@@ -741,155 +1110,135 @@ function pyFunction(
     if (node.kind === "sel") {
       const [c, a, b] = node.inputs as [ValueId, ValueId, ValueId];
       if (lazyBranches.has(owners.get(node.id)?.id ?? "")) {
-        if (b === c) return `(${ref(a)} if _truthy(${ref(c)}) else ${ref(c)})`;
-        if (a === c) return `(${ref(c)} if _truthy(${ref(c)}) else ${ref(b)})`;
+        if (b === c) return `_lazy_and(${ref(c)}, lambda: ${ref(a)})`;
+        if (a === c) return `_lazy_or(${ref(c)}, lambda: ${ref(b)})`;
+        return `_lazy_sel(${ref(c)}, lambda: ${ref(a)}, lambda: ${ref(b)})`;
       }
-      return `(${ref(a)} if _truthy(${ref(c)}) else ${ref(b)})`;
+      return `_sel(${ref(c)}, ${ref(a)}, ${ref(b)})`;
     }
     if (node.kind !== "op") throw new PyEmitError(`a ${node.kind} is not an expression`);
     const label = node.label ?? "";
     const ins = node.inputs;
     const arg = (i: number): string => ref(ins[i] as ValueId);
     if (ins.length === 2) {
-      switch (label) {
-        case "+":
-          return `_add(${arg(0)}, ${arg(1)})`;
-        case "-":
-          return `(_num(${arg(0)}) - _num(${arg(1)}))`;
-        case "*":
-          return `(_num(${arg(0)}) * _num(${arg(1)}))`;
-        case "/":
-          return `_div(${arg(0)}, ${arg(1)})`;
-        case "%":
-          return `_rem(${arg(0)}, ${arg(1)})`;
-        case "**":
-          return `(_num(${arg(0)}) ** _num(${arg(1)}))`;
-        case "<":
-        case ">":
-        case "<=":
-        case ">=":
-          return `(${arg(0)} ${label} ${arg(1)})`;
-        case "===":
-          return `_seq(${arg(0)}, ${arg(1)})`;
-        case "!==":
-          return `(not _seq(${arg(0)}, ${arg(1)}))`;
-        case "&&":
-          return `(${arg(1)} if _truthy(${arg(0)}) else ${arg(0)})`;
-        case "||":
-          return `(${arg(0)} if _truthy(${arg(0)}) else ${arg(1)})`;
-        case "??":
-          return `(${arg(1)} if ${arg(0)} is None or ${arg(0)} is UNDEFINED else ${arg(0)})`;
-        case "==":
-          if (producer.get(ins[1] as ValueId)?.label === "null")
-            return `(${arg(0)} is None or ${arg(0)} is UNDEFINED)`;
-          break;
-        case "in":
-          return `(_str(${arg(0)}) in ${arg(1)})`;
-        case "ElementAccess":
-          return `_idx(${arg(0)}, ${arg(1)})`;
-        case ",":
-          // Both run, in order; the value is the second.
-          return `(${arg(0)}, ${arg(1)})[1]`;
-      }
+      const binary: Record<string, string> = {
+        "+": "_add",
+        "-": "_sub",
+        "*": "_mul",
+        "/": "_div",
+        "%": "_rem",
+        "**": "_pow",
+        "<": "_lt",
+        ">": "_gt",
+        "<=": "_le",
+        ">=": "_ge",
+        "===": "_seq",
+        "!==": "_sne",
+        "&&": "_and",
+        "||": "_or",
+        "??": "_nullish",
+        in: "_has_key",
+        ElementAccess: "_idx",
+        "ElementAccess?.": "_idx_opt",
+        ",": "_comma",
+      };
+      const fn = entry(binary, label);
+      if (fn !== undefined) return `${fn}(${arg(0)}, ${arg(1)})`;
+      if (label === "==" && producer.get(ins[1] as ValueId)?.label === "null")
+        return `_is_nullish(${arg(0)})`;
     }
     if (ins.length === 1) {
-      switch (label) {
-        case "!":
-          return `(not _truthy(${arg(0)}))`;
-        case "-":
-          return `(-_num(${arg(0)}))`;
-        case "+":
-          return `_num(${arg(0)})`;
-        case "TypeOfExpression":
-          return `_typeof(${arg(0)})`;
-        case "VoidExpression":
-          return "UNDEFINED";
-        case "...":
-          return `*_values(${arg(0)})`;
-      }
+      const unary: Record<string, string> = {
+        "!": "_not",
+        "-": "_neg",
+        "+": "_pos",
+        TypeOfExpression: "_typeof",
+        VoidExpression: "_void_of",
+      };
+      const fn = entry(unary, label);
+      if (fn !== undefined) return `${fn}(${arg(0)})`;
+      if (label === "...") return `*_values(${arg(0)})`;
       if (isMemberRead(label)) {
         const name = label.replace(/^\??\./, "");
-        return `_get(${arg(0)}, ${JSON.stringify(name)})`;
+        return `${label.startsWith("?.") ? "_get_opt" : "_get"}(${arg(0)}, ${JSON.stringify(name)})`;
       }
     }
-    if (label === "CallExpression" || label === "NewExpression") {
-      // `(0, f)(x)` calls f: the comma's first operand is a literal, which does nothing.
+    if (label === "CallExpression" || label === "CallExpression?." || label === "NewExpression") {
+      // `(0, f)(x)` calls f with no receiver: the comma's first operand is a literal.
       let callee = ins[0] as ValueId;
       const viaComma = producer.get(callee);
+      let detached = false;
       if (
         viaComma?.label === "," &&
-        producer.get(viaComma.inputs[0] as ValueId)?.kind === "literal-source"
+        producer.get(viaComma.inputs[0] as ValueId)?.kind === "literal-source" &&
+        inline.has(viaComma.id)
       ) {
         callee = viaComma.inputs[1] as ValueId;
+        detached = true;
       }
       const args = ins.slice(1).map((v) => ref(v));
       const amb = ambientMember(callee);
       if (amb !== undefined) {
-        const fn = AMBIENT_MEMBERS[amb.ns]?.[amb.member];
+        const fn = entry(entry(AMBIENT_MEMBERS, amb.ns), amb.member);
         if (fn === undefined)
           throw new PyEmitError(`${amb.ns}.${amb.member} has no Python form here`);
-        return fn(args);
+        return `${fn}(${args.join(", ")})`;
       }
       const cp = producer.get(callee);
       const platform = producer.get(outerOf(callee));
-      if (
-        platform?.kind === "diamond-source" &&
-        platform.diamond?.reason === "platform-primitive"
-      ) {
-        const sym = platform.diamond.symbol;
-        if (ERRORS.has(sym)) return `JsError(${args[0] ?? "UNDEFINED"}, ${JSON.stringify(sym)})`;
-        const call = AMBIENT_CALLS[sym];
+      const sym =
+        platform?.kind === "diamond-source" && platform.diamond?.reason === "platform-primitive"
+          ? platform.diamond.symbol
+          : cp?.kind === "diamond-source" && cp.diamond?.reason === "platform-primitive"
+            ? cp.diamond.symbol
+            : undefined;
+      if (sym !== undefined) {
+        if (ERRORS.has(sym))
+          return `${label === "NewExpression" ? "_new_error" : "_call_error"}(${[JSON.stringify(sym), ...args].join(", ")})`;
+        const call = entry(AMBIENT_CALLS, sym);
         if (call === undefined) throw new PyEmitError(`${sym}(...) has no Python form here`);
-        return call(args);
-      }
-      if (cp?.kind === "diamond-source" && cp.diamond?.reason === "platform-primitive") {
-        const sym = cp.diamond.symbol;
-        if (ERRORS.has(sym)) return `JsError(${args[0] ?? "UNDEFINED"}, ${JSON.stringify(sym)})`;
-        const call = AMBIENT_CALLS[sym];
-        if (call === undefined) throw new PyEmitError(`${sym}(...) has no Python form here`);
-        return call(args);
+        return `${call}(${args.join(", ")})`;
       }
       if (cp !== undefined && inline.has(cp.id) && isMemberRead(cp.label ?? "")) {
+        if ((cp.label ?? "").startsWith("?."))
+          throw new PyEmitError("an optional method call has no Python form here");
         const method = (cp.label ?? "").replace(/^\??\./, "");
-        const fn = METHODS[method];
+        const fn = entry(METHODS, method);
         if (fn === undefined) throw new PyEmitError(`the method ${method} has no Python form here`);
-        return fn(ref(cp.inputs[0] as ValueId), args);
+        return `${fn}(${[ref(cp.inputs[0] as ValueId), ...args].join(", ")})`;
       }
       if (label === "NewExpression")
         throw new PyEmitError("new of a value other than an Error has no Python form here");
-      return `${ref(callee)}(${args.join(", ")})`;
+      const call =
+        label === "CallExpression?." ? "_call_opt" : detached ? "_call_detached" : "_call";
+      return `${call}(${[ref(callee), ...args].join(", ")})`;
     }
     if (label === "ArrayLiteral") {
-      // A spread is written in the list itself: `*xs` is not an expression on its own.
+      // A spread is written in the call itself: `*xs` is not an expression on its own.
       const items = ins.map((v) => {
         const p = producer.get(v);
         return p !== undefined && p.label === "..."
           ? `*_values(${ref(p.inputs[0] as ValueId)})`
           : ref(v);
       });
-      return `[${items.join(", ")}]`;
+      return `_arr(${items.join(", ")})`;
     }
     if (label.startsWith("object:")) {
       const entries = JSON.parse(label.slice("object:".length)) as unknown[];
       let at = 0;
       const next = (): string => ref(ins[at++] as ValueId);
       const parts = entries.map((entry) => {
-        if (entry === null) return `**${next()}`;
-        if (typeof entry === "string") return `${JSON.stringify(entry)}: ${next()}`;
+        if (entry === null) return `_ospread(${next()})`;
+        if (typeof entry === "string") return `_key(${JSON.stringify(entry)}, ${next()})`;
         throw new PyEmitError(
           "an object with a computed key, a method or an accessor has no Python form here",
         );
       });
-      return `{${parts.join(", ")}}`;
+      return `_obj(${parts.join(", ")})`;
     }
     if (label.startsWith("template:")) {
       const texts = JSON.parse(label.slice("template:".length)) as string[];
-      const pieces: string[] = [];
-      texts.forEach((t, i) => {
-        if (t !== "") pieces.push(JSON.stringify(t));
-        if (i < ins.length) pieces.push(`_str(${arg(i)})`);
-      });
-      return pieces.length > 0 ? `(${pieces.join(" + ")})` : '""';
+      return `_template([${texts.map((t) => JSON.stringify(t)).join(", ")}]${ins.map((v) => `, ${ref(v)}`).join("")})`;
     }
     throw new PyEmitError(`the operation "${label}" has no Python form`);
   };
@@ -897,24 +1246,21 @@ function pyFunction(
   const statementsOf = (node: DucNode): string[] => {
     const out = node.outputs[0];
     const label = node.label ?? "";
-    if (node.kind === "literal-source") return [`${nameOf(out as ValueId)} = UNDEFINED`];
+    if (node.kind === "literal-source") return [`${nameOf(out as ValueId)} = _uninit()`];
     if (node.kind === "sel") return [`${nameOf(out as ValueId)} = ${render(node)}`];
     if (node.kind !== "op") throw new PyEmitError(`a ${node.kind} is not a statement`);
     const arg = (i: number): string => ref(node.inputs[i] as ValueId);
-    if (label === "throw") {
-      const thrown = producer.get(node.inputs[0] as ValueId);
-      return [
-        thrown !== undefined && /^JsError\(/.test(safeRender(thrown))
-          ? `raise ${arg(0)}`
-          : `raise JsThrow(${arg(0)})`,
-      ];
-    }
+    if (label === "throw") return [`_throw(${arg(0)})`];
     if (out === undefined) {
       // A call or another expression run for its effect.
       return [render(node)];
     }
     const name = nameOf(out);
     if (node.closure !== undefined) {
+      if (label !== "closure" && label !== "function")
+        throw new PyEmitError(
+          `a closure that is ${label.replace(/ closure$/, "")} has no form here`,
+        );
       if (label === "function")
         throw new PyEmitError("a function with its own receiver (this) has no Python form here");
       const inner = pyFunction(
@@ -927,22 +1273,22 @@ function pyFunction(
         ...indent(inner.body.length > 0 ? inner.body : ["pass"]),
       ];
     }
-    if (["+=", "-=", "*=", "/=", "%="].includes(label)) {
-      const op = label.slice(0, -1);
-      const fn =
-        op === "+"
-          ? `_add(${arg(0)}, ${arg(1)})`
-          : op === "/"
-            ? `_div(${arg(0)}, ${arg(1)})`
-            : op === "%"
-              ? `_rem(${arg(0)}, ${arg(1)})`
-              : `(_num(${arg(0)}) ${op} _num(${arg(1)}))`;
-      return [`${name} = ${fn}`];
-    }
-    if (label === "++" || label === "post++") return [`${name} = _num(${arg(0)}) + 1`];
-    if (label === "--" || label === "post--") return [`${name} = _num(${arg(0)}) - 1`];
+    // A compound assignment and a step are operations of their own, as the graph has them.
+    const compound: Record<string, string> = {
+      "+=": "_add_assign",
+      "-=": "_sub_assign",
+      "*=": "_mul_assign",
+      "/=": "_div_assign",
+      "%=": "_rem_assign",
+      "++": "_pre_inc",
+      "post++": "_post_inc",
+      "--": "_pre_dec",
+      "post--": "_post_dec",
+    };
+    const fn = entry(compound, label);
+    if (fn !== undefined) return [`${name} = ${fn}(${node.inputs.map((v) => ref(v)).join(", ")})`];
     if (label.startsWith(".") && label.endsWith("="))
-      return [`${name} = _put(${arg(0)}, ${JSON.stringify(label.slice(1, -1))}, ${arg(1)})`];
+      return [`${name} = _put_member(${arg(0)}, ${JSON.stringify(label.slice(1, -1))}, ${arg(1)})`];
     if (label === "[]=") return [`${name} = _put(${arg(0)}, ${arg(1)}, ${arg(2)})`];
     return [`${name} = ${render(node)}`];
   };
@@ -955,11 +1301,25 @@ function pyFunction(
   };
 
   const nodeIndex = new Map(g.nodes.map((n, i) => [n.id, i] as const));
-  const needs = (node: DucNode): ValueId[] =>
-    [...node.inputs, ...(after.get(node.id) ?? [])].flatMap((v) => {
+  /** The values of the inline nodes a statement writes inside it. */
+  const inlined = (node: DucNode): ValueId[] =>
+    node.inputs.flatMap((v) => {
+      const p = producer.get(v);
+      return p !== undefined && inline.has(p.id) && p.kind === "op"
+        ? [...p.outputs, ...inlined(p)]
+        : [];
+    });
+  const needs = (node: DucNode): ValueId[] => [
+    ...node.inputs.flatMap((v) => {
       const p = producer.get(v);
       return p !== undefined && inline.has(p.id) ? needs(p) : [v];
-    });
+    }),
+    // An order edge to an inline operation waits for the statement that writes it.
+    ...(after.get(node.id) ?? []).flatMap((v) => {
+      const p = producer.get(v);
+      return p !== undefined && inline.has(p.id) ? [v, ...needs(p)] : [v];
+    }),
+  ];
   /** The values made inside a region (a branch side or a loop body), nested regions included. */
   const madeWithin = (path: string): ValueId[] =>
     g.nodes.filter((n) => isPrefix(path, n.region)).flatMap((n) => n.outputs);
@@ -1042,7 +1402,8 @@ function pyFunction(
       items.push({
         first: nodeIndex.get(node.id) as number,
         last: node.label === "throw" ? 2 : 0,
-        produces: node.outputs,
+        // A heap operation written inline (a spread) is done by the statement that writes it.
+        produces: [...node.outputs, ...inlined(node)],
         requires: needs(node),
         lines: () => statementsOf(node),
       });
@@ -1095,7 +1456,7 @@ function pyFunction(
         !done.has(i) &&
         item.requires.every((v) => {
           const p = producedBy.get(v);
-          return p === undefined || done.has(p);
+          return p === undefined || p === i || done.has(p);
         });
       const rank = Math.min(...items.filter(ready).map((item) => item.last));
       const next = items.findIndex((item, i) => ready(item, i) && item.last === rank);
@@ -1107,24 +1468,45 @@ function pyFunction(
   }
 
   const own = g.nodes
-    .filter((n) => n.kind === "param-source" && Number(n.label) >= bound.length)
-    .sort((a, b) => Number(a.label) - Number(b.label));
+    .filter((n) => n.kind === "param-source" && paramIndex(n.label) >= bound.length)
+    .sort((a, b) => paramIndex(a.label) - paramIndex(b.label));
+  // A rest parameter is the arguments from its place on, as a list: `*name`, made a list.
+  const rest = own.find((n) => isRestParam(n.label));
+  const plain = own.filter((n) => n !== rest);
+  const restName = rest !== undefined ? nameOf(rest.outputs[0] as ValueId) : undefined;
   const params = usesArguments
     ? ["*_args"]
     : // A JavaScript function ignores arguments past its parameters.
-      [...own.map((n) => `${nameOf(n.outputs[0] as ValueId)}=UNDEFINED`), "*_rest"];
+      [
+        ...plain.map((n) => `${nameOf(n.outputs[0] as ValueId)}=UNDEFINED`),
+        restName !== undefined ? `*${restName}` : "*_rest",
+      ];
   const bindings = usesArguments
     ? [
         "_arguments = list(_args)",
-        ...own.map(
+        ...plain.map(
           (n, i) =>
             `${nameOf(n.outputs[0] as ValueId)} = _args[${i}] if len(_args) > ${i} else UNDEFINED`,
         ),
+        ...(restName !== undefined ? [`${restName} = list(_args[${plain.length}:])`] : []),
       ]
-    : [];
-  const body = [...bindings, ...emitScope(undefined)];
+    : restName !== undefined
+      ? [`${restName} = list(${restName})`]
+      : [];
+  // A free or ambient name that nothing uses is still part of the atom: it is read on its own.
+  const used = new Set<ValueId>([...g.obs, ...branches.map((b) => b.cond)]);
+  for (const node of g.nodes) for (const v of node.inputs) used.add(v);
+  const unread = g.nodes
+    .filter((n) => n.kind === "diamond-source" && !used.has(n.outputs[0] as ValueId))
+    .map((n) => {
+      const d = n.diamond as { reason: string; symbol: string };
+      return d.reason === "platform-primitive"
+        ? `_platform(${JSON.stringify(d.symbol)})`
+        : `_unread(lambda: ${d.symbol})`;
+    });
+  const body = [...bindings, ...unread, ...emitScope(undefined)];
   const obs = g.obs[0];
-  if (obs !== undefined) body.push(`return ${ref(obs)}`);
-  else body.push("return UNDEFINED");
+  // No observation: the function computes nothing it returns (NONE, not an undefined returned).
+  body.push(obs !== undefined ? `return ${ref(obs)}` : "return NONE");
   return { params, body };
 }

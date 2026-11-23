@@ -58,6 +58,7 @@ import { sourceHash } from "../cache/key.js";
 import { STATIC_MODEL_TAG, STATIC_PROMPT_VERSION } from "../intent/constants.js";
 import type { IntentCard } from "../intent/types.js";
 import { maybePersistNovelGlueAtom } from "../persist/atom-persist.js";
+import { forestGateContext } from "../persist/duc-gate.js";
 import type { ShaveRegistryView } from "../types.js";
 import {
   collectForestSlicePlans,
@@ -225,10 +226,12 @@ describe("lodash/cloneDeep -- per-entry shave (WI-510 Slice 7)", () => {
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
         expect(plans.length).toBeGreaterThan(0);
         let persistedCount = 0;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 expect(await registry.getBlock(mr)).not.toBeNull();
@@ -337,10 +340,12 @@ describe("lodash/debounce -- per-entry shave (WI-510 Slice 7)", () => {
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
         expect(plans.length).toBeGreaterThan(0);
         let persistedCount = 0;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 expect(await registry.getBlock(mr)).not.toBeNull();
@@ -449,10 +454,12 @@ describe("lodash/throttle -- per-entry shave (WI-510 Slice 7)", () => {
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
         expect(plans.length).toBeGreaterThan(0);
         let persistedCount = 0;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 expect(await registry.getBlock(mr)).not.toBeNull();
@@ -561,10 +568,12 @@ describe("lodash/get -- per-entry shave (WI-510 Slice 7)", () => {
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
         expect(plans.length).toBeGreaterThan(0);
         let persistedCount = 0;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 expect(await registry.getBlock(mr)).not.toBeNull();
@@ -673,10 +682,12 @@ describe("lodash/set -- per-entry shave (WI-510 Slice 7)", () => {
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
         expect(plans.length).toBeGreaterThan(0);
         let persistedCount = 0;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 expect(await registry.getBlock(mr)).not.toBeNull();
@@ -785,10 +796,12 @@ describe("lodash/merge -- per-entry shave (WI-510 Slice 7)", () => {
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
         expect(plans.length).toBeGreaterThan(0);
         let persistedCount = 0;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 expect(await registry.getBlock(mr)).not.toBeNull();
@@ -822,7 +835,9 @@ describe("lodash/cloneDeep section F -- combinedScore quality gate (WI-510 Slice
           entryPath: join(LODASH_FIXTURE_ROOT, "cloneDeep.js"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue")
               await maybePersistNovelGlueAtom(
@@ -831,6 +846,7 @@ describe("lodash/cloneDeep section F -- combinedScore quality gate (WI-510 Slice
                   "Recursively deep-clone a JavaScript value including nested objects, arrays, dates, maps, sets, and symbols, returning a new value with no shared references",
                 ),
                 registry,
+                gate,
               );
           }
         }
@@ -869,7 +885,9 @@ describe("lodash/debounce section F -- combinedScore quality gate (WI-510 Slice 
           entryPath: join(LODASH_FIXTURE_ROOT, "debounce.js"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue")
               await maybePersistNovelGlueAtom(
@@ -878,6 +896,7 @@ describe("lodash/debounce section F -- combinedScore quality gate (WI-510 Slice 
                   "Create a debounced version of a function that delays execution until after a specified wait period of inactivity has elapsed since the last call",
                 ),
                 registry,
+                gate,
               );
           }
         }
@@ -916,7 +935,9 @@ describe("lodash/throttle section F -- combinedScore quality gate (WI-510 Slice 
           entryPath: join(LODASH_FIXTURE_ROOT, "throttle.js"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue")
               await maybePersistNovelGlueAtom(
@@ -925,6 +946,7 @@ describe("lodash/throttle section F -- combinedScore quality gate (WI-510 Slice 
                   "Create a throttled version of a function that limits invocation to at most once per specified time window",
                 ),
                 registry,
+                gate,
               );
           }
         }
@@ -963,7 +985,9 @@ describe("lodash/get section F -- combinedScore quality gate (WI-510 Slice 7)", 
           entryPath: join(LODASH_FIXTURE_ROOT, "get.js"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue")
               await maybePersistNovelGlueAtom(
@@ -972,6 +996,7 @@ describe("lodash/get section F -- combinedScore quality gate (WI-510 Slice 7)", 
                   "Safely read a nested property value from an object using a dotted-string or array path with a default fallback if the path resolves to undefined",
                 ),
                 registry,
+                gate,
               );
           }
         }
@@ -1008,7 +1033,9 @@ describe("lodash/set section F -- combinedScore quality gate (WI-510 Slice 7)", 
           entryPath: join(LODASH_FIXTURE_ROOT, "set.js"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue")
               await maybePersistNovelGlueAtom(
@@ -1017,6 +1044,7 @@ describe("lodash/set section F -- combinedScore quality gate (WI-510 Slice 7)", 
                   "Set a nested property value on an object at a dotted-string or array path, creating intermediate objects or arrays as needed",
                 ),
                 registry,
+                gate,
               );
           }
         }
@@ -1053,7 +1081,9 @@ describe("lodash/merge section F -- combinedScore quality gate (WI-510 Slice 7)"
           entryPath: join(LODASH_FIXTURE_ROOT, "merge.js"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue")
               await maybePersistNovelGlueAtom(
@@ -1062,6 +1092,7 @@ describe("lodash/merge section F -- combinedScore quality gate (WI-510 Slice 7)"
                   "Recursively merge own and inherited enumerable properties of source objects into a destination object, replacing arrays and plain objects deeply",
                 ),
                 registry,
+                gate,
               );
           }
         }
@@ -1205,10 +1236,16 @@ describe("lodash -- compound interaction: all 6 bindings (WI-510 Slice 7)", () =
           expect(plans.length).toBeGreaterThan(0);
 
           let persistedCount = 0;
-          for (const { slicePlan } of plans) {
+          for (const { filePath, slicePlan } of plans) {
+            // The gate is given what universalize gives it: the forest's names and the module's bindings.
+            const gate = forestGateContext(plans, filePath);
             for (const entry of slicePlan.entries) {
               if (entry.kind === "novel-glue") {
-                const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+                const mr = await maybePersistNovelGlueAtom(
+                  withStubIntentCard(entry),
+                  registry,
+                  gate,
+                );
                 if (mr !== undefined) persistedCount++;
               }
             }

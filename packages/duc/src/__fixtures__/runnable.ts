@@ -8,10 +8,14 @@ const RUNTIME = [
   "  try { try { return body(); } catch (thrown) { if (handler === undefined) throw thrown; return handler(thrown); } }",
   "  finally { if (finalizer !== undefined) { const done = finalizer(); if (Array.isArray(done) && done[0] === 1) return done; } }",
   "}",
+  "async function __yakccTryAsync(body, handler, finalizer) {",
+  "  try { try { return await body(); } catch (thrown) { if (handler === undefined) throw thrown; return await handler(thrown); } }",
+  "  finally { if (finalizer !== undefined) { const done = await finalizer(); if (Array.isArray(done) && done[0] === 1) return done; } }",
+  "}",
 ].join("\n");
 
 export function runnable(code: string): string {
   return code
-    .replace(/^import \{ __yakccTry \} from "@yakcc\/duc\/runtime";$/m, RUNTIME)
-    .replace("export function f", "function f");
+    .replace(/^import \{ [^}]* \} from "@yakcc\/duc\/runtime";$/m, RUNTIME)
+    .replace(/^export (async )?function(\*?) f/m, "$1function$2 f");
 }

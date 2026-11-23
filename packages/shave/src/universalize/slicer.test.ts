@@ -1026,7 +1026,7 @@ describe("slice glue-aware — GA-4: multi-glue file produces multiple GlueLeafE
    * A BranchNode with three AtomLeaf children: eval, with, eval again.
    * Expected: three GlueLeafEntries.
    */
-  it("three un-shaveable atoms → three GlueLeafEntries", async () => {
+  it("two un-shaveable atoms → two GlueLeafEntries; an `any`-typed one the graph lifts is an atom", async () => {
     const atom1 = makeAtom(EVAL_SOURCE, "hash-ga4-a", 0);
     const atom2 = makeAtom(WITH_SOURCE, "hash-ga4-b", EVAL_SOURCE.length);
     const atom3 = makeAtom(ANY_SOURCE, "hash-ga4-c", EVAL_SOURCE.length + WITH_SOURCE.length);
@@ -1036,12 +1036,11 @@ describe("slice glue-aware — GA-4: multi-glue file produces multiple GlueLeafE
 
     const plan = await slice(tree, emptyRegistry, { shaveMode: "glue-aware" });
 
+    // Types do not enter the graph, so `any` does not keep an atom out: the graph decides (#1281).
     const glueEntries = plan.entries.filter((e) => e.kind === "glue");
-    expect(glueEntries).toHaveLength(3);
-    expect(plan.sourceBytesByKind.glue).toBe(
-      EVAL_SOURCE.length + WITH_SOURCE.length + ANY_SOURCE.length,
-    );
-    expect(plan.sourceBytesByKind.novelGlue).toBe(0);
+    expect(glueEntries).toHaveLength(2);
+    expect(plan.sourceBytesByKind.glue).toBe(EVAL_SOURCE.length + WITH_SOURCE.length);
+    expect(plan.sourceBytesByKind.novelGlue).toBe(ANY_SOURCE.length);
   });
 
   it("mixed un-shaveable + shaveable → correct counts for each", async () => {

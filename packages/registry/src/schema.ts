@@ -176,7 +176,7 @@
  *   Migration is pure DDL (CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS);
  *   table starts empty. No backfill required. Closes #1087.
  */
-export const SCHEMA_VERSION = 17;
+export const SCHEMA_VERSION = 18;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -1588,7 +1588,28 @@ export function applyMigrations(db: MigrationsDb): void {
     for (const ddl of MIGRATION_17_DDL) db.exec(ddl);
     db.prepare("UPDATE schema_version SET version = ?").run(17);
   }
+
+  // Migration 17 → 18: graph search (#1280). duc_signatures holds each graph's retrieval signature
+  // and the vector embedded from it, keyed by graph identity. A plain table, not vec0: the search
+  // scans it with vec_distance_cosine, and the dimension column keeps vectors from a different
+  // embedding model out of a query. The signature text is kept so the vectors can be rebuilt.
+  //
+  // Pure DDL; no backfill. Graphs stored from now on with a signature are findable.
+  if (currentVersion < 18) {
+    for (const ddl of MIGRATION_18_DDL) db.exec(ddl);
+    db.prepare("UPDATE schema_version SET version = ?").run(18);
+  }
 }
+
+const MIGRATION_18_DDL: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS duc_signatures (
+    graph_identity TEXT    PRIMARY KEY REFERENCES duc_graphs(graph_identity),
+    signature      TEXT    NOT NULL,
+    dimension      INTEGER NOT NULL,
+    embedding      BLOB    NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_duc_signatures_dimension ON duc_signatures(dimension)",
+];
 
 const MIGRATION_17_DDL: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS duc_graphs (

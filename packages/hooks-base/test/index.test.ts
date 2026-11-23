@@ -391,6 +391,7 @@ describe("executeRegistryQuery — passthrough (error) path", () => {
       storeDucImplementation: registry.storeDucImplementation.bind(registry),
       getDucImplementation: registry.getDucImplementation.bind(registry),
       listDucImplementations: registry.listDucImplementations.bind(registry),
+      findDucGraphsBySignature: registry.findDucGraphsBySignature.bind(registry),
     };
 
     const ctx: EmissionContext = { intent: "some emission intent" };

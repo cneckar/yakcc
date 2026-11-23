@@ -121,3 +121,30 @@ export function guardedInfluence(
   }
   return result;
 }
+
+/**
+ * Control dependence (#1269, DEC-DUC-CONTROL-DEPENDENCE-001): a node inside a branch runs only when
+ * the branch's condition holds, so it depends on whatever reaches that condition, even when none of
+ * its own inputs does (`if (secret) sink("x")`). For every node under a branch whose condition
+ * `source` reaches, the conditions on its way down, outermost first. Like the guard labels, this
+ * annotates: it adds no edge to may-influence and removes none.
+ */
+export function controlInfluence(
+  graph: DucGraph,
+  source: ValueId,
+  blocked: (node: DucNode) => boolean = () => false,
+): ReadonlyMap<string, readonly ValueId[]> {
+  const flows = guardedFlows(graph, source, blocked);
+  const condOf = new Map((graph.branches ?? []).map((b) => [b.id, b.cond] as const));
+  const result = new Map<string, ValueId[]>();
+  for (const node of graph.nodes) {
+    if (node.region === undefined) continue;
+    const conds: ValueId[] = [];
+    for (const segment of node.region.split("/")) {
+      const cond = condOf.get(segment.replace(/\.[^.]*$/, ""));
+      if (cond !== undefined && flows.has(cond)) conds.push(cond);
+    }
+    if (conds.length > 0) result.set(node.id, conds);
+  }
+  return result;
+}

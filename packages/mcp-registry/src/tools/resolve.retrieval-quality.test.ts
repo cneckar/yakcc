@@ -36,9 +36,9 @@
  * Implements: yakcc#1006
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
-import { join, dirname, resolve } from "node:path";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -56,14 +56,21 @@ import { env as xenovaEnv } from "@xenova/transformers";
 
 // The workspace-root pnpm virtual store for @xenova/transformers contains the
 // pre-cached ONNX model. Point cacheDir there so the test is hermetic (no network).
-const __dirname_test = dirname(fileURLToPath(import.meta.url));
-// Walk up: src/tools → src → mcp-registry → packages → [worktree root] → [repo root]
-// from packages/mcp-registry/src/tools/ we go up 5 levels to get to the repo root
-const WORKSPACE_ROOT = resolve(__dirname_test, "../../../../../..");
-const XENOVA_CACHE_DIR = join(
-  WORKSPACE_ROOT,
-  "node_modules/.pnpm/@xenova+transformers@2.17.2/node_modules/@xenova/transformers/.cache",
-);
+// The store is found by walking up from this file: in a plain checkout it is at the repository
+// root (4 levels up), and in a git worktree at the root of the checkout that holds the worktree.
+const XENOVA_CACHE_SUBPATH =
+  "node_modules/.pnpm/@xenova+transformers@2.17.2/node_modules/@xenova/transformers/.cache";
+function findXenovaCacheDir(): string {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    const candidate = join(dir, XENOVA_CACHE_SUBPATH);
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) return candidate; // not found: offline mode reports the missing model
+    dir = parent;
+  }
+}
+const XENOVA_CACHE_DIR = findXenovaCacheDir();
 
 // Pin offline mode (B6 air-gap guarantee for tests too)
 xenovaEnv.allowRemoteModels = false;
@@ -74,18 +81,18 @@ xenovaEnv.cacheDir = XENOVA_CACHE_DIR;
 // ---------------------------------------------------------------------------
 
 import {
-  createLocalEmbeddingProvider,
-  blockMerkleRoot,
-  specHash,
-  canonicalize,
-  canonicalAstHash,
+  type CanonicalAstHash,
   type ProofManifest,
   type SpecYak,
-  type CanonicalAstHash,
+  blockMerkleRoot,
+  canonicalAstHash,
+  canonicalize,
+  createLocalEmbeddingProvider,
+  specHash,
 } from "@yakcc/contracts";
-import { openRegistry, type BlockTripletRow } from "@yakcc/registry";
-import { createResolveTool } from "./resolve.js";
+import { type BlockTripletRow, openRegistry } from "@yakcc/registry";
 import type { HttpClient } from "../http-client.js";
+import { createResolveTool } from "./resolve.js";
 
 // ---------------------------------------------------------------------------
 // Fixture helpers — minimal SpecYak and BlockTripletRow builders
@@ -230,124 +237,111 @@ afterAll(() => {
 // ---------------------------------------------------------------------------
 
 describe("yakcc_resolve retrieval quality — semantic provider (Xenova/bge-small-en-v1.5)", () => {
-  it(
-    "target atom is top-1 at score >= 0.85 with non-degenerate gap to runner-up",
-    async () => {
-      // Open registry with the SAME provider used during seeding (parity proof).
-      // A cross-provider mismatch would cause storage.ts:823 to throw 'cross_provider_rejected'.
-      const provider = createLocalEmbeddingProvider();
-      const fixtureRegistry = await openRegistry(registryPath, { embeddings: provider });
+  it("target atom is top-1 at score >= 0.85 with non-degenerate gap to runner-up", async () => {
+    // Open registry with the SAME provider used during seeding (parity proof).
+    // A cross-provider mismatch would cause storage.ts:823 to throw 'cross_provider_rejected'.
+    const provider = createLocalEmbeddingProvider();
+    const fixtureRegistry = await openRegistry(registryPath, { embeddings: provider });
 
-      // Drive the PRODUCTION handler path via createResolveTool with injected factory.
-      // This is the same interface production uses; we just supply the already-opened
-      // fixture registry instead of reading YAKCC_REGISTRY_PATH.
-      const tool = createResolveTool({
-        openRegistry: async () => fixtureRegistry,
-      });
+    // Drive the PRODUCTION handler path via createResolveTool with injected factory.
+    // This is the same interface production uses; we just supply the already-opened
+    // fixture registry instead of reading YAKCC_REGISTRY_PATH.
+    const tool = createResolveTool({
+      openRegistry: async () => fixtureRegistry,
+    });
 
-      // http stub that throws on any call — proves zero HTTP I/O on the resolve path.
-      const http: HttpClient = {
-        get: async () => {
-          throw new Error(
-            "[retrieval-quality] http.get must not be called — YAKCC_AIRGAPPED=1 set",
-          );
-        },
-        post: async () => {
-          throw new Error("[retrieval-quality] http.post must not be called");
-        },
-      } as unknown as HttpClient;
+    // http stub that throws on any call — proves zero HTTP I/O on the resolve path.
+    const http: HttpClient = {
+      get: async () => {
+        throw new Error("[retrieval-quality] http.get must not be called — YAKCC_AIRGAPPED=1 set");
+      },
+      post: async () => {
+        throw new Error("[retrieval-quality] http.post must not be called");
+      },
+    } as unknown as HttpClient;
 
-      // YAKCC_AIRGAPPED=1 suppresses the global HTTP cascade → proves zero network I/O.
-      const savedAirgap = process.env.YAKCC_AIRGAPPED;
-      process.env.YAKCC_AIRGAPPED = "1";
-      let result: Awaited<ReturnType<typeof tool.handler>>;
-      try {
-        result = await tool.handler(
-          {
-            intent: {
-              title: "compute SHA-256 hash of a string",
-              description: "hash a UTF-8 string using SHA-256 and return hex digest",
-            },
+    // YAKCC_AIRGAPPED=1 suppresses the global HTTP cascade → proves zero network I/O.
+    const savedAirgap = process.env.YAKCC_AIRGAPPED;
+    process.env.YAKCC_AIRGAPPED = "1";
+    let result: Awaited<ReturnType<typeof tool.handler>>;
+    try {
+      result = await tool.handler(
+        {
+          intent: {
+            title: "compute SHA-256 hash of a string",
+            description: "hash a UTF-8 string using SHA-256 and return hex digest",
           },
-          http,
-        );
-      } finally {
-        if (savedAirgap !== undefined) {
-          process.env.YAKCC_AIRGAPPED = savedAirgap;
-        } else {
-          process.env.YAKCC_AIRGAPPED = undefined;
-        }
-      }
-
-      await fixtureRegistry.close();
-
-      // --- Parse handler response ---
-      expect(result).toHaveLength(1);
-      const parsed = JSON.parse(result[0]!.text) as {
-        confidence_tier: string;
-        source: string;
-        candidates: Array<{ atom_id: string; score: number; source: string }>;
-        airgapped: boolean;
-      };
-
-      // Air-gap proof: handler returned local_only with airgapped=true
-      expect(parsed.airgapped).toBe(true);
-      expect(parsed.source).toBe("local_only");
-      expect(parsed.candidates.length).toBeGreaterThan(0);
-
-      const top1 = parsed.candidates[0]!;
-      const runner_up = parsed.candidates[1];
-
-      // --- Core retrieval quality assertion ---
-      const TARGET_ADDRESS = targetMerkleRoot.slice(0, 8);
-
-      // Log for evidence — visible in raw test output per contract requirements
-      const runnerUpScore = runner_up?.score ?? 0;
-      const gap = top1.score - runnerUpScore;
-      console.log(
-        `[retrieval-quality] top-1 atom_id=${top1.atom_id} score=${top1.score.toFixed(4)} ` +
-          `runner-up=${runnerUpScore.toFixed(4)} gap=${gap.toFixed(4)} ` +
-          `target=${TARGET_ADDRESS} modelId=${provider.modelId}`,
+        },
+        http,
       );
+    } finally {
+      if (savedAirgap !== undefined) {
+        process.env.YAKCC_AIRGAPPED = savedAirgap;
+      } else {
+        process.env.YAKCC_AIRGAPPED = undefined;
+      }
+    }
 
-      // The target atom (SHA-256 hashing) must be top-1 at score >= 0.85
-      expect(top1.atom_id).toBe(TARGET_ADDRESS);
-      expect(top1.score).toBeGreaterThanOrEqual(0.85);
+    await fixtureRegistry.close();
 
-      // Non-degenerate gap: top-1 must be meaningfully above runner-up
-      // (proves this is not a degenerate constant-vector scenario)
-      expect(gap).toBeGreaterThanOrEqual(0.05);
-    },
-    30_000,
-  );
+    // --- Parse handler response ---
+    expect(result).toHaveLength(1);
+    const parsed = JSON.parse(result[0]!.text) as {
+      confidence_tier: string;
+      source: string;
+      candidates: Array<{ atom_id: string; score: number; source: string }>;
+      airgapped: boolean;
+    };
 
-  it(
-    "provider parity: createLocalEmbeddingProvider modelId is Xenova/bge-small-en-v1.5 (DEC-MCP-RESOLVE-SEMANTIC-EMBED-001)",
-    async () => {
-      // Proves that the query provider matches the ingest provider schema.
-      // storage.ts:823 enforces cross-provider rejection; a mismatch would throw.
-      const provider = createLocalEmbeddingProvider();
-      expect(provider.modelId).toBe("Xenova/bge-small-en-v1.5");
+    // Air-gap proof: handler returned local_only with airgapped=true
+    expect(parsed.airgapped).toBe(true);
+    expect(parsed.source).toBe("local_only");
+    expect(parsed.candidates.length).toBeGreaterThan(0);
 
-      // Opening fixture with matching provider must succeed (no cross_provider_rejected throw)
-      const fixtureRegistry = await openRegistry(registryPath, { embeddings: provider });
-      // findCandidatesByQuery succeeds iff provider parity holds
-      await expect(
-        fixtureRegistry.findCandidatesByQuery({ behavior: "SHA256 hash" }),
-      ).resolves.not.toThrow();
-      await fixtureRegistry.close();
-    },
-    30_000,
-  );
+    const top1 = parsed.candidates[0]!;
+    const runner_up = parsed.candidates[1];
 
-  it(
-    "B6 offline proof: allowRemoteModels=false is set and model loads from local cache (no network)",
-    () => {
-      // This is a synchronous assertion proving that the env pin is in effect.
-      // The fact that the above tests succeed with allowRemoteModels=false proves
-      // the model was loaded from local cache only.
-      expect(xenovaEnv.allowRemoteModels).toBe(false);
-      expect(xenovaEnv.cacheDir).toBe(XENOVA_CACHE_DIR);
-    },
-  );
+    // --- Core retrieval quality assertion ---
+    const TARGET_ADDRESS = targetMerkleRoot.slice(0, 8);
+
+    // Log for evidence — visible in raw test output per contract requirements
+    const runnerUpScore = runner_up?.score ?? 0;
+    const gap = top1.score - runnerUpScore;
+    console.log(
+      `[retrieval-quality] top-1 atom_id=${top1.atom_id} score=${top1.score.toFixed(4)} ` +
+        `runner-up=${runnerUpScore.toFixed(4)} gap=${gap.toFixed(4)} ` +
+        `target=${TARGET_ADDRESS} modelId=${provider.modelId}`,
+    );
+
+    // The target atom (SHA-256 hashing) must be top-1 at score >= 0.85
+    expect(top1.atom_id).toBe(TARGET_ADDRESS);
+    expect(top1.score).toBeGreaterThanOrEqual(0.85);
+
+    // Non-degenerate gap: top-1 must be meaningfully above runner-up
+    // (proves this is not a degenerate constant-vector scenario)
+    expect(gap).toBeGreaterThanOrEqual(0.05);
+  }, 30_000);
+
+  it("provider parity: createLocalEmbeddingProvider modelId is Xenova/bge-small-en-v1.5 (DEC-MCP-RESOLVE-SEMANTIC-EMBED-001)", async () => {
+    // Proves that the query provider matches the ingest provider schema.
+    // storage.ts:823 enforces cross-provider rejection; a mismatch would throw.
+    const provider = createLocalEmbeddingProvider();
+    expect(provider.modelId).toBe("Xenova/bge-small-en-v1.5");
+
+    // Opening fixture with matching provider must succeed (no cross_provider_rejected throw)
+    const fixtureRegistry = await openRegistry(registryPath, { embeddings: provider });
+    // findCandidatesByQuery succeeds iff provider parity holds
+    await expect(
+      fixtureRegistry.findCandidatesByQuery({ behavior: "SHA256 hash" }),
+    ).resolves.not.toThrow();
+    await fixtureRegistry.close();
+  }, 30_000);
+
+  it("B6 offline proof: allowRemoteModels=false is set and model loads from local cache (no network)", () => {
+    // This is a synchronous assertion proving that the env pin is in effect.
+    // The fact that the above tests succeed with allowRemoteModels=false proves
+    // the model was loaded from local cache only.
+    expect(xenovaEnv.allowRemoteModels).toBe(false);
+    expect(xenovaEnv.cacheDir).toBe(XENOVA_CACHE_DIR);
+  });
 });

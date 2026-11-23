@@ -431,6 +431,9 @@ importers:
       '@yakcc/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@yakcc/duc':
+        specifier: workspace:*
+        version: link:../duc
       '@yakcc/registry':
         specifier: workspace:*
         version: link:../registry

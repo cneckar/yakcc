@@ -133,6 +133,7 @@ import { sourceHash } from "../cache/key.js";
 import { STATIC_MODEL_TAG, STATIC_PROMPT_VERSION } from "../intent/constants.js";
 import type { IntentCard } from "../intent/types.js";
 import { maybePersistNovelGlueAtom } from "../persist/atom-persist.js";
+import { forestGateContext } from "../persist/duc-gate.js";
 import type { ShaveRegistryView } from "../types.js";
 import {
   collectForestSlicePlans,
@@ -769,10 +770,12 @@ describe("zod/string-min -- v3/helpers/util.cjs working-helper atom (WI-510 Slic
         expect(plans.length).toBeGreaterThan(0);
         let persistedCount = 0;
         let entryAtomMerkleRoot: string | undefined;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 if (entryAtomMerkleRoot === undefined) entryAtomMerkleRoot = mr;
@@ -902,10 +905,12 @@ describe("zod/string-max -- v3/helpers/parseUtil.cjs working-helper atom (WI-510
         expect(plans.length).toBeGreaterThan(0);
         let persistedCount = 0;
         let entryAtomMerkleRoot: string | undefined;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 if (entryAtomMerkleRoot === undefined) entryAtomMerkleRoot = mr;
@@ -1022,10 +1027,12 @@ describe("zod/regex-match -- v3/helpers/errorUtil.cjs working-helper atom (WI-51
         expect(plans.length).toBeGreaterThan(0);
         let persistedCount = 0;
         let entryAtomMerkleRoot: string | undefined;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 if (entryAtomMerkleRoot === undefined) entryAtomMerkleRoot = mr;
@@ -1152,10 +1159,12 @@ describe("zod/number-int -- v3/ZodError.cjs working-helper atom (WI-510 Slice 8 
         expect(plans.length).toBeGreaterThan(0);
         let persistedCount = 0;
         let entryAtomMerkleRoot: string | undefined;
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue") {
-              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+              const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry, gate);
               if (mr !== undefined) {
                 persistedCount++;
                 if (entryAtomMerkleRoot === undefined) entryAtomMerkleRoot = mr;
@@ -1284,7 +1293,9 @@ describe("zod/string-min section F -- combinedScore quality gate (WI-510 Slice 8
           entryPath: join(ZOD_FIXTURE_ROOT, "v3", "helpers", "util.cjs"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue")
               await maybePersistNovelGlueAtom(
@@ -1293,6 +1304,7 @@ describe("zod/string-min section F -- combinedScore quality gate (WI-510 Slice 8
                   "Validate that a string has at least a specified minimum length using a chainable schema builder, producing a structured issue when the input is shorter than the minimum",
                 ),
                 registry,
+                gate,
               );
           }
         }
@@ -1341,7 +1353,9 @@ describe("zod/string-max section F -- combinedScore quality gate (WI-510 Slice 8
           entryPath: join(ZOD_FIXTURE_ROOT, "v3", "helpers", "parseUtil.cjs"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue")
               await maybePersistNovelGlueAtom(
@@ -1350,6 +1364,7 @@ describe("zod/string-max section F -- combinedScore quality gate (WI-510 Slice 8
                   "Validate that a string does not exceed a specified maximum length using a chainable schema builder, producing a structured issue when the input is longer than the maximum",
                 ),
                 registry,
+                gate,
               );
           }
         }
@@ -1394,7 +1409,9 @@ describe("zod/regex-match section F -- combinedScore quality gate (WI-510 Slice 
           entryPath: join(ZOD_FIXTURE_ROOT, "v3", "helpers", "errorUtil.cjs"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue")
               await maybePersistNovelGlueAtom(
@@ -1403,6 +1420,7 @@ describe("zod/regex-match section F -- combinedScore quality gate (WI-510 Slice 
                   "Validate that a string matches a regular expression pattern using a chainable schema builder, producing a structured issue with a custom error message when the input does not match",
                 ),
                 registry,
+                gate,
               );
           }
         }
@@ -1448,7 +1466,9 @@ describe("zod/number-int section F -- combinedScore quality gate (WI-510 Slice 8
           entryPath: join(ZOD_FIXTURE_ROOT, "v3", "ZodError.cjs"),
         });
         const plans = await collectForestSlicePlans(forest, slice, registry, "glue-aware");
-        for (const { slicePlan } of plans) {
+        for (const { filePath, slicePlan } of plans) {
+          // The gate is given what universalize gives it: the forest's names and the module's bindings.
+          const gate = forestGateContext(plans, filePath);
           for (const entry of slicePlan.entries) {
             if (entry.kind === "novel-glue")
               await maybePersistNovelGlueAtom(
@@ -1457,6 +1477,7 @@ describe("zod/number-int section F -- combinedScore quality gate (WI-510 Slice 8
                   "Validate that a number is an integer (no fractional component) using a chainable schema builder, producing a structured issue when the input is not an integer",
                 ),
                 registry,
+                gate,
               );
           }
         }
@@ -1510,7 +1531,7 @@ describe("zod/number-int section F -- combinedScore quality gate (WI-510 Slice 8
 // ===========================================================================
 describe("zod -- compound interaction: all 4 Group B bindings end-to-end (WI-510 Slice 8)", () => {
   it(
-    "all 4 Group B bindings resolve, slice, persist; produce distinct entryPaths and distinct atom merkle roots",
+    "all 4 Group B bindings resolve, slice, persist; produce distinct entryPaths, each persisting its atoms",
     // Sequential over 4 bindings: string-min ~11s + string-max ~23s + regex-match ~1.6s + number-int ~24s = ~60s.
     // 120_000ms gives ample headroom.
     { timeout: 120_000 },
@@ -1597,12 +1618,20 @@ describe("zod -- compound interaction: all 4 Group B bindings end-to-end (WI-510
 
           let persistedCount = 0;
           let firstMerkleRoot: string | undefined;
-          for (const { slicePlan } of plans) {
+          const bindingRoots = new Set<string>();
+          for (const { filePath, slicePlan } of plans) {
+            // The gate is given what universalize gives it: the forest's names and the module's bindings.
+            const gate = forestGateContext(plans, filePath);
             for (const entry of slicePlan.entries) {
               if (entry.kind === "novel-glue") {
-                const mr = await maybePersistNovelGlueAtom(withStubIntentCard(entry), registry);
+                const mr = await maybePersistNovelGlueAtom(
+                  withStubIntentCard(entry),
+                  registry,
+                  gate,
+                );
                 if (mr !== undefined) {
                   persistedCount++;
+                  bindingRoots.add(mr);
                   if (firstMerkleRoot === undefined) firstMerkleRoot = mr;
                 }
               }
@@ -1617,23 +1646,21 @@ describe("zod -- compound interaction: all 4 Group B bindings end-to-end (WI-510
           if (firstMerkleRoot !== undefined)
             expect(await registry.getBlock(firstMerkleRoot)).not.toBeNull();
 
-          if (firstMerkleRoot !== undefined) {
-            expect(
-              seenMerkleRoots.has(firstMerkleRoot),
-              `${b.name}: entry-atom merkle root must be distinct from previous bindings`,
-            ).toBe(false);
-            seenMerkleRoots.add(firstMerkleRoot);
-          }
+          // Atoms are content-addressed, and since the graph decides what is stored (#1281) every
+          // lifted statement of a module is one: bindings whose module sets overlap (number-int's
+          // two modules are among string-max's five) share their atoms. What each binding must
+          // have is its own entry path (above) and atoms of its own forest persisted.
+          expect(bindingRoots.size, `${b.name}: must persist its forest's atoms`).toBeGreaterThan(
+            0,
+          );
+          for (const root of bindingRoots) seenMerkleRoots.add(root);
         } finally {
           await registry.close();
         }
       }
 
       expect(seenEntryPaths.size, "all 4 Group B bindings must have distinct entryPaths").toBe(4);
-      expect(
-        seenMerkleRoots.size,
-        "all 4 Group B bindings must have distinct entry-atom merkle roots",
-      ).toBe(4);
+      expect(seenMerkleRoots.size, "the 4 bindings persist atoms").toBeGreaterThan(0);
     },
   );
 });

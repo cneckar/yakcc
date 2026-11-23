@@ -16,6 +16,94 @@ const regionOfCall = (src: string, callee: string): string | undefined => {
   return g.nodes.find((n) => n.label === "CallExpression" && n.inputs[0] === sym)?.region;
 };
 
+describe("conditions that assign, and postfix values (#1276)", () => {
+  const cases: [string, unknown[]][] = [
+    [
+      "export function f(xs: number[]) { const out = []; let r; let i = 0; while ((r = xs[i]) !== undefined) { out.push(r * 2); i = i + 1; } return [out, r]; }",
+      [[1, 2, 3]],
+    ],
+    [
+      "export function f(n: number) { let s = 0; let i = n; while (i--) { s = s + i; } return [s, i]; }",
+      [4],
+    ],
+    [
+      "export function f(n: number) { let i = -n; let c = 0; do { c = c + 1; } while (++i); return [c, i]; }",
+      [3],
+    ],
+    [
+      "export function f(xs: number[]) { let k = 0; for (let j = 0; (k = xs[j]) > 0; j++) {} return k; }",
+      [[3, 2, 0, 5]],
+    ],
+    [
+      "export function f(n: number) { let i = n; const a = i++; const b = i--; return [a, b, i]; }",
+      [5],
+    ],
+    [
+      "export function f(xs: number[], t: number) { let i = 0; let v; while ((v = xs[i++]) !== undefined) { if (v === t) return i; } return -1; }",
+      [[4, 5, 6], 5],
+    ],
+  ];
+  for (const [src, args] of cases) {
+    it(`computes what the source computes and lifts back the same: ${src.slice(22, 80)}`, () => {
+      const g = liftAtom(src);
+      const code = emitTypeScript(g);
+      const lifted = new Function(`${code.replace("export ", "")}; return f;`)() as (
+        ...a: unknown[]
+      ) => unknown;
+      const source = new Function(
+        `${src.replace("export ", "").replace(/: number(\[\])?/g, "")}; return f;`,
+      )() as (...a: unknown[]) => unknown;
+      expect(lifted(...structuredClone(args))).toEqual(source(...structuredClone(args)));
+      expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
+    });
+  }
+});
+
+describe("iterating over an existing name (#1276)", () => {
+  const cases: [string, unknown[]][] = [
+    [
+      "export function f(o: any) { let i; let n = 0; for (i in o) { n = n + o[i]; } return [n, i]; }",
+      [{ a: 1, b: 2 }],
+    ],
+    ['export function f(o: any) { let i = "none"; for (i in o) {} return i; }', [{}]],
+    [
+      "export function f(xs: number[]) { let x = -1; for (x of xs) { if (x > 2) break; } return x; }",
+      [[1, 3, 5]],
+    ],
+  ];
+  for (const [src, args] of cases) {
+    it(`assigns each element to the name, which the loop carries: ${src.slice(22, 70)}`, () => {
+      const g = liftAtom(src);
+      expect(g.nodes.some((n) => (n.label ?? "").includes("#"))).toBe(false);
+      const code = emitTypeScript(g);
+      const run = (text: string): unknown =>
+        (new Function(`${text}; return f;`)() as (...a: unknown[]) => unknown)(
+          ...structuredClone(args),
+        );
+      expect(run(code.replace("export ", ""))).toEqual(
+        run(src.replace("export ", "").replace(/: (any|number\[\])/g, "")),
+      );
+      expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
+    });
+  }
+});
+
+describe("delete (#1276)", () => {
+  it("delete is a heap operation on the object, its value delete's result, and lifts back the same", () => {
+    const src =
+      "export function f(o: any, k: string) { const had = delete o[k]; delete o.extra; return [had, Object.keys(o)]; }";
+    const g = liftAtom(src);
+    expect(g.nodes.some((n) => (n.label ?? "").startsWith("DeleteExpression#"))).toBe(false);
+    const code = emitTypeScript(g);
+    const run = new Function(`${code.replace("export ", "")}; return f;`)() as (
+      o: unknown,
+      k: string,
+    ) => unknown;
+    expect(run({ a: 1, b: 2, extra: 3 }, "a")).toEqual([true, ["b"]]);
+    expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
+  });
+});
+
 describe("exits (#1276)", () => {
   it("what follows a throw on some paths runs only on the other paths", () => {
     // The call is inside the branch's else side, not at the top level where it would always run.
@@ -230,11 +318,30 @@ describe("switch (#1276)", () => {
     expect(run("z", 5)).toBe(6);
   });
 
-  it("a clause that falls into the next stays opaque", () => {
+  it("a clause that falls into the next runs the next clause's statements too", () => {
     const g = liftAtom(
       src("let r = 0; switch (k) { case 'a': r = 1; case 'b': r = r + 1; break; } return r;"),
     );
-    expect(g.nodes.some((n) => n.label?.startsWith("SwitchStatement#"))).toBe(true);
+    expect(g.nodes.some((n) => n.label?.startsWith("SwitchStatement#"))).toBe(false);
+    const code = emitTypeScript(g);
+    const run = (k: string): unknown =>
+      new Function(`${code.replace("export ", "")}; return f(${JSON.stringify(k)}, 0);`)();
+    expect([run("a"), run("b"), run("z")]).toEqual([2, 1, 0]);
+  });
+
+  it("a switch with a continue inside (and so its loop), or clauses sharing a name, stays opaque", () => {
+    const opaque = (body: string): boolean =>
+      liftAtom(src(body)).nodes.some((n) =>
+        /^(SwitchStatement|ForOfStatement)#/.test(n.label ?? ""),
+      );
+    expect(
+      opaque(
+        "let r = 0; for (const c of [k]) { switch (c) { case 'a': if (x) continue; r = 1; case 'b': r = r + 2; } } return r;",
+      ),
+    ).toBe(true);
+    expect(
+      opaque("switch (k) { case 'a': const y = 1; case 'b': return y; default: return x; }"),
+    ).toBe(true);
   });
 });
 
@@ -359,4 +466,14 @@ describe("do loops (#1276)", () => {
       expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
     });
   }
+
+  describe("a block with a jump, and names elsewhere in the body (#1276)", () => {
+    it("a sibling block's own declaration, or a property name, does not keep the loop opaque", () => {
+      const g = liftAtom(
+        "export function f(xs: any[], o: any) { let n = 0; for (const x of xs) { if (x > 1) { const err = x * 2; if (err > 10) continue; n = n + err; } { const err = o.info; n = n + err; } } return n; }",
+      );
+      expect(g.nodes.some((n) => (n.label ?? "").includes("#"))).toBe(false);
+      expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+    });
+  });
 });

@@ -53,6 +53,7 @@ import type {
   CandidateMatch,
   CandidateNearMiss,
   DucImplementationRow,
+  DucSignatureMatch,
   FindCandidatesByQueryOptions,
   FindCandidatesByQueryResult,
   FindCandidatesOptions,
@@ -2180,6 +2181,9 @@ class SqliteRegistry implements Registry {
 
   async storeDucImplementation(row: DucImplementationRow): Promise<void> {
     const now = row.createdAt ?? Date.now();
+    // The signature's vector is computed before the transaction: embedding is asynchronous.
+    const signature = row.signature ?? null;
+    const vector = signature !== null ? await this.embeddings.embed(signature) : null;
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
@@ -2221,8 +2225,45 @@ class SqliteRegistry implements Registry {
           )
           .run(row.specHash, row.graphIdentity, Buffer.from(row.annotations));
       }
+      if (signature !== null && vector !== null) {
+        this.db
+          .prepare(
+            "INSERT OR REPLACE INTO duc_signatures(graph_identity, signature, dimension, embedding) VALUES (?, ?, ?, ?)",
+          )
+          .run(row.graphIdentity, signature, vector.length, serializeEmbedding(vector));
+      }
     });
     tx();
+  }
+
+  async findDucGraphsBySignature(
+    signature: string,
+    k: number,
+  ): Promise<readonly DucSignatureMatch[]> {
+    this.assertOpen();
+    if (!Number.isInteger(k) || k < 1) {
+      throw new Error(`findDucGraphsBySignature: k must be an integer >= 1, got ${k}`);
+    }
+    const query = await this.embeddings.embed(signature);
+    const rows = this.db
+      .prepare(
+        `SELECT graph_identity, vec_distance_cosine(embedding, ?) AS distance FROM duc_signatures
+         WHERE dimension = ? ORDER BY distance, graph_identity LIMIT ?`,
+      )
+      .all(serializeEmbedding(query), query.length, k) as {
+      graph_identity: string;
+      distance: number;
+    }[];
+    const specsOf = this.db.prepare(
+      "SELECT spec_hash FROM duc_implementations WHERE graph_identity = ? ORDER BY created_at, spec_hash",
+    );
+    return rows.map((r) => ({
+      graphIdentity: r.graph_identity,
+      distance: r.distance,
+      specHashes: (specsOf.all(r.graph_identity) as { spec_hash: string }[]).map(
+        (x) => x.spec_hash,
+      ),
+    }));
   }
 
   async getDucImplementation(
