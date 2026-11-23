@@ -138,4 +138,14 @@ export const EMIT_CASES: Case[] = [
       "export function f(o: { n: number }): number[] { const bump = (): number => { o.n = o.n + 1; return o.n; }; const a = o.n; const b = bump(); return [a, b, o.n]; }",
     args: [[{ n: 1 }], [{ n: -3 }]],
   },
+  // A name a closure rebinds is a cell the closure and its scope share (#1276).
+  {
+    name: "a counter a closure steps",
+    source:
+      "export function f(n: number, k: number): number { let count = 0; const tick = (): number => { count = count + k; return count; }; let i = 0; while (i < n) { tick(); i = i + 1; } return count; }",
+    args: [
+      [0, 2],
+      [3, 2],
+    ],
+  },
 ];

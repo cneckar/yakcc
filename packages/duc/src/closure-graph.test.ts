@@ -115,15 +115,30 @@ describe("captures that change (#1276)", () => {
     expect(closureNode(src)).toBeUndefined();
   });
 
-  it("a name reassigned inside another closure keeps it opaque", () => {
+  it("a name another closure rebinds is a cell both closures share", () => {
     const src =
-      "export function f(x: number) { const set = (v: number) => { x = v; }; const g = () => x; return [set, g]; }";
-    expect(
-      liftAtom(src)
-        .nodes.filter((n) => n.closure !== undefined && n.inputs.length > 0)
-        .every((n) => n.closure?.nodes.some((m) => m.kind === "param-source")),
-    ).toBe(true);
-    expect(liftAtom(src).nodes.some((n) => n.label?.startsWith("Closure#"))).toBe(true);
+      "export function f(x: number) { const set = (v: number) => { x = v; }; const get = () => x; set(x + 1); return get() * 10 + x; }";
+    const g = liftAtom(src);
+    expect(g.nodes.some((n) => n.label?.startsWith("Closure#"))).toBe(false);
+    expect(g.nodes.some((n) => n.label === 'object:["value"]')).toBe(true);
+    const code = emitTypeScript(g);
+    const run = new Function(`${code.replace("export ", "")}; return f;`)() as (
+      x: number,
+    ) => number;
+    expect(run(2)).toBe(33);
+    expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
+  });
+
+  it("a counter a closure steps is shared with its scope", () => {
+    const src =
+      "export function f(n: number) { let count = 0; const tick = () => { count++; return count; }; for (let i = 0; i < n; i++) tick(); return count; }";
+    const g = liftAtom(src);
+    const code = emitTypeScript(g);
+    const run = new Function(`${code.replace("export ", "")}; return f;`)() as (
+      n: number,
+    ) => number;
+    expect([run(0), run(4)]).toEqual([0, 4]);
+    expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
   });
 
   it("a member write to a captured object keeps the same object", () => {

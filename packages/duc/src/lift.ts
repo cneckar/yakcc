@@ -198,6 +198,12 @@ class Lifter {
   private readonly diamonds = new Map<string, ValueId>();
   private readonly obs: ValueId[] = [];
 
+  /**
+   * Names held in a cell (#1276): a closure rebinds them, so the closure and its scope share one
+   * binding. The name's value is a cell `{ value }`; a read is `.value`, a write `.value =`.
+   */
+  private readonly cells = new Set<string>();
+
   /** The heap token at the start: an operation after it alone needs no ordering edge. */
   private readonly heapStart: ValueId;
 
@@ -301,15 +307,16 @@ class Lifter {
     } else {
       // No single exported function: lift the top-level statements in one scope,
       // and treat every exported binding's final value as an observation.
+      for (const name of cellNames(file)) this.cells.add(name);
       this.liftStatements(file.getChildSyntaxListOrThrow().getChildren());
       for (const name of exportedBindingNames(file)) {
-        const value = this.env.get(name);
-        if (value !== undefined) this.obs.push(value);
+        if (this.env.has(name)) this.obs.push(this.resolveIdentifier(name));
       }
     }
   }
 
   private liftFunction(fn: FunctionLike, paramOffset = 0): void {
+    for (const name of cellNames(fn)) this.cells.add(name);
     for (const [index, param] of fn.getParameters().entries()) {
       const nameNode = param.getNameNode();
       const [value] = this.emit("param-source", [], 1, {
@@ -585,10 +592,12 @@ class Lifter {
     // A closure that rebinds a name outside itself needs a shared cell, which the graph does not
     // have. A write to a member of an outer object or of the receiver keeps the binding: it changes
     // the shared object, as a call that changes its argument does.
+    // A name in a cell is shared: the closure writes the cell it captures.
     const rebindsOutside = (t: Node): boolean => {
       if (Node.isPropertyAccessExpression(t) || Node.isElementAccessExpression(t)) return false;
-      if (Node.isIdentifier(t)) return !locals.has(t.getText());
-      return t.getDescendantsOfKind(SyntaxKind.Identifier).some((id) => !locals.has(id.getText()));
+      const outer = (name: string): boolean => !locals.has(name) && !this.cells.has(name);
+      if (Node.isIdentifier(t)) return outer(t.getText());
+      return t.getDescendantsOfKind(SyntaxKind.Identifier).some((id) => outer(id.getText()));
     };
     if (assignmentTargets(fn).some(rebindsOutside)) return undefined;
     const captures: string[] = [];
@@ -633,6 +642,8 @@ class Lifter {
       const base = baseIdentifierOfTarget(t);
       if (base === undefined || !captures.includes(base)) return false;
       if (!Node.isIdentifier(t)) return false;
+      // The closure holds the cell, which every write changes.
+      if (this.cells.has(base)) return false;
       const doneBefore =
         !Node.isFunctionDeclaration(fn) &&
         t.getEnd() <= fn.getStart() &&
@@ -644,12 +655,20 @@ class Lifter {
 
     let graph: DucGraph;
     try {
-      graph = new Lifter(this.ambient).liftClosureBody(fn, captures);
+      graph = new Lifter(this.ambient).liftClosureBody(
+        fn,
+        captures,
+        captures.filter((name) => this.cells.has(name)),
+      );
     } catch {
       return undefined;
     }
     const inputs = captures.map((name) =>
-      name === THIS ? this.thisValue() : this.resolveIdentifier(name),
+      name === THIS
+        ? this.thisValue()
+        : this.cells.has(name) && this.env.has(name)
+          ? this.throughLoop(this.env.get(name) as ValueId)
+          : this.resolveIdentifier(name),
     );
     const [value] = this.emit("op", inputs, 1, {
       origin: { kind: "Closure", text: truncate(selfName ?? fn.getText()) },
@@ -660,7 +679,13 @@ class Lifter {
   }
 
   /** The graph of a closure's body: its captures are its first parameters, then its own. */
-  liftClosureBody(fn: FunctionLike, captures: readonly string[]): DucGraph {
+  liftClosureBody(
+    fn: FunctionLike,
+    captures: readonly string[],
+    cellCaptures: readonly string[] = [],
+  ): DucGraph {
+    // A captured cell is the same cell inside: reads and writes go through it.
+    for (const name of cellCaptures) this.cells.add(name);
     captures.forEach((name, i) => {
       const [value] = this.emit("param-source", [], 1, {
         origin: { kind: "Capture", text: truncate(name) },
@@ -1418,7 +1443,17 @@ class Lifter {
    */
   private bindPattern(nameNode: Node, value: ValueId): void {
     if (Node.isIdentifier(nameNode)) {
-      this.env.set(nameNode.getText(), value);
+      const name = nameNode.getText();
+      if (this.cells.has(name)) {
+        // A name a closure rebinds is declared as a new cell holding its first value.
+        const [cell] = this.emit("op", [value], 1, {
+          origin: { kind: "ObjectLiteral", text: truncate(name) },
+          label: 'object:["value"]',
+        });
+        this.env.set(name, cell as ValueId);
+        return;
+      }
+      this.env.set(name, value);
       return;
     }
     const read = (label: string, inputs: ValueId[], text: string): ValueId =>
@@ -1700,7 +1735,8 @@ class Lifter {
       // ++/-- on a bound identifier reassigns it. No other unary operator does: `-x` leaves x as it is.
       const steps = token === "++" || token === "--";
       if (steps && Node.isIdentifier(operand) && this.env.has(operand.getText())) {
-        this.env.set(operand.getText(), out as ValueId);
+        if (this.cells.has(operand.getText())) this.writeCell(operand.getText(), out as ValueId);
+        else this.env.set(operand.getText(), out as ValueId);
       }
       return out as ValueId;
     }
@@ -2037,7 +2073,9 @@ class Lifter {
   /** Reassign an lvalue. Identifier -> rebind; member/element -> mutate base object. */
   private assignTo(lhs: Node, value: ValueId): void {
     if (Node.isIdentifier(lhs)) {
-      this.env.set(lhs.getText(), value);
+      if (this.cells.has(lhs.getText()) && this.env.has(lhs.getText()))
+        this.writeCell(lhs.getText(), value);
+      else this.env.set(lhs.getText(), value);
       return;
     }
     if (Node.isPropertyAccessExpression(lhs) || Node.isElementAccessExpression(lhs)) {
@@ -2058,13 +2096,29 @@ class Lifter {
     }
     // Destructuring / other lvalue: conservatively rebind every bound name inside.
     for (const name of patternNames(lhs)) {
-      if (this.env.has(name)) this.env.set(name, value);
+      if (this.cells.has(name) && this.env.has(name)) this.writeCell(name, value);
+      else if (this.env.has(name)) this.env.set(name, value);
     }
   }
 
   /** Resolve an identifier read to a value: bound name, import, ambient, or free. */
   private resolveIdentifier(name: string): ValueId {
-    return this.throughLoop(this.resolveName(name));
+    const bound = this.throughLoop(this.resolveName(name));
+    if (!this.cells.has(name) || !this.env.has(name)) return bound;
+    return this.emit("op", [bound], 1, {
+      origin: { kind: "PropertyAccess", text: truncate(name) },
+      label: ".value",
+    })[0] as ValueId;
+  }
+
+  /** Writes a cell's value: the cell after the write is the name's value. */
+  private writeCell(name: string, value: ValueId): void {
+    const cell = this.throughLoop(this.env.get(name) as ValueId);
+    const [written] = this.emit("op", [cell, value], 1, {
+      origin: { kind: "Write", text: truncate(name) },
+      label: ".value=",
+    });
+    this.env.set(name, written as ValueId);
   }
 
   private resolveName(name: string): ValueId {
@@ -2140,6 +2194,66 @@ function closureLocals(fn: Node): Set<string> {
     if (name !== undefined) locals.add(name);
   }
   return locals;
+}
+
+/**
+ * The names a scope declares that a closure inside it rebinds (#1276): they are held in cells. A name
+ * bound by a loop's header, or a `var` inside a loop, is left out: JavaScript gives the first a binding
+ * per iteration and the second one binding for all of them, and a cell made at the declaration is
+ * neither.
+ */
+function cellNames(scope: Node): Set<string> {
+  const nested = scope.getDescendants().filter((d) => isFunctionLikeNode(d));
+  if (nested.length === 0) return new Set();
+  const insideNested = (n: Node): boolean => {
+    for (const a of n.getAncestors()) {
+      if (a.compilerNode === scope.compilerNode) return false;
+      if (isFunctionLikeNode(a)) return true;
+    }
+    return false;
+  };
+  const inLoop = (n: Node): boolean => {
+    for (const a of n.getAncestors()) {
+      if (a.compilerNode === scope.compilerNode) return false;
+      if (isLoopStatement(a)) return true;
+    }
+    return false;
+  };
+  const declared = new Set<string>();
+  if (isFunctionLikeNode(scope))
+    for (const p of (scope as FunctionLike).getParameters())
+      for (const name of patternNames(p.getNameNode())) declared.add(name);
+  for (const decl of scope.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
+    if (insideNested(decl)) continue;
+    const list = decl.getParent();
+    const header = list?.getParent();
+    if (
+      header !== undefined &&
+      (Node.isForStatement(header) ||
+        Node.isForOfStatement(header) ||
+        Node.isForInStatement(header))
+    )
+      continue;
+    if (Node.isVariableDeclarationList(list) && list.getDeclarationKind() === "var" && inLoop(decl))
+      continue;
+    for (const name of patternNames(decl.getNameNode())) declared.add(name);
+  }
+  const out = new Set<string>();
+  for (const fn of nested) {
+    const locals = closureLocals(fn);
+    for (const t of assignmentTargets(fn)) {
+      const ids = Node.isIdentifier(t)
+        ? [t]
+        : Node.isPropertyAccessExpression(t) || Node.isElementAccessExpression(t)
+          ? []
+          : t.getDescendantsOfKind(SyntaxKind.Identifier);
+      for (const id of ids) {
+        const name = id.getText();
+        if (declared.has(name) && !locals.has(name)) out.add(name);
+      }
+    }
+  }
+  return out;
 }
 
 /** The targets of assignments, compound assignments and ++/-- in a subtree. */
