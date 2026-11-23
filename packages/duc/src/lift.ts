@@ -430,7 +430,12 @@ class Lifter {
         isLoopStatement(stmt) &&
         loopReturns(stmt)
       ) {
-        const flags = this.liftLoopWithExits(stmt);
+        // A condition that assigns is tested in the body, as liftLoop does.
+        const tested =
+          Node.isWhileStatement(stmt) || Node.isForStatement(stmt) || Node.isDoStatement(stmt)
+            ? this.testedInBody(stmt)
+            : undefined;
+        const flags = this.liftLoopWithExits(tested ?? stmt);
         if (flags !== undefined) {
           this.exitAfterLoop(flags.ret, flags.retv, full);
           return true;
@@ -750,14 +755,28 @@ class Lifter {
    * The receiver: inside an arrow it is the enclosing function's, a capture; otherwise the function's
    * own, an operation of the graph with no inputs.
    */
+  private receiver: ValueId | undefined;
+
+  /**
+   * The function's receiver. A captured one (an arrow's) is a name; otherwise it is one source of
+   * the graph, at its top level wherever it is first read, as a free name's source is: a read in a
+   * branch and one after it are the same value.
+   */
   private thisValue(): ValueId {
     if (this.env.has(THIS)) return this.resolveIdentifier(THIS);
-    const [value] = this.emit("op", [], 1, {
-      origin: { kind: "ThisKeyword", text: "this" },
-      label: "this",
-    });
-    this.env.set(THIS, value as ValueId);
-    return value as ValueId;
+    if (this.receiver === undefined) {
+      const saved = this.regionStack.splice(0);
+      try {
+        [this.receiver] = this.emit("op", [], 1, {
+          origin: { kind: "ThisKeyword", text: "this" },
+          label: "this",
+        }) as [ValueId];
+        this.topLevel.add(this.receiver);
+      } finally {
+        this.regionStack.push(...saved);
+      }
+    }
+    return this.throughLoop(this.receiver);
   }
 
   private liftClosure(
@@ -1144,6 +1163,18 @@ class Lifter {
       if (thenValue === undefined || elseValue === undefined) {
         throw new Error("internal: a total if has a side without a return");
       }
+      // A side that throws on every path returns nothing: the other side's return is the return,
+      // when it is visible after the if (made before it, or a constant); otherwise a select keeps it.
+      if (thenDead !== elseDead) {
+        const live = thenDead ? elseValue : thenValue;
+        const constant = this.nodes.some(
+          (n) => n.kind === "literal-source" && n.outputs[0] === live,
+        );
+        if (valueIndex(live) < sidesStart || constant) {
+          this.reportReturn(live);
+          return;
+        }
+      }
       const [returned] = this.emit("sel", [condValue, thenValue, elseValue], 1, {
         origin: { kind: "IfReturn" },
       });
@@ -1275,6 +1306,17 @@ class Lifter {
       | import("ts-morph").ForStatement
       | import("ts-morph").DoStatement,
   ): boolean {
+    // A lowering writes a condition it cannot put in the header as `while (true) { ..; if (!(c))
+    // break; .. }`: it is that loop's condition, computed at the top of its body (#1276).
+    const guard = whileGuard(node);
+    if (
+      guard !== undefined &&
+      [guard.cond, ...guard.prefix].every((n) => this.collectAssignedOuterNames(n).length === 0)
+    )
+      return this.liftLoopBody(node, [], guard);
+    // A condition that assigns is tested in the body, so its last assignment outlives the loop.
+    const tested = this.testedInBody(node);
+    if (tested !== undefined) return this.liftLoop(tested);
     if (hasJump(node)) {
       // A loop that only breaks and continues lifts here; one that returns needs the rest of the
       // function, and lifts from liftStatements.
@@ -1282,6 +1324,61 @@ class Lifter {
       return this.liftLoopWithExits(node) !== undefined;
     }
     return this.liftLoopBody(node);
+  }
+
+  private testedCount = 0;
+
+  /**
+   * A loop whose condition assigns a name, as one that tests it in its body (#1276):
+   * `while (C) B` is `while (true) { if (!(C)) break; B }`, `for (i; C; u) B` is
+   * `for (i; ; u) { if (!(C)) break; B }`, and `do B while (C)` is `do { B; if (!(C)) break; }
+   * while (true)`. The loop's results are its carried values when it stops, and a test in the body
+   * carries what the condition assigned on its last run. Undefined for any other loop, and for a do
+   * loop whose body continues (a continue there would skip the test).
+   */
+  private testedInBody(
+    node:
+      | import("ts-morph").WhileStatement
+      | import("ts-morph").ForStatement
+      | import("ts-morph").DoStatement,
+  ):
+    | import("ts-morph").WhileStatement
+    | import("ts-morph").ForStatement
+    | import("ts-morph").DoStatement
+    | undefined {
+    const cond = Node.isForStatement(node) ? node.getCondition() : node.getExpression();
+    if (cond === undefined || cond.getKind() === SyntaxKind.TrueKeyword) return undefined;
+    if (this.collectAssignedOuterNames(cond).length === 0) return undefined;
+    const body = node.getStatement();
+    const inner = Node.isBlock(body)
+      ? body
+          .getStatements()
+          .map((st) => st.getText())
+          .join("\n")
+      : body.getText();
+    const test = `if (!(${cond.getText()})) break;`;
+    let text: string;
+    if (Node.isWhileStatement(node)) text = `while (true) {\n${test}\n${inner}\n}`;
+    else if (Node.isForStatement(node)) {
+      const init = node.getInitializer()?.getText() ?? "";
+      const update = node.getIncrementor()?.getText() ?? "";
+      text = `for (${init}; ; ${update}) {\n${test}\n${inner}\n}`;
+    } else {
+      if (loopJumpsOf(node).some((j) => Node.isContinueStatement(j))) return undefined;
+      text = `do {\n${inner}\n${test}\n} while (true);`;
+    }
+    const n = this.testedCount++;
+    const file = node
+      .getSourceFile()
+      .getProject()
+      .createSourceFile(`__tested${n}_${node.getStart()}.ts`, `function __tested() {\n${text}\n}`, {
+        overwrite: true,
+      });
+    const loop = file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0];
+    return loop !== undefined &&
+      (Node.isWhileStatement(loop) || Node.isForStatement(loop) || Node.isDoStatement(loop))
+      ? loop
+      : undefined;
   }
 
   /**
@@ -1363,6 +1460,7 @@ class Lifter {
   private liftLoopBody(
     node: import("ts-morph").WhileStatement | import("ts-morph").ForStatement | Node,
     exitNames: readonly string[] = [],
+    guard?: WhileGuard,
   ): boolean {
     if (!(Node.isWhileStatement(node) || Node.isForStatement(node) || Node.isDoStatement(node)))
       return false;
@@ -1379,7 +1477,12 @@ class Lifter {
         })[0] as ValueId,
       );
     }
-    const cond = Node.isForStatement(node) ? node.getCondition() : node.getExpression();
+    const cond =
+      guard !== undefined
+        ? guard.cond
+        : Node.isForStatement(node)
+          ? node.getCondition()
+          : node.getExpression();
     const incrementor = Node.isForStatement(node) ? node.getIncrementor() : undefined;
     const body = node.getStatement();
 
@@ -1460,6 +1563,8 @@ class Lifter {
                 label: "!",
               })[0] as ValueId)
             : undefined;
+        // A guarded loop's condition needs the statements before its test.
+        if (guard !== undefined) this.liftStatements(guard.prefix);
         // The written condition: a do loop's first pass does not test it (`first || cond`, lazily).
         const condInert = cond === undefined || isInert(cond);
         const liftCond = (): ValueId => {
@@ -1506,7 +1611,8 @@ class Lifter {
                 label: "true",
               })[0] as ValueId));
         // The body ends on every path, so a continue, a break or a return ends only its own path.
-        if (Node.isBlock(body)) this.liftStatements(body.getStatements(), []);
+        if (guard !== undefined) this.liftStatements(guard.rest, []);
+        else if (Node.isBlock(body)) this.liftStatements(body.getStatements(), []);
         else this.liftStatement(body, []);
         // A body that throws on every path still may run no iterations.
         this.dead = false;
@@ -2015,6 +2121,18 @@ class Lifter {
       const value = this.liftExpr(operand);
       // The operator is structure: `-x` and `+x`, `++x` and `x++` are different operations.
       const token = ts.tokenToString(node.getOperatorToken()) ?? node.getKindName();
+      // `x++` and `x--` are worth the value before the step, as a number (#1276).
+      const parent = node.getParent();
+      const valueUsed =
+        Node.isPostfixUnaryExpression(node) &&
+        !Node.isExpressionStatement(parent) &&
+        !(Node.isForStatement(parent) && parent.getIncrementor() === node);
+      const before = valueUsed
+        ? (this.emit("op", [value], 1, {
+            origin: { kind: "PrefixUnaryExpression" },
+            label: "+",
+          })[0] as ValueId)
+        : undefined;
       const [out] = this.emit("op", [value], 1, {
         origin: { kind: node.getKindName() },
         label: Node.isPrefixUnaryExpression(node) ? token : `post${token}`,
@@ -2025,7 +2143,7 @@ class Lifter {
         if (this.cells.has(operand.getText())) this.writeCell(operand.getText(), out as ValueId);
         else this.env.set(operand.getText(), out as ValueId);
       }
-      return out as ValueId;
+      return before ?? (out as ValueId);
     }
     if (Node.isConditionalExpression(node)) {
       const cond = this.liftExpr(node.getCondition());
@@ -2892,8 +3010,11 @@ function findPrimaryFunction(file: Node): FunctionLike | undefined {
 function exportedBindingNames(file: Node): string[] {
   const sf = file as import("ts-morph").SourceFile;
   const names: string[] = [];
+  // `export const x`: in declaration order. (isExported() is also true for a name an export list
+  // exports, which comes in the list's order below.)
   for (const decl of sf.getVariableDeclarations()) {
-    if (decl.isExported()) names.push(...patternNames(decl.getNameNode()));
+    if (decl.getVariableStatement()?.hasExportKeyword() === true)
+      names.push(...patternNames(decl.getNameNode()));
   }
   // `export { a, b as c }` exports the file's own bindings a and b (#1276).
   for (const ex of sf.getExportDeclarations()) {
@@ -3111,6 +3232,50 @@ function isLoopStatement(n: Node): boolean {
     Node.isWhileStatement(n) ||
     Node.isDoStatement(n)
   );
+}
+
+interface WhileGuard {
+  /** The statements before the test: what the condition needs. */
+  readonly prefix: readonly Node[];
+  readonly cond: Node;
+  /** The statements after the test: the rest of the body. */
+  readonly rest: readonly Node[];
+}
+
+/**
+ * `while (true) { ...prefix; if (!(c)) break; ...rest }` whose only jump of its own is that break:
+ * how a lowering writes a condition it cannot put in the loop's header (#1276).
+ */
+function whileGuard(loop: Node): WhileGuard | undefined {
+  if (!Node.isWhileStatement(loop) || loop.getExpression().getKind() !== SyntaxKind.TrueKeyword)
+    return undefined;
+  const body = loop.getStatement();
+  if (!Node.isBlock(body)) return undefined;
+  const statements = body.getStatements();
+  const jumps = loopJumpsOf(loop);
+  if (jumps.length !== 1) return undefined;
+  const at = statements.findIndex((st) => {
+    if (!Node.isIfStatement(st) || st.getElseStatement() !== undefined) return false;
+    const then = st.getThenStatement();
+    const inner =
+      Node.isBlock(then) && then.getStatements().length === 1 ? then.getStatements()[0] : then;
+    return (
+      inner !== undefined &&
+      Node.isBreakStatement(inner) &&
+      inner.getLabel() === undefined &&
+      inner.compilerNode === jumps[0]?.compilerNode
+    );
+  });
+  if (at === -1) return undefined;
+  const test = (statements[at] as import("ts-morph").IfStatement).getExpression();
+  if (
+    !Node.isPrefixUnaryExpression(test) ||
+    test.getOperatorToken() !== SyntaxKind.ExclamationToken
+  )
+    return undefined;
+  let c: Node = test.getOperand();
+  while (Node.isParenthesizedExpression(c)) c = c.getExpression();
+  return { prefix: statements.slice(0, at), cond: c, rest: statements.slice(at + 1) };
 }
 
 /** Whether an iterating loop has a form the lifter expresses: not `for await`, one declared variable. */

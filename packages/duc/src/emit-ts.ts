@@ -97,7 +97,9 @@ export function emitTypeScript(g: DucGraph, signature?: EmitSignature): string {
     throw new EmitError(e instanceof Error ? e.message : String(e));
   }
   const imports = new Map<string, Set<string>>();
-  const { params, body } = emitFunction(g, "", [], imports);
+  // A file's graph that exports several values is a module: its statements, then its exports.
+  const asModule = g.obs.length > 1 && !g.nodes.some((n) => n.kind === "param-source");
+  const { params, body } = emitFunction(g, "", [], imports, asModule);
   const importLines = [...imports.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(
@@ -113,6 +115,7 @@ export function emitTypeScript(g: DucGraph, signature?: EmitSignature): string {
         });
   const result =
     signature?.output !== undefined ? `: ${typeToTypeScript(parseType(signature.output))}` : "";
+  if (asModule) return [...importLines, ...body, ""].join("\n");
   return [
     ...importLines,
     `export function f(${typed.join(", ")})${result} {`,
@@ -132,10 +135,11 @@ function emitFunction(
   prefix: string,
   bound: readonly string[],
   imports: Map<string, Set<string>>,
+  asModule = false,
 ): { params: string[]; body: string[] } {
   // The heap token orders the statements and is not written (#1285).
   const { graph: g, after } = loweringView(source);
-  if (g.obs.length > 1) throw new EmitError("more than one observation");
+  if (g.obs.length > 1 && !asModule) throw new EmitError("more than one observation");
 
   const branches = g.branches ?? [];
   const producer = new Map<ValueId, DucNode>();
@@ -183,6 +187,8 @@ function emitFunction(
   const inline = new Set<NodeId>();
   // Branches written as the `&&`, `||` or `?:` of the select that joins them.
   const lazyBranches = new Set<string>();
+  // Loops whose condition is written in the body: `while (true) { ..c..; if (!(c)) break; ... }`.
+  const guardLoops = new Set<NodeId>();
   // A class's members are written inside the class, not as statements of their own (#1276).
   const classMembers = new Set<NodeId>();
   for (const node of g.nodes) {
@@ -257,7 +263,18 @@ function emitFunction(
       }
       for (const input of p.inputs) mark(input, region);
     };
-    mark(rec.cond, body);
+    // A condition that cannot be written in the loop's header (it shares a value with the body,
+    // or assigns a name) is written at the top of the body, before `if (!(c)) break;` (#1276).
+    const inlineBefore = new Set(inline);
+    const lazyBefore = new Set(lazyBranches);
+    try {
+      mark(rec.cond, body);
+    } catch (e) {
+      if (!(e instanceof EmitError) || rec.iterate !== undefined) throw e;
+      for (const id of [...inline]) if (!inlineBefore.has(id)) inline.delete(id);
+      for (const id of [...lazyBranches]) if (!lazyBefore.has(id)) lazyBranches.delete(id);
+      guardLoops.add(loop.id);
+    }
   }
 
   /** A value as an expression: its name, or its inline expression. */
@@ -487,23 +504,35 @@ function emitFunction(
     const count = rec.carry.length;
     const carried = rec.carry.map((v) => nameOf(v));
     const before = carried.map((name, i) => `let ${name} = ${ref(loop.inputs[i] as ValueId)};`);
+    const guarded = guardLoops.has(loop.id);
     const header =
       rec.iterate !== undefined
         ? `for (const ${nameOf(rec.iterate.element)} ${rec.iterate.of === "values" ? "of" : "in"} ${ref(loop.inputs[count] as ValueId)}) {`
-        : `while (${ref(rec.cond as ValueId)}) {`;
+        : guarded
+          ? "while (true) {"
+          : `while (${ref(rec.cond as ValueId)}) {`;
     // An iterating loop's condition stops it before an element's body (#1276).
     const guard =
       rec.iterate !== undefined && rec.cond !== undefined
         ? [`if (!(${ref(rec.cond)})) break;`]
         : [];
-    const body = emitScope(bodyPathOf(loop));
+    // A condition written in the body: what it needs, then the test, then the rest (#1276).
+    const body = emitScope(
+      bodyPathOf(loop),
+      guarded
+        ? { cond: rec.cond as ValueId, line: `if (!(${ref(rec.cond as ValueId)})) break;` }
+        : undefined,
+    );
     const next = rec.next.map((v, i) => `${carried[i]} = ${ref(v)};`);
     const after = loop.outputs.map((v, i) => `const ${nameOf(v)} = ${carried[i]};`);
     return [...before, header, ...indent([...guard, ...body, ...next]), "}", ...after];
   };
 
   /** The statements of one scope, each after the values it needs. */
-  function emitScope(scope: string | undefined): string[] {
+  function emitScope(
+    scope: string | undefined,
+    guard?: { readonly cond: ValueId; readonly line: string },
+  ): string[] {
     interface Item {
       readonly first: number;
       /** 0 for a statement, 1 for a branch that may throw, 2 for a throw: each waits for the ones before. */
@@ -584,20 +613,40 @@ function emitFunction(
     for (const [i, item] of items.entries()) for (const v of item.produces) producedBy.set(v, i);
     const done = new Set<number>();
     const lines: string[] = [];
-    while (done.size < items.length) {
-      const ready = (item: Item, i: number): boolean =>
-        !done.has(i) &&
-        item.requires.every((v) => {
-          const p = producedBy.get(v);
-          return p === undefined || done.has(p);
-        });
-      // The earliest rank that has a ready item: a later rank waits while an earlier one can run.
-      const rank = Math.min(...items.filter(ready).map((item) => item.last));
-      const next = items.findIndex((item, i) => ready(item, i) && item.last === rank);
-      if (next === -1) throw new EmitError("the graph has a cycle");
-      done.add(next);
-      lines.push(...(items[next] as Item).lines());
+    // With a guard: first the items the condition needs (its cone), then the test, then the rest.
+    const cone = new Set<number>();
+    if (guard !== undefined) {
+      const visit = (v: ValueId): void => {
+        const i = producedBy.get(v);
+        if (i === undefined || cone.has(i)) return;
+        cone.add(i);
+        for (const r of (items[i] as Item).requires) visit(r);
+      };
+      visit(guard.cond);
     }
+    const schedule = (allowed: (i: number) => boolean): void => {
+      for (;;) {
+        const ready = (item: Item, i: number): boolean =>
+          allowed(i) &&
+          !done.has(i) &&
+          item.requires.every((v) => {
+            const p = producedBy.get(v);
+            return p === undefined || done.has(p);
+          });
+        if (!items.some(ready)) return;
+        // The earliest rank that has a ready item: a later rank waits while an earlier one can run.
+        const rank = Math.min(...items.filter(ready).map((item) => item.last));
+        const next = items.findIndex((item, i) => ready(item, i) && item.last === rank);
+        done.add(next);
+        lines.push(...(items[next] as Item).lines());
+      }
+    };
+    if (guard !== undefined) {
+      schedule((i) => cone.has(i));
+      lines.push(guard.line);
+    }
+    schedule(() => true);
+    if (done.size < items.length) throw new EmitError("the graph has a cycle");
     return lines;
   }
 
@@ -613,6 +662,17 @@ function emitFunction(
     .sort((a, b) => Number(a.label) - Number(b.label))
     .map((n) => nameOf(n.outputs[0] as ValueId));
   const body = [...unread, ...emitScope(undefined)];
+  if (asModule) {
+    // Each observation is exported, in order: a value written as a name, or a const holding it.
+    const names = g.obs.map((v, k) => {
+      const r = ref(v);
+      if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(r)) return r;
+      body.push(`const $out${k} = ${r};`);
+      return `$out${k}`;
+    });
+    body.push(`export { ${[...new Set(names)].join(", ")} };`);
+    return { params, body };
+  }
   const obs = g.obs[0];
   if (obs !== undefined) body.push(`return ${ref(obs)};`);
   return { params, body };

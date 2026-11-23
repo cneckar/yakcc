@@ -154,6 +154,12 @@ export const EMIT_CASES: Case[] = [
       "export function f(xs: number[]): number[] { let last = 0; const get = (): number => last; const out: number[] = []; for (const x of xs) { last = x; out.push(get()); } return out; }",
     args: [[[]], [[3, 1, 4]]],
   },
+  {
+    name: "a condition that assigns, and a postfix step's value",
+    source:
+      "export function f(xs: number[]): number[] { let i = 0; let v = 0; let n = 0; while ((v = xs[i++]) !== undefined) { n = n + v; } return [n, i, v === undefined ? -1 : v]; }",
+    args: [[[]], [[2, 3]]],
+  },
   // A try statement is a call of the try primitive over two closures (#1276).
   {
     name: "a try whose body returns, and a catch that reads what was thrown",

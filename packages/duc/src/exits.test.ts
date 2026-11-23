@@ -16,6 +16,49 @@ const regionOfCall = (src: string, callee: string): string | undefined => {
   return g.nodes.find((n) => n.label === "CallExpression" && n.inputs[0] === sym)?.region;
 };
 
+describe("conditions that assign, and postfix values (#1276)", () => {
+  const cases: [string, unknown[]][] = [
+    [
+      "export function f(xs: number[]) { const out = []; let r; let i = 0; while ((r = xs[i]) !== undefined) { out.push(r * 2); i = i + 1; } return [out, r]; }",
+      [[1, 2, 3]],
+    ],
+    [
+      "export function f(n: number) { let s = 0; let i = n; while (i--) { s = s + i; } return [s, i]; }",
+      [4],
+    ],
+    [
+      "export function f(n: number) { let i = -n; let c = 0; do { c = c + 1; } while (++i); return [c, i]; }",
+      [3],
+    ],
+    [
+      "export function f(xs: number[]) { let k = 0; for (let j = 0; (k = xs[j]) > 0; j++) {} return k; }",
+      [[3, 2, 0, 5]],
+    ],
+    [
+      "export function f(n: number) { let i = n; const a = i++; const b = i--; return [a, b, i]; }",
+      [5],
+    ],
+    [
+      "export function f(xs: number[], t: number) { let i = 0; let v; while ((v = xs[i++]) !== undefined) { if (v === t) return i; } return -1; }",
+      [[4, 5, 6], 5],
+    ],
+  ];
+  for (const [src, args] of cases) {
+    it(`computes what the source computes and lifts back the same: ${src.slice(22, 80)}`, () => {
+      const g = liftAtom(src);
+      const code = emitTypeScript(g);
+      const lifted = new Function(`${code.replace("export ", "")}; return f;`)() as (
+        ...a: unknown[]
+      ) => unknown;
+      const source = new Function(
+        `${src.replace("export ", "").replace(/: number(\[\])?/g, "")}; return f;`,
+      )() as (...a: unknown[]) => unknown;
+      expect(lifted(...structuredClone(args))).toEqual(source(...structuredClone(args)));
+      expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
+    });
+  }
+});
+
 describe("delete (#1276)", () => {
   it("delete is a heap operation on the object, its value delete's result, and lifts back the same", () => {
     const src =
