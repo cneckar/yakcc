@@ -1695,11 +1695,8 @@ class Lifter {
     const initializer = node.getInitializer();
     // `for (x in o)` with an existing x: each element is assigned to x, which the loop carries.
     const existing = Node.isIdentifier(initializer) ? initializer : undefined;
-    const decl = existing
-      ? undefined
-      : ((initializer as import("ts-morph").VariableDeclarationList).getDeclarations()[0] as import(
-          "ts-morph",
-        ).VariableDeclaration);
+    const list = existing ? undefined : (initializer as import("ts-morph").VariableDeclarationList);
+    const decl = list?.getDeclarations()[0];
     const declared = decl !== undefined ? patternNames(decl.getNameNode()) : [];
     const of: "values" | "keys" = Node.isForOfStatement(node) ? "values" : "keys";
     const body = node.getStatement();
