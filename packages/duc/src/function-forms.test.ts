@@ -284,11 +284,14 @@ describe("a try that yields, in a generator (#1330)", () => {
     });
   }
 
-  it("a try that yields and reads the receiver stays a summary", () => {
+  it("a try that yields and reads the receiver reads it through a name (#1330)", () => {
     const g = liftAtom(
       "export function f() { const o = { *g() { try { yield this.x; } finally {} }, x: 1 }; return [...o.g()]; }",
     );
-    expect(opaque(g).length).toBeGreaterThan(0);
+    expect(opaque(g)).toEqual([]);
+    expect(
+      (new Function(`${runnable(emitTypeScript(g))}; return f;`)() as () => unknown)(),
+    ).toEqual([1]);
   });
 });
 

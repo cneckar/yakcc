@@ -653,6 +653,20 @@ class Lifter {
 
   private liftFunction(fn: FunctionLike, paramOffset = 0): void {
     for (const name of cellNames(fn)) this.cells.add(name);
+    // A derived constructor with an arrow made before its `super(..)` that reads `this` when it
+    // runs (#1330): the receiver is a cell from the start, which the call writes.
+    if (
+      this.derived &&
+      Node.isConstructorDeclaration(fn) &&
+      (arrowReadsThisBeforeSuper(fn) || superInTry(fn))
+    ) {
+      this.cells.add(THIS);
+      const [cell] = this.emit("op", [this.undefinedValue()], 1, {
+        origin: { kind: "ObjectLiteral", text: "this" },
+        label: 'object:["value"]',
+      });
+      this.env.set(THIS, cell as ValueId);
+    }
     for (const [index, param] of fn.getParameters().entries()) {
       const nameNode = param.getNameNode();
       const [value] = this.emit("param-source", [], 1, {
@@ -1177,6 +1191,17 @@ class Lifter {
     );
     const completes = returns.length > 0 || leaves.length > 0;
     const full = t.getSourceFile().getFullText();
+    const n = this.tryCount++;
+    // A generator closure has its own receiver: the statement's is read through a name (#1330).
+    const owner = t.getAncestors().find((x) => isFunctionLikeNode(x));
+    const self = `$self${n}`;
+    const receivers = yields
+      ? parts.flatMap((part) =>
+          part
+            .getDescendantsOfKind(SyntaxKind.ThisKeyword)
+            .filter((k) => receiverOwner(k) === owner),
+        )
+      : [];
     const rewrite = (block: import("ts-morph").Block): string => {
       const start = block.getStart() + 1;
       const end = block.getEnd() - 1;
@@ -1187,6 +1212,9 @@ class Lifter {
         const value = expr === undefined ? "undefined" : `(${expr.getText()})`;
         edits.push({ from: r.getStart(), to: r.getEnd(), text: `return [1, ${value}];` });
       }
+      for (const k of receivers)
+        if (k.getStart() >= start && k.getEnd() <= end)
+          edits.push({ from: k.getStart(), to: k.getEnd(), text: self });
       // A break or continue of the loop around the statement is `[2]` or `[3]` (#1330).
       for (const j of leaves) {
         if (j.getStart() < start || j.getEnd() > end) continue;
@@ -1217,12 +1245,10 @@ class Lifter {
         text = `${text.slice(0, e.from - start)}${e.text}${text.slice(e.to - start)}`;
       return completes ? `${text}\nreturn [0];` : text;
     };
-    const n = this.tryCount++;
     const tmp = `$try${n}`;
     // A block that awaits is an async closure, and the call is of the async primitive, awaited. A
     // block that yields is a generator closure, and the call is of the generator primitive,
     // delegated to (#1330): next, throw and return reach the blocks as they reach the statement.
-    const owner = t.getAncestors().find((x) => isFunctionLikeNode(x));
     const ownerAsync =
       (Node.isFunctionDeclaration(owner) ||
         Node.isFunctionExpression(owner) ||
@@ -1253,9 +1279,12 @@ class Lifter {
         ? [`if (${tmp}[0] === 3) continue;`]
         : []),
     ];
+    const bindSelf = receivers.length > 0 ? `const ${self} = this;\n` : "";
     const source = completes
-      ? `${wrapper} {\n{\nconst ${tmp} = ${call};\n${after.join("\n")}\n}\n}`
-      : `${wrapper} {\n${call};\n}`;
+      ? `${wrapper} {\n{\n${bindSelf}const ${tmp} = ${call};\n${after.join("\n")}\n}\n}`
+      : receivers.length > 0
+        ? `${wrapper} {\n{\n${bindSelf}${call};\n}\n}`
+        : `${wrapper} {\n${call};\n}`;
     // The function's own names declared in the blocks are bound before the call, as JavaScript
     // hoists them; the closures assign them, so they are cells.
     for (const name of vars) {
@@ -1332,7 +1361,31 @@ class Lifter {
   private lowerSwitchAsPass(sw: import("ts-morph").SwitchStatement): Node | undefined {
     const clauses = sw.getCaseBlock().getClauses();
     const own = (n: Node): boolean => !isInsideNestedFunction(n, sw);
-    if (sw.getDescendantsOfKind(SyntaxKind.ContinueStatement).some(own)) return undefined;
+    // A `continue` of the loop around the switch (#1330): the pass sets a flag and leaves, and the
+    // loop continues after it. One inside a loop or a switch within this one is that statement's.
+    const nearestBreakable = (n: Node): Node | undefined =>
+      n
+        .getAncestors()
+        .find(
+          (a) =>
+            isLoopStatement(a) || Node.isSwitchStatement(a) || a.compilerNode === sw.compilerNode,
+        );
+    const loopInside = (c: Node): boolean => {
+      for (const a of c.getAncestors()) {
+        if (a.compilerNode === sw.compilerNode) return false;
+        if (isLoopStatement(a)) return true;
+      }
+      return false;
+    };
+    const continues = sw
+      .getDescendantsOfKind(SyntaxKind.ContinueStatement)
+      .filter((c) => own(c) && !loopInside(c));
+    if (
+      continues.some(
+        (c) => c.getLabel() !== undefined || nearestBreakable(c)?.compilerNode !== sw.compilerNode,
+      )
+    )
+      return undefined;
     if (
       sw
         .getDescendantsOfKind(SyntaxKind.BreakStatement)
@@ -1357,6 +1410,23 @@ class Lifter {
     const n = this.switchCount++;
     const tmp = `$switch${n}`;
     const at = `$at${n}`;
+    const cont = `$continue${n}`;
+    const continuing = new Set(continues.map((c) => c.compilerNode));
+    /** A clause's statement as written, with each of the switch's continues made the flag's. */
+    const textOf = (st: Node): string => {
+      let text = st.getText();
+      const inside = [
+        ...(Node.isContinueStatement(st) ? [st] : []),
+        ...st.getDescendantsOfKind(SyntaxKind.ContinueStatement),
+      ]
+        .filter((c) => continuing.has(c.compilerNode))
+        .sort((a, b) => b.getStart() - a.getStart());
+      for (const c of inside) {
+        const from = c.getStart() - st.getStart();
+        text = `${text.slice(0, from)}{ ${cont} = true; break; }${text.slice(c.getEnd() - st.getStart())}`;
+      }
+      return text;
+    };
     const end = clauses.length;
     const fallback = clauses.findIndex((c) => Node.isDefaultClause(c));
     let chain = String(fallback === -1 ? end : fallback);
@@ -1366,20 +1436,22 @@ class Lifter {
         chain = `${tmp} === (${c.getExpression().getText()}) ? ${i} : ${chain}`;
     }
     const bodies = clauses
-      .map(
-        (c, i) =>
-          `if (${at} <= ${i}) {\n${c
-            .getStatements()
-            .map((st) => st.getText())
-            .join("\n")}\n}`,
-      )
+      .map((c, i) => `if (${at} <= ${i}) {\n${c.getStatements().map(textOf).join("\n")}\n}`)
       .join("\n");
-    const source = `function __switch() {\n{\nconst ${tmp} = (${sw.getExpression().getText()});\nconst ${at} = ${chain};\ndo {\n${bodies}\n} while (false);\n}\n}`;
+    const before = continues.length > 0 ? `let ${cont} = false;\n` : "";
+    const after = continues.length > 0 ? `\nif (${cont}) continue;` : "";
+    const loop = continues.length > 0 ? "while (true) {\n" : "";
+    const source = `function __switch() {\n${loop}{\n${before}const ${tmp} = (${sw.getExpression().getText()});\nconst ${at} = ${chain};\ndo {\n${bodies}\n} while (false);${after}\n}\n${continues.length > 0 ? "}\n" : ""}}`;
     const file = sw
       .getSourceFile()
       .getProject()
       .createSourceFile(`__switchpass${n}_${sw.getStart()}.ts`, source, { overwrite: true });
-    return file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0];
+    const first = file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0];
+    // With a continue, the block sits in a loop of the synthetic function only so it parses: the
+    // block is what replaces the switch, inside the real loop, and its continue is that loop's.
+    return continues.length > 0
+      ? this.noteExits(first?.asKind(SyntaxKind.WhileStatement)?.getStatement())
+      : first;
   }
 
   /** Whether an `if` that exits on some paths can take `tail` onto its sides. */
@@ -1584,10 +1656,29 @@ class Lifter {
       // nested function, where it could run other than once.
       for (let p = statement?.getParent(); p !== undefined; p = p.getParent()) {
         if (p === fn) return true;
+        // In a try's block (#1330): the receiver is a cell, which the try's closure writes.
+        if (
+          Node.isTryStatement(p) &&
+          derived &&
+          k.getAncestors().some((a) => a.compilerNode === p.getTryBlock().compilerNode)
+        )
+          continue;
+        // In an arrow of the constructor: the arrow makes the receiver when it runs (#1330).
+        if (Node.isArrowFunction(p) && derived) continue;
         if (isFunctionLikeNode(p) || isLoopStatement(p) || Node.isTryStatement(p)) return false;
       }
-      return false;
+      // An arrow that makes the receiver: one in a derived constructor, or a try's block lowered,
+      // writing the receiver's cell (#1330).
+      return Node.isArrowFunction(fn) && (receiverCell || inDerivedConstructor);
     };
+    // The receiver of the constructor around, held in a cell this closure can write (#1330).
+    const receiverCell = Node.isArrowFunction(fn) && this.cells.has(THIS) && this.env.has(THIS);
+    const arrowOwner = Node.isArrowFunction(fn) ? receiverOwner(fn) : undefined;
+    const inDerivedConstructor =
+      arrowOwner !== undefined &&
+      Node.isConstructorDeclaration(arrowOwner) &&
+      (arrowOwner.getParent() as import("ts-morph").ClassDeclaration).getHeritageClauses().length >
+        0;
     // `super.name` (read or called) in a member of a derived class, or an arrow inside one: the
     // parent's member, with this function's receiver (#1294). A write through `super` is not.
     const superMember = (k: Node): boolean => {
@@ -1625,7 +1716,14 @@ class Lifter {
         cls.getHeritageClauses().some((h) => h.getToken() === SyntaxKind.ExtendsKeyword)
       );
     };
-    if (supers.length > 0 && !supers.every((k) => (derived && superStatement(k)) || superMember(k)))
+    if (
+      supers.length > 0 &&
+      !supers.every(
+        (k) =>
+          ((derived || receiverCell || inDerivedConstructor) && superStatement(k)) ||
+          superMember(k),
+      )
+    )
       return undefined;
     // `this` in an arrow is the enclosing receiver, captured like a name; in a function it is the
     // caller's receiver, so the closure is a `function` (#1276).
@@ -1633,6 +1731,8 @@ class Lifter {
       ...fn.getDescendantsOfKind(SyntaxKind.ThisKeyword),
       // `super.name` reads with the receiver: it uses `this` as much as `this.name` does.
       ...supers.filter(superMember),
+      // An arrow's `super(..)` writes the receiver's cell (#1330).
+      ...(receiverCell ? supers.filter((k) => !superMember(k)) : []),
     ].filter(
       (t) =>
         receiverOwner(t) === fn ||
@@ -1753,17 +1853,28 @@ class Lifter {
       !inLoop(fn, fnScope);
     // The closure holds the cell (or the binding), which every write changes.
     const shared = (name: string): boolean => this.cells.has(name) || this.bindings.has(name);
+    // A write to another binding of the same name (a parameter of another function, a block's own
+    // `let`) does not change the one the closure captures.
+    const sameBinding = (id: Node, name: string): boolean =>
+      bindingScope(id, name) === bindingScope(fn, name);
     const changesCapture = (t: Node): boolean => {
       // A destructuring assignment rebinds every name in it, under the same rules as a single
       // name: a shared one, or one rebound before the closure is made, does not change it (#1173).
       if (Node.isArrayLiteralExpression(t) || Node.isObjectLiteralExpression(t)) {
         return t
           .getDescendantsOfKind(SyntaxKind.Identifier)
-          .some((id) => captures.includes(id.getText()) && !shared(id.getText()) && !doneBefore(t));
+          .some(
+            (id) =>
+              captures.includes(id.getText()) &&
+              sameBinding(id, id.getText()) &&
+              !shared(id.getText()) &&
+              !doneBefore(t),
+          );
       }
       const base = baseIdentifierOfTarget(t);
       if (base === undefined || !captures.includes(base)) return false;
       if (!Node.isIdentifier(t)) return false;
+      if (!sameBinding(t, base)) return false;
       if (shared(base)) return false;
       if (perPass(t, base)) return false;
       return !doneBefore(t);
@@ -1818,7 +1929,9 @@ class Lifter {
     }
     const inputs = captures.map((name) =>
       name === THIS
-        ? this.thisValue()
+        ? this.cells.has(THIS) && this.env.has(THIS)
+          ? (this.env.get(THIS) as ValueId)
+          : this.thisValue()
         : name === ARGUMENTS
           ? this.argumentsValue()
           : this.bindings.has(name)
@@ -2732,7 +2845,12 @@ class Lifter {
         else if (existing !== undefined) this.assignTo(existing, element as ValueId);
         try {
           const statements = Node.isBlock(body) ? body.getStatements() : [body];
-          this.liftStatements(guard !== undefined ? statements.slice(1) : statements, []);
+          // The written guard, first, and again last when a lowering tests it after each pass too.
+          const trailing = guard !== undefined && trailingIterateGuard(node) !== undefined ? 1 : 0;
+          this.liftStatements(
+            guard !== undefined ? statements.slice(1, statements.length - trailing) : statements,
+            [],
+          );
         } finally {
           this.dead = false;
         }
@@ -3185,7 +3303,9 @@ class Lifter {
         label: "super",
         heap: true,
       });
-      this.env.set(THIS, made as ValueId);
+      // A receiver held in a cell (an arrow made before the call reads it) is written there (#1330).
+      if (this.cells.has(THIS) && this.env.has(THIS)) this.writeCell(THIS, made as ValueId);
+      else this.env.set(THIS, made as ValueId);
       return made as ValueId;
     }
     if (Node.isCallExpression(node) && !this.optional(node)) {
@@ -4011,6 +4131,16 @@ function declaredWithin(id: Node, fn: Node): boolean {
     if (p.compilerNode === fn.compilerNode) return false;
   }
   return false;
+}
+
+/**
+ * The scope whose binding of `name` a reference at `node` resolves to: the nearest enclosing scope
+ * (above `node` itself) that declares it, or undefined for a name no scope here declares.
+ */
+function bindingScope(node: Node, name: string): object | undefined {
+  for (let p: Node | undefined = node.getParent(); p !== undefined; p = p.getParent())
+    if (scopeNames(p).has(name)) return p.compilerNode;
+  return undefined;
 }
 
 /** Whether a scope strictly inside `top` (not `top` itself) declares the name `id` reads. */
@@ -4972,16 +5102,19 @@ function iterateGuard(loop: Node): Node | undefined {
   const body = loop.getStatement();
   if (!Node.isBlock(body)) return undefined;
   const first = body.getStatements()[0];
-  if (first === undefined || !Node.isIfStatement(first) || first.getElseStatement() !== undefined)
-    return undefined;
-  const then = first.getThenStatement();
-  const inner =
-    Node.isBlock(then) && then.getStatements().length === 1 ? then.getStatements()[0] : then;
-  if (inner === undefined || !Node.isBreakStatement(inner) || inner.getLabel() !== undefined)
-    return undefined;
+  const inner = guardBreak(first);
+  if (inner === undefined) return undefined;
+  // The guard, and the same guard again after the pass (emit-ts writes both, so a break leaves
+  // before the next element is pulled, #1330).
+  const last = trailingIterateGuard(loop);
   const jumps = loopJumpsOf(loop);
-  if (jumps.length !== 1 || jumps[0]?.compilerNode !== inner.compilerNode) return undefined;
-  const test = first.getExpression();
+  const expected = last !== undefined ? [inner, last] : [inner];
+  if (
+    jumps.length !== expected.length ||
+    jumps.some((j) => !expected.some((e) => e.compilerNode === j.compilerNode))
+  )
+    return undefined;
+  const test = (first as import("ts-morph").IfStatement).getExpression();
   if (
     !Node.isPrefixUnaryExpression(test) ||
     test.getOperatorToken() !== SyntaxKind.ExclamationToken
@@ -4990,6 +5123,65 @@ function iterateGuard(loop: Node): Node | undefined {
   let c: Node = test.getOperand();
   while (Node.isParenthesizedExpression(c)) c = c.getExpression();
   return c;
+}
+
+/** Whether a constructor's `super(..)` call is in a try statement's block. */
+function superInTry(ctor: Node): boolean {
+  return ctor
+    .getDescendantsOfKind(SyntaxKind.CallExpression)
+    .some(
+      (c) =>
+        Node.isSuperExpression(c.getExpression()) &&
+        receiverOwner(c) === ctor &&
+        c.getAncestors().some((a) => Node.isTryStatement(a) && !isInsideNestedFunction(a, ctor)),
+    );
+}
+
+/** Whether a constructor makes an arrow that reads `this` before its first `super(..)` call. */
+function arrowReadsThisBeforeSuper(ctor: Node): boolean {
+  const superCall = ctor
+    .getDescendantsOfKind(SyntaxKind.CallExpression)
+    .find((c) => Node.isSuperExpression(c.getExpression()) && receiverOwner(c) === ctor);
+  if (superCall === undefined) return false;
+  return ctor
+    .getDescendantsOfKind(SyntaxKind.ArrowFunction)
+    .some(
+      (arrow) =>
+        arrow.getStart() < superCall.getStart() &&
+        receiverOwner(arrow) === ctor &&
+        arrow.getDescendantsOfKind(SyntaxKind.ThisKeyword).some((t) => receiverOwner(t) === ctor),
+    );
+}
+
+/** For `if (..) break;` (or with the break in a block), the break; undefined for anything else. */
+function guardBreak(st: Node | undefined): Node | undefined {
+  if (st === undefined || !Node.isIfStatement(st) || st.getElseStatement() !== undefined)
+    return undefined;
+  const then = st.getThenStatement();
+  const inner =
+    Node.isBlock(then) && then.getStatements().length === 1 ? then.getStatements()[0] : then;
+  return inner !== undefined && Node.isBreakStatement(inner) && inner.getLabel() === undefined
+    ? inner
+    : undefined;
+}
+
+/**
+ * An iterating loop's last statement when it is the same `if (!(c)) break;` as its first: the
+ * written condition, tested again after the pass. Its break, or undefined.
+ */
+function trailingIterateGuard(loop: Node): Node | undefined {
+  const body = (loop as import("ts-morph").ForOfStatement).getStatement();
+  if (!Node.isBlock(body)) return undefined;
+  const statements = body.getStatements();
+  if (statements.length < 2) return undefined;
+  const first = statements[0] as Node;
+  const last = statements[statements.length - 1] as Node;
+  if (guardBreak(first) === undefined) return undefined;
+  const brk = guardBreak(last);
+  if (brk === undefined) return undefined;
+  const text = (st: Node): string =>
+    (st as import("ts-morph").IfStatement).getExpression().getText();
+  return text(first) === text(last) ? brk : undefined;
 }
 
 /** The jumps of a loop that leave it or end its iteration: its own breaks and continues, and its returns. */
@@ -5084,12 +5276,12 @@ function tryShape(t: import("ts-morph").TryStatement):
     }
     // A yield moves into a generator closure, delegated to with yield* (#1330); an await moves into
     // an async one. A generator closure is a function: it does not see the receiver or arguments.
+    // The receiver is passed in by name (lowerTry); `super` and `arguments` are not.
     if (part.getDescendantsOfKind(SyntaxKind.YieldExpression).some(own)) {
       if (!generator) return undefined;
-      const usesOwn = [
-        ...part.getDescendantsOfKind(SyntaxKind.ThisKeyword),
-        ...part.getDescendantsOfKind(SyntaxKind.SuperKeyword),
-      ].some((k) => receiverOwner(k) === owner);
+      const usesOwn = part
+        .getDescendantsOfKind(SyntaxKind.SuperKeyword)
+        .some((k) => receiverOwner(k) === owner);
       const readsArguments = part
         .getDescendantsOfKind(SyntaxKind.Identifier)
         .some((id) => id.getText() === "arguments" && receiverOwner(id) === owner);
@@ -5170,9 +5362,13 @@ function jumpsSupported(loop: Node): boolean {
       // A jump inside an inner loop, or a try or label of the body, is not one this lifts; nor
       // one inside a switch, unless it is a return and the switch is the chain of ifs it lowers to
       // (#1330): a return leaves the function wherever it is written.
+      // A continue in a switch nearest to it is the flag the switch's pass sets (#1330).
+      const switchContinue =
+        Node.isContinueStatement(j) && breakTarget(j)?.compilerNode === p.compilerNode;
       if (
         isLoopStatement(p) ||
         (Node.isSwitchStatement(p) &&
+          !switchContinue &&
           (switchArms(p) === undefined || !Node.isReturnStatement(j))) ||
         Node.isTryStatement(p) ||
         Node.isLabeledStatement(p)
