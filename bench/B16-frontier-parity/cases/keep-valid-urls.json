@@ -1,0 +1,245 @@
+{
+ "id": "keep-valid-urls",
+ "cases": [
+  {
+   "args": [
+    [
+     "http://example:443/a/b",
+     "ftp://exa mple.com/a/b",
+     "https://example.com:8080",
+     "ftp://exa mple.com:8080#frag",
+     "https://a-b.example.org:443/a/b"
+    ]
+   ],
+   "returns": [
+    "https://example.com:8080",
+    "https://a-b.example.org:443/a/b"
+   ]
+  },
+  {
+   "args": [
+    [
+     "ftp://exa mple.com:443",
+     "http://localhost/a/b",
+     "https://sub.example.co.uk/",
+     "ftp://example:443/p?q=1&r=2",
+     "https://example:443/"
+    ]
+   ],
+   "returns": [
+    "https://sub.example.co.uk/"
+   ]
+  },
+  {
+   "args": [
+    [
+     "exa mple.com:443",
+     "http://example/"
+    ]
+   ],
+   "returns": []
+  },
+  {
+   "args": [
+    [
+     "https://sub.example.co.uk:8080#frag",
+     "example:8080/p?q=1&r=2",
+     "http://a-b.example.org:8080/p?q=1&r=2"
+    ]
+   ],
+   "returns": [
+    "https://sub.example.co.uk:8080#frag",
+    "http://a-b.example.org:8080/p?q=1&r=2"
+   ]
+  },
+  {
+   "args": [
+    [
+     "https://example.com:443/",
+     "ftp://sub.example.co.uk#frag",
+     "https://sub.example.co.uk:8080/p?q=1&r=2"
+    ]
+   ],
+   "returns": [
+    "https://example.com:443/",
+    "https://sub.example.co.uk:8080/p?q=1&r=2"
+   ]
+  },
+  {
+   "args": [
+    [
+     "ftp://sub.example.co.uk:8080/",
+     "http://example/p?q=1&r=2",
+     "https://example.com",
+     "https://example.com:443"
+    ]
+   ],
+   "returns": [
+    "https://example.com",
+    "https://example.com:443"
+   ]
+  },
+  {
+   "args": [
+    [
+     "https://exa mple.com:8080/p?q=1&r=2",
+     "http://localhost:443"
+    ]
+   ],
+   "returns": []
+  },
+  {
+   "args": [
+    [
+     "https://example:8080/a/b",
+     "https://example.com:443/"
+    ]
+   ],
+   "returns": [
+    "https://example.com:443/"
+   ]
+  },
+  {
+   "args": [
+    [
+     "https://a-b.example.org/p?q=1&r=2",
+     "http://sub.example.co.uk:443",
+     "http://a-b.example.org:443#frag",
+     "https://sub.example.co.uk:8080/"
+    ]
+   ],
+   "returns": [
+    "https://a-b.example.org/p?q=1&r=2",
+    "http://sub.example.co.uk:443",
+    "http://a-b.example.org:443#frag",
+    "https://sub.example.co.uk:8080/"
+   ]
+  },
+  {
+   "args": [
+    [
+     "ftp://example:8080#frag",
+     "http://sub.example.co.uk/"
+    ]
+   ],
+   "returns": [
+    "http://sub.example.co.uk/"
+   ]
+  },
+  {
+   "args": [
+    [
+     "example:443/"
+    ]
+   ],
+   "returns": []
+  },
+  {
+   "args": [
+    [
+     "http://example/p?q=1&r=2",
+     "https://a-b.example.org:8080/a/b",
+     "exa mple.com#frag",
+     "https://localhost:8080/p?q=1&r=2"
+    ]
+   ],
+   "returns": [
+    "https://a-b.example.org:8080/a/b"
+   ]
+  },
+  {
+   "args": [
+    [
+     "http://a-b.example.org:443#frag"
+    ]
+   ],
+   "returns": [
+    "http://a-b.example.org:443#frag"
+   ]
+  },
+  {
+   "args": [
+    [
+     "localhost:443/p?q=1&r=2",
+     "http://sub.example.co.uk:443#frag",
+     "http://sub.example.co.uk/p?q=1&r=2"
+    ]
+   ],
+   "returns": [
+    "http://sub.example.co.uk:443#frag",
+    "http://sub.example.co.uk/p?q=1&r=2"
+   ]
+  },
+  {
+   "args": [
+    [
+     "https://example#frag",
+     "https://example/p?q=1&r=2",
+     "sub.example.co.uk/",
+     "ftp://exa mple.com"
+    ]
+   ],
+   "returns": []
+  },
+  {
+   "args": [
+    [
+     "localhost/a/b",
+     "http://localhost",
+     "https://localhost:8080/p?q=1&r=2",
+     "ftp://localhost:8080#frag"
+    ]
+   ],
+   "returns": []
+  },
+  {
+   "args": [
+    [
+     "https://localhost:8080/"
+    ]
+   ],
+   "returns": []
+  },
+  {
+   "args": [
+    [
+     "http://a-b.example.org:8080/p?q=1&r=2",
+     "exa mple.com:443/p?q=1&r=2",
+     "ftp://example.com:8080/p?q=1&r=2",
+     "https://sub.example.co.uk:8080/"
+    ]
+   ],
+   "returns": [
+    "http://a-b.example.org:8080/p?q=1&r=2",
+    "https://sub.example.co.uk:8080/"
+   ]
+  },
+  {
+   "args": [
+    [
+     "http://sub.example.co.uk#frag",
+     "https://a-b.example.org:8080/"
+    ]
+   ],
+   "returns": [
+    "http://sub.example.co.uk#frag",
+    "https://a-b.example.org:8080/"
+   ]
+  },
+  {
+   "args": [
+    [
+     "http://a-b.example.org:443#frag",
+     "https://sub.example.co.uk:443#frag",
+     "https://a-b.example.org:443",
+     "localhost:8080#frag"
+    ]
+   ],
+   "returns": [
+    "http://a-b.example.org:443#frag",
+    "https://sub.example.co.uk:443#frag",
+    "https://a-b.example.org:443"
+   ]
+  }
+ ]
+}

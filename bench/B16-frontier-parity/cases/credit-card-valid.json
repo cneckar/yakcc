@@ -1,0 +1,95 @@
+{
+ "id": "credit-card-valid",
+ "cases": [
+  {
+   "args": [
+    "4111111111111111"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "4111 1111 1111 1111"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "4111-1111-1111-1112"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "378282246310005"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "6011111111111117"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1234567812345670"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "5555555555554444"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2223003122003222"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "30569309025904"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "3530111333300000"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "4111111111111"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "6011111111111118"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "3530111333300004"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "4111111111111114"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "3530111333300002"
+   ],
+   "returns": false
+  }
+ ]
+}

@@ -1,0 +1,233 @@
+{
+ "id": "domain-name-valid",
+ "cases": [
+  {
+   "args": [
+    "example.com"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "sub.example.co.uk"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "localhost"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "-bad.com"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "a_b.com"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "example.com."
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "xn--bcher-kva.example"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "ex..com"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "123.com"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "example.c"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "example.123"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "bücher.de"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "zb___y_c.-"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "yz.0_y1.z9a-.cab0-0"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "01_y_."
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "xczac.._cca9.__-c9"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1a9_y..z1y0xcy-._0b-xxzz"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "-cx-cya9.__-z1z9.-yaz--0."
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "b.x-1a0by"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1x919.c-..0x_"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "10-9y1bb.bc"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1c_bb10a.b_a11za.z_xz1"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "y-cxzycz"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "zc-yx99-.b.9za0z"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "bbz_._0.-yxc"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "x.90c0z-c.y0.9cb"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    ".c"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "y.0-z.y-9zbx9"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    ".x"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "090bz_09."
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "91.1byz_y1_.1-0"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0c.bax.zz"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "--aax9-a.a_"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    ".-xc0"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "yz9a9x"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "xx--_cy9"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    ""
+   ],
+   "returns": false
+  }
+ ]
+}

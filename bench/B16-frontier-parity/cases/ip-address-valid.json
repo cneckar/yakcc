@@ -1,0 +1,271 @@
+{
+ "id": "ip-address-valid",
+ "cases": [
+  {
+   "args": [
+    "192.168.1.1"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "256.1.1.1"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "::1"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2001:db8::1",
+    6
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2001:db8::1",
+    4
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "::ffff:192.168.1.1"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "fe80::1%eth0"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "01.1.1.1"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1:2:3:4:5:6:7:8:9"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1::2::3"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0.0.0.0"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1:2:3:4:5:6:7::"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "::"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "12345::1"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "206.38.232"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    ":5d0::847::bb06"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    ":a:68:b:b:b"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "f:2:83:4:c3f"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    ":461"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "226.43.178.60.227"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "dc::1"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "45.67.123.193"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "86.292.154.117.245"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    ":f:4f:::"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "222.123.224.38.264"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "83.195.168.45.226"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "30.129.254.206"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "30.185.263"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "5acc:::21e5:"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    ":58:c1d:98"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "498:cd:f910:c4:3b51::"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    ":796b:1461:3ba:b34:45f:3:867:"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "290.122.181"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "ec:2f:7:036d:30::"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    ":c0f:f:72c"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "237.109.165"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    ":914:a520::7:4:916:9be3"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "9:3c43:::"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1:9f:d5b:5:8c:6b:2f:f:5b"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "268.208.286.23"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    ":d1c:f9:a11a:f:9c5b:53"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "36.189.286.167.145"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "274.265.42.220"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "273.260.161.49.98"
+   ],
+   "returns": false
+  }
+ ]
+}

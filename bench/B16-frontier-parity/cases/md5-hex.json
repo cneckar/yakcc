@@ -1,0 +1,167 @@
+{
+ "id": "md5-hex",
+ "cases": [
+  {
+   "args": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   ],
+   "returns": "ef1772b6dff9a122358552954ad0df65"
+  },
+  {
+   "args": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   ],
+   "returns": "3b0c8ac703f828b04c6c197006d17218"
+  },
+  {
+   "args": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   ],
+   "returns": "b06521f39153d618550606be297466d5"
+  },
+  {
+   "args": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   ],
+   "returns": "014842d480b571495a4a0363793f7367"
+  },
+  {
+   "args": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   ],
+   "returns": "c743a45e0d2e6a95cb859adae0248435"
+  },
+  {
+   "args": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   ],
+   "returns": "8a7bd0732ed6a28ce75f6dabc90e1613"
+  },
+  {
+   "args": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   ],
+   "returns": "5f61c0ccad4cac44c75ff505e1f1e537"
+  },
+  {
+   "args": [
+    "\n😀漢B1/\"C- 😀z-B-/\"1Bb"
+   ],
+   "returns": "0c846868ed290393671beda9434749b4"
+  },
+  {
+   "args": [
+    "a1b.b '😀'"
+   ],
+   "returns": "0165d9a339eb3a13e5bd4ac83afbcdc8"
+  },
+  {
+   "args": [
+    "9/Cx zy1C_éC~AzC\n漢1é9\"ab😀A漢-y.éa😀/-/x xxay漢\"/-b😀B9_éz.😀Cz'\nzy  - c'Bby  😀z-czby- .éxx漢😀~bc😀😀😀😀x''_c 1-z1.Cyxa.9x"
+   ],
+   "returns": "61a05344e25a990f7bbdbf8c6601acc0"
+  },
+  {
+   "args": [
+    "C91ayB'C漢9_ éé\n漢-__ .yyB\"_0-é\t_BzbéCb/ 9é \nx\tb😀'~z\n😀_a.é \tyac\n199B0.b"
+   ],
+   "returns": "cd34d8484d269d0eb787b3787186a058"
+  },
+  {
+   "args": [
+    "~ \ny.A/漢.\néB0\".~c/00 by9yx\"😀 \t\n910b😀Cc😀\tA😀b😀~/xc0 😀 yca漢 0é"
+   ],
+   "returns": "ae5ffff7fe267b5cbce04dae73d2212e"
+  },
+  {
+   "args": [
+    "\tB漢ay\nb😀y\n. x-A0~_😀xB0xCxcC1-_\nx.z"
+   ],
+   "returns": "a68c13cb81f6ce0eecd38e4252f98c67"
+  },
+  {
+   "args": [
+    "_\"x 'zb漢\n~C\"/y-😀\".漢11 \"bA_-😀b~C漢~ -.- C漢~0~😀 cB漢é😀 c9漢axa'\nCby0y/\n\n1c漢漢c.😀zB'/"
+   ],
+   "returns": "019b526094696c78fda22d015f6339c7"
+  },
+  {
+   "args": [
+    "_zz.xx~x\"~\t B_ \ty\n~C\né漢'\"-\"CB1 .'0c yz-.c\n\"cCy1.By9'AA _-_/a '//y漢"
+   ],
+   "returns": "428d97f90b04999d50a9a909b0577648"
+  },
+  {
+   "args": [
+    "😀9-x.x\"😀\"éc /-A9b\ty_x-\t\t\té c/a\t\"C9éé1yy é.\"_C\t./'0\nBC.9\nabc'漢😀1c0bC19aé.. xB😀\"-漢/\nBzCb"
+   ],
+   "returns": "028f04516df92f429a70361ee05ebd5d"
+  },
+  {
+   "args": [
+    "' -éAxc_z0bz B/\n  _éa漢00 B漢C_1/b0Cza'\n9B_._ B '/漢~'/b~'b00C'yxA a \"\t. é/AAxA \n1c\"y\n/B_漢~cz-_b0\"a\n \n 1_x'x./"
+   ],
+   "returns": "4d66d5ec62ad9a803fb9f96ddb5ea9aa"
+  },
+  {
+   "args": [
+    "Bz/ Aa_bazb😀zé~yAaz0\tcxA\n\" "
+   ],
+   "returns": "067fbbdbe327cf0b444a66e2dabcbd31"
+  },
+  {
+   "args": [
+    "~aac\n_-~_ -~_漢béy~CCé/'c 😀 B~az😀\nB_0a.\tAAb~'漢\n.~😀~a_'\".1\t aé/é\"\"\"B 0漢0.~\"1Cy'c\"0~~\"aa/0C c.é'cy \"0AcAé😀\n9"
+   ],
+   "returns": "8173733f2ce47304ad9c95ba690d7e6c"
+  },
+  {
+   "args": [
+    "zx9B 0Ba漢漢'bb~ 漢/ a~\"yCcz\t9~  Cb  9é'//0x\".yé😀a\n.B9czAx AB-\"'😀é'B\t~😀 \téC\"😀 z0  z./9y漢B\"z/CCéba- 😀céyC."
+   ],
+   "returns": "55015770ff6c0876bbad50b36dc04798"
+  },
+  {
+   "args": [
+    "CyCB-漢😀0'.x\ta_-Bx /\t _-\"b~CéA~Cc/\n0漢_"
+   ],
+   "returns": "5963bc428beefc13bdb324bebc7743e3"
+  },
+  {
+   "args": [
+    "é'x~\"-9b\n\nyaa漢0199_c\na1.\tb-漢\"y\"9\"'9cy-😀B\"b1\n漢\nx'ba /zx 漢\tb \"0zb~z'b\n-Ab\t0aCbz漢-漢yé"
+   ],
+   "returns": "2d2c7e36e1e8eac754be3d22aea0c25f"
+  },
+  {
+   "args": [
+    ".'--_'9\t-c/😀-1acc~\n\t~/z~.A1z\n09x~y-/Cc c1a\n'-'\na1😀~0\t\t C.'\"_bx\"bé~.bc\ty😀b1 B\"\"\n~😀é9czyCc..~ z漢.z漢\n~Aa-CxxaxxA/B"
+   ],
+   "returns": "73d601aca52c93b372005982360e285a"
+  },
+  {
+   "args": [
+    "~9A\t\t1x0😀b /09/B9/_'C_B/😀-😀éba1.9\"-b-漢~漢c ~.\"az'_\t9é//yxéy\"/bC0/ \téx~/0😀 "
+   ],
+   "returns": "c634ed443c6330a007117926622c1236"
+  },
+  {
+   "args": [
+    "\t\n😀_y9/~cAx./By0éa- ~xb\"1az1xxC é\n 😀z0.Ba/C y\"\"\té\"ybz1~ b-😀xBB1._\t\n"
+   ],
+   "returns": "9de7a692389a679f2e53d2f047b0e556"
+  },
+  {
+   "args": [
+    "é  C9/1/漢\n\ty0~_1\t\t 9/c1-😀\n\"😀😀\"'\téz9. B\"C\néyBB\"A'b-~ \tB漢y--zB\t/\n  éB.01A~ -a漢\n . éz\n-zza0 漢\"b~cB/.--\n/BAC\taAy\n.'9\t 0\t\"// _a1 '"
+   ],
+   "returns": "99383066a0294dacbbbfa5753b803178"
+  },
+  {
+   "args": [
+    ""
+   ],
+   "returns": "d41d8cd98f00b204e9800998ecf8427e"
+  }
+ ]
+}
