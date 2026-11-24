@@ -42,8 +42,11 @@ const ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   ...DYNAMIC_ATOMS,
 };
 
-/** A value's wasm type: a number, a boolean, a string, an array of numbers. */
-type WT = "f64" | "i32" | "str" | "nums";
+/**
+ * A value's wasm type: a number, a boolean, a string, an array of numbers, or a value of any of
+ * these kinds or undefined or null (`any`, an `anyref`: see BASE_TYPES).
+ */
+type WT = "f64" | "i32" | "str" | "nums" | "any";
 
 export interface WasmGcModule {
   readonly bytes: Uint8Array;
@@ -114,17 +117,31 @@ const section = (id: number, body: number[]): number[] => [id, ...u32(body.lengt
 const STR = 0;
 const F64S = 1;
 const NUMS = 2;
+/**
+ * A value of any kind is an `anyref`: a number is a box (type 3, a struct of one f64), a boolean is
+ * the i31 0 or 1, undefined is the i31 2, null is the null reference, and a string or an array is
+ * itself. `__ykTag` tells them apart.
+ */
+const BOX = 3;
 const BASE_TYPES: number[][] = [
   [0x5e, 0x77, 0x01],
   [0x5e, 0x7c, 0x01],
   [0x5f, 0x02, 0x7f, 0x01, 0x63, F64S, 0x01],
+  [0x5f, 0x01, 0x7c, 0x00],
 ];
+/** Abstract heap types. */
+const HT_I31 = 0x6c;
+const HT_EQ = 0x6d;
+const HT_ANY = 0x6e;
 const VAL: Record<WT, number[]> = {
   f64: [0x7c],
   i32: [0x7f],
   str: [0x63, STR],
   nums: [0x63, NUMS],
+  any: [0x63, HT_ANY],
 };
+/** The i31 that is undefined. */
+const UNDEFINED_I31 = 2;
 
 const I = {
   get: 0x20,
@@ -186,6 +203,15 @@ const GC = {
   numsData: [0xfb, 0x02, NUMS, 0x01],
   numsSetLen: [0xfb, 0x05, NUMS, 0x00],
   numsSetData: [0xfb, 0x05, NUMS, 0x01],
+  boxNew: [0xfb, 0x00, BOX],
+  boxGet: [0xfb, 0x02, BOX, 0x00],
+  refI31: [0xfb, 0x1c],
+  i31GetS: [0xfb, 0x1d],
+  refTest: (ht: number) => [0xfb, 0x14, ht],
+  refCast: (ht: number) => [0xfb, 0x16, ht],
+  refCastNull: (ht: number) => [0xfb, 0x17, ht],
+  refNullAny: [0xd0, HT_ANY],
+  refIsNull: [0xd1],
 };
 
 const NATIVE_MATH: Readonly<Record<string, number>> = {
@@ -237,6 +263,14 @@ const PRIMITIVES: Readonly<Record<string, { params: WT[]; result: WT }>> = {
   __ykF64Lo: { params: ["f64"], result: "f64" },
   // 2^e, exact over the whole range of doubles (0 below the least subnormal, Infinity above).
   __ykPow2: { params: ["f64"], result: "f64" },
+  // A value of any kind: its kind (0 undefined, 1 null, 2 boolean, 3 number, 4 string, 5 array of
+  // numbers), the value read as one kind, and reference equality.
+  __ykTag: { params: ["any"], result: "f64" },
+  __ykNum: { params: ["any"], result: "f64" },
+  __ykBool: { params: ["any"], result: "i32" },
+  __ykStr: { params: ["any"], result: "str" },
+  __ykArr: { params: ["any"], result: "nums" },
+  __ykSame: { params: ["any", "any"], result: "i32" },
 };
 
 /** The array operations, written directly: what an array of numbers is made of. */
@@ -245,6 +279,24 @@ const ARRAY_PRIMITIVES: Readonly<Record<string, { params: WT[]; result: WT }>> =
   numsPop: { params: ["nums"], result: "f64" },
   numsGet: { params: ["nums", "f64"], result: "f64" },
   numsSet: { params: ["nums", "f64", "f64"], result: "nums" },
+  // A program's element read: the element, or undefined at an index that is not one.
+  numsAt: { params: ["nums", "f64"], result: "any" },
+};
+
+/** What crosses the boundary: values made and read from JavaScript (`instantiateWasmGc`). */
+const MARSHAL: Readonly<Record<string, { params: WT[]; result: WT | undefined }>> = {
+  strNew: { params: ["i32"], result: "str" },
+  strSet: { params: ["str", "i32", "i32"], result: undefined },
+  strLen: { params: ["str"], result: "i32" },
+  strGet: { params: ["str", "i32"], result: "i32" },
+  numsNew: { params: ["i32"], result: "nums" },
+  numsSetAt: { params: ["nums", "i32", "f64"], result: undefined },
+  numsLen: { params: ["nums"], result: "i32" },
+  numsGetAt: { params: ["nums", "i32"], result: "f64" },
+  mkNum: { params: ["f64"], result: "any" },
+  mkBool: { params: ["i32"], result: "any" },
+  mkUndef: { params: [], result: "any" },
+  mkNull: { params: [], result: "any" },
 };
 
 /**
@@ -704,6 +756,137 @@ function primitiveBody(key: string): { locals: number[][]; code: Tok[] } {
         ],
       };
     }
+    case "__ykTag":
+      // null 1; an i31: 2 (a boolean) for 0 and 1, 0 for undefined; a box 3; a string 4; else 5.
+      return {
+        locals: [],
+        code: [
+          ...get(0),
+          ...GC.refIsNull,
+          I.if,
+          0x7c,
+          I.f64const,
+          ...f64(1),
+          I.else,
+          ...get(0),
+          ...GC.refTest(HT_I31),
+          I.if,
+          0x7c,
+          ...get(0),
+          ...GC.refCast(HT_I31),
+          ...GC.i31GetS,
+          I.i32const,
+          UNDEFINED_I31,
+          I.i32eq,
+          I.if,
+          0x7c,
+          I.f64const,
+          ...f64(0),
+          I.else,
+          I.f64const,
+          ...f64(2),
+          I.end,
+          I.else,
+          ...get(0),
+          ...GC.refTest(BOX),
+          I.if,
+          0x7c,
+          I.f64const,
+          ...f64(3),
+          I.else,
+          ...get(0),
+          ...GC.refTest(STR),
+          I.if,
+          0x7c,
+          I.f64const,
+          ...f64(4),
+          I.else,
+          I.f64const,
+          ...f64(5),
+          I.end,
+          I.end,
+          I.end,
+          I.end,
+          I.end,
+        ],
+      };
+    case "__ykNum":
+      return { locals: [], code: [...get(0), ...GC.refCast(BOX), ...GC.boxGet, I.end] };
+    case "__ykBool":
+      return { locals: [], code: [...get(0), ...GC.refCast(HT_I31), ...GC.i31GetS, I.end] };
+    case "__ykStr":
+      return { locals: [], code: [...get(0), ...GC.refCastNull(STR), I.end] };
+    case "__ykArr":
+      return { locals: [], code: [...get(0), ...GC.refCastNull(NUMS), I.end] };
+    case "__ykSame":
+      return {
+        locals: [],
+        code: [
+          ...get(0),
+          ...GC.refCastNull(HT_EQ),
+          ...get(1),
+          ...GC.refCastNull(HT_EQ),
+          I.refEq,
+          I.end,
+        ],
+      };
+    case "numsAt":
+      // An index is one when it is an integer in [0, length): -0 is 0.
+      return {
+        locals: [],
+        code: [
+          ...get(1),
+          ...get(1),
+          0x9d, // f64.trunc
+          I.f64eq,
+          ...get(1),
+          I.f64const,
+          ...f64(0),
+          I.f64ge,
+          I.i32and,
+          ...get(1),
+          ...get(0),
+          ...GC.numsLen,
+          I.f64fromI32,
+          I.f64lt,
+          I.i32and,
+          I.if,
+          ...VAL.any,
+          ...get(0),
+          ...GC.numsData,
+          ...trunc(1),
+          ...GC.f64sGet,
+          ...GC.boxNew,
+          I.else,
+          I.i32const,
+          UNDEFINED_I31,
+          ...GC.refI31,
+          I.end,
+          I.end,
+        ],
+      };
+    case "numsNew":
+      return {
+        locals: [],
+        code: [...get(0), ...get(0), ...GC.f64sNewDefault, ...GC.numsNew, I.end],
+      };
+    case "numsSetAt":
+      return {
+        locals: [],
+        code: [...get(0), ...GC.numsData, ...get(1), ...get(2), ...GC.f64sSet, I.end],
+      };
+    case "numsLen":
+      return { locals: [], code: [...get(0), ...GC.numsLen, I.end] };
+    case "numsGetAt":
+      return { locals: [], code: [...get(0), ...GC.numsData, ...get(1), ...GC.f64sGet, I.end] };
+    case "mkNum":
+      return { locals: [], code: [...get(0), ...GC.boxNew, I.end] };
+    case "mkBool":
+      return { locals: [], code: [...get(0), ...GC.refI31, I.end] };
+    case "mkUndef":
+      return { locals: [], code: [I.i32const, UNDEFINED_I31, ...GC.refI31, I.end] };
+    case "mkNull":
+      return { locals: [], code: [...GC.refNullAny, I.end] };
     case "strNew":
       return { locals: [], code: [...get(0), ...GC.arrayNewDefault, I.end] };
     case "strSet":
@@ -722,11 +905,15 @@ function wt(t: DucType | undefined, what: string): WT {
   if (t.k === "boolean") return "i32";
   if (t.k === "string") return "str";
   if (t.k === "array" && t.of?.k === "num") return "nums";
+  // A value that may be of more than one kind, undefined or null.
+  if (t.k === "unknown" || t.k === "null" || t.k === "undefined") return "any";
   if (t.k === "union") {
-    const kinds = new Set(t.of.filter((x) => x.k !== "undefined").map((x) => wt(x, what)));
-    if (kinds.size === 1) return [...kinds][0] as WT;
+    const kinds = new Set(t.of.map((x) => wt(x, what)));
+    return kinds.size === 1 ? ([...kinds][0] as WT) : "any";
   }
-  throw new WasmEmitError(`${what} is not a number, a boolean or a string here`);
+  throw new WasmEmitError(
+    `${what} is not a number, a boolean, a string or an array of numbers here`,
+  );
 }
 
 const atomGraphs = new Map<string, DucGraph>();
@@ -805,16 +992,29 @@ function lowerFunction(
             i32: "a boolean",
             str: "a string",
             nums: "an array of numbers",
+            any: "a value of any kind",
             undef: "undefined",
             "?": "nothing yet",
           } as const
         )[t]
       : "a function";
+  /**
+   * The type of a value that is one of two: values of different kinds make a value of any kind. In
+   * a program an undefined is a value too, so undefined and a number make a value of any kind. In a
+   * runtime atom an undefined is never observed (the atoms are tested against the builtins they
+   * define): it stands for the other type's default.
+   */
   const unify = (a: VT | "?", b: VT | "?", what: string): VT | "?" => {
-    if (a === "?" || a === "undef") return b === "?" ? a : b;
-    if (b === "?" || b === "undef") return a;
-    if (typeof a === "string" && a === b) return a;
-    throw new WasmEmitError(`${what} mixes ${show(a)} and ${show(b)}`);
+    if (a === "?") return b;
+    if (b === "?") return a;
+    if (typeof a === "object" || typeof b === "object") {
+      if (a === b) return a;
+      throw new WasmEmitError(`${what} mixes ${show(a)} and ${show(b)}`);
+    }
+    if (a === b) return a;
+    if (trusted && a === "undef") return b;
+    if (trusted && b === "undef") return a;
+    return "any";
   };
   const computeType = (v: ValueId): VT | "?" => {
     const carry = carryOf.get(v);
@@ -834,6 +1034,7 @@ function lowerFunction(
       // `let x;` reads as Uninitialized until it is assigned: undefined.
       if (text === "undefined" || text === "Uninitialized") return "undef";
       if (text === "true" || text === "false") return "i32";
+      if (text === "null") return "any";
       if (text.startsWith('"')) return "str";
       if (text === "NaN" || (text.trim() !== "" && !Number.isNaN(Number(text.replace(/_/g, "")))))
         return "f64";
@@ -859,8 +1060,10 @@ function lowerFunction(
     const label = p.label ?? "";
     const operand = (i: number): VT | "?" => {
       const t = get(ins[i] as ValueId);
-      if (t === "undef") throw new WasmEmitError(`undefined is an operand of "${label}"`);
-      return t;
+      if (t !== "undef") return t;
+      // In a program, undefined is a value like any other; in a runtime atom it is never one.
+      if (trusted) throw new WasmEmitError(`undefined is an operand of "${label}"`);
+      return "any";
     };
     if (/^\.\w+$/.test(label) && ins.length === 1) {
       const member = label.slice(1);
@@ -874,6 +1077,10 @@ function lowerFunction(
           return { call: { k: "method", recv: ins[0] as ValueId, name: `nums.${member}` } };
         throw new WasmEmitError(`the array method ${member} is not in the subset yet`);
       }
+      if (t0 === "any")
+        throw new WasmEmitError(
+          `the member ${member} of a value of any kind is not in the subset yet`,
+        );
       if ((t0 === "f64" || t0 === "i32") && member === "toString")
         return { call: { k: "method", recv: ins[0] as ValueId, name: "toString" } };
       if (t0 === "str") {
@@ -909,6 +1116,8 @@ function lowerFunction(
       if (known.length === 0) return "?";
       // An array's primitive is its join, a string: + of one concatenates.
       if (known.some((x) => x === "str" || x === "nums")) return "str";
+      // A value of any kind may be a string: ECMAScript's + decides (the runtime atom).
+      if (known.some((x) => x === "any")) return known.length === 2 ? "any" : "?";
       return "f64";
     }
     if (label === "ArrayLiteral") {
@@ -924,11 +1133,11 @@ function lowerFunction(
       if (t0 === "?") return "?";
       if (t0 !== "nums")
         throw new WasmEmitError(`an element read of ${show(t0)} is not in the subset`);
-      if (!trusted)
-        throw new WasmEmitError(
-          "an element read (undefined out of range) is not in the subset of a program yet",
-        );
-      return "f64";
+      const t1 = operand(1);
+      if (t1 !== "?" && t1 !== "f64")
+        throw new WasmEmitError(`an element read at ${show(t1)} is not in the subset yet`);
+      // In a program a read out of range is undefined: a value of any kind.
+      return trusted ? "f64" : "any";
     }
     if (label === "[]=" && ins.length === 3) {
       const t0 = operand(0);
@@ -947,6 +1156,15 @@ function lowerFunction(
       }
       return "str";
     }
+    if (label === "TypeOfExpression") return "str";
+    if (label === "??" && ins.length === 2) {
+      // A value that is never nullish is the result; undefined gives the other side.
+      const t0 = get(ins[0] as ValueId);
+      if (t0 === "?") return "?";
+      if (t0 === "undef") return get(ins[1] as ValueId);
+      if (t0 !== "any") return t0;
+      return unify(t0, get(ins[1] as ValueId), '"??"');
+    }
     for (let i = 0; i < ins.length; i++) operand(i);
     if (ins.length === 2 && (F64_BINARY[label] !== undefined || label === "%" || label === "**"))
       return "f64";
@@ -956,6 +1174,11 @@ function lowerFunction(
     if (ins.length === 2 && (label === "&&" || label === "||"))
       return unify(get(ins[0] as ValueId), get(ins[1] as ValueId), `"${label}"`);
     throw new WasmEmitError(`the operation "${label}" is not in the subset`);
+  };
+  /** A value's type as an operand: in a program, undefined is a value of any kind. */
+  const opType = (v: ValueId): VT => {
+    const t = ty(v);
+    return t === "undef" && !trusted ? "any" : t;
   };
   const allValues = [...new Set([...producer.keys(), ...carryOf.keys()])].filter(
     (v) => resolve(v) === v,
@@ -1001,7 +1224,8 @@ function lowerFunction(
     return at;
   };
   const pushDefault = (t: WT): void => {
-    if (t === "f64") code.push(I.f64const, ...f64(Number.NaN));
+    if (t === "any") code.push(I.i32const, UNDEFINED_I31, ...GC.refI31);
+    else if (t === "f64") code.push(I.f64const, ...f64(Number.NaN));
     else if (t === "i32") code.push(I.i32const, 0);
     else if (t === "nums")
       code.push(I.i32const, 0, I.i32const, 4, ...GC.f64sNewDefault, ...GC.numsNew);
@@ -1017,7 +1241,14 @@ function lowerFunction(
    * Number::toString (the runtime atom), a boolean is "true" or "false".
    */
   const pushString = (v: ValueId): void => {
-    const t = value(v, "a value made a string");
+    const t = opType(v);
+    if (t === "any") {
+      push(v, "any");
+      code.push(I.call, mod.atom("__ykToString").tok);
+      return;
+    }
+    if (typeof t !== "string" || t === "undef")
+      throw new WasmEmitError("a value made a string has no value here");
     if (t === "str") push(v);
     else if (t === "f64") call(mod.atom("__ykNumberToString"), [v], "ToString");
     else if (t === "i32") {
@@ -1033,7 +1264,37 @@ function lowerFunction(
    * undefined stands for the default of the chosen type; it is never observed there, because what
    * chooses it is the lowering's own return state. Anywhere else undefined is refused.
    */
-  const push = (v0: ValueId, orDefault?: WT): WT => {
+  const push = (v0: ValueId, want?: WT): WT => {
+    const got = pushRaw(v0, want);
+    if (want !== undefined && got !== want) convert(got, want, "a value");
+    return want ?? got;
+  };
+  /**
+   * Convert the value on the stack between representations: into a value of any kind (a number
+   * boxed, a boolean an i31), out of one as the kind its type says it is, and a boolean to a number.
+   */
+  const convert = (got: WT, want: WT, what: string): void => {
+    if (want === "any") {
+      if (got === "f64") code.push(...GC.boxNew);
+      else if (got === "i32") code.push(I.i32eqz, I.i32eqz, ...GC.refI31);
+      return;
+    }
+    if (got === "any") {
+      if (want === "f64") code.push(...GC.refCast(BOX), ...GC.boxGet);
+      else if (want === "i32") code.push(...GC.refCast(HT_I31), ...GC.i31GetS);
+      else code.push(...GC.refCastNull(want === "str" ? STR : NUMS));
+      return;
+    }
+    if (got === "i32" && want === "f64") {
+      code.push(I.f64fromI32);
+      return;
+    }
+    throw new WasmEmitError(
+      `${what} is ${got === "str" ? "a string" : "not a string"}, and a ${want === "str" ? "string" : "number"} is needed`,
+    );
+  };
+  /** Push a value as it is held; an undefined pushes `want`'s default (undefined for any). */
+  const pushRaw = (v0: ValueId, orDefault?: WT): WT => {
     const v = resolve(v0);
     const t = ty(v);
     if (t === "undef") {
@@ -1045,7 +1306,8 @@ function lowerFunction(
     const p = producer.get(v);
     if (p?.kind === "literal-source") {
       const text = p.label ?? "";
-      if (t === "i32") code.push(I.i32const, ...s32(text === "true" ? 1 : 0));
+      if (text === "null") code.push(...GC.refNullAny);
+      else if (t === "i32") code.push(I.i32const, ...s32(text === "true" ? 1 : 0));
       else if (t === "str") {
         const s = JSON.parse(text) as string;
         for (let i = 0; i < s.length; i++) code.push(I.i32const, ...s32(s.charCodeAt(i)));
@@ -1075,20 +1337,22 @@ function lowerFunction(
   };
   /** Push a value as the parameter type `want`: a boolean converts to a number, as ToNumber does. */
   const pushAs = (v: ValueId, want: WT, what: string): void => {
-    const got = push(v);
-    if (got === want) return;
-    if (got === "i32" && want === "f64") code.push(I.f64fromI32);
-    else
-      throw new WasmEmitError(
-        `${what} is ${got === "str" ? "a string" : "not a string"}, and a ${want === "str" ? "string" : "number"} is needed`,
-      );
+    const got = pushRaw(v, want);
+    if (got !== want) convert(got, want, what);
   };
   /**
    * Push a value as a number, as ECMAScript's ToNumber: a number is itself, a boolean is 0 or 1, a
    * string is StringToNumber (the runtime atom), an array of numbers is its join made a number.
    */
   const pushNumber = (v: ValueId): void => {
-    const t = value(v, "a value made a number");
+    const t = opType(v);
+    if (t === "any") {
+      push(v, "any");
+      code.push(I.call, mod.atom("__ykToNumber").tok);
+      return;
+    }
+    if (typeof t !== "string" || t === "undef")
+      throw new WasmEmitError("a value made a number has no value here");
     if (t === "str") call(mod.atom("__ykStringToNumber"), [v], "ToNumber");
     else if (t === "nums") {
       call(mod.atom("__ykJoinNums"), [v], "ToNumber");
@@ -1097,6 +1361,11 @@ function lowerFunction(
   };
   /** Push a value's truthiness as an i32 (nonzero is true). */
   const truthy = (v: ValueId): void => {
+    if (opType(v) === "any") {
+      push(v, "any");
+      code.push(I.call, mod.atom("__ykTruthy").tok);
+      return;
+    }
     const t = push(v);
     if (t === "i32") return;
     if (t === "str") {
@@ -1117,8 +1386,9 @@ function lowerFunction(
     code.push(I.set, ...u32(localOf(v)));
   };
   const select = (t: WT): void => {
-    if (t === "str") code.push(I.selectT, ...vec([VAL.str]));
-    else code.push(I.select);
+    // A reference is chosen by a typed select.
+    if (t === "f64" || t === "i32") code.push(I.select);
+    else code.push(I.selectT, ...vec([VAL[t]]));
   };
   const call = (
     target: { tok: Tok; params: readonly WT[] },
@@ -1226,6 +1496,13 @@ function lowerFunction(
       set(out);
       return;
     }
+    if (ins.length === 2 && label === "+" && t === "any") {
+      push(ins[0] as ValueId, "any");
+      push(ins[1] as ValueId, "any");
+      code.push(I.call, mod.atom("__ykAdd").tok);
+      set(out);
+      return;
+    }
     if (ins.length === 2 && label === "+" && t === "str") {
       pushString(ins[0] as ValueId);
       pushString(ins[1] as ValueId);
@@ -1244,7 +1521,7 @@ function lowerFunction(
       return;
     }
     if (label === "ElementAccess") {
-      call(mod.primitive("numsGet"), ins, "an element read");
+      call(mod.primitive(t === "any" ? "numsAt" : "numsGet"), ins, "an element read");
       set(out);
       return;
     }
@@ -1283,10 +1560,30 @@ function lowerFunction(
     }
     if (ins.length === 2 && F64_COMPARE[label] !== undefined) {
       const [a, b] = ins as [ValueId, ValueId];
-      const ta = value(a, "an operand");
-      const tb = value(b, "an operand");
       const equality = /^[!=]==?$/.test(label);
       const negated = label.startsWith("!");
+      if (opType(a) === "any" || opType(b) === "any") {
+        // A value of any kind: ECMAScript's comparisons, as the runtime atoms. __ykCompare is 0
+        // when its first is less, 1 when not, 2 when either is NaN: a > b is b < a, a <= b is
+        // b is not less than a, a >= b is a is not less than b.
+        if (equality) {
+          push(a, "any");
+          push(b, "any");
+          const strictly = label === "===" || label === "!==";
+          code.push(I.call, mod.atom(strictly ? "__ykStrictEquals" : "__ykLooseEquals").tok);
+          if (negated) code.push(I.i32eqz);
+        } else {
+          const swap = label === ">" || label === "<=";
+          push(swap ? b : a, "any");
+          push(swap ? a : b, "any");
+          code.push(I.call, mod.atom("__ykCompare").tok);
+          code.push(I.f64const, ...f64(label === "<" || label === ">" ? 0 : 1), I.f64eq);
+        }
+        set(out);
+        return;
+      }
+      const ta = value(a, "an operand");
+      const tb = value(b, "an operand");
       // ECMAScript's IsStrictlyEqual, IsLooselyEqual and IsLessThan over these types. An array of
       // numbers is an object: equal only to itself, and a primitive (its join) where one is needed.
       const strictly = label === "===" || label === "!==";
@@ -1334,6 +1631,42 @@ function lowerFunction(
       set(out);
       return;
     }
+    if (label === "TypeOfExpression") {
+      const t0 = opType(ins[0] as ValueId);
+      if (t0 === "any") {
+        push(ins[0] as ValueId, "any");
+        code.push(I.call, mod.atom("__ykTypeOf").tok);
+      } else {
+        const names: Record<string, string> = {
+          f64: "number",
+          i32: "boolean",
+          str: "string",
+          nums: "object",
+          undef: "undefined",
+        };
+        const name0 = typeof t0 === "string" ? names[t0] : undefined;
+        if (name0 === undefined) throw new WasmEmitError("typeof of a function");
+        pushText(name0);
+      }
+      set(out);
+      return;
+    }
+    if (label === "??" && ins.length === 2) {
+      const [a, b] = ins as [ValueId, ValueId];
+      const ta = opType(a);
+      if (ty(a) === "undef") push(b, t as WT);
+      else if (ta !== "any") push(a, t as WT);
+      else {
+        // a when it is neither undefined nor null (its kind is 2 or more), else b.
+        push(a, t as WT);
+        push(b, t as WT);
+        push(a, "any");
+        code.push(I.call, mod.primitive("__ykTag").tok, I.f64const, ...f64(2), I.f64ge);
+        select(t as WT);
+      }
+      set(out);
+      return;
+    }
     if (ins.length === 1 && label === "!") {
       truthy(ins[0] as ValueId);
       code.push(I.i32eqz);
@@ -1343,11 +1676,11 @@ function lowerFunction(
     if (ins.length === 2 && (label === "&&" || label === "||")) {
       const [a, b] = ins as [ValueId, ValueId];
       if (label === "&&") {
-        push(b);
-        push(a);
+        push(b, t as WT);
+        push(a, t as WT);
       } else {
-        push(a);
-        push(b);
+        push(a, t as WT);
+        push(b, t as WT);
       }
       truthy(a);
       select(t as WT);
@@ -1422,11 +1755,17 @@ function lowerFunction(
   };
 
   emitScope(undefined);
-  const result = value(g.obs[0] as ValueId, "the result");
+  // The result as the contract types it: a value of any kind is read as the kind it says.
+  const computed = opType(g.obs[0] as ValueId);
+  if (typeof computed !== "string" || computed === "undef")
+    throw new WasmEmitError("the result has no value here");
+  const result = declared ?? computed;
+  if (result !== computed && computed !== "any" && result !== "any")
+    throw new WasmEmitError(
+      `the result is ${show(computed)}, and the contract says ${show(result)}`,
+    );
   push(g.obs[0] as ValueId, result);
   code.push(I.end);
-  if (declared !== undefined && declared !== result)
-    throw new WasmEmitError(`the result is ${result}, and the contract says ${declared}`);
   return { result, locals, code };
 }
 
@@ -1440,8 +1779,6 @@ export function emitWasmGc(input: DucGraph, signature: WasmSignature): WasmGcMod
   if (signature.output === undefined)
     throw new WasmEmitError("the contract's output type is needed");
   const out = parseType(signature.output);
-  if (out.k === "undefined" || (out.k === "union" && out.of.some((t) => t.k === "undefined")))
-    throw new WasmEmitError("a result that may be undefined is not in the subset");
   const params = signature.inputs.map((t, i) => wt(parseType(t), `parameter ${i}`));
   const result = wt(out, "the result");
   const mod = new Module();
@@ -1450,25 +1787,17 @@ export function emitWasmGc(input: DucGraph, signature: WasmSignature): WasmGcMod
   const lowered = lowerFunction(source, params, result, mod);
   f.locals = lowered.locals;
   f.code = lowered.code;
-  for (const k of ["strNew", "strSet", "strLen", "strGet"]) {
-    const sig: Record<string, { params: WT[]; result: WT | undefined }> = {
-      strNew: { params: ["i32"], result: "str" },
-      strSet: { params: ["str", "i32", "i32"], result: undefined },
-      strLen: { params: ["str"], result: "i32" },
-      strGet: { params: ["str", "i32"], result: "i32" },
-    };
-    mod.funcs.set(`mar:${k}`, {
-      ...(sig[k] as { params: WT[]; result: WT | undefined }),
-      ...primitiveBody(k),
-    });
+  // The boundary: values made and read from JavaScript, and a value of any kind's kind and parts.
+  const exports: Record<string, string> = { f: "f" };
+  for (const [k, sig] of Object.entries(MARSHAL)) {
+    mod.funcs.set(`mar:${k}`, { ...sig, ...primitiveBody(k) });
+    exports[k] = `mar:${k}`;
   }
-  const bytes = mod.write({
-    f: "f",
-    strNew: "mar:strNew",
-    strSet: "mar:strSet",
-    strLen: "mar:strLen",
-    strGet: "mar:strGet",
-  });
+  for (const k of ["__ykTag", "__ykNum", "__ykBool", "__ykStr", "__ykArr"]) {
+    mod.primitive(k);
+    exports[k] = `prim:${k}`;
+  }
+  const bytes = mod.write(exports);
   return { bytes, imports: [...mod.imports], params, result, atoms: [...mod.atoms] };
 }
 
@@ -1488,26 +1817,50 @@ export async function instantiateWasmGc(m: WasmGcModule): Promise<(...args: unkn
   ).WebAssembly;
   const { instance } = await wasm.instantiate(m.bytes, { host });
   const x = instance.exports as Record<string, (...a: unknown[]) => unknown>;
+  const fn = (k: string) => x[k] as (...a: unknown[]) => unknown;
   const toWasm = (v: unknown, t: WT): unknown => {
     if (t === "i32") return v ? 1 : 0;
     if (t === "f64") return v;
+    if (t === "nums") {
+      const a = v as readonly number[];
+      const r = fn("numsNew")(a.length);
+      a.forEach((e, i) => fn("numsSetAt")(r, i, e));
+      return r;
+    }
+    if (t === "any") {
+      if (v === undefined) return fn("mkUndef")();
+      if (v === null) return fn("mkNull")();
+      if (typeof v === "boolean") return fn("mkBool")(v ? 1 : 0);
+      if (typeof v === "number") return fn("mkNum")(v);
+      if (typeof v === "string") return toWasm(v, "str");
+      if (Array.isArray(v) && v.every((e) => typeof e === "number")) return toWasm(v, "nums");
+      throw new TypeError(`${String(v)} is not a value the WasmGC lowering represents`);
+    }
     const s = String(v);
-    const r = (x.strNew as (n: number) => unknown)(s.length);
-    for (let i = 0; i < s.length; i++)
-      (x.strSet as (r: unknown, i: number, u: number) => void)(r, i, s.charCodeAt(i));
+    const r = fn("strNew")(s.length);
+    for (let i = 0; i < s.length; i++) fn("strSet")(r, i, s.charCodeAt(i));
     return r;
   };
-  const fromWasm = (v: unknown): unknown => {
-    if (m.result === "i32") return v !== 0;
-    if (m.result === "f64") return v;
-    const n = (x.strLen as (r: unknown) => number)(v);
+  const fromWasm = (v: unknown, t: WT): unknown => {
+    if (t === "i32") return v !== 0;
+    if (t === "f64") return v;
+    if (t === "nums") {
+      const n = fn("numsLen")(v) as number;
+      return Array.from({ length: n }, (_, i) => fn("numsGetAt")(v, i));
+    }
+    if (t === "any") {
+      const tag = fn("__ykTag")(v);
+      if (tag === 0) return undefined;
+      if (tag === 1) return null;
+      if (tag === 2) return fn("__ykBool")(v) !== 0;
+      if (tag === 3) return fn("__ykNum")(v);
+      return fromWasm(v, tag === 4 ? "str" : "nums");
+    }
+    const n = fn("strLen")(v) as number;
     let s = "";
-    for (let i = 0; i < n; i++)
-      s += String.fromCharCode((x.strGet as (r: unknown, i: number) => number)(v, i));
+    for (let i = 0; i < n; i++) s += String.fromCharCode(fn("strGet")(v, i) as number);
     return s;
   };
   return (...args) =>
-    fromWasm(
-      (x.f as (...a: unknown[]) => unknown)(...args.map((a, i) => toWasm(a, m.params[i] as WT))),
-    );
+    fromWasm(fn("f")(...args.map((a, i) => toWasm(a, m.params[i] as WT))), m.result);
 }

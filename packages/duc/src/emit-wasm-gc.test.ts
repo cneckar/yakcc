@@ -318,46 +318,59 @@ describe("StringToNumber as a runtime atom (#1300)", () => {
   }, 300_000);
 });
 
+/** Every kind of value the WasmGC lowering represents. */
+const anyValue = fc.oneof(
+  fc.double(),
+  fc.integer({ min: -3, max: 3 }),
+  fc.constantFrom(0, -0, Number.NaN, Number.POSITIVE_INFINITY, 1e21),
+  fc.string({ maxLength: 4 }),
+  fc.constantFrom("", " 1 ", "0x10", "1e3", "abc", "-0", "Infinity", "1,2", "number"),
+  fc.boolean(),
+  fc.constantFrom(null, undefined),
+  fc.array(fc.oneof(fc.integer({ min: -5, max: 5 }), fc.double()), { maxLength: 3 }),
+);
+
 describe("the dynamic-value atoms define ECMAScript's operators (#1300)", () => {
-  // Every kind of value the WasmGC lowering represents: numbers, strings, booleans, undefined,
-  // null and arrays of numbers.
-  const value = fc.oneof(
-    fc.double(),
-    fc.integer(),
-    fc.constantFrom(0, -0, Number.NaN, Number.POSITIVE_INFINITY, 1e21),
-    fc.string({ maxLength: 4 }),
-    fc.constantFrom("", " 1 ", "0x10", "1e3", "abc", "-0", "Infinity", "1,2"),
-    fc.boolean(),
-    fc.constantFrom(null, undefined),
-    fc.array(fc.oneof(fc.integer({ min: -5, max: 5 }), fc.double()), { maxLength: 3 }),
-  );
   // biome-ignore lint/suspicious/noExplicitAny: the operators are ECMAScript's, over any values.
   type Op = (a: any, b: any) => unknown;
-  const atom = (k: string) => atomInJs(k);
-  const OPS: [string, Op, Op][] = [
-    ["+", (a, b) => atom("__ykAdd")(a, b), (a, b) => a + b],
+  // Each operator: the atom, what its result means, and the engine's operator.
+  const OPS: [string, string, (r: unknown) => unknown, Op][] = [
+    ["+", "__ykAdd", (r) => r, (a, b) => a + b],
     // biome-ignore lint/suspicious/noDoubleEquals: IsLooselyEqual is what is defined.
-    ["==", (a, b) => atom("__ykLooseEquals")(a, b), (a, b) => a == b],
-    ["===", (a, b) => atom("__ykStrictEquals")(a, b), (a, b) => a === b],
-    ["<", (a, b) => atom("__ykCompare")(a, b) === 0, (a, b) => a < b],
-    [">=", (a, b) => atom("__ykCompare")(a, b) === 1, (a, b) => a >= b],
-    ["typeof", (a) => atom("__ykTypeOf")(a), (a) => typeof a],
-    ["truthiness", (a) => atom("__ykTruthy")(a), (a) => !!a],
-    ["String", (a) => atom("__ykToString")(a), (a) => String(a)],
-    ["Number", (a) => atom("__ykToNumber")(a), (a) => Number(a)],
+    ["==", "__ykLooseEquals", (r) => r, (a, b) => a == b],
+    ["===", "__ykStrictEquals", (r) => r, (a, b) => a === b],
+    ["<", "__ykCompare", (r) => r === 0, (a, b) => a < b],
+    [">=", "__ykCompare", (r) => r === 1, (a, b) => a >= b],
+    ["typeof", "__ykTypeOf", (r) => r, (a) => typeof a],
+    ["truthiness", "__ykTruthy", (r) => r, (a) => !!a],
+    ["String", "__ykToString", (r) => r, (a) => String(a)],
+    ["Number", "__ykToNumber", (r) => r, (a) => Number(a)],
   ];
-  for (const [name, mine, engine] of OPS)
-    it(`${name}, as JavaScript, agrees with the engine on every kind of value`, () => {
+  for (const [name, key, meaning, engine] of OPS)
+    it(`${name} agrees with the engine on every kind of value: as JavaScript and as WasmGC`, async () => {
+      const arity = (ALL_ATOMS[key] as { inputs: readonly string[] }).inputs.length;
+      const js = atomInJs(key);
+      const wasm = await atomInWasm(key);
       const bad: string[] = [];
-      for (const [a, b] of fc.sample(fc.tuple(value, value), { numRuns: 2000, seed: 1302 })) {
+      for (const [a, b] of fc.sample(fc.tuple(anyValue, anyValue), { numRuns: 1000, seed: 1302 })) {
+        const args = arity === 1 ? [a] : [a, b];
         const want = engine(a, b);
-        const got = mine(a, b);
-        if (!Object.is(got, want))
-          bad.push(`${JSON.stringify([a, b])}: ${String(got)} vs ${String(want)}`);
+        for (const [how, got] of [
+          ["js", meaning(js(...args))],
+          ["wasm", meaning(wasm(...args))],
+        ] as const)
+          if (!Object.is(got, want))
+            bad.push(`${how} ${JSON.stringify(args)}: ${String(got)} vs ${String(want)}`);
       }
       expect(bad.slice(0, 5)).toEqual([]);
-    });
+    }, 120_000);
 });
+
+/** The same value: by Object.is, an array element by element. */
+const same = (a: unknown, b: unknown): boolean =>
+  Array.isArray(a) && Array.isArray(b)
+    ? a.length === b.length && a.every((x, i) => Object.is(x, b[i]))
+    : Object.is(a, b);
 
 const numericText = fc.oneof(
   text,
@@ -367,6 +380,38 @@ const numericText = fc.oneof(
 );
 
 const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
+  [
+    "values of any kind: +, ==, ===, relational, typeof, truthiness, arithmetic, templates, ??, ||, &&",
+    "export function f(a: any, b: any): string { return String(a + b) + '|' + (a == b) + (a === b) + (a < b) + (a >= b) + (a > b) + (a <= b) + (a != b) + (a !== b) + typeof a + typeof b + (!a) + (a ? 1 : 2) + (a - b) + a * 2 + -b + `<${a}>` + (a ?? 'n') + (a || b) + (b && a) + (a == null) + (b === undefined); }",
+    ["unknown", "unknown"],
+    "string",
+    fc.tuple(anyValue, anyValue),
+  ],
+  [
+    "undefined and null as values: an optional result, element reads in and out of range, ??",
+    "export function f(xs: number[], i: number, k: boolean): number | null | undefined { let r; if (k) r = xs[i]; const y = xs[i + 1] ?? -1; if (r === undefined) return y > 0 ? undefined : y < -1 ? null : y; return r * 2 + y; }",
+    ["number[]", "number", "boolean"],
+    "number | null | undefined",
+    fc.tuple(
+      fc.array(fc.oneof(fc.integer({ min: -3, max: 3 }), fc.double()), { maxLength: 4 }),
+      fc.oneof(fc.integer({ min: -1, max: 5 }), fc.constantFrom(0.5, -0, Number.NaN)),
+      fc.boolean(),
+    ),
+  ],
+  [
+    "a loop whose carried value changes kind, and a result of any kind",
+    "export function f(n: number, s: string, x: unknown): unknown { let v: any = n; let i = 0; while (i < 4) { v = i % 2 === 0 ? v + s : v * 1; if (v === x) return i; i = i + 1; } return v; }",
+    ["number", "string", "unknown"],
+    "unknown",
+    fc.tuple(fc.oneof(fc.integer({ min: -3, max: 3 }), fc.double()), numericText, anyValue),
+  ],
+  [
+    "arrays across the boundary, as values of any kind",
+    "export function f(a: number[], x: unknown): unknown { if (x === null) return a; if (typeof x === 'object') return x; return a[0] === x ? a : x; }",
+    ["number[]", "unknown"],
+    "unknown",
+    fc.tuple(fc.array(fc.integer({ min: -2, max: 2 }), { maxLength: 3 }), anyValue),
+  ],
   [
     "values made numbers and compared across types: Number, unary +, ==, <, + of an array",
     'export function f(s: string, n: number, b: boolean): string { const a = [n, 2.5]; const t = Number(s) + +s * 2 - Number(b); return t + "|" + (s == n) + (s != b) + (s < n) + (n >= s) + (a == s) + (a < s) + (a + s) + Number(a) + Number([n]) + (b == n) + (a == a) + (s + a > s) + `${a}` + String([n]) + ([n] == n) + Number(); }',
@@ -438,7 +483,7 @@ describe("programs over strings, lowered to WasmGC (#1300)", () => {
       for (const a of fc.sample(args, { numRuns: 400, seed: 13001 })) {
         const want = ref(...a);
         const got = wasm(...a);
-        if (!Object.is(got, want))
+        if (!same(got, want))
           bad.push(`${JSON.stringify(a)}: ${JSON.stringify(got)} vs ${JSON.stringify(want)}`);
       }
       expect(bad.slice(0, 5)).toEqual([]);
@@ -495,17 +540,7 @@ describe("what the WasmGC lowering refuses, with the reason (#1300)", () => {
     }
     return "lowered";
   };
-  it("a method not yet an atom, an undefined result, element access in a program", () => {
-    expect(
-      refusal("export function f(a: number[]): number { return a[0]; }", ["number[]"], "number"),
-    ).toMatch(/element read .* not in the subset of a program yet/);
-    expect(
-      refusal(
-        "export function f(s: string, n: number): boolean { return s == n; }",
-        ["string", "number"],
-        "boolean",
-      ),
-    ).toBe("lowered");
+  it("a method not yet an atom, a member of a value of any kind, an element write in a program", () => {
     expect(
       refusal(
         "export function f(s: string): string { return s.toUpperCase(); }",
@@ -515,25 +550,36 @@ describe("what the WasmGC lowering refuses, with the reason (#1300)", () => {
     ).toMatch(/toUpperCase is not in the subset yet/);
     expect(
       refusal(
-        "export function f(s: string): string { return s; }",
+        "export function f(x: unknown): unknown { return x.length; }",
+        ["unknown"],
+        "unknown",
+      ),
+    ).toMatch(/member length of a value of any kind/);
+    expect(
+      refusal(
+        "export function f(a: number[]): number[] { a[5] = 1; return a; }",
+        ["number[]"],
+        "number[]",
+      ),
+    ).toMatch(/element write is not in the subset of a program yet/);
+  });
+
+  it("what was refused before values of any kind is lowered: ==, undefined, null, element reads", () => {
+    for (const [source, inputs, output] of [
+      [
+        "export function f(s: string, n: number): boolean { return s == n; }",
+        ["string", "number"],
+        "boolean",
+      ],
+      [
+        "export function f(s: string): string | undefined { return s; }",
         ["string"],
         "string | undefined",
-      ),
-    ).toMatch(/may be undefined/);
-    // undefined may stand for a default only where a value is chosen, never as an operand.
-    expect(
-      refusal(
-        "export function f(s: string): string { let t; return t + s; }",
-        ["string"],
-        "string",
-      ),
-    ).toMatch(/undefined is an operand/);
-    expect(
-      refusal(
-        "export function f(s: string): boolean { return s === null; }",
-        ["string"],
-        "boolean",
-      ),
-    ).toMatch(/literal null is not in the subset/);
+      ],
+      ["export function f(s: string): string { let t; return t + s; }", ["string"], "string"],
+      ["export function f(s: string): boolean { return s === null; }", ["string"], "boolean"],
+      ["export function f(a: number[]): number { return a[0]; }", ["number[]"], "number"],
+    ] as const)
+      expect(refusal(source, [...inputs], output)).toBe("lowered");
   });
 });
