@@ -85,6 +85,7 @@ const GLOBALS = new Set([
   "Infinity",
   "__yakccTry",
   "__yakccTryAsync",
+  "__yakccTryGen",
   "Promise",
   "queueMicrotask",
   "Error",
@@ -142,6 +143,8 @@ const RUNTIME_DECLS: Readonly<Record<string, string>> = {
   yk_yield_star: "declare i64 @yk_yield_star(i64)",
   yk_closure_mode: "declare i64 @yk_closure_mode(i64, i32)",
   yk_super_get: "declare i64 @yk_super_get(ptr, i64, ptr, i64)",
+  yk_super_get_key: "declare i64 @yk_super_get_key(ptr, i64, i64)",
+  yk_iter_close: "declare void @yk_iter_close(i64)",
   yk_closure_class: "declare i64 @yk_closure_class(ptr)",
   yk_closure_inherit: "declare i64 @yk_closure_inherit(i64, ptr)",
   yk_delete: "declare i64 @yk_delete(i64, i64)",
@@ -504,9 +507,25 @@ function lowerFunction(
       block(end);
       return;
     }
+    if (lbl.startsWith("array-with-holes:"))
+      throw new LlvmEmitError(
+        "an array with holes is not in the native subset yet: the runtime's arrays have no holes (#1330)",
+      );
+    if (lbl.startsWith("in:#") || /^(\?)?\.#/.test(lbl))
+      throw new LlvmEmitError(
+        `the private name in "${lbl}" is not in the native subset yet: the runtime does not resolve a private name to its class (#1330)`,
+      );
     if (lbl === "...") {
-      // The value spread; the list it is in (an array literal, a call's arguments) expands it.
-      set(out, operand(ins[0] as ValueId));
+      // The value spread, iterated here, where the spread is in heap order: a copy of its elements,
+      // which the list it is in (an array literal, a call's arguments) expands. The list may be made
+      // later, after a write to what was spread (#1330: `const b = [...a]; a.push(x)`).
+      set(
+        out,
+        call(
+          "yk_spread_list",
+          `i64 1, ptr ${list([operand(ins[0] as ValueId)])}, ptr ${list([TRUE])}`,
+        ),
+      );
       return;
     }
     if (lbl === "class-self") {
@@ -516,7 +535,7 @@ function lowerFunction(
     }
     if (lbl.startsWith("Class#"))
       throw new LlvmEmitError(
-        "a class with a field, a static block, a computed or private name, or a parameter property is not in the subset yet",
+        "a class the lifter keeps as a summary (a parameter property, a decorator) is not in the subset",
       );
     if (lbl === "AwaitExpression" && ins.length === 1) {
       // The coroutine suspends until the value settles (#1295).
@@ -542,8 +561,18 @@ function lowerFunction(
       );
       return;
     }
-    if (lbl === "super[]")
-      throw new LlvmEmitError("super[key] is not lowered natively yet (#1330)");
+    if (lbl === "super[]") {
+      // The parent's member by a key's value, read with the receiver (#1330).
+      if (closure === undefined) throw new LlvmEmitError("super outside a class's member");
+      set(
+        out,
+        call(
+          "yk_super_get_key",
+          `ptr %closure, i64 ${operand(ins[0] as ValueId)}, i64 ${operand(ins[1] as ValueId)}`,
+        ),
+      );
+      return;
+    }
     if (lbl.startsWith("super.")) {
       // The parent's member, read with the receiver (#1294).
       if (closure === undefined) throw new LlvmEmitError("super outside a class's member");
@@ -558,22 +587,50 @@ function lowerFunction(
       return;
     }
     if (lbl.startsWith("class:")) {
-      // [kind, name, static] per member; the inputs are the members' functions, in order. A derived
-      // class's parent is its first input (#1294).
-      const all = JSON.parse(lbl.slice("class:".length)) as [string, string?, boolean?][];
+      // [kind, name, static] per member; the inputs are the members' functions, in order, a
+      // computed name's key just before its member's (#1330). A derived class's parent is its first
+      // input (#1294). A field's function is its initializer; a static block's, its body.
+      const all = JSON.parse(lbl.slice("class:".length)) as [string, (string | null)?, boolean?][];
       const derived = all[0]?.[0] === "extends";
       const members = derived ? all.slice(1) : all;
       const parent = derived ? operand(ins[0] as ValueId) : "0";
       const memberIns = derived ? ins.slice(1) : ins;
-      const KIND: Record<string, number> = { constructor: 0, method: 1, get: 2, set: 3 };
-      if (members.length !== memberIns.length || members.some(([k]) => KIND[k] === undefined))
+      const KIND: Record<string, number> = {
+        constructor: 0,
+        method: 1,
+        get: 2,
+        set: 3,
+        field: 4,
+        block: 5,
+      };
+      const unknown = members.find(([k]) => KIND[k] === undefined);
+      if (unknown !== undefined)
+        throw new LlvmEmitError(`a class member of kind ${unknown[0]} is not in the subset yet`);
+      const privateName = members.find(
+        ([, name]) => typeof name === "string" && name.startsWith("#"),
+      );
+      if (privateName !== undefined)
         throw new LlvmEmitError(
-          `a class member of kind ${members.map(([k]) => k).find((k) => KIND[k] === undefined) ?? "(computed)"} is not in the subset yet`,
+          `the private name ${privateName[1]} is not in the native subset yet: the runtime does not resolve a private name to its class (#1330)`,
         );
+      const names: string[] = [];
+      const fns: string[] = [];
+      let at = 0;
+      for (const [kind, name] of members) {
+        const computed = kind !== "constructor" && kind !== "block" && name === null;
+        names.push(
+          computed
+            ? operand(memberIns[at++] as ValueId)
+            : name === undefined || name === null
+              ? UNDEFINED
+              : str(name),
+        );
+        fns.push(operand(memberIns[at++] as ValueId));
+      }
+      if (at !== memberIns.length)
+        throw new LlvmEmitError("a class's inputs are not its members' keys and functions");
       const kinds = members.map(([k]) => boxedNumber(KIND[k] as number));
-      const names = members.map(([, name]) => (name === undefined ? UNDEFINED : str(name)));
       const statics = members.map(([, , isStatic]) => (isStatic === true ? TRUE : FALSE));
-      const fns = memberIns.map(operand);
       set(
         out,
         call(
@@ -776,10 +833,16 @@ function lowerFunction(
         );
         return;
       }
-      // super.f(args): the parent's f, called with the receiver the read was made with (#1294).
+      // super.f(args) and super[k](args): the parent's f, called with the receiver the read was
+      // made with (#1294). o[k](args): o's member k, called with o as its receiver (#1330).
       const viaSuper = producer.get(resolve(ins[0] as ValueId));
+      const readLabel = viaSuper?.kind === "op" ? (viaSuper.label ?? "") : "";
       const superRecv =
-        viaSuper?.kind === "op" && (viaSuper.label ?? "").startsWith("super.")
+        viaSuper !== undefined &&
+        (readLabel.startsWith("super.") ||
+          readLabel === "super[]" ||
+          readLabel === "ElementAccess" ||
+          readLabel === "ElementAccess?.")
           ? operand(viaSuper.inputs[0] as ValueId)
           : UNDEFINED;
       if (callee === undefined && ins.slice(1).some(isSpread)) {
@@ -950,8 +1013,10 @@ function lowerFunction(
     const exit = freshLabel("exit");
     // An iteration: an iterator over the input after the carries, asked for the next element first.
     let iterator: string | undefined;
-    if (rec.iterate?.of === "async values")
-      throw new LlvmEmitError("for await is not in the subset yet");
+    // for await (x of it): the runtime has no async iterables (no symbols, no async generators),
+    // so `it` is iterated as it is and each element awaited, as ECMAScript does for a sync
+    // iterable (CreateAsyncFromSyncIterator, #1330).
+    const awaitEach = rec.iterate?.of === "async values";
     if (rec.iterate !== undefined) {
       m.used.add("yk_iter_new");
       const iterable = operand(loop.inputs[rec.carry.length] as ValueId);
@@ -975,7 +1040,7 @@ function lowerFunction(
       block(got);
       const element = fresh();
       emit(`${element} = load i64, ptr ${cell}`);
-      set(rec.iterate.element, element);
+      set(rec.iterate.element, awaitEach ? call("yk_await", `i64 ${element}`) : element);
     }
     const items = planner.ordered(planner.itemsOf(bodyPathOf(loop)));
     const forCond = new Set<ScopeItem>();
@@ -998,6 +1063,12 @@ function lowerFunction(
     next.forEach((r, i) => set(rec.carry[i] as ValueId, r));
     emit(`br label %${head}`);
     block(exit);
+    // Left early (a break, or a return carried out of the loop), a generator is closed: its
+    // finally blocks run (IteratorClose, #1330). One that is done is left as it is.
+    if (iterator !== undefined) {
+      m.used.add("yk_iter_close");
+      emit(`call void @yk_iter_close(i64 ${iterator})`);
+    }
     loop.outputs.forEach((v, i) => set(v, operand(rec.carry[i] as ValueId)));
   };
 
