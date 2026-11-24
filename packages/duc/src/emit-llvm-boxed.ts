@@ -221,6 +221,8 @@ const APPROXIMATED =
 
 const RUNTIME_DECLS: Readonly<Record<string, string>> = {
   yk_bigint_literal: "declare i64 @yk_bigint_literal(ptr, i64)",
+  yk_bigint_from_i128: "declare i64 @yk_bigint_from_i128(i64, i64)",
+  yk_bigint_word: "declare i64 @yk_bigint_word(i64, i32)",
   ...Object.fromEntries(
     Object.values(LEAVES).map(([fn, n]) => [
       fn,
@@ -442,6 +444,166 @@ function lowerFunction(
   };
   const isMath = (v: ValueId): boolean => mathValue.has(resolve(v));
 
+  // --- Typed BigInts (#1369, DEC-DUC-TYPED-NATIVE-001): a BigInt the graph proves narrower than 128
+  // bits is an i128, not a heap value. The proof: the integer ranges of numbers (an int32 or uint32
+  // from `| 0`, `>>> 0`, the 32-bit loads, ...) and the widths of BigInts (from the fixed-width
+  // leaves, literals, and the operators' growth). Anything else stays boxed.
+  const leafOf = (n: DucNode): string | undefined =>
+    n.label === "CallExpression" ? leafValue.get(resolve(n.inputs[0] as ValueId)) : undefined;
+  const numRange = new Map<ValueId, "i32" | "u32">();
+  const bigWidth = new Map<ValueId, number>();
+  const literalBig = (v: ValueId): bigint | undefined => {
+    const p = producer.get(resolve(v));
+    if (p?.kind !== "literal-source" || !BIGINT_LITERAL.test(p.label ?? "")) return undefined;
+    return BigInt((p.label as string).slice(0, -1).replace(/_/g, ""));
+  };
+  const widthOf = (v: ValueId): number | undefined => {
+    const lit = literalBig(v);
+    if (lit !== undefined) return (lit < 0n ? -lit : lit).toString(2).length + 1;
+    return bigWidth.get(resolve(v));
+  };
+  const rangeOf = (v: ValueId): "i32" | "u32" | undefined => {
+    const p = producer.get(resolve(v));
+    if (p?.kind === "literal-source") {
+      const x = Number(p.label);
+      if (Number.isInteger(x) && x >= -(2 ** 31) && x < 2 ** 31 && !Object.is(x, -0)) return "i32";
+      if (Number.isInteger(x) && x >= 0 && x < 2 ** 32) return "u32";
+      return undefined;
+    }
+    return numRange.get(resolve(v));
+  };
+  /** A value proved a number: a number literal, or an integer range's. */
+  const isNumberish = (v: ValueId): boolean => {
+    const p = producer.get(resolve(v));
+    if (p?.kind === "literal-source") {
+      const t = (p.label ?? "").replace(/_/g, "");
+      return t === "NaN" || (t !== "" && !BIGINT_LITERAL.test(t) && !Number.isNaN(Number(t)));
+    }
+    return numRange.has(resolve(v));
+  };
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const n of g.nodes) {
+      if (n.kind !== "op") continue;
+      const out = n.outputs[0] as ValueId | undefined;
+      if (out === undefined || numRange.has(out) || bigWidth.has(out)) continue;
+      const ins = n.inputs as readonly ValueId[];
+      const lbl = n.label ?? "";
+      const leaf = leafOf(n);
+      let range: "i32" | "u32" | undefined;
+      let width: number | undefined;
+      if (leaf !== undefined) {
+        const a = ins[1] as ValueId;
+        if (leaf === "__ykBigToI32" || leaf === "__ykI32Mul") range = "i32";
+        else if (
+          leaf === "__ykBigToU32" ||
+          leaf === "__ykLoad8" ||
+          leaf === "__ykLoad16" ||
+          leaf === "__ykLoad32"
+        )
+          range = "u32";
+        else if (leaf === "__ykF64Bits" || leaf === "__ykU64" || leaf === "__ykLoad64") width = 65;
+        else if (leaf === "__ykI64") width = 64;
+        else if (leaf === "__ykNumToBig" && a !== undefined && rangeOf(a) !== undefined) width = 33;
+      } else if (ins.length === 2 && ["|", "&", "^", "<<", ">>"].includes(lbl)) {
+        // On numbers, ToInt32's; on BigInts (both operands proved BigInts), the BigInt's.
+        const wa = widthOf(ins[0] as ValueId);
+        const wb = widthOf(ins[1] as ValueId);
+        if (wa !== undefined && wb !== undefined) {
+          if (lbl === ">>") {
+            const k = literalBig(ins[1] as ValueId);
+            if (k !== undefined && k >= 0n) width = wa;
+          } else if (lbl === "<<") {
+            const k = literalBig(ins[1] as ValueId);
+            if (k !== undefined && k >= 0n && k <= 127n) width = wa + Number(k);
+          } else width = Math.max(wa, wb);
+        } else if (isNumberish(ins[0] as ValueId) || isNumberish(ins[1] as ValueId))
+          // With a number operand the result, if there is one (a BigInt operand throws), is ToInt32's.
+          range = "i32";
+      } else if (ins.length === 2 && lbl === ">>>") {
+        // On anything but BigInts (which throw), ToUint32's.
+        range = "u32";
+      } else if (ins.length === 2 && (lbl === "+" || lbl === "-" || lbl === "*")) {
+        const wa = widthOf(ins[0] as ValueId);
+        const wb = widthOf(ins[1] as ValueId);
+        if (wa !== undefined && wb !== undefined)
+          width = lbl === "*" ? wa + wb : Math.max(wa, wb) + 1;
+      } else if (ins.length === 1 && lbl === "-") {
+        const wa = widthOf(ins[0] as ValueId);
+        if (wa !== undefined) width = wa + 1;
+      } else if (ins.length === 1 && lbl === "~") {
+        const wa = widthOf(ins[0] as ValueId);
+        if (wa !== undefined) width = wa + 1;
+        else if (isNumberish(ins[0] as ValueId)) range = "i32";
+      }
+      if (range !== undefined) {
+        numRange.set(out, range);
+        changed = true;
+      } else if (width !== undefined && width <= 127) {
+        bigWidth.set(out, width);
+        changed = true;
+      }
+    }
+  }
+  // --- Constant tables (#1369): an array literal of number literals whose every use reads an element
+  // (never written, returned, passed or captured) is one constant array, read in place.
+  const constTables = new Map<ValueId, { global: string; n: number }>();
+  {
+    const uses = new Map<ValueId, DucNode[]>();
+    for (const n of g.nodes)
+      for (const v of n.inputs) {
+        const r = resolve(v as ValueId);
+        uses.set(r, [...(uses.get(r) ?? []), n]);
+      }
+    const escaping = new Set<ValueId>([
+      ...g.obs.map((v) => resolve(v)),
+      ...(g.branches ?? []).map((b) => resolve(b.cond as ValueId)),
+    ]);
+    for (const n of g.nodes) {
+      if (n.kind !== "op" || n.label !== "ArrayLiteral" || n.inputs.length === 0) continue;
+      const out = n.outputs[0] as ValueId;
+      const values = n.inputs.map((v) => {
+        const p = producer.get(resolve(v as ValueId));
+        const x =
+          p?.kind === "literal-source" ? Number((p.label ?? "").replace(/_/g, "")) : Number.NaN;
+        return p?.kind === "literal-source" && (!Number.isNaN(x) || p.label === "NaN")
+          ? x
+          : undefined;
+      });
+      if (values.some((x) => x === undefined) || escaping.has(out)) continue;
+      const consumers = uses.get(out) ?? [];
+      if (
+        consumers.length === 0 ||
+        !consumers.every(
+          (c) =>
+            c.kind === "op" &&
+            c.label === "ElementAccess" &&
+            c.inputs.length === 2 &&
+            resolve(c.inputs[0] as ValueId) === out &&
+            resolve(c.inputs[1] as ValueId) !== out,
+        )
+      )
+        continue;
+      const name = `@ctab${m.globals.length}`;
+      m.globals.push(
+        `${name} = private unnamed_addr constant [${values.length} x i64] [${values.map((x) => `i64 ${boxedNumber(x as number)}`).join(", ")}]`,
+      );
+      constTables.set(out, { global: name, n: values.length });
+    }
+  }
+  /** Whether a value is a typed BigInt: an i128 (a literal, or an operation the proof types). */
+  const isTypedBig = (v: ValueId): boolean =>
+    widthOf(v) !== undefined && (widthOf(v) as number) <= 127;
+  const bigSlots = new Map<ValueId, string>();
+  const bigSlotOf = (v: ValueId): string => {
+    let s0 = bigSlots.get(v);
+    if (s0 === undefined) {
+      s0 = `%b${bigSlots.size}`;
+      bigSlots.set(v, s0);
+    }
+    return s0;
+  };
+
   const params = g.nodes
     .filter((n) => n.kind === "param-source")
     .sort((a, b) => paramIndex(a.label) - paramIndex(b.label));
@@ -537,11 +699,49 @@ function lowerFunction(
       const key = m.constant(sym);
       return call("yk_global", `ptr ${key.ptr}, i64 ${key.length}`);
     }
+    if (bigWidth.has(v)) return boxBig(bigOperand(v));
     const r = fresh();
     emit(`${r} = load i64, ptr ${slotOf(v)}`);
     return r;
   };
   const set = (v: ValueId, r: string): void => emit(`store i64 ${r}, ptr ${slotOf(v)}`);
+  /** A typed BigInt's i128: a literal's constant, or the value's own slot. */
+  const bigOperand = (v0: ValueId): string => {
+    const v = resolve(v0);
+    const lit = literalBig(v);
+    if (lit !== undefined) return lit.toString();
+    const r = fresh();
+    emit(`${r} = load i128, ptr ${bigSlotOf(v)}`);
+    return r;
+  };
+  /** An i128 as a boxed BigInt (the runtime's). */
+  const boxBig = (x: string): string => {
+    const lo = fresh();
+    emit(`${lo} = trunc i128 ${x} to i64`);
+    const sh = fresh();
+    emit(`${sh} = lshr i128 ${x}, 64`);
+    const hi = fresh();
+    emit(`${hi} = trunc i128 ${sh} to i64`);
+    return call("yk_bigint_from_i128", `i64 ${lo}, i64 ${hi}`);
+  };
+  /** A boxed BigInt the proof says fits as an i128 (a runtime leaf's result): its i128. */
+  const unboxBig = (b: string): string => {
+    m.used.add("yk_bigint_word");
+    const lo = fresh();
+    emit(`${lo} = call i64 @yk_bigint_word(i64 ${b}, i32 0)`);
+    const hi = fresh();
+    emit(`${hi} = call i64 @yk_bigint_word(i64 ${b}, i32 1)`);
+    const l = fresh();
+    emit(`${l} = zext i64 ${lo} to i128`);
+    const h0 = fresh();
+    emit(`${h0} = zext i64 ${hi} to i128`);
+    const h = fresh();
+    emit(`${h} = shl i128 ${h0}, 64`);
+    const r = fresh();
+    emit(`${r} = or i128 ${h}, ${l}`);
+    return r;
+  };
+  const setBig = (v: ValueId, x: string): void => emit(`store i128 ${x}, ptr ${bigSlotOf(v)}`);
   /**
    * An operation with a number's fast path: `fast` (given the operands as doubles) inline when every
    * operand is a number (and `guard` holds), else `slow` (the runtime's). The value, boxed.
@@ -816,6 +1016,138 @@ function lowerFunction(
     return closure === undefined ? made : call("yk_closure_inherit", `i64 ${made}, ptr %closure`);
   };
 
+  /** A typed BigInt producer's i128. */
+  const typedBig = (n: DucNode): string => {
+    const ins = n.inputs as readonly ValueId[];
+    const lbl = n.label ?? "";
+    const leaf = leafOf(n);
+    const r = fresh();
+    if (leaf !== undefined) {
+      const a = ins[1] as ValueId;
+      const [fn] = LEAVES[leaf] as [string, number];
+      if ((leaf === "__ykU64" || leaf === "__ykI64") && isTypedBig(a)) {
+        const x = bigOperand(a);
+        const t = fresh();
+        emit(`${t} = trunc i128 ${x} to i64`);
+        emit(`${r} = ${leaf === "__ykU64" ? "zext" : "sext"} i64 ${t} to i128`);
+        return r;
+      }
+      if (leaf === "__ykNumToBig" || leaf === "__ykF64Bits") {
+        // A number: its bits (__ykF64Bits), or (__ykNumToBig, the number proved an int32 or uint32)
+        // its integer; anything else, the runtime's conversion (or its error).
+        const bits = leaf === "__ykF64Bits";
+        // A number proved an int32 or uint32 (or not a number: the runtime's conversion).
+        const x = operand(a);
+        const isNum = fresh();
+        emit(`${isNum} = icmp ult i64 ${x}, ${NUMBER_LIMIT}`);
+        const fast = freshLabel("nbfast");
+        const slow = freshLabel("nbslow");
+        const join = freshLabel("nbjoin");
+        emit(`br i1 ${isNum}, label %${fast}, label %${slow}`);
+        block(fast);
+        const w = fresh();
+        if (bits) emit(`${w} = zext i64 ${x} to i128`);
+        else {
+          const d = fresh();
+          emit(`${d} = bitcast i64 ${x} to double`);
+          const i = fresh();
+          emit(`${i} = fptosi double ${d} to i64`);
+          emit(`${w} = sext i64 ${i} to i128`);
+        }
+        const fastEnd = currentLabel();
+        emit(`br label %${join}`);
+        block(slow);
+        const b = call(fn, `i64 ${x}`);
+        const u = unboxBig(b);
+        const slowEnd = currentLabel();
+        emit(`br label %${join}`);
+        block(join);
+        emit(`${r} = phi i128 [ ${w}, %${fastEnd} ], [ ${u}, %${slowEnd} ]`);
+        return r;
+      }
+      // __ykU64/__ykI64 of a boxed value, __ykLoad64: the runtime's leaf, its result unboxed.
+      const args = ins.slice(1).map(operand);
+      return unboxBig(call(fn, args.map((x) => `i64 ${x}`).join(", ")));
+    }
+    if (ins.length === 1) {
+      const x = bigOperand(ins[0] as ValueId);
+      if (lbl === "-") emit(`${r} = sub i128 0, ${x}`);
+      else emit(`${r} = xor i128 ${x}, -1`);
+      return r;
+    }
+    const a = bigOperand(ins[0] as ValueId);
+    // A right shift by 127 or more is the sign: an LLVM shift by the width or more is poison.
+    const k = literalBig(ins[1] as ValueId);
+    const b = lbl === ">>" && k !== undefined && k > 127n ? "127" : bigOperand(ins[1] as ValueId);
+    const OPS: Record<string, string> = {
+      "+": "add",
+      "-": "sub",
+      "*": "mul",
+      "&": "and",
+      "|": "or",
+      "^": "xor",
+      "<<": "shl",
+      ">>": "ashr",
+    };
+    emit(`${r} = ${OPS[lbl] as string} i128 ${a}, ${b}`);
+    return r;
+  };
+  /**
+   * An operation whose operands are typed BigInts and whose result is not one: a comparison, a
+   * conversion to a number, a double from bits. Emitted (true), or not this case (false).
+   */
+  const typedConsumer = (n: DucNode, out: ValueId): boolean => {
+    const ins = n.inputs as readonly ValueId[];
+    const lbl = n.label ?? "";
+    const leaf = leafOf(n);
+    if (leaf !== undefined && ins.length === 2 && isTypedBig(ins[1] as ValueId)) {
+      const x = bigOperand(ins[1] as ValueId);
+      if (leaf === "__ykBigToI32" || leaf === "__ykBigToU32") {
+        const t = fresh();
+        emit(`${t} = trunc i128 ${x} to i32`);
+        const d = fresh();
+        emit(`${d} = ${leaf === "__ykBigToI32" ? "sitofp" : "uitofp"} i32 ${t} to double`);
+        const bits = fresh();
+        emit(`${bits} = bitcast double ${d} to i64`);
+        set(out, bits);
+        return true;
+      }
+      if (leaf === "__ykF64FromBits") {
+        const t = fresh();
+        emit(`${t} = trunc i128 ${x} to i64`);
+        const d = fresh();
+        emit(`${d} = bitcast i64 ${t} to double`);
+        set(out, boxDouble(d));
+        return true;
+      }
+      return false;
+    }
+    const CMP: Record<string, string> = {
+      "===": "eq",
+      "==": "eq",
+      "!==": "ne",
+      "!=": "ne",
+      "<": "slt",
+      ">": "sgt",
+      "<=": "sle",
+      ">=": "sge",
+    };
+    if (
+      ins.length === 2 &&
+      CMP[lbl] !== undefined &&
+      isTypedBig(ins[0] as ValueId) &&
+      isTypedBig(ins[1] as ValueId)
+    ) {
+      const a = bigOperand(ins[0] as ValueId);
+      const b = bigOperand(ins[1] as ValueId);
+      const c = fresh();
+      emit(`${c} = icmp ${CMP[lbl] as string} i128 ${a}, ${b}`);
+      set(out, boolBox(c));
+      return true;
+    }
+    return false;
+  };
+
   const emitNode = (n: DucNode): void => {
     if (["literal-source", "param-source", "carry-source", "diamond-source"].includes(n.kind))
       return;
@@ -839,6 +1171,11 @@ function lowerFunction(
       return;
     }
     if (n.kind !== "op") throw new LlvmEmitError(`a ${n.kind} node is not in the subset`);
+    if (bigWidth.has(out)) {
+      setBig(out, typedBig(n));
+      return;
+    }
+    if (typedConsumer(n, out)) return;
     if (lbl === "this" || lbl.startsWith("ThisKeyword#")) {
       // At a CommonJS module's top level, `this` is its exports.
       const top = closure === undefined ? scope?.read("this", emit, fresh) : "%this";
@@ -1151,6 +1488,47 @@ function lowerFunction(
       return;
     }
     if (lbl === "ElementAccess" && ins.length === 2) {
+      const table = constTables.get(resolve(ins[0] as ValueId));
+      if (table !== undefined) {
+        // A constant table's element at an integer index in range: a load; else the array's read.
+        const idx = operand(ins[1] as ValueId);
+        set(
+          out,
+          numberFast(
+            [idx],
+            ([d]) => {
+              const i = fresh();
+              emit(`${i} = fptosi double ${d} to i64`);
+              const p = fresh();
+              emit(`${p} = getelementptr [${table.n} x i64], ptr ${table.global}, i64 0, i64 ${i}`);
+              const r = fresh();
+              emit(`${r} = load i64, ptr ${p}`);
+              return r;
+            },
+            () => {
+              const arr = call("yk_array_of", `i64 ${table.n}, ptr ${table.global}`);
+              return call("yk_get", `i64 ${arr}, i64 ${idx}`);
+            },
+            ([d]) => {
+              const nonneg = fresh();
+              emit(`${nonneg} = fcmp oge double ${d}, 0.0`);
+              const below = fresh();
+              emit(`${below} = fcmp olt double ${d}, ${table.n}.0`);
+              const inRange = fresh();
+              emit(`${inRange} = and i1 ${nonneg}, ${below}`);
+              const t = fresh();
+              emit(`${t} = call double @llvm.trunc.f64(double ${d})`);
+              m.intrinsics.add("declare double @llvm.trunc.f64(double)");
+              const integral = fresh();
+              emit(`${integral} = fcmp oeq double ${t}, ${d}`);
+              const ok = fresh();
+              emit(`${ok} = and i1 ${inRange}, ${integral}`);
+              return ok;
+            },
+          ),
+        );
+        return;
+      }
       set(
         out,
         call("yk_get", `i64 ${operand(ins[0] as ValueId)}, i64 ${operand(ins[1] as ValueId)}`),
@@ -1376,7 +1754,47 @@ function lowerFunction(
         "** is implementation-approximated in ECMAScript: a native pow need not give the reference's last bit",
       );
     if (ins.length === 1 && UNARY[lbl] !== undefined) {
-      set(out, call(UNARY[lbl] as string, `i64 ${operand(ins[0] as ValueId)}`));
+      const x = operand(ins[0] as ValueId);
+      const slow = (): string => call(UNARY[lbl] as string, `i64 ${x}`);
+      // A number's negation, plus and complement inline (#1369).
+      if (lbl === "-" || lbl === "+") {
+        set(
+          out,
+          numberFast(
+            [x],
+            ([d]) => {
+              if (lbl === "+") return x;
+              const r = fresh();
+              emit(`${r} = fneg double ${d}`);
+              return boxDouble(r);
+            },
+            slow,
+          ),
+        );
+        return;
+      }
+      if (lbl === "~") {
+        set(
+          out,
+          numberFast(
+            [x],
+            ([d]) => {
+              const i = toInt32(d as string);
+              const r = fresh();
+              emit(`${r} = xor i32 ${i}, -1`);
+              const f = fresh();
+              emit(`${f} = sitofp i32 ${r} to double`);
+              const bits = fresh();
+              emit(`${bits} = bitcast double ${f} to i64`);
+              return bits;
+            },
+            slow,
+            ([d]) => smallDouble(d as string),
+          ),
+        );
+        return;
+      }
+      set(out, slow());
       return;
     }
     if (ins.length === 2 && (lbl === "&&" || lbl === "||")) {
@@ -1393,6 +1811,7 @@ function lowerFunction(
       set(out, r);
       return;
     }
+    if (lbl === "ArrayLiteral" && constTables.has(out)) return; // read in place
     if (lbl === "ArrayLiteral") {
       if (ins.some(isSpread)) {
         set(out, spreadList(ins));
@@ -1624,6 +2043,7 @@ function lowerFunction(
       head,
       "entry:",
       ...[...slots.values()].map((s) => `  ${s} = alloca i64`),
+      ...[...bigSlots.values()].map((s) => `  ${s} = alloca i128`),
       ...entryAllocas,
       ...body,
       "}",

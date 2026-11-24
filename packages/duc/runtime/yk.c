@@ -2196,6 +2196,21 @@ static int numeric_pair(yk *a, yk *b) {
   return 0;
 }
 
+/* A 128-bit two's complement integer (as its low and high words) as a BigInt: the typed
+   lowering's boxing of the BigInts it keeps unboxed (#1369). Portable: no __int128 needed. */
+yk yk_bigint_from_i128(uint64_t lo, uint64_t hi) {
+  uint32_t w[4] = {(uint32_t)lo, (uint32_t)(lo >> 32), (uint32_t)hi, (uint32_t)(hi >> 32)};
+  return from_twos(w, 4);
+}
+
+/* Word i (0 low, 1 high) of a BigInt's 128-bit two's complement (the typed lowering's unboxing of a
+   value it proved fits). */
+uint64_t yk_bigint_word(yk b, int32_t i) {
+  uint32_t w[4];
+  twos(big(b), w, 4);
+  return ((uint64_t)w[2 * i + 1] << 32) | w[2 * i];
+}
+
 /* --- the leaves --- */
 
 yk yk_leaf_i32mul(yk a, yk b) { return yk_number((int32_t)((uint32_t)to_int32(a) * (uint32_t)to_int32(b))); }
