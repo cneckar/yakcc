@@ -1092,7 +1092,7 @@ class Lifter {
   private lowerTry(t: import("ts-morph").TryStatement): Node | undefined {
     const shape = tryShape(t);
     if (shape === undefined) return undefined;
-    const { parts, vars, awaits, yields } = shape;
+    const { parts, vars, awaits, yields, leaves } = shape;
     const handler = t.getCatchClause();
     const finalizer = t.getFinallyBlock();
     const returns = parts.flatMap((part) =>
@@ -1100,7 +1100,7 @@ class Lifter {
         .getDescendantsOfKind(SyntaxKind.ReturnStatement)
         .filter((r) => !isInsideNestedFunction(r, part)),
     );
-    const completes = returns.length > 0;
+    const completes = returns.length > 0 || leaves.length > 0;
     const full = t.getSourceFile().getFullText();
     const rewrite = (block: import("ts-morph").Block): string => {
       const start = block.getStart() + 1;
@@ -1111,6 +1111,12 @@ class Lifter {
         const expr = r.getExpression();
         const value = expr === undefined ? "undefined" : `(${expr.getText()})`;
         edits.push({ from: r.getStart(), to: r.getEnd(), text: `return [1, ${value}];` });
+      }
+      // A break or continue of the loop around the statement is `[2]` or `[3]` (#1330).
+      for (const j of leaves) {
+        if (j.getStart() < start || j.getEnd() > end) continue;
+        const code = Node.isBreakStatement(j) ? 2 : 3;
+        edits.push({ from: j.getStart(), to: j.getEnd(), text: `return [${code}];` });
       }
       // `var x = v` inside is the assignment `x = v` of the function's x, declared before the call.
       for (const list of block.getDescendantsOfKind(SyntaxKind.VariableDeclarationList)) {
@@ -1165,8 +1171,15 @@ class Lifter {
         ? `(await ${ASYNC_TRY_PRIMITIVE}(${body}, ${caught}${last}))`
         : `${TRY_PRIMITIVE}(${body}, ${caught}${last})`;
     const wrapper = `${a}function${yields ? "*" : ""} __try()`;
+    const after = [
+      ...(returns.length > 0 ? [`if (${tmp}[0] === 1) return ${tmp}[1];`] : []),
+      ...(leaves.some((j) => Node.isBreakStatement(j)) ? [`if (${tmp}[0] === 2) break;`] : []),
+      ...(leaves.some((j) => Node.isContinueStatement(j))
+        ? [`if (${tmp}[0] === 3) continue;`]
+        : []),
+    ];
     const source = completes
-      ? `${wrapper} {\n{\nconst ${tmp} = ${call};\nif (${tmp}[0] === 1) return ${tmp}[1];\n}\n}`
+      ? `${wrapper} {\n{\nconst ${tmp} = ${call};\n${after.join("\n")}\n}\n}`
       : `${wrapper} {\n${call};\n}`;
     // The function's own names declared in the blocks are bound before the call, as JavaScript
     // hoists them; the closures assign them, so they are cells.
@@ -1196,8 +1209,13 @@ class Lifter {
    * returns of the statement it was lowered from are (#1330).
    */
   private noteExits(lowered: Node | undefined): Node | undefined {
-    for (const r of lowered?.getDescendantsOfKind(SyntaxKind.ReturnStatement) ?? [])
-      if (!isInsideNestedFunction(r, lowered as Node)) this.loweredExits.add(r.compilerNode);
+    for (const r of [
+      ...(lowered?.getDescendantsOfKind(SyntaxKind.ReturnStatement) ?? []),
+      ...(lowered?.getDescendantsOfKind(SyntaxKind.BreakStatement) ?? []),
+      ...(lowered?.getDescendantsOfKind(SyntaxKind.ContinueStatement) ?? []),
+    ])
+      if (!isInsideNestedFunction(r, lowered as Node) && !insideLoop(r, lowered as Node))
+        this.loweredExits.add(r.compilerNode);
     return lowered;
   }
 
@@ -1208,9 +1226,7 @@ class Lifter {
   private holdsLoopExit(stmt: Node, loop: Node): boolean {
     return (
       containsLoopJump(stmt, loop) ||
-      stmt
-        .getDescendantsOfKind(SyntaxKind.ReturnStatement)
-        .some((r) => this.loweredExits.has(r.compilerNode))
+      stmt.getDescendants().some((r) => this.loweredExits.has(r.compilerNode))
     );
   }
 
@@ -4800,11 +4816,16 @@ function containsLoopJump(stmt: Node, loop: Node): boolean {
  * what Lifter.lowerTry needs. Undefined when it cannot be lowered: a var that is not a plain name, a
  * yield, or a break or continue that leaves the statement.
  */
-function tryShape(
-  t: import("ts-morph").TryStatement,
-):
-  | { parts: import("ts-morph").Block[]; vars: string[]; awaits: boolean; yields: boolean }
+function tryShape(t: import("ts-morph").TryStatement):
+  | {
+      parts: import("ts-morph").Block[];
+      vars: string[];
+      awaits: boolean;
+      yields: boolean;
+      leaves: Node[];
+    }
   | undefined {
+  const leaves: Node[] = [];
   // The function the try is in: a yield inside moves into a generator closure, delegated to.
   const owner = t.getAncestors().find((a) => isFunctionLikeNode(a));
   const generator =
@@ -4863,10 +4884,25 @@ function tryShape(
       const target = Node.isBreakStatement(j)
         ? breakTarget(j)
         : j.getAncestors().find((a) => isLoopStatement(a));
-      if (!inside(target)) return undefined;
+      if (inside(target)) continue;
+      // One that leaves the statement for the loop around it is a completion of the closure, done
+      // after the call (#1330); not from a finally, whose completion the primitive does not keep.
+      if (target === undefined || !isLoopStatement(target) || part === finalizer) return undefined;
+      leaves.push(j);
     }
   }
-  return { parts, vars, awaits, yields };
+  return { parts, vars, awaits, yields, leaves };
+}
+
+/** Whether a loop statement is between a node and `boundary`. */
+function insideLoop(node: Node, boundary: Node): boolean {
+  for (
+    let p = node.getParent();
+    p !== undefined && p.compilerNode !== boundary.compilerNode;
+    p = p.getParent()
+  )
+    if (isLoopStatement(p)) return true;
+  return false;
 }
 
 /** The outermost try statement between a node and `boundary`, if any. */
@@ -4896,9 +4932,9 @@ function jumpsSupported(loop: Node): boolean {
   // Every loop statement has a body statement.
   const body = (loop as import("ts-morph").WhileStatement).getStatement();
   for (const j of loopJumpsOf(loop)) {
-    // A return inside a try is the return after the call the try lowers to (#1330): it is written
-    // where the try is.
-    const t = Node.isReturnStatement(j) ? outermostTry(j, body) : undefined;
+    // A jump inside a try is the one after the call the try lowers to (#1330): it is written where
+    // the try is.
+    const t = outermostTry(j, body);
     if (t !== undefined && tryShape(t) === undefined) return false;
     for (
       let p: Node | undefined = t !== undefined ? t.getParent() : j.getParent();

@@ -151,9 +151,47 @@ describe("a try with a return inside a loop (#1330)", () => {
     });
   }
 
-  it("a break that leaves the try is not lifted yet", () => {
+  const JUMPS: [string, string, unknown][] = [
+    [
+      "a break and a continue that leave the try, as Node's Readable.from writes them",
+      "export function f(xs) { const out = []; const it = xs[Symbol.iterator](); for (;;) { try { const { value, done } = it.next(); if (done) { out.push('end'); return out; } if (value === 0) throw new Error('zero'); if (value > 5) { out.push('big'); continue; } out.push(value); } catch (err) { out.push('err ' + err.message); } break; } return out; }",
+      [9, 7, 0, 4],
+    ],
+    [
+      "the same, to the end",
+      "export function f(xs) { const out = []; const it = xs[Symbol.iterator](); for (;;) { try { const { value, done } = it.next(); if (done) { out.push('end'); return out; } if (value > 5) { out.push('big'); continue; } out.push(value); } catch (err) { out.push('err ' + err.message); } break; } return out; }",
+      [9, 9],
+    ],
+    [
+      "for-of: break and continue from the try, statements after it",
+      "export function f(xs) { let n = 0; for (const x of xs) { try { if (x < 0) break; if (x === 0) continue; n += x; } catch {} n *= 2; } return n; }",
+      [1, 0, 2, -1, 5],
+    ],
+    [
+      "a break of a loop inside the try stays inside",
+      "export function f(xs) { let n = 0; for (const x of xs) { try { for (const y of x) { if (y < 0) break; n += y; } } catch {} } return n; }",
+      [[1, -1, 5], [2]],
+    ],
+  ];
+  for (const [name, source, input] of JUMPS) {
+    it(name, () => {
+      const g = liftAtom(source);
+      expect(opaque(g)).toEqual([]);
+      const code = emitTypeScript(g);
+      const go = (c: string): unknown =>
+        (
+          new Function(`${runnable(c).replace(/^export /m, "")}; return f;`)() as (
+            x: unknown,
+          ) => unknown
+        )(input);
+      expect(go(code), code).toEqual(go(source));
+      expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    });
+  }
+
+  it("a break from a finally is not lifted yet", () => {
     const g = liftAtom(
-      "export function f(xs) { let n = 0; for (const x of xs) { try { if (x) break; n++; } catch (e) {} } return n; }",
+      "export function f(xs) { let n = 0; for (const x of xs) { try { n += x; } finally { if (x > 1) break; } } return n; }",
     );
     expect(opaque(g).length).toBeGreaterThan(0);
   });
