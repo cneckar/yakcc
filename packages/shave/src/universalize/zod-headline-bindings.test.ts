@@ -453,10 +453,13 @@ describe("zod/v3/external.cjs -- engine-gap corroboration (WI-510 Slice 8 Group 
 //   follow-up issue for the depth-limit / body-scale problem should be filed separately.
 //   Path (b) (flip assertions with raised timeouts) was NOT chosen because the file
 //   still stubs — the error is deterministic and not a timeout race condition.
+// superseded by DEC-RECURSION-DEPTH-STRUCTURAL-001 (recursion.ts): the recursion is bounded by
+//   the source's own AST height, so the depth-25 descent is no longer refused. v3/types.cjs now
+//   decomposes (7 modules, 0 stubs, ~74s); sections A-C assert that engine reality.
 // ---------------------------------------------------------------------------
 describe("zod/v3/types.cjs -- engine-gap corroboration, binding-bearing monolith (WI-510 Slice 8 Group A)", () => {
   it(
-    "section A -- moduleCount=0, stubCount=1, leafTotal=0 (3775-line monolith; ~69s empirical; DEC-WI510-S8-ENGINE-GAPS-EXERCISED-001)",
+    "section A -- moduleCount>=1, stubCount=0, leafTotal>0 (3775-line monolith decomposes; ~74s empirical; DEC-RECURSION-DEPTH-STRUCTURAL-001)",
     // v3/types.cjs empirically takes ~69s (planner probe, plan §3.2).
     // 120_000ms gives headroom. If >120s on CI that is a Slice 1 engine perf concern.
     { timeout: 120_000 },
@@ -474,21 +477,21 @@ describe("zod/v3/types.cjs -- engine-gap corroboration, binding-bearing monolith
         "[zod-v3-types sA] stubs:",
         forestStubs(forest).map((s) => s.specifier),
       );
-      // Engine-gap assertion: binding-bearing monolith is engine-opaque.
-      // DEC-WI510-S8-ENGINE-GAP-CORROBORATION-TESTS-001: assert empirical engine output.
+      // The monolith decomposes now that the recursion is bounded by its own AST height
+      // (DEC-RECURSION-DEPTH-STRUCTURAL-001): assertion flip from engine-gap to engine-reality.
       expect(
         forest.moduleCount,
-        "v3/types.cjs moduleCount must be 0 (3775-line monolith is engine-opaque)",
-      ).toBe(0);
-      expect(forest.stubCount, "v3/types.cjs stubCount must be 1").toBe(1);
-      expect(forestTotalLeafCount(forest)).toBe(0);
+        "v3/types.cjs moduleCount must be >= 1 (the monolith decomposes)",
+      ).toBeGreaterThanOrEqual(1);
+      expect(forest.stubCount, "v3/types.cjs stubCount must be 0").toBe(0);
+      expect(forestTotalLeafCount(forest)).toBeGreaterThan(0);
       const allExternal = forestModules(forest).flatMap((m) => m.externalSpecifiers);
       expect(allExternal).toEqual([]);
     },
   );
 
   it(
-    "section B -- stub specifier path ends in zod-3.25.76/v3/types.cjs",
+    "section B -- a module for zod-3.25.76/v3/types.cjs, and no stub",
     // Vitest runs it() blocks concurrently within a describe. Sections A, B, C each spawn
     // a ~69s shavePackage call simultaneously. Worst-case concurrency: all three compete,
     // pushing any one to ~3×69s ≈ 207s. 400_000ms gives safe headroom.
@@ -498,15 +501,15 @@ describe("zod/v3/types.cjs -- engine-gap corroboration, binding-bearing monolith
         registry: emptyRegistry,
         entryPath: join(ZOD_FIXTURE_ROOT, "v3", "types.cjs"),
       });
-      const stubs = forestStubs(forest);
-      expect(stubs).toHaveLength(1);
-      const stubSpec = normalize(stubs[0]?.specifier ?? "");
-      expect(stubSpec).toContain(join("zod-3.25.76", "v3", "types.cjs"));
+      // A module for v3/types.cjs itself, and no stub for it (DEC-RECURSION-DEPTH-STRUCTURAL-001).
+      expect(forestStubs(forest)).toHaveLength(0);
+      const paths = forestModules(forest).map((m) => normalize(m.filePath));
+      expect(paths.some((p) => p.endsWith(join("zod-3.25.76", "v3", "types.cjs")))).toBe(true);
     },
   );
 
   it(
-    "section C -- no modules resolved; binding-bearing source text NOT in this atom (engine-gap)",
+    "section C -- modules resolved (the monolith decomposes)",
     // Same concurrency rationale as section B. 400_000ms empirically validated (358_957ms
     // observed in first run with 3-way concurrency on this machine).
     { timeout: 400_000 },
@@ -515,7 +518,8 @@ describe("zod/v3/types.cjs -- engine-gap corroboration, binding-bearing monolith
         registry: emptyRegistry,
         entryPath: join(ZOD_FIXTURE_ROOT, "v3", "types.cjs"),
       });
-      expect(forestModules(forest).length).toBe(0);
+      // Modules resolve now that the monolith decomposes (DEC-RECURSION-DEPTH-STRUCTURAL-001).
+      expect(forestModules(forest).length).toBeGreaterThan(0);
     },
   );
 
