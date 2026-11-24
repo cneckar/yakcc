@@ -40,6 +40,8 @@ Or install globally and reference the binary:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `YAKCC_REGISTRY_URL` | `https://registry.yakcc.com` | Base URL of the registry. Override to point at a self-hosted instance. |
+| `YAKCC_MODULE_INDEX` | none | Path to a module index (`scripts/build-module-index.mjs`), for `yakcc_find_modules` and `yakcc_get_module`. |
+| `YAKCC_BEHAVIOR_INDEX` | none | Path to a behavior index (`scripts/build-behavior-index.mjs`), for `yakcc_check_duplicates`. |
 
 ---
 
@@ -57,6 +59,13 @@ All 8 tools proxy the W-135 HTTP endpoints on `registry.yakcc.com`. Tool outputs
 | `yakcc_request_shave` | `POST /v1/shaves` | Request a shave. May return `503 worker_not_implemented` — surfaced as structured content, not an error. |
 | `yakcc_get_shave_status` | `GET /v1/shaves/{shave_id}` | Poll the status of a pending or completed shave. |
 | `yakcc_get_provenance` | `GET /v1/atoms/{block_merkle_root}/provenance` | Fetch the proof manifest for an atom. |
+
+### Local tools (no HTTP)
+
+| Tool name | Index | Description |
+|-----------|-------|-------------|
+| `yakcc_find_modules` / `yakcc_get_module` | `YAKCC_MODULE_INDEX` | Find large modules by a described need; fetch the picked module's source (DEC-MCP-MODULES-001). |
+| `yakcc_check_duplicates` | `YAKCC_BEHAVIOR_INDEX` | Before storing a function you wrote, find stored code that behaves the same. It runs your function in a vm sandbox on fixed inputs and on your examples. Each neighbor gets a verdict: equivalent, near (with the inputs where they differ), different, or inconclusive (DEC-MCP-CHECK-DUPLICATES-001; measured in `bench/B15-upsert-dedup`). |
 
 Non-200 responses are returned as structured MCP content (`{ error: { kind, status, message, server_payload } }`) rather than thrown exceptions, so agents can adapt to server-side signals (DEC-MCP-ERROR-AS-CONTENT-004).
 

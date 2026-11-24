@@ -101,6 +101,18 @@ export function needPrompt(task) {
   return `Task: ${task.spec}\n\nBefore writing any code, say what reusable library module would do the heavy lifting for this task, as one or two sentences for a code search: the capability, its inputs and outputs, the behavior that matters. No code. If the task is small enough that no library would help, reply NONE.`;
 }
 
+/** Lines of from-scratch code below which the routed arm writes instead of searching. */
+export const ROUTE_LINES = 60;
+
+/**
+ * The routed arm's first prompt: write it now when it is small, else name the module to search
+ * for. B14's first live run put break-even near 2,000 output tokens of from-scratch code; the
+ * model cannot count tokens before writing, so the threshold is stated in lines.
+ */
+export function routePrompt(task) {
+  return `Task: ${task.spec}\n\nIf you can write this correctly in about ${ROUTE_LINES} lines of code or fewer, write it now. ${CODE_RULES}\n\nOtherwise, do not write any code: say what reusable library module would do the heavy lifting, as one or two sentences for a code search: the capability, its inputs and outputs, the behavior that matters.`;
+}
+
 export function confirmPrompt(task, need, candidates) {
   const lines = [
     `Task: ${task.spec}`,
@@ -166,8 +178,11 @@ export async function runScratch({ task, client }) {
  * The reuse arm: the model names the capability it needs; the library shows the top k modules;
  * the model picks one or none; with a pick, it writes glue around `lib.<name>`, which the
  * scorer binds to the picked module; with none (or NONE), it writes everything itself.
+ *
+ * With `route`, the first call is routePrompt: a reply with code is the solution (one call, no
+ * search); a reply without code is the need, and the reuse path continues from it.
  */
-export async function runReuse({ task, client, search, rootSourceOf, k = 5 }) {
+export async function runReuse({ task, client, search, rootSourceOf, k = 5, route = false }) {
   const t0 = Date.now();
   let inputTokens = 0;
   let outputTokens = 0;
@@ -179,7 +194,26 @@ export async function runReuse({ task, client, search, rootSourceOf, k = 5 }) {
     turns++;
     return r.text;
   };
-  const needText = (await call(needPrompt(task))).trim();
+  const arm = route ? "routed" : "reuse";
+  const first = (await call(route ? routePrompt(task) : needPrompt(task))).trim();
+  if (route && /```/.test(first)) {
+    const score = scoreSolution(task, extractCode(first));
+    return {
+      arm,
+      task: task.id,
+      ...score,
+      inputTokens,
+      outputTokens,
+      turns,
+      ms: Date.now() - t0,
+      routedTo: "write",
+      need: null,
+      targetShown: false,
+      picked: null,
+      pickedTarget: false,
+    };
+  }
+  const needText = first;
   let picked = null;
   let shown = [];
   if (!/^NONE\b/i.test(needText)) {
@@ -197,13 +231,14 @@ export async function runReuse({ task, client, search, rootSourceOf, k = 5 }) {
     score = scoreSolution(task, code);
   }
   return {
-    arm: "reuse",
+    arm,
     task: task.id,
     ...score,
     inputTokens,
     outputTokens,
     turns,
     ms: Date.now() - t0,
+    ...(route ? { routedTo: "search" } : {}),
     need: needText.slice(0, 300),
     targetShown: shown.some((e) => isTargetEntry(task, e)),
     picked: picked?.id ?? null,
@@ -228,7 +263,10 @@ export function summarize(rows, price) {
       dollarsPerPass: rs.some((r) => r.pass)
         ? rs.reduce((s, r) => s + cost(r), 0) / rs.filter((r) => r.pass).length
         : null,
-      ...(arm === "reuse"
+      ...(arm === "routed"
+        ? { routedToWrite: rs.filter((r) => r.routedTo === "write").length / rs.length }
+        : {}),
+      ...(arm === "reuse" || arm === "routed"
         ? {
             reuseRate: rs.filter((r) => r.picked).length / rs.length,
             targetShown: rs.filter((r) => r.targetShown).length / rs.length,

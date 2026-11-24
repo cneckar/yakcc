@@ -670,9 +670,23 @@ function encodeFunction(
         }
         break;
       case "i32":
-        if (x.name === "and") a.op([OP.iand], -1);
-        else if (x.name === "eqz") a.bool(OP.ifeq, 1);
-        else a.bool(OP.if_icmpeq, 2);
+        if (x.name === "eqz") a.bool(OP.ifeq, 1);
+        else if (x.name === "eq") a.bool(OP.if_icmpeq, 2);
+        else
+          a.op(
+            [{ and: OP.iand, or: 0x80, xor: 0x82, shl: OP.ishl, shr_s: 0x7a, shr_u: 0x7c }[x.name]],
+            -1,
+          );
+        break;
+      case "i32.of.f64":
+        a.op([OP.d2i], -1);
+        break;
+      case "f64.of.u32":
+        // i2l, mask to the low 32 bits, l2d.
+        a.op([0x85], 1);
+        a.op([OP.ldc2_w, ...u2(pool.longConst(0xffffffff))], 2);
+        a.op([OP.land], -2);
+        a.op([OP.l2d], 0);
         break;
       case "f64.of.i32":
         a.op([OP.i2d], 1);
