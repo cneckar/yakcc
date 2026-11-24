@@ -1,0 +1,2785 @@
+{
+  "set": "generated",
+  "model": "claude-opus-5-5",
+  "k": 10,
+  "descriptions": 2754,
+  "usage": {
+    "inputTokens": 266898,
+    "outputTokens": 19580,
+    "calls": 172
+  },
+  "summary": {
+    "queries": 172,
+    "targetShown": 0.9302325581395349,
+    "rightOfPositives": 0.7965116279069767,
+    "rightWhenShown": 0.85625,
+    "reusePrecision": 0.8509316770186336,
+    "wrongReuseOnNegatives": null,
+    "correctNoneOnNegatives": null,
+    "invalid": 1,
+    "rightOfPositivesSameFunction": 0.8895348837209303,
+    "reusePrecisionSameFunction": 0.9503105590062112
+  },
+  "meanTokens": {
+    "request": 104.61046511627907,
+    "examples": 103.1046511627907,
+    "confirmInput": 1551.7325581395348,
+    "confirmOutput": 113.83720930232558
+  },
+  "rows": [
+    {
+      "id": "gen-1",
+      "positive": true,
+      "pick": 2,
+      "picked": "base64-js-1.5.1/index.js#getLens@22",
+      "reason": "getLens enforces length %4 and returns [validLen, placeHoldersLen]",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 125,
+        "examples": 47,
+        "confirmInput": 1482,
+        "confirmOutput": 109
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-2",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "Candidate 2 computes the right big-endian word with wraparound, but it returns it under the field 'key', not 'word'. The other bcryptjs readers are the same library function, so none gives the required {word, offp} shape.",
+      "outcome": "missed",
+      "reachable": true,
+      "tokens": {
+        "request": 135,
+        "examples": 115,
+        "confirmInput": 1776,
+        "confirmOutput": 410
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-3",
+      "positive": true,
+      "pick": 1,
+      "picked": "csv-parse-6.2.1/lib/api/normalize_columns_array.js#normalize_columns_array@4",
+      "reason": "normalizes column definitions into objects",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 141,
+        "examples": 131,
+        "confirmInput": 1432,
+        "confirmOutput": 137
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-4",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/_lib/addLeadingZeros.cjs#addLeadingZeros@3",
+      "reason": "date-fns addLeadingZeros zero-pads the absolute value to the target length, keeps the minus sign in front, and does not truncate long values.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 73,
+        "examples": 55,
+        "confirmInput": 1575,
+        "confirmOutput": 63
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-5",
+      "positive": true,
+      "pick": 2,
+      "picked": "fastest-levenshtein-1.0.16/esm/mod.js#myers_32@31",
+      "reason": "Bit-parallel Levenshtein for a first string of at most 32 chars, which is this contract",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 113,
+        "examples": 56,
+        "confirmInput": 1491,
+        "confirmOutput": 124
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-6",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/escape.js#escape@9",
+      "reason": "Escapes HTML-sensitive characters to entities and leaves plain strings unchanged.",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 67,
+        "examples": 69,
+        "confirmInput": 1367,
+        "confirmOutput": 46
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-7",
+      "positive": true,
+      "pick": 3,
+      "picked": "lodash-4.17.21/_arrayEach.js#arrayEach@10",
+      "reason": "lodash arrayEach iterates in index order with early exit on false and returns the same array",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 133,
+        "examples": 108,
+        "confirmInput": 1372,
+        "confirmOutput": 43
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-8",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate returns metrics[prop] with a fallback to tracing[prop]; all are zod schema checks or lazy proxy traps.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 116,
+        "examples": 182,
+        "confirmInput": 1163,
+        "confirmOutput": 61
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-9",
+      "positive": true,
+      "pick": 1,
+      "picked": "ms-2.1.3/index.js#parse@48",
+      "reason": "ms parse converts duration strings to ms",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 93,
+        "examples": 53,
+        "confirmInput": 1314,
+        "confirmOutput": 140
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-10",
+      "positive": true,
+      "pick": 4,
+      "picked": "semver-7.8.0/classes/range.js#isNullSet@233",
+      "reason": "isNullSet checks the comparator value for the '<0.0.0-0' matches-nothing string",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 84,
+        "examples": 52,
+        "confirmInput": 1360,
+        "confirmOutput": 48
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-11",
+      "positive": true,
+      "pick": 1,
+      "picked": "toposort-2.0.2/index.js#toposort@37",
+      "reason": "Toposorts nodes by the edges and throws on cycles or unknown nodes.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 105,
+        "examples": 87,
+        "confirmInput": 1479,
+        "confirmOutput": 43
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-12",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/esm/parse.js#parse@2",
+      "reason": "parses UUID to 16 bytes, throws TypeError",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 98,
+        "examples": 226,
+        "confirmInput": 1726,
+        "confirmOutput": 141
+      },
+      "otherBuild": true
+    },
+    {
+      "id": "gen-13",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/index.js#_typeof@3",
+      "reason": "typeof-like output with polyfilled symbol handling; examples match",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 65,
+        "examples": 47,
+        "confirmInput": 1239,
+        "confirmOutput": 38
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-14",
+      "positive": true,
+      "pick": 1,
+      "picked": "zod-3.25.76/v3/ZodError.cjs#quotelessJson@23",
+      "reason": "Two-space JSON with unquoted property names; examples match",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 93,
+        "examples": 129,
+        "confirmInput": 1377,
+        "confirmOutput": 225
+      },
+      "otherBuild": true
+    },
+    {
+      "id": "gen-15",
+      "positive": true,
+      "pick": 1,
+      "picked": "base64-js-1.5.1/index.js#byteLength@42",
+      "reason": "Returns the decoded byte count from length minus padding, without decoding.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 68,
+        "examples": 46,
+        "confirmInput": 1429,
+        "confirmOutput": 38
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-16",
+      "positive": true,
+      "pick": 3,
+      "picked": "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_encode@38",
+      "reason": "bcryptjs base64_encode; its examples output '.' characters for zero bytes, which matches the ./A-Za-z0-9 alphabet.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 114,
+        "examples": 61,
+        "confirmInput": 2002,
+        "confirmOutput": 281
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-17",
+      "positive": true,
+      "pick": 1,
+      "picked": "csv-parse-6.2.1/lib/utils/is_object.js#is_object@1",
+      "reason": "Non-null, non-array typeof-object check; Dates and class instances still pass",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 81,
+        "examples": 56,
+        "confirmInput": 1185,
+        "confirmOutput": 134
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-18",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/addDays.cjs#addDays@32",
+      "reason": "addDays shifts by days and returns a new date",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 124,
+        "examples": 218,
+        "confirmInput": 1971,
+        "confirmOutput": 31
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-19",
+      "positive": true,
+      "pick": 1,
+      "picked": "fastest-levenshtein-1.0.16/esm/mod.js#distance@141",
+      "reason": "general Levenshtein, correct examples",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 103,
+        "examples": 176,
+        "confirmInput": 1248,
+        "confirmOutput": 130
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-20",
+      "positive": true,
+      "pick": 1,
+      "picked": "jsonpointer-5.0.1/jsonpointer.js#compilePointer@49",
+      "reason": "compilePointer turns a string or array pointer into a segment array and throws on invalid input; compilePointer(\"\") = [\"\"] fits the spec",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 128,
+        "examples": 55,
+        "confirmInput": 1482,
+        "confirmOutput": 67
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-21",
+      "positive": true,
+      "pick": 1,
+      "picked": "lodash-4.17.21/_arrayFilter.js#arrayFilter@10",
+      "reason": "lodash arrayFilter calls predicate(value, index, array), treats null as empty, keeps order",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 119,
+        "examples": 105,
+        "confirmInput": 1311,
+        "confirmOutput": 126
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-22",
+      "positive": true,
+      "pick": 1,
+      "picked": "lru-cache-11.3.6/dist/esm/index.js#shouldWarn@22",
+      "reason": "Returns true when the warning ID is not yet in the issued-warnings set. Read-only, and the examples fit.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 144,
+        "examples": 44,
+        "confirmInput": 1281,
+        "confirmOutput": 52
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-23",
+      "positive": true,
+      "pick": 2,
+      "picked": "ms-2.1.3/index.js#fmtShort@113",
+      "reason": "ms fmtShort gives compact '3ms' form",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 92,
+        "examples": 50,
+        "confirmInput": 1485,
+        "confirmOutput": 34
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-24",
+      "positive": true,
+      "pick": 4,
+      "picked": "semver-7.8.0/classes/range.js#isAny@234",
+      "reason": "isAny returns true only when the object's value property is exactly an empty string.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 62,
+        "examples": 41,
+        "confirmInput": 1158,
+        "confirmOutput": 38
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-25",
+      "positive": true,
+      "pick": 1,
+      "picked": "toposort-2.0.2/index.js#uniqueNodes@93",
+      "reason": "uniqueNodes returns the distinct endpoints of the edges in first-appearance order, and its examples match.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 101,
+        "examples": 97,
+        "confirmInput": 1551,
+        "confirmOutput": 51
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-26",
+      "positive": true,
+      "pick": 3,
+      "picked": "uuid-11.1.1/dist/cjs/v1ToV6.js#v1ToV6@5",
+      "reason": "Converts v1 to v6 for string or bytes and returns the same form as the input; candidate 6 behaves identically",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 120,
+        "examples": 157,
+        "confirmInput": 2248,
+        "confirmOutput": 93
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-27",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/index.js#_interopRequireWildcard@110",
+      "reason": "wildcard interop, copies own props plus default",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 140,
+        "examples": 109,
+        "confirmInput": 1463,
+        "confirmOutput": 156
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-28",
+      "positive": true,
+      "pick": 1,
+      "picked": "zod-3.25.76/v3/errors.cjs#getErrorMap@15",
+      "reason": "Returns the live module-level error map; candidates 4-5 read core global config instead.",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 110,
+        "examples": 19,
+        "confirmInput": 981,
+        "confirmOutput": 353
+      },
+      "otherBuild": true
+    },
+    {
+      "id": "gen-29",
+      "positive": true,
+      "pick": 1,
+      "picked": "base64-js-1.5.1/index.js#_byteLength@49",
+      "reason": "matches formula, ignores b64",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 108,
+        "examples": 66,
+        "confirmInput": 1527,
+        "confirmOutput": 112
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-30",
+      "positive": true,
+      "pick": 2,
+      "picked": "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_decode@75",
+      "reason": "Examples confirm bcrypt-alphabet decoding into bytes, limited by the requested length",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 99,
+        "examples": 50,
+        "confirmInput": 1418,
+        "confirmOutput": 252
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-31",
+      "positive": true,
+      "pick": 1,
+      "picked": "csv-parse-6.2.1/lib/utils/underscore.js#underscore@1",
+      "reason": "Replaces each capital with an underscore plus lowercase, no trimming of a leading underscore",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 88,
+        "examples": 56,
+        "confirmInput": 1083,
+        "confirmOutput": 47
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-32",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/constructFrom.cjs#constructFrom@40",
+      "reason": "constructFrom takes the reference first and the value second, then builds the date via a factory, the construction hook, or the reference's constructor. Non-date references fall back to a plain Date, as its examples show.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 137,
+        "examples": 203,
+        "confirmInput": 1546,
+        "confirmOutput": 78
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-33",
+      "positive": true,
+      "pick": 1,
+      "picked": "fastest-levenshtein-1.0.16/esm/mod.js#distance@141",
+      "reason": "General Levenshtein distance; handles empty strings correctly",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 86,
+        "examples": 89,
+        "confirmInput": 1448,
+        "confirmOutput": 36
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-34",
+      "positive": true,
+      "pick": 1,
+      "picked": "jsonpointer-5.0.1/jsonpointer.js#get@66",
+      "reason": "Resolves JSON Pointer strings against objects or arrays; jsonpointer get matches the spec",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 103,
+        "examples": 113,
+        "confirmInput": 1358,
+        "confirmOutput": 50
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-35",
+      "positive": true,
+      "pick": 2,
+      "picked": "lodash-4.17.21/_arrayLikeKeys.js#arrayLikeKeys@22",
+      "reason": "Takes value and inherited flag, lists indexes first",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 107,
+        "examples": 62,
+        "confirmInput": 1498,
+        "confirmOutput": 34
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-36",
+      "positive": true,
+      "pick": 1,
+      "picked": "lru-cache-11.3.6/dist/esm/index.js#isPosInt@24",
+      "reason": "isPosInt returns true only for finite positive whole numbers of numeric type, e.g. 3 gives true and \"abc\" gives false",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 75,
+        "examples": 29,
+        "confirmInput": 1230,
+        "confirmOutput": 62
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-37",
+      "positive": true,
+      "pick": 1,
+      "picked": "ms-2.1.3/index.js#fmtLong@138",
+      "reason": "Long-form ms format; values under one second come back as the raw number plus \" ms\"",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 93,
+        "examples": 58,
+        "confirmInput": 1882,
+        "confirmOutput": 43
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-38",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/classes/range.js#isSatisfiable@238",
+      "reason": "Checks that every pair of comparators intersects, with the right signature.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 115,
+        "examples": 105,
+        "confirmInput": 1401,
+        "confirmOutput": 37
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-39",
+      "positive": true,
+      "pick": 1,
+      "picked": "toposort-2.0.2/index.js#makeOutgoingEdges@103",
+      "reason": "Builds a map from each node to the set of nodes it points to, with sinks getting empty sets.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 112,
+        "examples": 155,
+        "confirmInput": 1401,
+        "confirmOutput": 46
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-40",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs/v1ToV6.js#_v1ToV6@11",
+      "reason": "Byte-level v1→v6 conversion with zero-fill; examples match the required layout",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 141,
+        "examples": 226,
+        "confirmInput": 2256,
+        "confirmOutput": 45
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-41",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/index.js#_interopRequireDefault@111",
+      "reason": "Wraps non-ES values as {default: value}, returns ES modules unchanged",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 82,
+        "examples": 98,
+        "confirmInput": 1525,
+        "confirmOutput": 43
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-42",
+      "positive": true,
+      "pick": 2,
+      "picked": "zod-3.25.76/v3/helpers/parseUtil.js#DIRTY@104",
+      "reason": "returns {status:'dirty', value} wrapping input",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 86,
+        "examples": 125,
+        "confirmInput": 1329,
+        "confirmOutput": 89
+      },
+      "otherBuild": true
+    },
+    {
+      "id": "gen-43",
+      "positive": true,
+      "pick": 1,
+      "picked": "base64-js-1.5.1/index.js#toByteArray@53",
+      "reason": "standard base64 decode to bytes with padding",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 47,
+        "examples": 80,
+        "confirmInput": 1447,
+        "confirmOutput": 144
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-44",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/differenceInMilliseconds.cjs#differenceInMilliseconds@27",
+      "reason": "Returns the unrounded millisecond difference, later minus earlier, for Date or number inputs.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 84,
+        "examples": 137,
+        "confirmInput": 1637,
+        "confirmOutput": 47
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-45",
+      "positive": true,
+      "pick": 1,
+      "picked": "fastest-levenshtein-1.0.16/esm/mod.js#closest@155",
+      "reason": "returns closest candidate by edit distance",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 83,
+        "examples": 96,
+        "confirmInput": 1382,
+        "confirmOutput": 118
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-46",
+      "positive": true,
+      "pick": 3,
+      "picked": "lodash-4.17.21/_arrayMap.js#arrayMap@10",
+      "reason": "lodash arrayMap maps array-likes with (value,index,array), null gives []",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 115,
+        "examples": 85,
+        "confirmInput": 1582,
+        "confirmOutput": 144
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-47",
+      "positive": true,
+      "pick": 1,
+      "picked": "lru-cache-11.3.6/dist/esm/index.js#getUintArray@34",
+      "reason": "Returns the smallest fitting uint array constructor, null for invalid input",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 181,
+        "examples": 51,
+        "confirmInput": 1666,
+        "confirmOutput": 40
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-48",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/classes/range.js#parseComparator@257",
+      "reason": "parseComparator does the full pipeline: strips build metadata, expands carets, tildes, x-ranges and star. The examples are trivial but consistent with that.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 111,
+        "examples": 109,
+        "confirmInput": 1555,
+        "confirmOutput": 67
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-49",
+      "positive": true,
+      "pick": 1,
+      "picked": "toposort-2.0.2/index.js#makeNodesHash@114",
+      "reason": "Builds a Map from each element to its index, and the last occurrence wins.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 106,
+        "examples": 94,
+        "confirmInput": 1371,
+        "confirmOutput": 39
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-50",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs/v35.js#stringToBytes@6",
+      "reason": "Returns UTF-8 bytes as a Uint8Array; it likely uses encodeURIComponent, which throws on lone surrogates.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 81,
+        "examples": 72,
+        "confirmInput": 1569,
+        "confirmOutput": 257
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-51",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/blacklist.js#blacklist@9",
+      "reason": "removes all chars in class from string, asserts string input",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 87,
+        "examples": 63,
+        "confirmInput": 1425,
+        "confirmOutput": 138
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-52",
+      "positive": true,
+      "pick": 3,
+      "picked": "zod-3.25.76/v3/helpers/parseUtil.cjs#isAborted@117",
+      "reason": "Returns true only when status equals \"aborted\"",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 89,
+        "examples": 56,
+        "confirmInput": 1196,
+        "confirmOutput": 110
+      },
+      "otherBuild": true
+    },
+    {
+      "id": "gen-53",
+      "positive": true,
+      "pick": 1,
+      "picked": "base64-js-1.5.1/index.js#tripletToBase64@99",
+      "reason": "Turns a 24-bit packed integer into four Base64 characters; tripletToBase64(3) gives 'AAAD', as expected.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 82,
+        "examples": 50,
+        "confirmInput": 2154,
+        "confirmOutput": 61
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-54",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "None appends in place; copyArray overwrites from index 0 rather than appending",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 91,
+        "examples": 65,
+        "confirmInput": 1402,
+        "confirmOutput": 129
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-55",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/classes/range.js#isX@271",
+      "reason": "isX treats empty, x/X, and * as wildcards",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 80,
+        "examples": 39,
+        "confirmInput": 1185,
+        "confirmOutput": 35
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-56",
+      "positive": true,
+      "pick": 2,
+      "picked": "uuid-11.1.1/dist/esm/v6ToV1.js#v6ToV1@3",
+      "reason": "Converts v6 to v1 for string or byte input and returns the same form. Candidate 6 is equivalent.",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 118,
+        "examples": 200,
+        "confirmInput": 2256,
+        "confirmOutput": 124
+      },
+      "otherBuild": true
+    },
+    {
+      "id": "gen-57",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/contains.js#contains@15",
+      "reason": "validator contains returns a boolean for a minimum count of occurrences, with an optional ignoreCase setting.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 112,
+        "examples": 73,
+        "confirmInput": 1481,
+        "confirmOutput": 51
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-58",
+      "positive": true,
+      "pick": 1,
+      "picked": "zod-3.25.76/src/v3/helpers/parseUtil.ts#isDirty@173",
+      "reason": "Checks the result's status field for \"dirty\" and takes a parse result as input; examples on non-result inputs return false. Candidate 8 behaves the same, so either fits.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 123,
+        "examples": 57,
+        "confirmInput": 1258,
+        "confirmOutput": 268
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-59",
+      "positive": true,
+      "pick": -1,
+      "picked": null,
+      "reason": null,
+      "raw": "",
+      "stopReason": "refusal",
+      "outcome": "invalid",
+      "reachable": true,
+      "tokens": {
+        "request": 94,
+        "examples": 127,
+        "confirmInput": 2096,
+        "confirmOutput": 170
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-60",
+      "positive": true,
+      "pick": 2,
+      "picked": "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+      "reason": "parseISO parses a full ISO string into a Date, reading it as local time when there is no offset and returning an invalid date on bad input.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 128,
+        "examples": 160,
+        "confirmInput": 2345,
+        "confirmOutput": 58
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-61",
+      "positive": true,
+      "pick": 1,
+      "picked": "lodash-4.17.21/_assocIndexOf.js#assocIndexOf@11",
+      "reason": "lodash assocIndexOf: reverse search, SameValueZero",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 110,
+        "examples": 78,
+        "confirmInput": 1286,
+        "confirmOutput": 102
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-62",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/classes/range.js#replaceTildes@280",
+      "reason": "splits on whitespace, expands each tilde, rejoins with single spaces",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 88,
+        "examples": 110,
+        "confirmInput": 1531,
+        "confirmOutput": 41
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-63",
+      "positive": true,
+      "pick": 2,
+      "picked": "uuid-11.1.1/dist/cjs/v6ToV1.js#_v6ToV1@11",
+      "reason": "Byte-level v6-to-v1 helper; examples show the version nibble set to 1 and missing bytes treated as zero.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 153,
+        "examples": 116,
+        "confirmInput": 2387,
+        "confirmOutput": 166
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-64",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/equals.js#equals@9",
+      "reason": "validator equals checks that the input is a string and compares with strict equality",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 66,
+        "examples": 45,
+        "confirmInput": 1334,
+        "confirmOutput": 37
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-65",
+      "positive": true,
+      "pick": 2,
+      "picked": "zod-3.25.76/src/v3/helpers/parseUtil.ts#isValid@174",
+      "reason": "isValid checks whether status === 'valid'",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 93,
+        "examples": 60,
+        "confirmInput": 1193,
+        "confirmOutput": 31
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-66",
+      "positive": true,
+      "pick": 1,
+      "picked": "base64-js-1.5.1/index.js#fromByteArray@119",
+      "reason": "Standard Base64 encoder with '=' padding. The examples used strings instead of bytes, but their output lengths and padding are right.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 64,
+        "examples": 83,
+        "confirmInput": 1965,
+        "confirmOutput": 164
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-67",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/parseISO.cjs#splitDateString@103",
+      "reason": "Splits a date string into date, time and timezone parts; the examples show splitting on the space separator.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 96,
+        "examples": 133,
+        "confirmInput": 2431,
+        "confirmOutput": 46
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-68",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "None does a (destination, source) shallow assign that returns a falsy destination unchanged; copyObject needs an explicit props list and takes source first.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 83,
+        "examples": 113,
+        "confirmInput": 1398,
+        "confirmOutput": 148
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-69",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/classes/range.js#replaceTilde@288",
+      "reason": "replaceTilde expands one tilde comparator into explicit bounds and returns non-matching input unchanged",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 146,
+        "examples": 133,
+        "confirmInput": 1603,
+        "confirmOutput": 51
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-70",
+      "positive": true,
+      "pick": 7,
+      "picked": "uuid-11.1.1/dist/cjs/validate.js#validate@4",
+      "reason": "Accepts any value, never throws, and does a standard UUID regex check that allows nil",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 93,
+        "examples": 77,
+        "confirmInput": 1264,
+        "confirmOutput": 133
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-71",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/escape.js#escape@9",
+      "reason": "validator escape replaces HTML chars with entities and checks the input is a string",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 76,
+        "examples": 131,
+        "confirmInput": 1279,
+        "confirmOutput": 40
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-72",
+      "positive": true,
+      "pick": 3,
+      "picked": "zod-3.25.76/src/v3/helpers/parseUtil.ts#isAsync@175",
+      "reason": "Checks that Promise exists, then tests the result with instanceof; returns false for non-promises.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 101,
+        "examples": 69,
+        "confirmInput": 1232,
+        "confirmOutput": 46
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-73",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "None copies all inherited enumerable properties (destination, source); candidates are key listers, symbol-only copiers, or need a props list.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 85,
+        "examples": 96,
+        "confirmInput": 1367,
+        "confirmOutput": 127
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-74",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/classes/range.js#replaceCarets@324",
+      "reason": "Splits the range on whitespace, expands every caret term, and rejoins with single spaces.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 88,
+        "examples": 158,
+        "confirmInput": 1600,
+        "confirmOutput": 45
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-75",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs/version.js#version@4",
+      "reason": "validates and returns version digit",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 84,
+        "examples": 101,
+        "confirmInput": 1745,
+        "confirmOutput": 84
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-76",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/isAbaRouting.js#isAbaRouting@13",
+      "reason": "Validates US ABA routing numbers with the 3-7-1 checksum",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 85,
+        "examples": 36,
+        "confirmInput": 1576,
+        "confirmOutput": 41
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-77",
+      "positive": true,
+      "pick": 7,
+      "picked": "zod-3.25.76/v3/helpers/util.js#getParsedType@93",
+      "reason": "Fine-grained labels covering NaN, null, array, promise-like, map, set and date, with matching examples",
+      "outcome": "wrong-reuse",
+      "reachable": false,
+      "tokens": {
+        "request": 143,
+        "examples": 73,
+        "confirmInput": 1356,
+        "confirmOutput": 209
+      },
+      "otherBuild": true
+    },
+    {
+      "id": "gen-78",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/parseISO.cjs#parseDate@164",
+      "reason": "Parses the rest of the date string with the year into a UTC date (calendar, ordinal, or week) and returns an invalid date on malformed input.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 122,
+        "examples": 136,
+        "confirmInput": 1898,
+        "confirmOutput": 62
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-79",
+      "positive": true,
+      "pick": 5,
+      "picked": "lodash-4.17.21/get.js#get@28",
+      "reason": "Lodash get accepts dotted/bracket strings or key arrays and returns undefined for broken or empty paths. The zod candidates return the original object on an empty path, which doesn't match.",
+      "outcome": "wrong-reuse",
+      "reachable": false,
+      "tokens": {
+        "request": 95,
+        "examples": 113,
+        "confirmInput": 1456,
+        "confirmOutput": 200
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-80",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/classes/range.js#replaceCaret@332",
+      "reason": "rewrites a single caret comparator",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 148,
+        "examples": 112,
+        "confirmInput": 1640,
+        "confirmOutput": 126
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-81",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+      "reason": "Examples match standard MD5 of a byte array, e.g. [1,2,3] → 5289df73..., returning 16 bytes",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 62,
+        "examples": 170,
+        "confirmInput": 1912,
+        "confirmOutput": 330
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-82",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/isAfter.js#isAfter@10",
+      "reason": "validator isAfter: strictly later than reference date, defaults to now",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 89,
+        "examples": 71,
+        "confirmInput": 1522,
+        "confirmOutput": 38
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-83",
+      "positive": true,
+      "pick": 6,
+      "picked": "zod-3.25.76/v3/types.cjs#processCreateParams@52",
+      "reason": "processCreateParams returns {} for falsy input and builds an errorMap plus description",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 172,
+        "examples": 199,
+        "confirmInput": 1397,
+        "confirmOutput": 77
+      },
+      "otherBuild": true
+    },
+    {
+      "id": "gen-84",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/parseISO.cjs#parseDateUnit@197",
+      "reason": "Parses to an integer like parseInt and returns 1 for falsy input; the examples match.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 70,
+        "examples": 35,
+        "confirmInput": 1260,
+        "confirmOutput": 115
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-85",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "no arguments-object check",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 72,
+        "examples": 55,
+        "confirmInput": 1081,
+        "confirmOutput": 82
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-86",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs-browser/md5.js#uint32ToUint8@8",
+      "reason": "Splits each word into four little-endian bytes; [1,2,3] gives the expected 12-byte output.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 138,
+        "examples": 84,
+        "confirmInput": 1892,
+        "confirmOutput": 50
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-87",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/isAlpha.js#isAlpha@11",
+      "reason": "Checks for locale letters only, with optional ignore characters",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 114,
+        "examples": 72,
+        "confirmInput": 1434,
+        "confirmOutput": 35
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-88",
+      "positive": true,
+      "pick": 1,
+      "picked": "zod-3.25.76/src/v3/types.ts#timeRegexSource@652",
+      "reason": "Returns an unanchored source string. Its stated behavior fits the precision rules: seconds required with fixed digits when precision is positive, otherwise optional, and whole seconds only when precision is 0. The examples only exercise the default case.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 132,
+        "examples": 210,
+        "confirmInput": 3066,
+        "confirmOutput": 691
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-89",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/parseISO.cjs#parseTimeUnit@220",
+      "reason": "comma as decimal, parseFloat, 0 on empty/invalid",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 80,
+        "examples": 44,
+        "confirmInput": 1409,
+        "confirmOutput": 40
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-90",
+      "positive": true,
+      "pick": 9,
+      "picked": "lodash-4.17.21/_baseIsMap.js#baseIsMap@14",
+      "reason": "baseIsMap checks object-like plus [object Map] tag",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 73,
+        "examples": 43,
+        "confirmInput": 1173,
+        "confirmOutput": 37
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-91",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/classes/range.js#replaceXRange@393",
+      "reason": "Expands wildcards in one comparator; the plural version splits on whitespace",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 151,
+        "examples": 101,
+        "confirmInput": 1614,
+        "confirmOutput": 123
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-92",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs-browser/md5.js#getOutputLength@15",
+      "reason": "Computes the padded word count up to the length slot; small and non-numeric inputs give 15.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 96,
+        "examples": 31,
+        "confirmInput": 2003,
+        "confirmOutput": 45
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-93",
+      "positive": true,
+      "pick": 2,
+      "picked": "validator-13.15.35/lib/isAlphanumeric.js#isAlphanumeric@11",
+      "reason": "Checks locale letters and digits with ignore option",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 121,
+        "examples": 76,
+        "confirmInput": 1403,
+        "confirmOutput": 32
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-94",
+      "positive": true,
+      "pick": 1,
+      "picked": "zod-3.25.76/src/v3/types.ts#timeRegex@664",
+      "reason": "Returns an anchored (^...$) time-of-day regex. It accepts offset, local and precision options and passes them to a time-pattern source helper.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 131,
+        "examples": 275,
+        "confirmInput": 3088,
+        "confirmOutput": 372
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-95",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/parseISO.cjs#parseTimezone@224",
+      "reason": "Parses offset strings to milliseconds with the sign inverted. Returns 0 for Z or unrecognized input and NaN for out-of-range values, as the examples show.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 105,
+        "examples": 44,
+        "confirmInput": 2207,
+        "confirmOutput": 71
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-96",
+      "positive": true,
+      "pick": 10,
+      "picked": "lodash-4.17.21/_baseIsNative.js#baseIsNative@39",
+      "reason": "baseIsNative checks native code pattern, returns false for primitives/masked",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 85,
+        "examples": 43,
+        "confirmInput": 1220,
+        "confirmOutput": 41
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-97",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/classes/range.js#replaceStars@470",
+      "reason": "Trims the comparator and removes star wildcards, ignoring the loose option.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 102,
+        "examples": 74,
+        "confirmInput": 1549,
+        "confirmOutput": 41
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-98",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs-browser/md5.js#wordsToMd5@18",
+      "reason": "words+bitLength in, 4-word MD5 digest out",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 114,
+        "examples": 57,
+        "confirmInput": 2053,
+        "confirmOutput": 162
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-99",
+      "positive": true,
+      "pick": 2,
+      "picked": "validator-13.15.35/lib/isAscii.js#isAscii@13",
+      "reason": "isAscii returns true for ASCII-only strings, false for empty, and validates the input is a string.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 60,
+        "examples": 34,
+        "confirmInput": 1285,
+        "confirmOutput": 47
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-100",
+      "positive": true,
+      "pick": 2,
+      "picked": "zod-3.25.76/src/v3/types.ts#datetimeRegex@673",
+      "reason": "Its examples return an anchored ISO date-time regex, and it takes exactly the precision, offset and local options needed. Several other candidates look equivalent.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 135,
+        "examples": 431,
+        "confirmInput": 2942,
+        "confirmOutput": 356
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-101",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+      "reason": "Converts ISO week-year, week, and weekday to a UTC date and rolls over out-of-range values.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 131,
+        "examples": 147,
+        "confirmInput": 1880,
+        "confirmOutput": 50
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-102",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "no Set type check",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 94,
+        "examples": 50,
+        "confirmInput": 1105,
+        "confirmOutput": 70
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-103",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/classes/range.js#replaceGTE0@478",
+      "reason": "trims and removes >=0.0.0 (or >=0.0.0-0 with prerelease)",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 106,
+        "examples": 109,
+        "confirmInput": 1543,
+        "confirmOutput": 48
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-104",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs-browser/md5.js#uint8ToUint32@104",
+      "reason": "little-endian byte packing, 15-word MD5 sizing",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 166,
+        "examples": 105,
+        "confirmInput": 2386,
+        "confirmOutput": 255
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-105",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/isBIC.js#isBIC@12",
+      "reason": "isBIC checks the embedded country code and the BIC format",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 114,
+        "examples": 48,
+        "confirmInput": 1550,
+        "confirmOutput": 35
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-106",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate accepts 'ipv4'/'ipv6' family strings; validator expects 4/6, zod expects 'v4'/'v6'",
+      "outcome": "missed",
+      "reachable": true,
+      "tokens": {
+        "request": 92,
+        "examples": 80,
+        "confirmInput": 1255,
+        "confirmOutput": 344
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-107",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/parseISO.cjs#isLeapYearIndex@258",
+      "reason": "Gregorian leap year check returning boolean",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 78,
+        "examples": 31,
+        "confirmInput": 1558,
+        "confirmOutput": 92
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-108",
+      "positive": true,
+      "pick": 8,
+      "picked": "lodash-4.17.21/_baseIsTypedArray.js#baseIsTypedArray@55",
+      "reason": "lodash typed array check; false for arrays and primitives",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 87,
+        "examples": 64,
+        "confirmInput": 1327,
+        "confirmOutput": 34
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-109",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/clean.js#clean@4",
+      "reason": "clean trims whitespace, strips leading '=' or 'v', and returns the canonical version string or null",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 83,
+        "examples": 83,
+        "confirmInput": 1441,
+        "confirmOutput": 49
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-110",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs-browser/md5.js#safeAdd@114",
+      "reason": "This is the classic MD5 safe_add: it adds the 16-bit halves separately and wraps to a signed 32-bit result. The examples are consistent with this, since non-numeric inputs give 0.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 96,
+        "examples": 53,
+        "confirmInput": 1288,
+        "confirmOutput": 220
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-111",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/isBase32.js#isBase32@15",
+      "reason": "Base32 validator with optional Crockford flag",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 131,
+        "examples": 73,
+        "confirmInput": 1506,
+        "confirmOutput": 32
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-112",
+      "positive": true,
+      "pick": 2,
+      "picked": "zod-3.25.76/v3/types.cjs#isValidJWT@450",
+      "reason": "Checks the header is an object, typ is JWT if present, alg is present, and alg matches the expected one.",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 134,
+        "examples": 302,
+        "confirmInput": 1495,
+        "confirmOutput": 186
+      },
+      "otherBuild": true
+    },
+    {
+      "id": "gen-113",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/parseISO.cjs#validateDate@262",
+      "reason": "Takes year, zero-based month and day, and checks leap-year February.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 87,
+        "examples": 55,
+        "confirmInput": 1571,
+        "confirmOutput": 38
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-114",
+      "positive": true,
+      "pick": 4,
+      "picked": "lodash-4.17.21/keys.js#keys@33",
+      "reason": "lodash keys returns own enumerable property names like Object.keys and skips 'constructor' on prototype objects",
+      "outcome": "wrong-reuse",
+      "reachable": false,
+      "tokens": {
+        "request": 74,
+        "examples": 50,
+        "confirmInput": 1426,
+        "confirmOutput": 154
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-115",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/coerce.js#coerce@7",
+      "reason": "semver coerce: turns 3 into a 3.0.0 version object and returns null for non-version input",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 145,
+        "examples": 115,
+        "confirmInput": 1515,
+        "confirmOutput": 48
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-116",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs-browser/md5.js#bitRotateLeft@119",
+      "reason": "Rotates 32-bit bits left with wraparound and returns a signed 32-bit result. ROTL is equivalent.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 99,
+        "examples": 57,
+        "confirmInput": 1480,
+        "confirmOutput": 224
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-117",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "isBase58 returns true for an empty string, but false is required; no other candidate checks the Base58 alphabet.",
+      "outcome": "missed",
+      "reachable": true,
+      "tokens": {
+        "request": 85,
+        "examples": 62,
+        "confirmInput": 1458,
+        "confirmOutput": 90
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-118",
+      "positive": true,
+      "pick": 7,
+      "picked": "zod-3.25.76/v3/types.cjs#isValidCidr@477",
+      "reason": "Validates CIDR notation with an optional 'v4'/'v6' version.",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 82,
+        "examples": 65,
+        "confirmInput": 1242,
+        "confirmOutput": 126
+      },
+      "otherBuild": true
+    },
+    {
+      "id": "gen-119",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271",
+      "reason": "Checks day-of-year is between 1 and 365, or 366 in leap years.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 88,
+        "examples": 45,
+        "confirmInput": 1572,
+        "confirmOutput": 42
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-120",
+      "positive": true,
+      "pick": 1,
+      "picked": "lodash-4.17.21/keysIn.js#keysIn@28",
+      "reason": "Returns own and inherited enumerable keys and gives string index keys",
+      "outcome": "wrong-reuse",
+      "reachable": false,
+      "tokens": {
+        "request": 99,
+        "examples": 70,
+        "confirmInput": 1451,
+        "confirmOutput": 236
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-121",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/inc.js#inc@5",
+      "reason": "standalone inc returns string or null",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 153,
+        "examples": 100,
+        "confirmInput": 1445,
+        "confirmOutput": 93
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-122",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs-browser/md5.js#md5cmn@122",
+      "reason": "md5cmn is the shared MD5 step: it sums four values, rotates left, then adds b",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 115,
+        "examples": 104,
+        "confirmInput": 1851,
+        "confirmOutput": 47
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-123",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/isBase64.js#isBase64@14",
+      "reason": "validator isBase64 supports urlSafe/padding options and treats empty string as valid",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 117,
+        "examples": 95,
+        "confirmInput": 1416,
+        "confirmOutput": 44
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-124",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/parseISO.cjs#validateWeekDate@275",
+      "reason": "Ignores year; checks week 1-53, day 0-6",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 104,
+        "examples": 55,
+        "confirmInput": 1599,
+        "confirmOutput": 36
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-125",
+      "positive": true,
+      "pick": 7,
+      "picked": "lodash-4.17.21/_baseSet.js#baseSet@17",
+      "reason": "baseSet takes customizer and sets nested path",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 136,
+        "examples": 126,
+        "confirmInput": 1690,
+        "confirmOutput": 95
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-126",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/functions/prerelease.js#prerelease@4",
+      "reason": "semver prerelease returns the pre-release identifier list, or null when the version is invalid or has none",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 106,
+        "examples": 119,
+        "confirmInput": 1405,
+        "confirmOutput": 47
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-127",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs-browser/md5.js#md5ff@125",
+      "reason": "md5ff is the MD5 round-1 step using F",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 134,
+        "examples": 106,
+        "confirmInput": 1905,
+        "confirmOutput": 34
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-128",
+      "positive": true,
+      "pick": 2,
+      "picked": "validator-13.15.35/lib/isBefore.js#isBefore@10",
+      "reason": "isBefore checks strictly earlier than a reference date, given directly or in options, default now",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 95,
+        "examples": 77,
+        "confirmInput": 1538,
+        "confirmOutput": 44
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-129",
+      "positive": true,
+      "pick": 1,
+      "picked": "zod-3.25.76/v3/types.cjs#deepPartialify@1870",
+      "reason": "Recursively deep-partialifies schemas and returns other kinds unchanged, as required. Candidate 3 appears identical.",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 140,
+        "examples": 576,
+        "confirmInput": 1264,
+        "confirmOutput": 101
+      },
+      "otherBuild": true
+    },
+    {
+      "id": "gen-130",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/parseISO.cjs#validateTime@279",
+      "reason": "validateTime takes hour, minute and second as numbers and returns a boolean, allowing 24:00:00. The examples reject negative seconds as expected.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 91,
+        "examples": 51,
+        "confirmInput": 1980,
+        "confirmOutput": 65
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-131",
+      "positive": true,
+      "pick": 8,
+      "picked": "lodash-4.17.21/_baseTimes.js#baseTimes@10",
+      "reason": "baseTimes builds an array of length n by calling iteratee(index) for each index in order. It uses Array(n), which throws a RangeError for negative, fractional, NaN or infinite counts before any callback runs.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 98,
+        "examples": 61,
+        "confirmInput": 1354,
+        "confirmOutput": 358
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-132",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/functions/rsort.js#rsort@4",
+      "reason": "rsort sorts in place, descending, build tie-break",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 116,
+        "examples": 186,
+        "confirmInput": 1373,
+        "confirmOutput": 34
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-133",
+      "positive": true,
+      "pick": 3,
+      "picked": "uuid-11.1.1/dist/cjs-browser/md5.js#md5gg@128",
+      "reason": "md5gg is the MD5 round-2 G step",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 124,
+        "examples": 106,
+        "confirmInput": 1831,
+        "confirmOutput": 33
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-134",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/isBoolean.js#isBoolean@15",
+      "reason": "validator isBoolean checks boolean strings, with strict and loose modes",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 119,
+        "examples": 47,
+        "confirmInput": 1421,
+        "confirmOutput": 40
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-135",
+      "positive": true,
+      "pick": 2,
+      "picked": "zod-3.25.76/v3/types.js#getDiscriminator@2370",
+      "reason": "getDiscriminator unwraps wrapper layers and returns the schema's literal values, or [] when none can be determined. Matches the spec, though 2, 6 and 7 look identical.",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 161,
+        "examples": 140,
+        "confirmInput": 1394,
+        "confirmOutput": 162
+      },
+      "otherBuild": true
+    },
+    {
+      "id": "gen-136",
+      "positive": true,
+      "pick": 2,
+      "picked": "date-fns-4.1.0/parseISO.cjs#validateTimezone@294",
+      "reason": "ignores hours, checks minutes in 0-59",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 97,
+        "examples": 41,
+        "confirmInput": 2058,
+        "confirmOutput": 116
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-137",
+      "positive": true,
+      "pick": 6,
+      "picked": "lodash-4.17.21/_baseToString.js#baseToString@21",
+      "reason": "Matches lodash baseToString exactly: strings pass through, arrays are converted recursively and comma-joined, symbols are stringified, and -0 is kept. The spec says nothing about nullish values becoming empty, which fits base over toString.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 94,
+        "examples": 55,
+        "confirmInput": 1685,
+        "confirmOutput": 282
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-138",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/satisfies.js#satisfies@4",
+      "reason": "satisfies takes version, range, options and returns a boolean, false on an invalid range",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 120,
+        "examples": 99,
+        "confirmInput": 1439,
+        "confirmOutput": 43
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-139",
+      "positive": true,
+      "pick": 5,
+      "picked": "uuid-11.1.1/dist/cjs-browser/md5.js#md5hh@131",
+      "reason": "md5hh is the third-round step, which uses the XOR of b, c and d.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 135,
+        "examples": 106,
+        "confirmInput": 1906,
+        "confirmOutput": 41
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-140",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/isBtcAddress.js#isBtcAddress@11",
+      "reason": "Bitcoin address format check (bech32 or base58) with a string-type check",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 110,
+        "examples": 93,
+        "confirmInput": 1451,
+        "confirmOutput": 41
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-141",
+      "positive": true,
+      "pick": 2,
+      "picked": "zod-3.25.76/v3/types.js#mergeValues@2494",
+      "reason": "Its examples return a bare {valid:false} with no error path, and its description covers merging objects, equal-length arrays, identical primitives and equal dates. Candidates 1 and 3 look much the same.",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 141,
+        "examples": 176,
+        "confirmInput": 1538,
+        "confirmOutput": 217
+      },
+      "otherBuild": true
+    },
+    {
+      "id": "gen-142",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/toDate.cjs#toDate@43",
+      "reason": "date-fns toDate(argument, context) converts a date, number or string into a Date. The context picks the date class and the input is used when the context is falsy, which the examples are consistent with.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 116,
+        "examples": 189,
+        "confirmInput": 1697,
+        "confirmOutput": 72
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-143",
+      "positive": true,
+      "pick": 10,
+      "picked": "validator-13.15.35/lib/trim.js#trim@10",
+      "reason": "Strips whitespace from both ends by default and returns a string.",
+      "outcome": "wrong-reuse",
+      "reachable": false,
+      "tokens": {
+        "request": 67,
+        "examples": 45,
+        "confirmInput": 1186,
+        "confirmOutput": 127
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-144",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/sort.js#sort@4",
+      "reason": "Sorts the list in place ascending with build-metadata tiebreak and loose flag",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 95,
+        "examples": 169,
+        "confirmInput": 1330,
+        "confirmOutput": 44
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-145",
+      "positive": true,
+      "pick": 2,
+      "picked": "uuid-11.1.1/dist/cjs-browser/md5.js#md5ii@134",
+      "reason": "md5ii is the MD5 round-four step, and md5ii(3,0,-2)=4 matches the c^(b|~d) mix",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 112,
+        "examples": 106,
+        "confirmInput": 1757,
+        "confirmOutput": 254
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-146",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/isByteLength.js#isByteLength@11",
+      "reason": "Checks UTF-8 byte length against min/max bounds and returns a boolean",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 105,
+        "examples": 62,
+        "confirmInput": 1435,
+        "confirmOutput": 43
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-147",
+      "positive": true,
+      "pick": 6,
+      "picked": "zod-3.25.76/src/v3/types.ts#cleanParams@4906",
+      "reason": "Calls a function config with the data and wraps string results as {message}, which is what the examples show.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 82,
+        "examples": 100,
+        "confirmInput": 1412,
+        "confirmOutput": 44
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-148",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "none returns path segments array",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 96,
+        "examples": 64,
+        "confirmInput": 1567,
+        "confirmOutput": 136
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-149",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/functions/truncate.js#truncate@7",
+      "reason": "matches signature and null-on-invalid behavior",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 116,
+        "examples": 94,
+        "confirmInput": 1480,
+        "confirmOutput": 133
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-150",
+      "positive": true,
+      "pick": 2,
+      "picked": "uuid-11.1.1/dist/cjs-browser/md5.js#bitRotateLeft@119",
+      "reason": "Rotates 32-bit bits left with wraparound and returns a signed result; ROTL is equivalent",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 98,
+        "examples": 53,
+        "confirmInput": 1496,
+        "confirmOutput": 269
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-151",
+      "positive": true,
+      "pick": 2,
+      "picked": "validator-13.15.35/lib/isCreditCard.js#isCreditCard@30",
+      "reason": "Checks the card format for a named or any issuer, then applies the Luhn checksum.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 109,
+        "examples": 92,
+        "confirmInput": 1413,
+        "confirmOutput": 43
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-152",
+      "positive": true,
+      "pick": 3,
+      "picked": "zod-3.25.76/src/v4/classic/compat.ts#getErrorMap@53",
+      "reason": "Reads the formatter from the global config and returns nothing when none is set, with no default substituted.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 81,
+        "examples": 29,
+        "confirmInput": 998,
+        "confirmOutput": 316
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-153",
+      "positive": true,
+      "pick": 1,
+      "picked": "lodash-4.17.21/_cloneArrayBuffer.js#cloneArrayBuffer@10",
+      "reason": "lodash cloneArrayBuffer builds the copy with the input's own constructor and copies the bytes. The odd examples only come from passing strings instead of buffers.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 95,
+        "examples": 86,
+        "confirmInput": 1350,
+        "confirmOutput": 184
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-154",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/functions/truncate.js#cloneInputVersion@16",
+      "reason": "Re-parses string or SemVer into a fresh SemVer and returns null for invalid input, as required.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 110,
+        "examples": 149,
+        "confirmInput": 1476,
+        "confirmOutput": 49
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-155",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+      "reason": "Byte-array SHA-1 returning 20 bytes; the [1,2,3] example matches",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 54,
+        "examples": 130,
+        "confirmInput": 1728,
+        "confirmOutput": 293
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-156",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/isCurrency.js#isCurrency@77",
+      "reason": "isCurrency validates monetary strings using the requested options",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 99,
+        "examples": 34,
+        "confirmInput": 1383,
+        "confirmOutput": 34
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-157",
+      "positive": true,
+      "pick": 1,
+      "picked": "zod-3.25.76/v4/classic/schemas.cjs#check@1041",
+      "reason": "Single-arg check(fn) that wraps the callback directly in a custom check object",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 115,
+        "examples": 252,
+        "confirmInput": 1239,
+        "confirmOutput": 151
+      },
+      "otherBuild": true
+    },
+    {
+      "id": "gen-158",
+      "positive": true,
+      "pick": 1,
+      "picked": "lodash-4.17.21/_cloneBuffer.js#cloneBuffer@24",
+      "reason": "Lodash cloneBuffer returns slice() when the flag is truthy and otherwise allocates and copies; examples are consistent.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 112,
+        "examples": 103,
+        "confirmInput": 1429,
+        "confirmOutput": 246
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-159",
+      "positive": true,
+      "pick": 8,
+      "picked": "semver-7.8.0/functions/truncate.js#isPrerelease@44",
+      "reason": "boolean check that string starts with 'pre'",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 74,
+        "examples": 35,
+        "confirmInput": 1279,
+        "confirmOutput": 210
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-160",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/esm/parse.js#parse@2",
+      "reason": "Parses a valid UUID into 16 bytes and throws a type error on invalid input",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 96,
+        "examples": 223,
+        "confirmInput": 1627,
+        "confirmOutput": 91
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-161",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/isDataURI.js#isDataURI@12",
+      "reason": "validator isDataURI checks data URI structure",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 89,
+        "examples": 67,
+        "confirmInput": 1496,
+        "confirmOutput": 31
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-162",
+      "positive": true,
+      "pick": 10,
+      "picked": "zod-3.25.76/v4/classic/schemas.js#superRefine@953",
+      "reason": "Takes a callback and returns a check object that adds issue reporting with defaults to the context, then runs the callback.",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 161,
+        "examples": 345,
+        "confirmInput": 1315,
+        "confirmOutput": 446
+      },
+      "otherBuild": true
+    },
+    {
+      "id": "gen-163",
+      "positive": true,
+      "pick": 1,
+      "picked": "lodash-4.17.21/_cloneDataView.js#cloneDataView@11",
+      "reason": "cloneDataView: deep/shallow buffer, same constructor/offset/length",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 97,
+        "examples": 343,
+        "confirmInput": 1563,
+        "confirmOutput": 140
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-164",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/clean.js#clean@4",
+      "reason": "clean trims whitespace/'v' prefix, returns normalized string or null",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 76,
+        "examples": 110,
+        "confirmInput": 1441,
+        "confirmOutput": 154
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-165",
+      "positive": true,
+      "pick": 4,
+      "picked": "uuid-11.1.1/dist/cjs/v1ToV6.js#v1ToV6@5",
+      "reason": "v1→v6, preserves input form",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 116,
+        "examples": 201,
+        "confirmInput": 2244,
+        "confirmOutput": 92
+      },
+      "otherBuild": true
+    },
+    {
+      "id": "gen-166",
+      "positive": true,
+      "pick": 2,
+      "picked": "validator-13.15.35/lib/isDate.js#_slicedToArray@9",
+      "reason": "Babel slicedToArray: arrays as-is, limited iteration, array-like fallback, throws TypeError for non-iterables",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 117,
+        "examples": 61,
+        "confirmInput": 1618,
+        "confirmOutput": 59
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-167",
+      "positive": true,
+      "pick": 3,
+      "picked": "zod-3.25.76/src/v4/core/api.ts#_lt@785",
+      "reason": "_lt takes (value, params) and builds a strict less-than check object.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 89,
+        "examples": 125,
+        "confirmInput": 1195,
+        "confirmOutput": 38
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-168",
+      "positive": true,
+      "pick": 1,
+      "picked": "lodash-4.17.21/_cloneTypedArray.js#cloneTypedArray@11",
+      "reason": "lodash cloneTypedArray matches spec",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 109,
+        "examples": 116,
+        "confirmInput": 1610,
+        "confirmOutput": 143
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-169",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/internal/identifiers.js#compareIdentifiers@4",
+      "reason": "Compares identifiers in ascending order, numeric before alphanumeric",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 98,
+        "examples": 50,
+        "confirmInput": 1251,
+        "confirmOutput": 40
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-170",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/esm/v35.js#stringToBytes@3",
+      "reason": "Returns UTF-8 bytes as a Uint8Array, matching the examples. It likely relies on encodeURIComponent, which throws on unpaired surrogates, though that case isn't shown.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 80,
+        "examples": 75,
+        "confirmInput": 1392,
+        "confirmOutput": 317
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-171",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/isDate.js#_iterableToArrayLimit@11",
+      "reason": "Babel iterableToArrayLimit helper: takes up to N items, closes iterator early, returns undefined for non-iterables",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 95,
+        "examples": 79,
+        "confirmInput": 1623,
+        "confirmOutput": 58
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "gen-172",
+      "positive": true,
+      "pick": 5,
+      "picked": "zod-3.25.76/src/v4/core/api.ts#_lte@797",
+      "reason": "_lte with a bound and optional message/options; the examples give no distinguishing output",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 145,
+        "examples": 202,
+        "confirmInput": 1368,
+        "confirmOutput": 107
+      },
+      "otherBuild": false
+    }
+  ]
+}

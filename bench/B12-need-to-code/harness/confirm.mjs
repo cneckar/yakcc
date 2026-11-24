@@ -83,6 +83,16 @@ export function scorePick(q, cards, pick) {
   return { outcome: isTarget(chosen, q) ? "right" : "wrong-reuse", reachable };
 }
 
+/** Whether a wrong reuse picked the target's name in the target's package (another build). */
+export function otherBuild(q, cards, pick, scored) {
+  if (scored.outcome !== "wrong-reuse") return false;
+  const c = cards[pick - 1];
+  return q.targets.some((t) => {
+    const [pkg, rest] = t.split(":");
+    return c.pkg === pkg && c.name === rest.split("#")[1];
+  });
+}
+
 /** Summary over scored rows. */
 export function summarizePicks(rows) {
   const pos = rows.filter((r) => r.positive);
@@ -101,6 +111,15 @@ export function summarizePicks(rows) {
     wrongReuseOnNegatives: neg.length === 0 ? null : count(neg, "wrong-reuse") / neg.length,
     correctNoneOnNegatives: neg.length === 0 ? null : count(neg, "correct-none") / neg.length,
     invalid: count(rows, "invalid"),
+    // Counting a pick of the same function from another build of the package as right.
+    rightOfPositivesSameFunction:
+      pos.length === 0
+        ? null
+        : pos.filter((r) => r.outcome === "right" || r.otherBuild).length / pos.length,
+    reusePrecisionSameFunction:
+      reused.length === 0
+        ? null
+        : reused.filter((r) => r.outcome === "right" || r.otherBuild).length / reused.length,
   };
 }
 
@@ -135,6 +154,23 @@ async function main() {
     return { q, cards, prompt: confirmPrompt(q, cards, descriptions) };
   });
 
+  if (argv.includes("--rescore")) {
+    // Recompute outcomes and the summary from a saved run's picks, with no model calls.
+    const saved = JSON.parse(readFileSync(out, "utf8"));
+    const byQ = new Map(items.map((it) => [it.q.id, it]));
+    saved.rows = saved.rows.map((row) => {
+      const { q, cards } = byQ.get(row.id);
+      const scored =
+        row.pick < 0
+          ? { outcome: "invalid", reachable: cards.some((c) => isTarget(c, q)) }
+          : scorePick(q, cards, row.pick);
+      return { ...row, ...scored, otherBuild: otherBuild(q, cards, row.pick, scored) };
+    });
+    saved.summary = summarizePicks(saved.rows);
+    writeFileSync(out, `${JSON.stringify(saved, null, 2)}\n`);
+    console.log(JSON.stringify(saved.summary, null, 2));
+    return;
+  }
   if (argv.includes("--dry-run")) {
     const chars = items.reduce((n, it) => n + SYSTEM.length + it.prompt.length, 0);
     console.log(
@@ -177,6 +213,9 @@ async function main() {
         reason: parsed?.reason ?? null,
         ...(pick < 0 ? { raw: r.text.slice(0, 500), stopReason: r.stopReason } : {}),
         ...scored,
+        // A wrong reuse of the same name in the same package is the target from another
+        // build (uuid ships cjs, esm and browser copies); reported separately, not as right.
+        otherBuild: otherBuild(q, cards, pick, scored),
         // What each request style costs the composing model, in tokens (real tokenizer).
         tokens: {
           request: await client.countTokens(requestText(q)),

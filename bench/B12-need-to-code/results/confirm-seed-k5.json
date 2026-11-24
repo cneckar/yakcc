@@ -16,7 +16,9 @@
     "reusePrecision": 0.96,
     "wrongReuseOnNegatives": 0,
     "correctNoneOnNegatives": 1,
-    "invalid": 0
+    "invalid": 0,
+    "rightOfPositivesSameFunction": 0.631578947368421,
+    "reusePrecisionSameFunction": 0.96
   },
   "meanTokens": {
     "request": 57.130434782608695,
@@ -38,7 +40,8 @@
         "examples": 52,
         "confirmInput": 422,
         "confirmOutput": 33
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "ms-to-short-duration",
@@ -53,7 +56,8 @@
         "examples": 45,
         "confirmInput": 598,
         "confirmOutput": 43
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "bytes-to-base64",
@@ -68,7 +72,8 @@
         "examples": 51,
         "confirmInput": 819,
         "confirmOutput": 238
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "base64-encode-byte-range",
@@ -83,7 +88,8 @@
         "examples": 61,
         "confirmInput": 771,
         "confirmOutput": 165
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "int24-to-base64-chars",
@@ -98,7 +104,8 @@
         "examples": 37,
         "confirmInput": 673,
         "confirmOutput": 46
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "nodes-of-edge-list",
@@ -113,7 +120,8 @@
         "examples": 32,
         "confirmInput": 535,
         "confirmOutput": 145
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "adjacency-from-edges",
@@ -128,7 +136,8 @@
         "examples": 65,
         "confirmInput": 859,
         "confirmOutput": 146
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "order-by-dependencies",
@@ -143,7 +152,8 @@
         "examples": 62,
         "confirmInput": 554,
         "confirmOutput": 28
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "is-real-calendar-date",
@@ -158,7 +168,8 @@
         "examples": 55,
         "confirmInput": 719,
         "confirmOutput": 52
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "ms-between-dates",
@@ -173,7 +184,8 @@
         "examples": 111,
         "confirmInput": 765,
         "confirmOutput": 32
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "date-plus-days",
@@ -188,7 +200,8 @@
         "examples": 109,
         "confirmInput": 811,
         "confirmOutput": 50
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "zero-pad-number",
@@ -203,7 +216,8 @@
         "examples": 37,
         "confirmInput": 635,
         "confirmOutput": 130
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "parse-iso-date",
@@ -218,7 +232,8 @@
         "examples": 57,
         "confirmInput": 619,
         "confirmOutput": 53
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "cache-function-results",
@@ -233,7 +248,8 @@
         "examples": 0,
         "confirmInput": 658,
         "confirmOutput": 41
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "bounded-recent-cache",
@@ -248,7 +264,8 @@
         "examples": 0,
         "confirmInput": 519,
         "confirmOutput": 150
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "split-json-pointer",
@@ -263,7 +280,8 @@
         "examples": 32,
         "confirmInput": 590,
         "confirmOutput": 300
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "unescape-pointer-token",
@@ -278,7 +296,8 @@
         "examples": 38,
         "confirmInput": 613,
         "confirmOutput": 94
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "value-at-json-pointer",
@@ -293,7 +312,8 @@
         "examples": 79,
         "confirmInput": 637,
         "confirmOutput": 199
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "compare-prerelease-identifiers",
@@ -308,7 +328,8 @@
         "examples": 50,
         "confirmInput": 483,
         "confirmOutput": 48
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "compare-version-core",
@@ -323,7 +344,8 @@
         "examples": 0,
         "confirmInput": 445,
         "confirmOutput": 188
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "compare-version-prerelease",
@@ -338,7 +360,8 @@
         "examples": 0,
         "confirmInput": 469,
         "confirmOutput": 201
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "edit-count-between-strings",
@@ -353,7 +376,8 @@
         "examples": 40,
         "confirmInput": 550,
         "confirmOutput": 40
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "nearest-string",
@@ -368,7 +392,8 @@
         "examples": 53,
         "confirmInput": 691,
         "confirmOutput": 105
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "is-uuid",
@@ -383,7 +408,8 @@
         "examples": 112,
         "confirmInput": 1204,
         "confirmOutput": 402
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "uuid-version-number",
@@ -398,7 +424,8 @@
         "examples": 74,
         "confirmInput": 909,
         "confirmOutput": 134
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "uuid-to-bytes",
@@ -413,7 +440,8 @@
         "examples": 79,
         "confirmInput": 1207,
         "confirmOutput": 112
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "bytes-to-uuid-text",
@@ -428,7 +456,8 @@
         "examples": 137,
         "confirmInput": 920,
         "confirmOutput": 98
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "normalize-semver",
@@ -443,7 +472,8 @@
         "examples": 49,
         "confirmInput": 550,
         "confirmOutput": 125
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "bump-semver",
@@ -458,7 +488,8 @@
         "examples": 61,
         "confirmInput": 552,
         "confirmOutput": 121
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "version-in-range",
@@ -473,7 +504,8 @@
         "examples": 56,
         "confirmInput": 548,
         "confirmOutput": 40
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "version-difference-kind",
@@ -488,7 +520,8 @@
         "examples": 58,
         "confirmInput": 609,
         "confirmOutput": 113
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "sort-versions-descending",
@@ -503,7 +536,8 @@
         "examples": 45,
         "confirmInput": 482,
         "confirmOutput": 92
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "is-email",
@@ -518,7 +552,8 @@
         "examples": 32,
         "confirmInput": 465,
         "confirmOutput": 84
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "is-integer-text",
@@ -533,7 +568,8 @@
         "examples": 30,
         "confirmInput": 494,
         "confirmOutput": 146
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "is-hex-color",
@@ -548,7 +584,8 @@
         "examples": 29,
         "confirmInput": 464,
         "confirmOutput": 138
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "escape-html",
@@ -563,7 +600,8 @@
         "examples": 41,
         "confirmInput": 521,
         "confirmOutput": 97
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "value-at-object-path",
@@ -578,7 +616,8 @@
         "examples": 53,
         "confirmInput": 808,
         "confirmOutput": 41
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "coerce-to-number",
@@ -593,7 +632,8 @@
         "examples": 34,
         "confirmInput": 621,
         "confirmOutput": 95
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "chunk-array",
@@ -608,7 +648,8 @@
         "examples": 31,
         "confirmInput": 503,
         "confirmOutput": 41
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "clamp-number",
@@ -623,7 +664,8 @@
         "examples": 42,
         "confirmInput": 479,
         "confirmOutput": 118
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "slug-from-title",
@@ -638,7 +680,8 @@
         "examples": 22,
         "confirmInput": 400,
         "confirmOutput": 49
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "title-case-words",
@@ -653,7 +696,8 @@
         "examples": 16,
         "confirmInput": 497,
         "confirmOutput": 87
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "group-by-key",
@@ -668,7 +712,8 @@
         "examples": 0,
         "confirmInput": 841,
         "confirmOutput": 60
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "integer-range",
@@ -683,7 +728,8 @@
         "examples": 33,
         "confirmInput": 643,
         "confirmOutput": 42
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "shallow-object-equal",
@@ -698,7 +744,8 @@
         "examples": 45,
         "confirmInput": 613,
         "confirmOutput": 113
-      }
+      },
+      "otherBuild": false
     },
     {
       "id": "dedupe-array",
@@ -713,7 +760,8 @@
         "examples": 21,
         "confirmInput": 522,
         "confirmOutput": 108
-      }
+      },
+      "otherBuild": false
     }
   ]
 }

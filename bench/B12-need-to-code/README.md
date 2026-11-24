@@ -129,9 +129,88 @@ For each query the step records:
 Library-side work (cards, probes, descriptions) is paid once per function, not per
 request.
 
-**Status: built, not yet run.** The key in this environment (`CLAUDE_API_KEY`) is rejected
-by the API with 401 "invalid x-api-key". `--dry-run` shows the plan: 46 seed queries at
-K = 5 cost about $0.34 on Opus 5.5.
+**Status: run** with Opus 5.5 (results below).
+
+## Held-out results (Opus 5.5)
+
+`queries/generated.json` holds 172 queries for functions across 14 corpus packages, made by
+`generate-queries.mjs`. For each function, one call described it from its code with the
+name masked, and a fresh call that saw only that description wrote the query.
+- In 134 of the 172 (78%), the real target reproduces the examples the model wrote. In 38
+  it does not, because the description or the model's examples are wrong.
+- `results/descriptions.json` holds model-written one-line descriptions of the 2,754
+  definitions without JSDoc (`describe-atoms.mjs`). This is a one-time library cost.
+
+### Search (`results/eval-generated*.json`)
+
+| Configuration | Top-1 | Top-5 | Top-50 |
+|---|---|---|---|
+| Production spec text | 0.23 | 0.51 | 0.84 |
+| Card text, dense + BM25 | 0.37 | 0.60 | 0.88 |
+| **Card text + model descriptions, dense + BM25** | **0.59** | **0.85** | **0.97** |
+| + execution on the model's examples (with descriptions) | 0.67 | 0.80 | 0.99 |
+
+- **Descriptions are the largest single gain.** On the seed set they lift text-only top-1
+  from 0.39 to 0.58, and execution top-1 from 0.71 to 0.89.
+- **Execution helps less on held-out queries than on the seed set,** because 22% of the
+  model's own examples do not hold for the target. Reuse precision with execution is 0.85
+  (0.99 with the unique-pass rule).
+
+### Confirm step (`results/confirm-generated-desc-k10.json`)
+
+The model sends only the need and types, sees the top 10 candidates (with descriptions and
+observed calls), and picks one or none.
+
+| | Held-out (172) | Seed (46), K = 10, no descriptions |
+|---|---|---|
+| Target among the 10 shown | 0.93 | 0.74 |
+| Picked the target | 0.80 (0.89 counting the same function from another build) | 0.74 |
+| Picked the target when it was shown | 0.86 | 1.00 |
+| Reuse precision | 0.85 (0.95 counting other builds) | 1.00 |
+| Needs with no answer, answered "none" | – (the held-out set has none) | 8 of 8 |
+
+Of the 24 picks that missed the exact target:
+- **16 were the same function from another build** of its package. uuid, for example,
+  ships cjs, esm and browser copies.
+- **5 were the public wrapper of an internal target,** such as `get` for `baseGet` or
+  `distance` for `myers_x`. Each implements the described need.
+- **3 were wrong:** `escape` for a JSON-pointer unescape, validator's `trim` for lodash's,
+  and semver's `clean` for `valid`.
+
+### What it costs, and where it pays
+
+Mean tokens per need, real tokenizer:
+
+| | Model writes | Model reads |
+|---|---|---|
+| The request (need and types) | 105 | – |
+| Examples, if the request had included them | +103 | – |
+| The confirm turn | 114 (pick, reason, thinking) | 1,552 (10 candidates) |
+| **Writing the target function itself** (mean; median 59) | **about 100** | – |
+
+**At this granularity, search does not save tokens.** These functions are small helpers.
+Describing and confirming costs about 220 output and 1,550 input tokens, while writing
+the function costs about 100 output tokens. At Opus 5.5 prices that is about $0.011
+against about $0.002 per need. Reuse pays only when the reused unit is much larger than
+its description: whole modules, or compositions of many atoms. It also pays when reuse
+buys something besides tokens, such as code that is already tested and verified. The
+confirm turn could be cheaper (effort low, K = 5, shorter candidate blocks), but not by
+5×. So the next measurement should be at module or composition scale, not atom scale.
+
+### Caveats
+
+- **Same-model phrasing.** The same model wrote the queries and the library
+  descriptions, so their phrasing may match unusually well.
+- **The queries come from descriptions of the code,** so some are implementation-specific
+  (for example, "return [validLen, placeHoldersLen]"). That makes them easier than real
+  needs.
+- **The sample is biased toward small functions:** callable, deterministic, with probe
+  examples.
+- **One planned run did not happen.** The confirm step on held-out queries without
+  descriptions stopped when the API account ran out of credit.
+
+**Total spend: about $14 on Opus 5.5** ($4.09 queries, $7.44 descriptions, about $2.60
+confirm runs).
 
 ## Running
 
