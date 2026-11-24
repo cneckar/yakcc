@@ -41,6 +41,7 @@ beforeAll(async () => {
     await registry.storeDucImplementation({
       specHash: `spec-${name}`,
       graphIdentity: packed.identity,
+      graphRoot: packed.root,
       formatVersion: packed.formatVersion,
       lifterVersion: packed.lifterVersion,
       structure: packed.structure,

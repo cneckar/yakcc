@@ -294,6 +294,10 @@ describe("T2: observe-don't-mutate — response unchanged under all 3 outcomes",
       getDucImplementation: registry.getDucImplementation.bind(registry),
       listDucImplementations: registry.listDucImplementations.bind(registry),
       findDucGraphsBySignature: registry.findDucGraphsBySignature.bind(registry),
+      storeDucModule: registry.storeDucModule.bind(registry),
+      getDucModule: registry.getDucModule.bind(registry),
+      enumerateDucSpecs: registry.enumerateDucSpecs.bind(registry),
+      getDucContract: registry.getDucContract.bind(registry),
     };
 
     const hook = createHook(brokenRegistry, {
