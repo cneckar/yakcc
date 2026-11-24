@@ -75,6 +75,13 @@ const COMPOUND = new Set([
 const PREFIX = new Set(["!", "-", "+", "~"]);
 const CALLS = new Set(["CallExpression", "CallExpression?.", "NewExpression"]);
 
+/** A value as a template's literal text: the characters a template would read otherwise escaped. */
+function templateText(value: string): string {
+  return value.replace(/\\|`|\$\{|\r/g, (m) =>
+    m === "\r" ? "\\r" : m === "${" ? "\\${" : `\\${m}`,
+  );
+}
+
 const isMemberRead = (label: string): boolean =>
   (label !== "..." && (label.startsWith(".") || label.startsWith("?.")) && !label.endsWith("=")) ||
   label.startsWith("super.") ||
@@ -414,9 +421,13 @@ function emitFunction(
     }
     if (label.startsWith("template:") || label.startsWith("tagged:")) {
       const tagged = label.startsWith("tagged:");
-      const parts = JSON.parse(
-        label.slice(tagged ? "tagged:".length : "template:".length),
-      ) as string[];
+      // A template's parts are values, written back with what a template needs escaped; a tagged
+      // template's are written as their raw text, which the tag sees (#1303).
+      const parts = tagged
+        ? (JSON.parse(label.slice("tagged:".length)) as [string | null, string][]).map(
+            ([, raw]) => raw,
+          )
+        : (JSON.parse(label.slice("template:".length)) as string[]).map(templateText);
       const exprs = tagged ? ins.slice(1) : ins;
       let text = `\`${parts[0] ?? ""}`;
       exprs.forEach((v, i) => {

@@ -2862,10 +2862,11 @@ class Lifter {
       return this.liftObjectLiteral(node);
     }
     if (Node.isTemplateExpression(node)) {
-      // The literal parts are structure; the expressions between them are the inputs.
+      // The literal parts are structure; the expressions between them are the inputs. A part is its
+      // value (cooked), as a string literal's label is: `\x61` and `a` are one part (#1303).
       const parts = [
-        rawTextOf(node.getHead()),
-        ...node.getTemplateSpans().map((span) => rawTextOf(span.getLiteral())),
+        cookedTextOf(node.getHead()),
+        ...node.getTemplateSpans().map((span) => cookedTextOf(span.getLiteral())),
       ];
       const inputs = node.getTemplateSpans().map((span) => this.liftExpr(span.getExpression()));
       return this.emit("op", inputs, 1, {
@@ -2876,16 +2877,22 @@ class Lifter {
     if (Node.isTaggedTemplateExpression(node)) {
       const template = node.getTemplate();
       const inputs = [this.liftExpr(node.getTag())];
-      let parts: string[];
+      // A tag sees each part's value and its raw text (`strings.raw`): the label carries both, the
+      // value null where an escape has none (#1303).
+      const both = (part: Node): [string | null, string] => [
+        hasInvalidEscape(part) ? null : cookedTextOf(part),
+        rawTextOf(part),
+      ];
+      let parts: [string | null, string][];
       if (Node.isTemplateExpression(template)) {
         parts = [
-          rawTextOf(template.getHead()),
-          ...template.getTemplateSpans().map((span) => rawTextOf(span.getLiteral())),
+          both(template.getHead()),
+          ...template.getTemplateSpans().map((span) => both(span.getLiteral())),
         ];
         for (const span of template.getTemplateSpans())
           inputs.push(this.liftExpr(span.getExpression()));
       } else {
-        parts = [rawTextOf(template)];
+        parts = [both(template)];
       }
       return this.emit("op", inputs, 1, {
         origin: { kind: "TaggedTemplate" },
@@ -4101,6 +4108,18 @@ function labelJson(value: unknown): string {
     /\s/g,
     (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
   );
+}
+
+/** A template part's value: its escapes applied, a line break in the source as LF (#1303). */
+function cookedTextOf(part: Node): string {
+  return (part.compilerNode as unknown as { text: string }).text;
+}
+
+/** Whether a tagged template's part has an escape with no value (`\unicode` in a tag). */
+function hasInvalidEscape(part: Node): boolean {
+  // TokenFlags.ContainsInvalidEscape, which TypeScript does not export.
+  const flags = (part.compilerNode as { templateFlags?: number }).templateFlags ?? 0;
+  return (flags & 2048) !== 0;
 }
 
 /** The raw text of a template part, exactly as written (escapes kept). */

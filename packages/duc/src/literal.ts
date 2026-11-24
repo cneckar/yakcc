@@ -71,6 +71,11 @@ export function normalizeLiteral(text: string): string {
     if (value !== undefined) return JSON.stringify(value);
     return text;
   }
+  // A regular expression's flags in one order (#1303): `/a/gi` and `/a/ig` are one RegExp, whose
+  // `flags` is canonical. The pattern stays as written: `/\x41/` and `/A/` differ in `.source`.
+  const regex = /^\/([\s\S]*)\/([a-z]*)$/.exec(text);
+  if (regex !== null && quote === "/")
+    return `/${regex[1]}/${[...(regex[2] as string)].sort().join("")}`;
   if (NUMBER.test(text)) {
     const value = Number(text.replace(/_/g, ""));
     if (Number.isFinite(value)) return String(value);
