@@ -51,7 +51,14 @@ export {
 export type { EmitSignature } from "./emit-ts.js";
 export { EmitError, emitTypeScript } from "./emit-ts.js";
 export type { PackedGraph, StoredLink } from "./store.js";
-export { GRAPH_FORMAT_VERSION, LIFTER_VERSION, packGraph, unpackGraph } from "./store.js";
+export {
+  GRAPH_FORMAT_VERSION,
+  LIFTER_VERSION,
+  ducBlockRoot,
+  graphRoot,
+  packGraph,
+  unpackGraph,
+} from "./store.js";
 export { canonicalizeGraph, graphIdentity } from "./canonical.js";
 
 export type { DiamondSupport, InfluenceIndex, NodeSummary, WitnessTerm } from "./influence.js";

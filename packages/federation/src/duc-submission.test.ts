@@ -50,6 +50,7 @@ function implementation(
     formatVersion: packed.formatVersion,
     structure: packed.structure,
     identity: packed.identity,
+    root: packed.root,
     lifterVersion: packed.lifterVersion,
     links: packed.links,
     evidence,
@@ -132,6 +133,26 @@ describe("the receiver's checks, in order (#1287)", () => {
     const v = await verdictOf(wrongSpec);
     expect(v?.refused?.check).toBe("integrity");
     expect(v?.refused?.reason).toContain("contract's hash");
+  });
+
+  it("3 integrity: a graph's root commits to its links and its format version (#1306)", async () => {
+    // A root that is not the graph's, with the structure and identity unchanged.
+    const wrongRoot = implementation(CLAMP_SPEC, CLAMP, [], { root: "0".repeat(64) });
+    const v1 = await verdictOf(wrongRoot);
+    expect(v1?.refused?.check).toBe("integrity");
+    expect(v1?.refused?.reason).toContain("root");
+    // A link swapped under the same structure: the identity still matches, the root does not.
+    const honest = implementation(CLAMP_SPEC, CLAMP);
+    const swapped = {
+      ...honest,
+      links: [
+        ...honest.links,
+        { reason: "free-identifier" as const, symbol: "x", spec: "9".repeat(64) },
+      ],
+    };
+    const v2 = await verdictOf(swapped);
+    expect(v2?.refused?.check).toBe("integrity");
+    expect(v2?.refused?.reason).toContain("root");
   });
 
   it("4 no external code: an opaque construct, and code given as text", async () => {
