@@ -27,18 +27,30 @@ applies the fill (DEC-RETRIEVAL-FILL-001). Defaults are a 1200-token budget and 
 
 ### Fallback policy (#1263)
 
-`decideFallback` (DEC-RETRIEVAL-GAP-GATE-001) decides from the slice scores and the
-candidate, never from the held-out check:
+The arm decides whether the slice is worth composing from. Two gates are available
+(`--gate`). Neither reads the held-out check.
 
-| Gap | Trigger reason | What the arm does |
+**`confirm` (default).** Retrieval scores do not separate relevant slices from irrelevant
+ones (see "Retrieval"), and B12 found that a model reading candidates does:
+
+| Step | Trigger reason | What the arm does |
 |---|---|---|
-| No candidate reaches the strong threshold (0.8) | `near-miss-only` | Writes from the spec alone (one turn). The slice is not worth its tokens. |
-| A strong candidate exists, and the reply has closure holes (names nothing defines, checked by the TypeScript checker against ES2022 only) | `unexplained-residual` | One repair turn, with the missing names. |
-| A strong candidate exists, and the reply has no holes | none | One turn. No synthesis. |
+| A reading turn shows the task and the slice; the model answers which candidates it would reuse (`{"use": [...]}`) | – | One short turn. |
+| It keeps none | `none-confirmed` | Writes from the spec alone, without the slice's tokens. |
+| It keeps some, and the reply has closure holes (names nothing defines, checked by the TypeScript checker against ES2022 only) | `unexplained-residual` | Composes from only the kept candidates, then one repair turn with the missing names. |
+| It keeps some, and the reply has no holes | none | Composes from only the kept candidates. |
 
-Every trigger is written to `triggers` (task, seed, reason, best score, holes). The counts
-by reason and the synthesis rate are in `triggerCounts`. A reply that stops on a refusal or
-on the token cap fails with its stop reason, and is not read as a hole.
+**`score`.** The earlier rule (`decideFallback`, DEC-RETRIEVAL-GAP-GATE-001):
+- If no candidate reaches 0.8, the arm writes from the spec (`near-miss-only`).
+- Otherwise it composes, with the same repair turn.
+
+It is kept for comparison.
+
+Every trigger is written to `triggers`. The counts by reason and the synthesis rate are in
+`triggerCounts`. A reply that stops on a refusal or on the token cap fails with its stop
+reason, and is not read as a hole. In the offline dry run, the client keeps nothing at the
+confirm turn, so every fallback row reads `none-confirmed`. The scripted tests cover the
+compose path.
 
 This is the TypeScript-text form of the policy. The graph form is `composeMissing` in
 `packages/federation/src/authored.ts`, where the gaps are `no-match` and a failed check
@@ -182,15 +194,16 @@ only).
 
 ## Status
 
-- **Harness: built and tested.** 84 tests pass across `harness.test.mjs`, `run.test.mjs`
+- **Harness: built and tested.** 89 tests pass across `harness.test.mjs`, `run.test.mjs`
   and `retrieval.test.mjs`.
 - **Offline dry run:** `results/offline-validation.json`, with three seeds and every arm. The
   offline client returns reference solutions, so every row passes and the token counts are
   estimates. It checks that the harness runs end to end. It is **not** a measurement of
   reuse. It uses the retrieved slices.
 - **Live run: not run.** It needs a key and approved spend. `results/dry-run-plan.json`
-  bounds a three-seed run on the retrieved slices at 297 calls, about 285k input tokens,
-  and at most 594k output tokens (2000 per call, thinking included). Adding
+  bounds a three-seed run on the retrieved slices at 378 calls, about 400k input tokens,
+  and at most 756k output tokens (2000 per call, thinking included). The confirm gate adds
+  one reading turn per fallback row. Adding
   `slice-oracle` adds 63 calls. Run it only with approval:
 
   ```sh

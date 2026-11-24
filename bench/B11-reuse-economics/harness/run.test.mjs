@@ -5,7 +5,14 @@ import assert from "node:assert/strict";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { breakEven, closureHoles, loadTasks, tallyTriggers } from "./lib.mjs";
+import {
+  breakEven,
+  buildConfirmPrompt,
+  closureHoles,
+  loadTasks,
+  parseConfirm,
+  tallyTriggers,
+} from "./lib.mjs";
 import { offlineClient } from "./offline-client.mjs";
 import { ARMS, DEFAULTS, planRun, runAll, selectionFor } from "./run.mjs";
 
@@ -27,7 +34,7 @@ function scripted(replies) {
 }
 const fenced = (code) => `\`\`\`ts\n${code}\n\`\`\``;
 
-describe("gap-gated fallback arm (#1263)", () => {
+describe("fallback arm, score gate (#1263)", () => {
   // clamp's best slice score is below the strong threshold; add-durations' is above it.
   const nearMiss = byId.clamp;
   const strong = byId["add-durations"];
@@ -42,7 +49,7 @@ describe("gap-gated fallback arm (#1263)", () => {
     const { rows, triggers } = await runAll({
       tasks: [nearMiss],
       client,
-      options: { arms: ["fallback"] },
+      options: { arms: ["fallback"], gate: "score" },
     });
     assert.equal(rows[0].turns, 1);
     assert.equal(rows[0].pass, true);
@@ -58,7 +65,7 @@ describe("gap-gated fallback arm (#1263)", () => {
     const { rows, triggers } = await runAll({
       tasks: [strong],
       client,
-      options: { arms: ["fallback"] },
+      options: { arms: ["fallback"], gate: "score" },
     });
     assert.equal(rows[0].turns, 1);
     assert.equal(rows[0].decision, "compose");
@@ -74,7 +81,7 @@ describe("gap-gated fallback arm (#1263)", () => {
     const { rows, triggers, triggerCounts } = await runAll({
       tasks: [strong],
       client,
-      options: { arms: ["fallback"] },
+      options: { arms: ["fallback"], gate: "score" },
     });
     assert.equal(rows[0].turns, 2);
     assert.equal(rows[0].pass, true);
@@ -91,7 +98,7 @@ describe("gap-gated fallback arm (#1263)", () => {
       const { rows } = await runAll({
         tasks: [strong],
         client,
-        options: { arms: ["fallback", "slice"] },
+        options: { arms: ["fallback", "slice"], gate: "score" },
       });
       for (const r of rows) {
         assert.equal(r.pass, false);
@@ -118,6 +125,63 @@ describe("gap-gated fallback arm (#1263)", () => {
       byReason: { none: 1, "near-miss-only": 1, "unexplained-residual": 1 },
       synthesisRate: 2 / 3,
     });
+  });
+});
+
+describe("fallback arm, confirm gate (default)", () => {
+  const strong = byId["add-durations"];
+  const confirmReply = (use) => ({ text: JSON.stringify({ use }) });
+  it("none confirmed: writes from the spec alone and logs the reason", async () => {
+    const client = scripted([confirmReply([]), { text: fenced(strong.reference) }]);
+    const { rows, triggers } = await runAll({
+      tasks: [strong],
+      client,
+      options: { arms: ["fallback"] },
+    });
+    assert.equal(rows[0].gate, "confirm");
+    assert.equal(rows[0].turns, 2);
+    assert.equal(rows[0].decision, "synthesize");
+    assert.match(client.prompts[0], /Which of them would you reuse/);
+    assert.equal(client.prompts[1].includes("Kept work"), false);
+    assert.equal(triggers[0].reason, "none-confirmed");
+  });
+  it("confirmed candidates are the only ones the compose turn sees", async () => {
+    const client = scripted([confirmReply([2]), { text: fenced(strong.reference) }]);
+    const { rows } = await runAll({ tasks: [strong], client, options: { arms: ["fallback"] } });
+    assert.equal(rows[0].decision, "compose");
+    assert.equal(rows[0].trigger, null);
+    assert.deepEqual(rows[0].confirmed, [strong.slice[1].id]);
+    assert.match(client.prompts[1], /Kept work/);
+    assert.equal(
+      client.prompts[1].includes(
+        strong.slice[0].citation.sourceFile + ":" + strong.slice[0].citation.lineStart,
+      ),
+      false,
+    );
+  });
+  it("a hole after composing gets one repair turn", async () => {
+    const holed =
+      "export function addDurations(a: string, b: string): string { return fmt(p(a) + p(b)); }";
+    const client = scripted([
+      confirmReply([1]),
+      { text: fenced(holed) },
+      { text: fenced(strong.reference) },
+    ]);
+    const { rows, triggers } = await runAll({
+      tasks: [strong],
+      client,
+      options: { arms: ["fallback"] },
+    });
+    assert.equal(rows[0].turns, 3);
+    assert.equal(rows[0].pass, true);
+    assert.deepEqual(triggers[0].holes, ["fmt", "p"]);
+  });
+  it("an unreadable confirm reply counts as none, and the confirm parser ignores out-of-range picks", () => {
+    assert.equal(parseConfirm("no json here", 3), null);
+    assert.deepEqual(parseConfirm('They use {} objects. {"use": [3, 1, 9, 1]}', 3), [1, 3]);
+  });
+  it("the confirm prompt never contains the held-out check", () => {
+    for (const t of tasks) assert.equal(buildConfirmPrompt(t, t.slice).includes(t.heldOut), false);
   });
 });
 
