@@ -191,4 +191,31 @@ describe.skipIf(!canRun("x86_64-linux"))("programs, natively (#1333)", () => {
     expect(bad.status).toBe(1);
     expect(bad.stderr.toString()).toMatch(/SyntaxError/);
   }, 600_000);
+
+  // #1333's acceptance: the same command on AArch64, ARMv7 and RISC-V (run under QEMU).
+  for (const [target, qemu] of [
+    ["aarch64-linux", "qemu-aarch64"],
+    ["arm-linux", "qemu-arm"],
+    ["riscv64-linux", "qemu-riscv64"],
+  ] as const)
+    it.skipIf(!canRun(target))(
+      `yakcc build --native --target ${target}: the acceptance command prints what Node does`,
+      () => {
+        const exe = join(work, "bin", `contract-id-${target}`);
+        buildProgram(here("./__fixtures__/program/contract-id-cli.ts"), exe, {
+          root: here("../../.."),
+          target,
+        });
+        const specs = fc.sample(spec, { numRuns: 12, seed: 1369 });
+        const run = spawnSync(qemu, [exe, ...specs.map((s) => JSON.stringify(s))], {
+          maxBuffer: 1 << 24,
+        });
+        expect([run.status, run.stderr.toString()]).toEqual([0, ""]);
+        const want = specs.map(
+          (s) => `${contractId(s as never)} ${canonicalizeText(s as never).length}`,
+        );
+        expect(run.stdout.toString().split("\n").slice(0, -1)).toEqual(want);
+      },
+      900_000,
+    );
 });
