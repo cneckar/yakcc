@@ -91,9 +91,28 @@ def _numstr(x):
         return "NaN"
     if math.isinf(x):
         return "Infinity" if x > 0 else "-Infinity"
-    if x == int(x) and abs(x) < 1e21:
-        return str(int(x))
-    return repr(x)
+    if x == 0:
+        return "0"
+    # Number::toString: the shortest round-trip digits, laid out as ECMA-262 says.
+    sign = "-" if x < 0 else ""
+    r = repr(abs(x))
+    mant, _, exp = r.partition("e")
+    point = mant.find(".")
+    digits = mant.replace(".", "")
+    n = (len(mant) if point < 0 else point) + (int(exp) if exp else 0)
+    stripped = digits.lstrip("0")
+    n -= len(digits) - len(stripped)
+    digits = stripped.rstrip("0") or "0"
+    k = len(digits)
+    if k <= n <= 21:
+        return sign + digits + "0" * (n - k)
+    if 0 < n <= 21:
+        return sign + digits[:n] + "." + digits[n:]
+    if -6 < n <= 0:
+        return sign + "0." + "0" * (-n) + digits
+    e = n - 1
+    es = ("+" if e >= 0 else "-") + str(abs(e))
+    return sign + digits[0] + ("." + digits[1:] if k > 1 else "") + "e" + es
 
 
 def _str(x):
@@ -135,8 +154,52 @@ def _rem(a, b):
         return math.nan
     if isinstance(a, int) and isinstance(b, int):
         r = abs(a) % abs(b)
-        return -r if a < 0 else r
+        # The remainder has the dividend's sign, zero included: -4 % 2 is -0.
+        if a < 0:
+            return -r if r != 0 else -0.0
+        return r
     return math.fmod(a, b)
+
+
+def _int32(x):
+    # ToInt32: truncate toward zero, then wrap to 32 bits; NaN and the infinities are 0.
+    n = _num(x)
+    if n != n or math.isinf(n):
+        return 0
+    n = int(n) & 0xFFFFFFFF
+    return n - 0x100000000 if n >= 0x80000000 else n
+
+
+def _uint32(x):
+    return _int32(x) & 0xFFFFFFFF
+
+
+def _shl(a, b):
+    return _int32(_int32(a) << (_uint32(b) & 31))
+
+
+def _shr(a, b):
+    return _int32(a) >> (_uint32(b) & 31)
+
+
+def _ushr(a, b):
+    return _uint32(a) >> (_uint32(b) & 31)
+
+
+def _band(a, b):
+    return _int32(a) & _int32(b)
+
+
+def _bor(a, b):
+    return _int32(_int32(a) | _int32(b))
+
+
+def _bxor(a, b):
+    return _int32(_int32(a) ^ _int32(b))
+
+
+def _bnot(a):
+    return _int32(~_int32(a))
 
 
 def _seq(a, b):
@@ -211,11 +274,39 @@ def _round(x):
     return math.floor(_num(x) + 0.5)
 
 
-def _index_of(s, x=UNDEFINED):
+def _position(pos, default):
+    # ToIntegerOrInfinity: NaN is 0, a fraction is truncated toward zero.
+    if pos is UNDEFINED:
+        return default
+    p = _num(pos)
+    if p != p:
+        return 0
+    if math.isinf(p):
+        return p
+    return int(p)
+
+
+def _index_of(s, x=UNDEFINED, pos=UNDEFINED):
+    p = _position(pos, 0)
     if isinstance(s, str):
-        return s.find(_str(x))
-    for i, e in enumerate(s):
-        if _seq(e, x):
+        return s.find(_str(x), int(min(max(p, 0), len(s))))
+    start = int(max(len(s) + p, 0) if p < 0 else min(p, len(s)))
+    for i in range(start, len(s)):
+        if _seq(s[i], x):
+            return i
+    return -1
+
+
+def _last_index_of(s, x=UNDEFINED, pos=UNDEFINED):
+    if isinstance(s, str):
+        t = _str(x)
+        n = _num(pos) if pos is not UNDEFINED else math.nan
+        p = len(s) if n != n else int(min(max(_position(pos, 0), 0), len(s)))
+        return s.rfind(t, 0, min(p + len(t), len(s)))
+    p = _position(pos, len(s) - 1)
+    start = int(len(s) + p if p < 0 else min(p, len(s) - 1))
+    for i in range(start, -1, -1):
+        if _seq(s[i], x):
             return i
     return -1
 
@@ -251,6 +342,23 @@ def _substring(s, start=UNDEFINED, end=UNDEFINED):
 def _split(s, sep=UNDEFINED):
     if sep is UNDEFINED:
         return [s]
+    if isinstance(sep, JsRegExp):
+        # String.prototype.split with a RegExp (ECMA-262 22.2.6.14): a match at the current
+        # position that is empty there does not split; captures are spliced in.
+        r = sep.compiled
+        if s == "":
+            return [] if r.match(s) else [s]
+        out, p, q = [], 0, 0
+        while q < len(s):
+            m = r.match(s, q)
+            if m is None or m.end() == p:
+                q += 1
+                continue
+            out.append(s[p:q])
+            out.extend(UNDEFINED if g is None else g for g in m.groups())
+            p = q = m.end()
+        out.append(s[p:])
+        return out
     return list(s) if sep == "" else s.split(sep)
 
 
@@ -378,11 +486,27 @@ def _reduce(xs, f, init=_NO_INIT):
 
 
 def _max(*xs):
-    return max((_num(x) for x in xs), default=-math.inf)
+    # Math.max: NaN if any argument is NaN, and +0 is larger than -0.
+    r = -math.inf
+    for x in xs:
+        n = _num(x)
+        if n != n:
+            return math.nan
+        if n > r or (n == 0 and r == 0 and math.copysign(1, r) < 0):
+            r = n
+    return r
 
 
 def _min(*xs):
-    return min((_num(x) for x in xs), default=math.inf)
+    # Math.min: NaN if any argument is NaN, and -0 is smaller than +0.
+    r = math.inf
+    for x in xs:
+        n = _num(x)
+        if n != n:
+            return math.nan
+        if n < r or (n == 0 and r == 0 and math.copysign(1, n) < 0):
+            r = n
+    return r
 
 
 def _try(body, handler, finalizer=UNDEFINED):
@@ -474,6 +598,12 @@ def _nullish(a, b):
 
 
 def _has_key(k, o):
+    # \`k in o\`: a TypeError on a value that is not an object, as in JavaScript.
+    if o is None or o is UNDEFINED or isinstance(o, (bool, str)) or _isnum(o):
+        raise JsError("Cannot use 'in' operator to search for '" + _str(k) + "' in " + _str(o), "TypeError")
+    if isinstance(o, list):
+        key = _str(k)
+        return key == "length" or (key.isdigit() and (key == "0" or not key.startswith("0")) and int(key) < len(o))
     return _str(k) in o
 
 
@@ -626,16 +756,28 @@ def _math_abs(x):
     return abs(_num(x))
 
 
+def _rounded(f, x):
+    # Math.floor / ceil / trunc: NaN and the infinities are themselves, and a zero result keeps the
+    # sign of a negative argument (-0), as in JavaScript.
+    x = _num(x)
+    if isinstance(x, float) and (x != x or math.isinf(x)):
+        return x
+    r = f(x)
+    if r == 0 and (x < 0 or (x == 0 and math.copysign(1, x) < 0)):
+        return -0.0
+    return r
+
+
 def _math_floor(x):
-    return math.floor(_num(x))
+    return _rounded(math.floor, x)
 
 
 def _math_ceil(x):
-    return math.ceil(_num(x))
+    return _rounded(math.ceil, x)
 
 
 def _math_trunc(x):
-    return math.trunc(_num(x))
+    return _rounded(math.trunc, x)
 
 
 def _math_sqrt(x):
@@ -652,6 +794,68 @@ def _object_keys(x):
 
 def _is_array(x):
     return isinstance(x, list)
+
+
+_JSON_ESCAPES = {'"': '\\\\"', "\\\\": "\\\\\\\\", "\\b": "\\\\b", "\\f": "\\\\f", "\\n": "\\\\n", "\\r": "\\\\r", "\\t": "\\\\t"}
+
+
+def _json_quote(s):
+    out = ['"']
+    for ch in s:
+        c = ord(ch)
+        if ch in _JSON_ESCAPES:
+            out.append(_JSON_ESCAPES[ch])
+        elif c < 0x20 or 0xD800 <= c <= 0xDFFF:
+            out.append("\\\\u%04x" % c)
+        else:
+            out.append(ch)
+    out.append('"')
+    return "".join(out)
+
+
+def _json_str(x):
+    """JSON.stringify's SerializeJSONProperty: the text, or None where JavaScript gives undefined."""
+    if x is UNDEFINED:
+        return None
+    if x is None:
+        return "null"
+    if isinstance(x, bool):
+        return "true" if x else "false"
+    if _isnum(x):
+        if isinstance(x, float) and (math.isnan(x) or math.isinf(x)):
+            return "null"
+        return _numstr(x)
+    if isinstance(x, str):
+        return _json_quote(x)
+    if isinstance(x, list):
+        return "[" + ",".join("null" if (t := _json_str(e)) is None else t for e in x) + "]"
+    if isinstance(x, dict):
+        parts = []
+        for k, v in x.items():
+            t = _json_str(v)
+            if t is not None:
+                parts.append(_json_quote(k) + ":" + t)
+        return "{" + ",".join(parts) + "}"
+    if callable(x) and not isinstance(x, (JsError, JsRegExp)):
+        return None
+    return "{}"
+
+
+def _number_is_nan(x=UNDEFINED):
+    return isinstance(x, float) and math.isnan(x)
+
+
+def _number_is_finite(x=UNDEFINED):
+    return _isnum(x) and not (isinstance(x, float) and (math.isnan(x) or math.isinf(x)))
+
+
+def _number_is_integer(x=UNDEFINED):
+    return _number_is_finite(x) and x == math.floor(x)
+
+
+def _json_stringify(x=UNDEFINED):
+    t = _json_str(x)
+    return UNDEFINED if t is None else t
 
 
 def _string_of(*a):
@@ -782,6 +986,7 @@ const METHODS: Record<string, string> = {
   endsWith: "_ends_with",
   includes: "_includes",
   indexOf: "_index_of",
+  lastIndexOf: "_last_index_of",
   slice: "_slice",
   substring: "_substring",
   split: "_split",
@@ -820,6 +1025,16 @@ const AMBIENT_MEMBERS: Record<string, Record<string, string>> = {
   },
   Object: { keys: "_object_keys" },
   Array: { isArray: "_is_array" },
+  JSON: { stringify: "_json_stringify" },
+  // Number.parseInt and Number.parseFloat are the global functions (ECMA-262 21.1.2.12–13).
+  Number: {
+    parseInt: "_parse_int",
+    parseFloat: "_parse_float",
+    // Number.isNaN / isFinite / isInteger do not convert their argument, unlike the globals.
+    isNaN: "_number_is_nan",
+    isFinite: "_number_is_finite",
+    isInteger: "_number_is_integer",
+  },
 };
 
 const AMBIENT_CALLS: Record<string, string> = {
@@ -1128,6 +1343,12 @@ function pyFunction(
         "/": "_div",
         "%": "_rem",
         "**": "_pow",
+        "<<": "_shl",
+        ">>": "_shr",
+        ">>>": "_ushr",
+        "&": "_band",
+        "|": "_bor",
+        "^": "_bxor",
         "<": "_lt",
         ">": "_gt",
         "<=": "_le",
@@ -1152,6 +1373,7 @@ function pyFunction(
         "!": "_not",
         "-": "_neg",
         "+": "_pos",
+        "~": "_bnot",
         TypeOfExpression: "_typeof",
         VoidExpression: "_void_of",
       };
@@ -1182,6 +1404,10 @@ function pyFunction(
         const fn = entry(entry(AMBIENT_MEMBERS, amb.ns), amb.member);
         if (fn === undefined)
           throw new PyEmitError(`${amb.ns}.${amb.member} has no Python form here`);
+        if (amb.ns === "JSON" && args.length > 1)
+          throw new PyEmitError(
+            "JSON.stringify with a replacer or an indent has no Python form here",
+          );
         return `${fn}(${args.join(", ")})`;
       }
       const cp = producer.get(callee);

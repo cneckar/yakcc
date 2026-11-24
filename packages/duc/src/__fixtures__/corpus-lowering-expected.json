@@ -1,0 +1,367 @@
+{
+  "add": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "isHex64": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "truncate": {
+    "python": "disagrees",
+    "go": "disagrees",
+    "rust": "disagrees"
+  },
+  "stemToCamelCase": {
+    "python": "disagrees",
+    "go": "disagrees",
+    "rust": "identical"
+  },
+  "emitEntry": {
+    "python": "disagrees",
+    "go": "disagrees",
+    "rust": "disagrees"
+  },
+  "panicCodeToKind": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "f64Bytes": {
+    "python": "refused",
+    "go": "refused",
+    "rust": "refused"
+  },
+  "valtypeByte": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "bytesToHex": {
+    "python": "refused",
+    "go": "refused",
+    "rust": "refused"
+  },
+  "isLocalTriplet": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "normalizeBase": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "buildIntentCardQuery": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "buildSkeletonSpec": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "refBytesToHex": {
+    "python": "refused",
+    "go": "refused",
+    "rust": "refused"
+  },
+  "isAsciiDigit": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "isEnoent": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "normalizeSource": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "candidatesToCombinedScores": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "propsArtifactPath": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "collapseWhitespace": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "escapeRegex": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "normalizeId": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "mapParam": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "deriveSpecName": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "normalizeSentence": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "parseArgv": {
+    "python": "refused",
+    "go": "refused",
+    "rust": "refused"
+  },
+  "insideSnapshot": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "validateProofManifestL0": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "buildFragmentFallback": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "isTestEmission": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "extractFunctionName": {
+    "python": "refused",
+    "go": "refused",
+    "rust": "refused"
+  },
+  "renderAtomNewComment": {
+    "python": "disagrees",
+    "go": "disagrees",
+    "rust": "disagrees"
+  },
+  "outcomeFromResponse": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "cosineDistanceToCombinedScore": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "benchmarkQueryToIntentQuery": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "worstHitRateEntries": {
+    "python": "refused",
+    "go": "refused",
+    "rust": "refused"
+  },
+  "computePrecisionAt1": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "computeRecallAtK": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "computeAtomComplexity": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "computeNeedComplexity": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "buildSuggestion": {
+    "python": "refused",
+    "go": "refused",
+    "rust": "refused"
+  },
+  "tokenize": {
+    "python": "identical",
+    "go": "disagrees",
+    "rust": "disagrees"
+  },
+  "withCompletion": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "withHitIncrement": {
+    "python": "refused",
+    "go": "refused",
+    "rust": "identical"
+  },
+  "makeBindingKey": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "makeLruNode": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "parseSemver": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "seed:ascii-char": {
+    "python": "disagrees",
+    "go": "disagrees",
+    "rust": "disagrees"
+  },
+  "seed:bracket": {
+    "python": "disagrees",
+    "go": "disagrees",
+    "rust": "disagrees"
+  },
+  "seed:char-code": {
+    "python": "disagrees",
+    "go": "disagrees",
+    "rust": "disagrees"
+  },
+  "seed:digit-or-throw": {
+    "python": "disagrees",
+    "go": "disagrees",
+    "rust": "disagrees"
+  },
+  "seed:eof-check": {
+    "python": "disagrees",
+    "go": "disagrees",
+    "rust": "disagrees"
+  },
+  "seed:integer": {
+    "python": "disagrees",
+    "go": "disagrees",
+    "rust": "disagrees"
+  },
+  "seed:signed-integer": {
+    "python": "disagrees",
+    "go": "disagrees",
+    "rust": "disagrees"
+  },
+  "seed:whitespace": {
+    "python": "disagrees",
+    "go": "disagrees",
+    "rust": "disagrees"
+  },
+  "seed:string-from-position": {
+    "python": "disagrees",
+    "go": "disagrees",
+    "rust": "disagrees"
+  },
+  "seed:position-step": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "seed:peek-char": {
+    "python": "disagrees",
+    "go": "disagrees",
+    "rust": "disagrees"
+  },
+  "seed:non-ascii-rejector": {
+    "python": "disagrees",
+    "go": "disagrees",
+    "rust": "identical"
+  },
+  "seed:comma-separated-integers": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "seed:nonempty-list-content": {
+    "python": "disagrees",
+    "go": "disagrees",
+    "rust": "disagrees"
+  },
+  "probe:integer-precision": {
+    "python": "disagrees",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "probe:integer-division": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "probe:truthiness": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "probe:null-undefined": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "probe:plus": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "probe:number-to-string": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "probe:json-stringify": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "probe:index-of": {
+    "python": "identical",
+    "go": "refused",
+    "rust": "refused"
+  },
+  "probe:caught-throw": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "probe:uncaught-throw": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "probe:shared-array": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  },
+  "probe:closure-over-heap": {
+    "python": "identical",
+    "go": "identical",
+    "rust": "identical"
+  }
+}

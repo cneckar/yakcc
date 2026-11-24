@@ -181,6 +181,20 @@ export function signAttestation(
 }
 
 /**
+ * Sign any payload object: its canonical JSON (keys sorted at every level), signed with Ed25519.
+ * The DUC verifier-as-block (`duc.ts`) signs its I1 payloads with this; `verifyAttestation`
+ * checks them as it checks claim attestations.
+ */
+export function signPayload(
+  privateKey: Uint8Array,
+  value: object,
+): Pick<Attestation, "payload" | "signature"> {
+  const payload = canonicalJson(value);
+  const sigBuffer = cryptoSign(null, Buffer.from(payload, "utf8"), seedToPrivateKeyObject(privateKey));
+  return { payload, signature: sigBuffer.toString("hex") };
+}
+
+/**
  * Verify a previously-produced attestation.
  *
  * @returns `true` when the signature is valid for the given public key and

@@ -165,10 +165,120 @@ func numStr(f float64) string {
 	if f == 0 {
 		return "0"
 	}
-	if f == math.Trunc(f) && math.Abs(f) < 1e21 {
-		return strconv.FormatFloat(f, 'f', -1, 64)
+	// Number::toString: the shortest round-trip digits, laid out as ECMA-262 says.
+	sign := ""
+	if f < 0 {
+		sign = "-"
+		f = -f
 	}
-	return strconv.FormatFloat(f, 'g', -1, 64)
+	e := strconv.FormatFloat(f, 'e', -1, 64)
+	at := strings.IndexByte(e, 'e')
+	digits := strings.Replace(e[:at], ".", "", 1)
+	exp, _ := strconv.Atoi(e[at+1:])
+	digits = strings.TrimRight(digits, "0")
+	if digits == "" {
+		digits = "0"
+	}
+	k, n := len(digits), exp+1
+	switch {
+	case k <= n && n <= 21:
+		return sign + digits + strings.Repeat("0", n-k)
+	case 0 < n && n <= 21:
+		return sign + digits[:n] + "." + digits[n:]
+	case -6 < n && n <= 0:
+		return sign + "0." + strings.Repeat("0", -n) + digits
+	}
+	es := strconv.Itoa(n - 1)
+	if n-1 >= 0 {
+		es = "+" + es
+	}
+	if k == 1 {
+		return sign + digits + "e" + es
+	}
+	return sign + digits[:1] + "." + digits[1:] + "e" + es
+}
+
+func jsonQuote(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			b.WriteString("\\\\\\"")
+		case '\\\\':
+			b.WriteString("\\\\\\\\")
+		case '\\b':
+			b.WriteString("\\\\b")
+		case '\\f':
+			b.WriteString("\\\\f")
+		case '\\n':
+			b.WriteString("\\\\n")
+		case '\\r':
+			b.WriteString("\\\\r")
+		case '\\t':
+			b.WriteString("\\\\t")
+		default:
+			if r < 0x20 {
+				b.WriteString("\\\\u00")
+				b.WriteString(strconv.FormatInt(int64(r)>>4, 16))
+				b.WriteString(strconv.FormatInt(int64(r)&15, 16))
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// jsonStr is JSON.stringify's SerializeJSONProperty: the text, or false where JavaScript gives undefined.
+func jsonStr(x any) (string, bool) {
+	switch v := x.(type) {
+	case undefinedT:
+		return "", false
+	case nil:
+		return "null", true
+	case bool:
+		if v {
+			return "true", true
+		}
+		return "false", true
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return "null", true
+		}
+		return numStr(v), true
+	case string:
+		return jsonQuote(v), true
+	case *Array:
+		parts := make([]string, len(v.Items))
+		for i, e := range v.Items {
+			t, ok := jsonStr(e)
+			if !ok {
+				t = "null"
+			}
+			parts[i] = t
+		}
+		return "[" + strings.Join(parts, ",") + "]", true
+	case *Object:
+		parts := []string{}
+		for _, k := range v.Keys {
+			if t, ok := jsonStr(v.Vals[k]); ok {
+				parts = append(parts, jsonQuote(k)+":"+t)
+			}
+		}
+		return "{" + strings.Join(parts, ",") + "}", true
+	case func(...any) any:
+		return "", false
+	}
+	return "{}", true
+}
+
+func jsonStringify(x any) any {
+	if t, ok := jsonStr(x); ok {
+		return t
+	}
+	return Undefined
 }
 
 func str(x any) string {

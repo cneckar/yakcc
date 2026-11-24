@@ -1,0 +1,553 @@
+{
+  "python": "3.13.18",
+  "license": "PSF-2.0 (CPython standard library)",
+  "functions": [
+    {
+      "module": "colorsys",
+      "name": "rgb_to_yiq",
+      "args": [
+        {
+          "float": [0.0, 1.0]
+        },
+        {
+          "float": [0.0, 1.0]
+        },
+        {
+          "float": [0.0, 1.0]
+        }
+      ],
+      "source": "def rgb_to_yiq(r, g, b):\n    y = 0.30*r + 0.59*g + 0.11*b\n    i = 0.74*(r-y) - 0.27*(b-y)\n    q = 0.48*(r-y) + 0.41*(b-y)\n    return (y, i, q)\n",
+      "context": ""
+    },
+    {
+      "module": "colorsys",
+      "name": "yiq_to_rgb",
+      "args": [
+        {
+          "float": [0.0, 1.0]
+        },
+        {
+          "float": [-1.0, 1.0]
+        },
+        {
+          "float": [-1.0, 1.0]
+        }
+      ],
+      "source": "def yiq_to_rgb(y, i, q):\n    # r = y + (0.27*q + 0.41*i) / (0.74*0.41 + 0.27*0.48)\n    # b = y + (0.74*q - 0.48*i) / (0.74*0.41 + 0.27*0.48)\n    # g = y - (0.30*(r-y) + 0.11*(b-y)) / 0.59\n\n    r = y + 0.9468822170900693*i + 0.6235565819861433*q\n    g = y - 0.27478764629897834*i - 0.6356910791873801*q\n    b = y - 1.1085450346420322*i + 1.7090069284064666*q\n\n    if r < 0.0:\n        r = 0.0\n    if g < 0.0:\n        g = 0.0\n    if b < 0.0:\n        b = 0.0\n    if r > 1.0:\n        r = 1.0\n    if g > 1.0:\n        g = 1.0\n    if b > 1.0:\n        b = 1.0\n    return (r, g, b)\n",
+      "context": ""
+    },
+    {
+      "module": "colorsys",
+      "name": "rgb_to_hls",
+      "args": [
+        {
+          "float": [0.0, 1.0]
+        },
+        {
+          "float": [0.0, 1.0]
+        },
+        {
+          "float": [0.0, 1.0]
+        }
+      ],
+      "source": "def rgb_to_hls(r, g, b):\n    maxc = max(r, g, b)\n    minc = min(r, g, b)\n    sumc = (maxc+minc)\n    rangec = (maxc-minc)\n    l = sumc/2.0\n    if minc == maxc:\n        return 0.0, l, 0.0\n    if l <= 0.5:\n        s = rangec / sumc\n    else:\n        s = rangec / (2.0-maxc-minc)  # Not always 2.0-sumc: gh-106498.\n    rc = (maxc-r) / rangec\n    gc = (maxc-g) / rangec\n    bc = (maxc-b) / rangec\n    if r == maxc:\n        h = bc-gc\n    elif g == maxc:\n        h = 2.0+rc-bc\n    else:\n        h = 4.0+gc-rc\n    h = (h/6.0) % 1.0\n    return h, l, s\n",
+      "context": ""
+    },
+    {
+      "module": "colorsys",
+      "name": "hls_to_rgb",
+      "args": [
+        {
+          "float": [0.0, 1.0]
+        },
+        {
+          "float": [0.0, 1.0]
+        },
+        {
+          "float": [0.0, 1.0]
+        }
+      ],
+      "source": "def hls_to_rgb(h, l, s):\n    if s == 0.0:\n        return l, l, l\n    if l <= 0.5:\n        m2 = l * (1.0+s)\n    else:\n        m2 = l+s-(l*s)\n    m1 = 2.0*l - m2\n    return (_v(m1, m2, h+ONE_THIRD), _v(m1, m2, h), _v(m1, m2, h-ONE_THIRD))\n",
+      "context": "ONE_THIRD = 1.0/3.0\nONE_SIXTH = 1.0/6.0\nTWO_THIRD = 2.0/3.0\ndef _v(m1, m2, hue):\n    hue = hue % 1.0\n    if hue < ONE_SIXTH:\n        return m1 + (m2-m1)*hue*6.0\n    if hue < 0.5:\n        return m2\n    if hue < TWO_THIRD:\n        return m1 + (m2-m1)*(TWO_THIRD-hue)*6.0\n    return m1"
+    },
+    {
+      "module": "colorsys",
+      "name": "_v",
+      "args": [
+        {
+          "float": [0.0, 1.0]
+        },
+        {
+          "float": [0.0, 1.0]
+        },
+        {
+          "float": [-1.0, 1.0]
+        }
+      ],
+      "source": "def _v(m1, m2, hue):\n    hue = hue % 1.0\n    if hue < ONE_SIXTH:\n        return m1 + (m2-m1)*hue*6.0\n    if hue < 0.5:\n        return m2\n    if hue < TWO_THIRD:\n        return m1 + (m2-m1)*(TWO_THIRD-hue)*6.0\n    return m1\n",
+      "context": "ONE_SIXTH = 1.0/6.0\nTWO_THIRD = 2.0/3.0"
+    },
+    {
+      "module": "colorsys",
+      "name": "rgb_to_hsv",
+      "args": [
+        {
+          "float": [0.0, 1.0]
+        },
+        {
+          "float": [0.0, 1.0]
+        },
+        {
+          "float": [0.0, 1.0]
+        }
+      ],
+      "source": "def rgb_to_hsv(r, g, b):\n    maxc = max(r, g, b)\n    minc = min(r, g, b)\n    rangec = (maxc-minc)\n    v = maxc\n    if minc == maxc:\n        return 0.0, 0.0, v\n    s = rangec / maxc\n    rc = (maxc-r) / rangec\n    gc = (maxc-g) / rangec\n    bc = (maxc-b) / rangec\n    if r == maxc:\n        h = bc-gc\n    elif g == maxc:\n        h = 2.0+rc-bc\n    else:\n        h = 4.0+gc-rc\n    h = (h/6.0) % 1.0\n    return h, s, v\n",
+      "context": ""
+    },
+    {
+      "module": "colorsys",
+      "name": "hsv_to_rgb",
+      "args": [
+        {
+          "float": [0.0, 1.0]
+        },
+        {
+          "float": [0.0, 1.0]
+        },
+        {
+          "float": [0.0, 1.0]
+        }
+      ],
+      "source": "def hsv_to_rgb(h, s, v):\n    if s == 0.0:\n        return v, v, v\n    i = int(h*6.0) # XXX assume int() truncates!\n    f = (h*6.0) - i\n    p = v*(1.0 - s)\n    q = v*(1.0 - s*f)\n    t = v*(1.0 - s*(1.0-f))\n    i = i%6\n    if i == 0:\n        return v, t, p\n    if i == 1:\n        return q, v, p\n    if i == 2:\n        return p, v, t\n    if i == 3:\n        return p, q, v\n    if i == 4:\n        return t, p, v\n    if i == 5:\n        return v, p, q\n    # Cannot get here\n",
+      "context": ""
+    },
+    {
+      "module": "calendar",
+      "name": "isleap",
+      "args": ["int"],
+      "source": "def isleap(year):\n    \"\"\"Return True for leap years, False for non-leap years.\"\"\"\n    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)\n",
+      "context": ""
+    },
+    {
+      "module": "calendar",
+      "name": "leapdays",
+      "args": [
+        {
+          "int": [1, 9999]
+        },
+        {
+          "int": [1, 9999]
+        }
+      ],
+      "source": "def leapdays(y1, y2):\n    \"\"\"Return number of leap years in range [y1, y2).\n       Assume y1 <= y2.\"\"\"\n    y1 -= 1\n    y2 -= 1\n    return (y2//4 - y1//4) - (y2//100 - y1//100) + (y2//400 - y1//400)\n",
+      "context": ""
+    },
+    {
+      "module": "string",
+      "name": "capwords",
+      "args": [
+        {
+          "str": "aB c\t-d",
+          "max": 10
+        },
+        {
+          "opt": {
+            "lit": [null, " ", "-"]
+          }
+        }
+      ],
+      "source": "def capwords(s, sep=None):\n    \"\"\"capwords(s [,sep]) -> string\n\n    Split the argument into words using split, capitalize each\n    word using capitalize, and join the capitalized words using\n    join.  If the optional second argument sep is absent or None,\n    runs of whitespace characters are replaced by a single space\n    and leading and trailing whitespace are removed, otherwise\n    sep is used to split and join the words.\n\n    \"\"\"\n    return (sep or ' ').join(map(str.capitalize, s.split(sep)))\n",
+      "context": ""
+    },
+    {
+      "module": "html",
+      "name": "escape",
+      "args": [
+        {
+          "str": "a&<>\"' ",
+          "max": 8
+        },
+        {
+          "opt": "bool"
+        }
+      ],
+      "source": "def escape(s, quote=True):\n    \"\"\"\n    Replace special characters \"&\", \"<\" and \">\" to HTML-safe sequences.\n    If the optional flag quote is true (the default), the quotation mark\n    characters, both double quote (\") and single quote (') characters are also\n    translated.\n    \"\"\"\n    s = s.replace(\"&\", \"&amp;\") # Must be done first!\n    s = s.replace(\"<\", \"&lt;\")\n    s = s.replace(\">\", \"&gt;\")\n    if quote:\n        s = s.replace('\"', \"&quot;\")\n        s = s.replace('\\'', \"&#x27;\")\n    return s\n",
+      "context": ""
+    },
+    {
+      "module": "difflib",
+      "name": "_format_range_unified",
+      "args": [
+        {
+          "int": [-3, 12]
+        },
+        {
+          "int": [-3, 12]
+        }
+      ],
+      "source": "def _format_range_unified(start, stop):\n    'Convert range to the \"ed\" format'\n    # Per the diff spec at http://www.unix.org/single_unix_specification/\n    beginning = start + 1     # lines start numbering with one\n    length = stop - start\n    if length == 1:\n        return '{}'.format(beginning)\n    if not length:\n        beginning -= 1        # empty ranges begin at line just before the range\n    return '{},{}'.format(beginning, length)\n",
+      "context": ""
+    },
+    {
+      "module": "difflib",
+      "name": "_format_range_context",
+      "args": [
+        {
+          "int": [-3, 12]
+        },
+        {
+          "int": [-3, 12]
+        }
+      ],
+      "source": "def _format_range_context(start, stop):\n    'Convert range to the \"ed\" format'\n    # Per the diff spec at http://www.unix.org/single_unix_specification/\n    beginning = start + 1     # lines start numbering with one\n    length = stop - start\n    if not length:\n        beginning -= 1        # empty ranges begin at line just before the range\n    if length <= 1:\n        return '{}'.format(beginning)\n    return '{},{}'.format(beginning, beginning + length - 1)\n",
+      "context": ""
+    },
+    {
+      "module": "ipaddress",
+      "name": "_count_righthand_zero_bits",
+      "args": [
+        {
+          "int": [0, 4096]
+        },
+        {
+          "int": [0, 32]
+        }
+      ],
+      "source": "def _count_righthand_zero_bits(number, bits):\n    \"\"\"Count the number of zero bits on the right hand side.\n\n    Args:\n        number: an integer.\n        bits: maximum number of bits to count.\n\n    Returns:\n        The number of zero bits on the right hand side of the number.\n\n    \"\"\"\n    if number == 0:\n        return bits\n    return min(bits, (~number & (number-1)).bit_length())\n",
+      "context": ""
+    },
+    {
+      "module": "urllib.parse",
+      "name": "_splitnetloc",
+      "args": [
+        {
+          "str": "ab:/?#@=<>URL ",
+          "max": 12
+        },
+        {
+          "opt": {
+            "int": [0, 6]
+          }
+        }
+      ],
+      "source": "def _splitnetloc(url, start=0):\n    delim = len(url)   # position of end of domain part of url, default is end\n    for c in '/?#':    # look for delimiters; the order is NOT important\n        wdelim = url.find(c, start)        # find first of this delim\n        if wdelim >= 0:                    # if found\n            delim = min(delim, wdelim)     # use earliest delim position\n    return url[start:delim], url[delim:]   # return (domain, rest)\n",
+      "context": ""
+    },
+    {
+      "module": "urllib.parse",
+      "name": "unwrap",
+      "args": [
+        {
+          "union": [
+            {
+              "str": "ab:/?#@=<>URL ",
+              "max": 12
+            },
+            {
+              "lit": ["<URL:http://a/b>", " <x> ", "URL:y", "<>"]
+            }
+          ]
+        }
+      ],
+      "source": "def unwrap(url):\n    \"\"\"Transform a string like '<URL:scheme://host/path>' into 'scheme://host/path'.\n\n    The string is returned unchanged if it's not a wrapped URL.\n    \"\"\"\n    url = str(url).strip()\n    if url[:1] == '<' and url[-1:] == '>':\n        url = url[1:-1].strip()\n    if url[:4] == 'URL:':\n        url = url[4:].strip()\n    return url\n",
+      "context": ""
+    },
+    {
+      "module": "urllib.parse",
+      "name": "_splitport",
+      "args": [
+        {
+          "str": "ab:12",
+          "max": 8
+        }
+      ],
+      "source": "def _splitport(host):\n    \"\"\"splitport('host:port') --> 'host', 'port'.\"\"\"\n    global _portprog\n    if _portprog is None:\n        _portprog = re.compile('(.*):([0-9]*)', re.DOTALL)\n\n    match = _portprog.fullmatch(host)\n    if match:\n        host, port = match.groups()\n        if port:\n            return host, port\n    return host, None\n",
+      "context": "import re\n_portprog = None"
+    },
+    {
+      "module": "urllib.parse",
+      "name": "_splituser",
+      "args": [
+        {
+          "str": "ab:/?#@=<>URL ",
+          "max": 12
+        }
+      ],
+      "source": "def _splituser(host):\n    \"\"\"splituser('user[:passwd]@host[:port]') --> 'user[:passwd]', 'host[:port]'.\"\"\"\n    user, delim, host = host.rpartition('@')\n    return (user if delim else None), host\n",
+      "context": ""
+    },
+    {
+      "module": "urllib.parse",
+      "name": "_splitpasswd",
+      "args": [
+        {
+          "str": "ab:/?#@=<>URL ",
+          "max": 12
+        }
+      ],
+      "source": "def _splitpasswd(user):\n    \"\"\"splitpasswd('user:passwd') -> 'user', 'passwd'.\"\"\"\n    user, delim, passwd = user.partition(':')\n    return user, (passwd if delim else None)\n",
+      "context": ""
+    },
+    {
+      "module": "urllib.parse",
+      "name": "_splitvalue",
+      "args": [
+        {
+          "str": "ab:/?#@=<>URL ",
+          "max": 12
+        }
+      ],
+      "source": "def _splitvalue(attr):\n    \"\"\"splitvalue('attr=value') --> 'attr', 'value'.\"\"\"\n    attr, delim, value = attr.partition('=')\n    return attr, (value if delim else None)\n",
+      "context": ""
+    },
+    {
+      "module": "urllib.parse",
+      "name": "_splittag",
+      "args": [
+        {
+          "str": "ab:/?#@=<>URL ",
+          "max": 12
+        }
+      ],
+      "source": "def _splittag(url):\n    \"\"\"splittag('/path#tag') --> '/path', 'tag'.\"\"\"\n    path, delim, tag = url.rpartition('#')\n    if delim:\n        return path, tag\n    return url, None\n",
+      "context": ""
+    },
+    {
+      "module": "urllib.parse",
+      "name": "_splitquery",
+      "args": [
+        {
+          "str": "ab:/?#@=<>URL ",
+          "max": 12
+        }
+      ],
+      "source": "def _splitquery(url):\n    \"\"\"splitquery('/path?query') --> '/path', 'query'.\"\"\"\n    path, delim, query = url.rpartition('?')\n    if delim:\n        return path, query\n    return url, None\n",
+      "context": ""
+    },
+    {
+      "module": "email.utils",
+      "name": "quote",
+      "args": [
+        {
+          "str": "a\\\"b",
+          "max": 8
+        }
+      ],
+      "source": "def quote(str):\n    \"\"\"Prepare string to be used in a quoted string.\n\n    Turns backslash and double quote characters into quoted pairs.  These\n    are the only characters that need to be quoted inside a quoted string.\n    Does not add the surrounding double quotes.\n    \"\"\"\n    return str.replace('\\\\', '\\\\\\\\').replace('\"', '\\\\\"')\n",
+      "context": ""
+    },
+    {
+      "module": "email.utils",
+      "name": "unquote",
+      "args": [
+        {
+          "union": [
+            {
+              "str": "a\\\"<>",
+              "max": 8
+            },
+            {
+              "lit": ["\"a\\\\b\"", "<x>", "\"\"", "\"a\\\"b\""]
+            }
+          ]
+        }
+      ],
+      "source": "def unquote(str):\n    \"\"\"Remove quotes from a string.\"\"\"\n    if len(str) > 1:\n        if str.startswith('\"') and str.endswith('\"'):\n            return str[1:-1].replace('\\\\\\\\', '\\\\').replace('\\\\\"', '\"')\n        if str.startswith('<') and str.endswith('>'):\n            return str[1:-1]\n    return str\n",
+      "context": ""
+    },
+    {
+      "module": "_pydatetime",
+      "name": "_is_leap",
+      "args": ["int"],
+      "source": "def _is_leap(year):\n    \"year -> 1 if leap year, else 0.\"\n    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)\n",
+      "context": ""
+    },
+    {
+      "module": "_pydatetime",
+      "name": "_days_before_year",
+      "args": ["int"],
+      "source": "def _days_before_year(year):\n    \"year -> number of days before January 1st of year.\"\n    y = year - 1\n    return y*365 + y//4 - y//100 + y//400\n",
+      "context": ""
+    },
+    {
+      "module": "_pydatetime",
+      "name": "_days_in_month",
+      "args": [
+        {
+          "int": [1, 9999]
+        },
+        {
+          "int": [0, 13]
+        }
+      ],
+      "source": "def _days_in_month(year, month):\n    \"year, month -> number of days in that month in that year.\"\n    assert 1 <= month <= 12, month\n    if month == 2 and _is_leap(year):\n        return 29\n    return _DAYS_IN_MONTH[month]\n",
+      "context": "_DAYS_IN_MONTH = [-1, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]\ndef _is_leap(year):\n    \"year -> 1 if leap year, else 0.\"\n    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)"
+    },
+    {
+      "module": "_pydatetime",
+      "name": "_days_before_month",
+      "args": [
+        {
+          "int": [1, 9999]
+        },
+        {
+          "int": [0, 13]
+        }
+      ],
+      "source": "def _days_before_month(year, month):\n    \"year, month -> number of days in year preceding first day of month.\"\n    assert 1 <= month <= 12, 'month must be in 1..12'\n    return _DAYS_BEFORE_MONTH[month] + (month > 2 and _is_leap(year))\n",
+      "context": "_DAYS_IN_MONTH = [-1, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]\n_DAYS_BEFORE_MONTH = [-1]\ndbm = 0\nfor dim in _DAYS_IN_MONTH[1:]:\n    _DAYS_BEFORE_MONTH.append(dbm)\n    dbm += dim\ndef _is_leap(year):\n    \"year -> 1 if leap year, else 0.\"\n    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)"
+    },
+    {
+      "module": "_pydatetime",
+      "name": "_ymd2ord",
+      "args": [
+        {
+          "int": [1, 9999]
+        },
+        {
+          "int": [1, 12]
+        },
+        {
+          "int": [1, 31]
+        }
+      ],
+      "source": "def _ymd2ord(year, month, day):\n    \"year, month, day -> ordinal, considering 01-Jan-0001 as day 1.\"\n    assert 1 <= month <= 12, 'month must be in 1..12'\n    dim = _days_in_month(year, month)\n    assert 1 <= day <= dim, ('day must be in 1..%d' % dim)\n    return (_days_before_year(year) +\n            _days_before_month(year, month) +\n            day)\n",
+      "context": "_DAYS_IN_MONTH = [-1, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]\n_DAYS_BEFORE_MONTH = [-1]\ndbm = 0\nfor dim in _DAYS_IN_MONTH[1:]:\n    _DAYS_BEFORE_MONTH.append(dbm)\n    dbm += dim\ndef _is_leap(year):\n    \"year -> 1 if leap year, else 0.\"\n    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)\ndef _days_before_year(year):\n    \"year -> number of days before January 1st of year.\"\n    y = year - 1\n    return y*365 + y//4 - y//100 + y//400\ndef _days_in_month(year, month):\n    \"year, month -> number of days in that month in that year.\"\n    assert 1 <= month <= 12, month\n    if month == 2 and _is_leap(year):\n        return 29\n    return _DAYS_IN_MONTH[month]\ndef _days_before_month(year, month):\n    \"year, month -> number of days in year preceding first day of month.\"\n    assert 1 <= month <= 12, 'month must be in 1..12'\n    return _DAYS_BEFORE_MONTH[month] + (month > 2 and _is_leap(year))"
+    },
+    {
+      "module": "_pydatetime",
+      "name": "_divide_and_round",
+      "args": [
+        "int",
+        {
+          "union": [
+            "int",
+            {
+              "lit": [0, 2, -2]
+            }
+          ]
+        }
+      ],
+      "source": "def _divide_and_round(a, b):\n    \"\"\"divide a by b and round result to the nearest integer\n\n    When the ratio is exactly half-way between two integers,\n    the even integer is returned.\n    \"\"\"\n    # Based on the reference implementation for divmod_near\n    # in Objects/longobject.c.\n    q, r = divmod(a, b)\n    # round up if either r / b > 0.5, or r / b == 0.5 and q is odd.\n    # The expression r / b > 0.5 is equivalent to 2 * r > b if b is\n    # positive, 2 * r < b if b negative.\n    r *= 2\n    greater_than_half = r > b if b > 0 else r < b\n    if greater_than_half or r == b and q % 2 == 1:\n        q += 1\n\n    return q\n",
+      "context": ""
+    },
+    {
+      "module": "_pydatetime",
+      "name": "_cmp",
+      "args": [
+        {
+          "union": ["int", "float"]
+        },
+        {
+          "union": ["int", "float"]
+        }
+      ],
+      "source": "def _cmp(x, y):\n    return 0 if x == y else 1 if x > y else -1\n",
+      "context": ""
+    },
+    {
+      "module": "heapq",
+      "name": "_siftdown",
+      "args": [
+        {
+          "list": "int",
+          "min": 5,
+          "max": 5
+        },
+        {
+          "int": [0, 2]
+        },
+        {
+          "int": [0, 4]
+        }
+      ],
+      "source": "def _siftdown(heap, startpos, pos):\n    newitem = heap[pos]\n    # Follow the path to the root, moving parents down until finding a place\n    # newitem fits.\n    while pos > startpos:\n        parentpos = (pos - 1) >> 1\n        parent = heap[parentpos]\n        if newitem < parent:\n            heap[pos] = parent\n            pos = parentpos\n            continue\n        break\n    heap[pos] = newitem\n",
+      "context": ""
+    },
+    {
+      "module": "heapq",
+      "name": "_siftup",
+      "args": [
+        {
+          "list": "int",
+          "min": 5,
+          "max": 5
+        },
+        {
+          "int": [0, 4]
+        }
+      ],
+      "source": "def _siftup(heap, pos):\n    endpos = len(heap)\n    startpos = pos\n    newitem = heap[pos]\n    # Bubble up the smaller child until hitting a leaf.\n    childpos = 2*pos + 1    # leftmost child position\n    while childpos < endpos:\n        # Set childpos to index of smaller child.\n        rightpos = childpos + 1\n        if rightpos < endpos and not heap[childpos] < heap[rightpos]:\n            childpos = rightpos\n        # Move the smaller child up.\n        heap[pos] = heap[childpos]\n        pos = childpos\n        childpos = 2*pos + 1\n    # The leaf at pos is empty now.  Put newitem there, and bubble it up\n    # to its final resting place (by sifting its parents down).\n    heap[pos] = newitem\n    _siftdown(heap, startpos, pos)\n",
+      "context": "def _siftdown(heap, startpos, pos):\n    newitem = heap[pos]\n    # Follow the path to the root, moving parents down until finding a place\n    # newitem fits.\n    while pos > startpos:\n        parentpos = (pos - 1) >> 1\n        parent = heap[parentpos]\n        if newitem < parent:\n            heap[pos] = parent\n            pos = parentpos\n            continue\n        break\n    heap[pos] = newitem"
+    },
+    {
+      "module": "shlex",
+      "name": "quote",
+      "args": [
+        {
+          "str": "a b'$",
+          "max": 6
+        }
+      ],
+      "source": "def quote(s):\n    \"\"\"Return a shell-escaped version of the string *s*.\"\"\"\n    if not s:\n        return \"''\"\n    if _find_unsafe(s) is None:\n        return s\n\n    # use single quotes, and put single quotes into double quotes\n    # the string $'b is then quoted as '$'\"'\"'b'\n    return \"'\" + s.replace(\"'\", \"'\\\"'\\\"'\") + \"'\"\n",
+      "context": "import re\n_find_unsafe = re.compile(r'[^\\w@%+=:,./-]', re.ASCII).search"
+    },
+    {
+      "module": "glob",
+      "name": "_ishidden",
+      "args": [
+        {
+          "str": ".ab",
+          "max": 4
+        }
+      ],
+      "source": "def _ishidden(path):\n    return path[0] in ('.', b'.'[0])\n",
+      "context": ""
+    },
+    {
+      "module": "locale",
+      "name": "_strip_padding",
+      "args": [
+        {
+          "str": "  ab ",
+          "max": 8
+        },
+        {
+          "int": [0, 4]
+        }
+      ],
+      "source": "def _strip_padding(s, amount):\n    lpos = 0\n    while amount and s[lpos] == ' ':\n        lpos += 1\n        amount -= 1\n    rpos = len(s) - 1\n    while amount and s[rpos] == ' ':\n        rpos -= 1\n        amount -= 1\n    return s[lpos:rpos+1]\n",
+      "context": ""
+    },
+    {
+      "module": "_strptime",
+      "name": "_calc_julian_from_U_or_W",
+      "args": [
+        {
+          "int": [1, 9999]
+        },
+        {
+          "int": [0, 53]
+        },
+        {
+          "int": [0, 6]
+        },
+        "bool"
+      ],
+      "source": "def _calc_julian_from_U_or_W(year, week_of_year, day_of_week, week_starts_Mon):\n    \"\"\"Calculate the Julian day based on the year, week of the year, and day of\n    the week, with week_start_day representing whether the week of the year\n    assumes the week starts on Sunday or Monday (6 or 0).\"\"\"\n    first_weekday = datetime_date(year, 1, 1).weekday()\n    # If we are dealing with the %U directive (week starts on Sunday), it's\n    # easier to just shift the view to Sunday being the first day of the\n    # week.\n    if not week_starts_Mon:\n        first_weekday = (first_weekday + 1) % 7\n        day_of_week = (day_of_week + 1) % 7\n    # Need to watch out for a week 0 (when the first day of the year is not\n    # the same as that specified by %U or %W).\n    week_0_length = (7 - first_weekday) % 7\n    if week_of_year == 0:\n        return 1 + day_of_week - first_weekday\n    else:\n        days_to_week = week_0_length + (7 * (week_of_year - 1))\n        return 1 + days_to_week + day_of_week\n",
+      "context": "from datetime import (date as datetime_date,\n                      timedelta as datetime_timedelta,\n                      timezone as datetime_timezone)"
+    },
+    {
+      "module": "textwrap",
+      "name": "dedent",
+      "args": [
+        {
+          "str": "  a\n\tb\n c",
+          "max": 12
+        }
+      ],
+      "source": "def dedent(text):\n    \"\"\"Remove any common leading whitespace from every line in `text`.\n\n    This can be used to make triple-quoted strings line up with the left\n    edge of the display, while still presenting them in the source code\n    in indented form.\n\n    Note that tabs and spaces are both treated as whitespace, but they\n    are not equal: the lines \"  hello\" and \"\\\\thello\" are\n    considered to have no common leading whitespace.\n\n    Entirely blank lines are normalized to a newline character.\n    \"\"\"\n    # Look for the longest leading string of spaces and tabs common to\n    # all lines.\n    margin = None\n    text = _whitespace_only_re.sub('', text)\n    indents = _leading_whitespace_re.findall(text)\n    for indent in indents:\n        if margin is None:\n            margin = indent\n\n        # Current line more deeply indented than previous winner:\n        # no change (previous winner is still on top).\n        elif indent.startswith(margin):\n            pass\n\n        # Current line consistent with and no deeper than previous winner:\n        # it's the new winner.\n        elif margin.startswith(indent):\n            margin = indent\n\n        # Find the largest common whitespace between current line and previous\n        # winner.\n        else:\n            for i, (x, y) in enumerate(zip(margin, indent)):\n                if x != y:\n                    margin = margin[:i]\n                    break\n\n    # sanity check (testing/debugging only)\n    if 0 and margin:\n        for line in text.split(\"\\n\"):\n            assert not line or line.startswith(margin), \\\n                   \"line = %r, margin = %r\" % (line, margin)\n\n    if margin:\n        text = re.sub(r'(?m)^' + margin, '', text)\n    return text\n",
+      "context": "import re\n_whitespace_only_re = re.compile('^[ \\t]+$', re.MULTILINE)\n_leading_whitespace_re = re.compile('(^[ \\t]*)(?:[^ \\t\\n])', re.MULTILINE)\ndef indent(text, prefix, predicate=None):\n    \"\"\"Adds 'prefix' to the beginning of selected lines in 'text'.\n\n    If 'predicate' is provided, 'prefix' will only be added to the lines\n    where 'predicate(line)' is True. If 'predicate' is not provided,\n    it will default to adding 'prefix' to all non-empty lines that do not\n    consist solely of whitespace characters.\n    \"\"\"\n    if predicate is None:\n        # str.splitlines(True) doesn't produce empty string.\n        #  ''.splitlines(True) => []\n        #  'foo\\n'.splitlines(True) => ['foo\\n']\n        # So we can use just `not s.isspace()` here.\n        predicate = lambda s: not s.isspace()\n\n    prefixed_lines = []\n    for line in text.splitlines(True):\n        if predicate(line):\n            prefixed_lines.append(prefix)\n        prefixed_lines.append(line)\n\n    return ''.join(prefixed_lines)"
+    }
+  ]
+}

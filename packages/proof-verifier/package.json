@@ -1,7 +1,7 @@
 {
   "name": "@yakcc/proof-verifier",
   "version": "0.6.0-alpha.0",
-  "description": "Verifier daemon for yakcc proof incentive layer — watches proof_claims in REVEAL state, runs Lean checker, emits Ed25519-signed attestations.",
+  "description": "Verifier daemon for yakcc proof incentive layer \u2014 watches proof_claims in REVEAL state, runs Lean checker, emits Ed25519-signed attestations.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -43,7 +43,8 @@
   },
   "dependencies": {
     "@noble/hashes": "^2.2.0",
-    "@yakcc/contracts": "workspace:*"
+    "@yakcc/contracts": "workspace:*",
+    "@yakcc/duc": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

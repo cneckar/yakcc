@@ -1,0 +1,1005 @@
+[
+  {
+    "name": "add",
+    "origin": "db5da00e23835324229e64e71eee44094770acedf73024b2dcae8a78e6bfe574",
+    "identity": "d7f08709b3d52ed1326c45d55263a68fb1c28ff78d701f54d709fe0fd4f7078a",
+    "constructs": ["number"],
+    "args": ["num", "num"],
+    "source": "export function add(a: number, b: number): number {\n  return a + b;\n}\n"
+  },
+  {
+    "name": "isHex64",
+    "origin": "67612218ea2b4b2bd1ff21599181723595c6a63557f0a5828e0db769a894e57f",
+    "identity": "3416b3563c87cf2f9cdc6d06b62b739640da636126585452cf311c53e2452416",
+    "constructs": ["string", "regex"],
+    "args": [
+      {
+        "str": "0123456789abcdefABCDEFg",
+        "max": 66
+      }
+    ],
+    "source": "function isHex64(s: string): boolean {\n  return /^[0-9a-f]{64}$/i.test(s);\n}"
+  },
+  {
+    "name": "truncate",
+    "origin": "7c6b1dff6c399816b11f513304e2bacae617ec71a45a97214b1c9ae09478a125",
+    "identity": "cc893d7508d075a25b25efdf079eef8f0e81c66ed3454955e613866e4b4ef737",
+    "constructs": ["string", "number"],
+    "args": ["str", "idx"],
+    "source": "function truncate(s: string, max: number): string {\n  return s.length <= max ? s : `${s.slice(0, max - 3)}...`;\n}"
+  },
+  {
+    "name": "stemToCamelCase",
+    "origin": "52639497e79240b419bceac4f50efe6a21fa4707ab0e5a3407f3620735b427fc",
+    "identity": "c1c12c77a15e4a4ac38fccdbc325c055950add38a9d4e723552452812ce1fded",
+    "constructs": ["string", "regex", "closure"],
+    "args": [
+      {
+        "str": "ab-cZ_",
+        "max": 8
+      }
+    ],
+    "source": "function stemToCamelCase(stem: string): string {\n  return stem.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());\n}"
+  },
+  {
+    "name": "emitEntry",
+    "origin": "939775daa16dc85edb8ef788dcd969e963ca668dc28f9b19ba3452cb91989285",
+    "identity": "b65e08f33c0cfd114bd33eb70e9faac01552f4f77724f9a9bec80bdf5acd8392",
+    "constructs": ["string", "object", "switch"],
+    "args": [
+      {
+        "obj": {
+          "kind": {
+            "lit": ["pointer", "novel-glue", "glue", "foreign-leaf"]
+          },
+          "merkleRoot": "str",
+          "canonicalAstHash": "str",
+          "source": "str"
+        }
+      }
+    ],
+    "source": "function emitEntry(entry: SlicePlanEntry): string | null {\n  switch (entry.kind) {\n    case \"pointer\":\n      return `\\n// --- pointer: ${entry.merkleRoot} (${entry.canonicalAstHash.slice(0, 8)}) ---`;\n\n    case \"novel-glue\":\n      return `\\n// --- novel-glue: ${entry.canonicalAstHash.slice(0, 8)} ---\\n${entry.source}`;\n\n    case \"glue\": {\n      const shortHash = entry.canonicalAstHash.slice(0, 8);\n      return (\n        `\\n// --- glue: ${shortHash} (not in registry) ---\\n` +\n        entry.source +\n        `\\n// --- end glue ---`\n      );\n    }\n\n    case \"foreign-leaf\":\n      // Foreign imports are not inlined into the assembled module.\n      return null;\n  }\n}"
+  },
+  {
+    "name": "panicCodeToKind",
+    "origin": "4fc4eb009a7ad17cb061752ea4bab1bb4b1757d9e9ad5bfe7ee86eb3f0deb704",
+    "identity": "48d2d902706c57e958ccc307d210df2bb7cd5952eb8adcea6422d4968e458b98",
+    "constructs": ["number"],
+    "args": ["int"],
+    "source": "function panicCodeToKind(code: number): WasmTrapKind {\n  if (code === 0x01) return \"oom\";\n  // 0x42 and all other codes map to \"unreachable\"\n  return \"unreachable\";\n}"
+  },
+  {
+    "name": "f64Bytes",
+    "origin": "333e718ae4f14f58c0bead3ca16900f60f562d5f0e766ca50ee8472bdab18c50",
+    "identity": "56b1db29961674906d37096940dde409acb1f3dc169534a49972eab2a55a6e40",
+    "constructs": ["number", "array", "platform"],
+    "args": ["num"],
+    "source": "function f64Bytes(value: number): number[] {\n  const buf = new ArrayBuffer(8);\n  new DataView(buf).setFloat64(0, value, /* littleEndian */ true);\n  return Array.from(new Uint8Array(buf));\n}"
+  },
+  {
+    "name": "valtypeByte",
+    "origin": "de5a2725548349c1577aeaf17f662bcdd5318b2fe9836582417d2b695ae4afe8",
+    "identity": "6c71157d1ce34309544b37ea1b186e096d457c3e5cff858dd01b9b7d0c14c9c5",
+    "constructs": ["switch", "module"],
+    "args": [
+      {
+        "lit": ["i32", "i64", "f64", "x"]
+      }
+    ],
+    "source": "export type NumericDomain = \"i32\" | \"i64\" | \"f64\";\n\n// ---------------------------------------------------------------------------\n// Local variable declaration\n//\n// WASM local declarations appear in the function body as (count × valtype)\n// pairs that precede the instruction stream. See WASM binary format §5.4.6.\n// ---------------------------------------------------------------------------\n\n/**\n * A single group of local variable declarations inside a WASM function body.\n *\n * Example: `{ count: 2, type: \"i32\" }` encodes two i32 locals in one group.\n * Grouping is an optimisation: adjacent locals of the same type share a count\n * prefix. The visitor emits one group per unique type unless it knows multiple\n * consecutive locals share a type.\n */\nexport interface LocalDecl {\n  readonly count: number;\n  readonly type: NumericDomain;\n}\n\n// ---------------------------------------------------------------------------\n// WasmFunction — the primary output of LoweringVisitor per exported function\n// ---------------------------------------------------------------------------\n\n/**\n * Intermediate representation for a single compiled WASM function.\n *\n * The fields map directly to the WASM binary code section structure:\n *   - `locals` — local variable declarations (not including params, which are\n *     implicit in WASM and assigned the first local slots by convention)\n *   - `body` — opcode stream as raw bytes (each element is one byte)\n *\n * The wave-2 emitter in wasm-backend.ts serialises this as:\n *   uleb128(locals.length)\n *   [ uleb128(d.count), valtype(d.type) for d in locals ]\n *   [ b for b in body ]\n *   0x0b  (end)\n *\n * Note: the `end` opcode (0x0b) is appended by the emitter, NOT included in\n * `body`, so visitor implementations must not include it.\n */\nexport interface WasmFunction {\n  /** Explicit local variable declarations (params are implicit, not listed here). */\n  readonly locals: ReadonlyArray<LocalDecl>;\n  /**\n   * Opcode byte stream. Each number is a byte in [0, 255].\n   * Does NOT include the terminal `end` (0x0b) — the emitter appends that.\n   */\n  readonly body: ReadonlyArray<number>;\n}\n\n// ---------------------------------------------------------------------------\n// Helpers for building WasmFunction values during lowering\n// ---------------------------------------------------------------------------\n\n/**\n * Encode a WASM numeric type as its binary valtype byte.\n *\n * Spec reference: WASM binary format §5.3.1 (value types).\n *   i32 = 0x7f, i64 = 0x7e, f64 = 0x7c\n */\nexport function valtypeByte(domain: NumericDomain): number {\n  switch (domain) {\n    case \"i32\":\n      return 0x7f;\n    case \"i64\":\n      return 0x7e;\n    case \"f64\":\n      return 0x7c;\n  }\n}\n"
+  },
+  {
+    "name": "bytesToHex",
+    "origin": "bfa606249fbc78bd6a88f75d354559fbc0113b9ce46c4265b4de7ff1ef44927e",
+    "identity": "7c552b87c6a1a760770b4293769ee5f20e71c5941d6b4a7edfcae1a29a40ae71",
+    "constructs": ["array", "closure", "string"],
+    "args": [
+      {
+        "arr": "byte",
+        "max": 6
+      }
+    ],
+    "source": "function bytesToHex(bytes: Uint8Array): string {\n  return Array.from(bytes)\n    .map((b) => b.toString(16).padStart(2, \"0\"))\n    .join(\"\");\n}"
+  },
+  {
+    "name": "isLocalTriplet",
+    "origin": "49c462823a32d8a9e8670c22d759988a458a4611e070d6eedfa95527db4f8859",
+    "identity": "e823921c49ef4814a47ed84f37fa01cdb9990f58ed796b3e28a57867b7321f1f",
+    "constructs": ["object"],
+    "args": [
+      {
+        "obj": {
+          "kind": {
+            "lit": ["local", "foreign"]
+          }
+        }
+      }
+    ],
+    "source": "export function isLocalTriplet(t: BlockTriplet): t is LocalTriplet {\n  return t.kind !== \"foreign\";\n}"
+  },
+  {
+    "name": "normalizeBase",
+    "origin": "aabb5f8610b9af6632a5705e5005d392d67cfa3a5c8f96ccdacd9dc0698fe9ff",
+    "identity": "2389fd15e123515f0f61c2e12e9446debb29eb4b13c4dba32f08a913fed76092",
+    "constructs": ["string"],
+    "args": [
+      {
+        "str": "ab/",
+        "max": 5
+      }
+    ],
+    "source": "function normalizeBase(remote: RemotePeer): string {\n  return remote.endsWith(\"/\") ? remote.slice(0, -1) : remote;\n}"
+  },
+  {
+    "name": "buildIntentCardQuery",
+    "origin": "e3e4fe3152d5d939fa3f38032e1f8b12d50ea43b221a5cb011b854815ec58c92",
+    "identity": "f3db235172d097dbcfe1e4a35b34120b69bd762e6a18b8babaa39b23132848c2",
+    "constructs": ["object", "truthiness"],
+    "args": [
+      {
+        "obj": {
+          "intent": "str",
+          "sourceContext": {
+            "opt": "str"
+          }
+        },
+        "opt": ["sourceContext"]
+      }
+    ],
+    "source": "export function buildIntentCardQuery(ctx: EmissionContext): IntentCardQuery {\n  const behavior = ctx.sourceContext ? `${ctx.intent} ${ctx.sourceContext}` : ctx.intent;\n  return { behavior, inputs: [], outputs: [] };\n}"
+  },
+  {
+    "name": "buildSkeletonSpec",
+    "origin": "672ef5373e4c1a0037e7e602b07342d5b9bdc6ac0780df6f35feeedc8e21d587",
+    "identity": "c3467d0826c647677dee5d0c615b5601354673e0eff9f8c1d5bee0ca53ac5a6c",
+    "constructs": ["object", "array"],
+    "args": ["str"],
+    "source": "export function buildSkeletonSpec(intent: string): ContractSpec {\n  return {\n    inputs: [],\n    outputs: [],\n    behavior: intent,\n    guarantees: [],\n    errorConditions: [],\n    nonFunctional: {\n      purity: \"pure\",\n      threadSafety: \"safe\",\n    },\n    propertyTests: [],\n  };\n}"
+  },
+  {
+    "name": "refBytesToHex",
+    "origin": "8dc97fc0c4bb3f7158cb8c7090a785fcd51d044a7444f876ed40f828ad31f8b4",
+    "identity": "42cd710094aa98a06230118370d55a845b47b3e15823b24bd01aac1ae5cc0173",
+    "constructs": ["loop", "array", "string"],
+    "args": [
+      {
+        "arr": "byte",
+        "max": 6
+      }
+    ],
+    "source": "function refBytesToHex(bytes: Uint8Array): string {\n  let hex = \"\";\n  for (let i = 0; i < bytes.length; i++) {\n    hex += bytes[i]?.toString(16).padStart(2, \"0\");\n  }\n  return hex;\n}"
+  },
+  {
+    "name": "isAsciiDigit",
+    "origin": "d0897c9466dd66a24c3af8c28812def45b1fc92e0a5d165b9458d35d3ef46a0e",
+    "identity": "5c90eafa419b12e948705513f7c5ea213f0c6769f3384745a9f213e8254d57b3",
+    "constructs": ["string", "comparison"],
+    "args": [
+      {
+        "str": "09a/:é",
+        "max": 2
+      }
+    ],
+    "source": "export function isAsciiDigit(c: string): boolean {\n  return c.length === 1 && c >= \"0\" && c <= \"9\";\n}\n"
+  },
+  {
+    "name": "isEnoent",
+    "origin": "e02be7c904fac89679f0033ee8cf7518f2e96ed9665ae0104e6b251c7bef4ea4",
+    "identity": "8324b60efc14f01e68ee7bc65f7c929f88c7c3bca786369f8ffe60c4a0e7b51d",
+    "constructs": ["object", "in", "typeof"],
+    "args": ["any"],
+    "source": "function isEnoent(err: unknown): boolean {\n  return (\n    typeof err === \"object\" &&\n    err !== null &&\n    \"code\" in err &&\n    (err as { code: unknown }).code === \"ENOENT\"\n  );\n}"
+  },
+  {
+    "name": "normalizeSource",
+    "origin": "d931405d023f5ad6a8a6273dac8f574d7489e138194154d6b3c1ca7e62ddf142",
+    "identity": "f4c79de6868f08134c9bdaf066dc20620420ac996c5a84cc607e95387daa814e",
+    "constructs": ["string", "regex"],
+    "args": [
+      {
+        "str": "a\r\n \t",
+        "max": 8
+      }
+    ],
+    "source": "export function normalizeSource(s: string): string {\n  return s.replace(/\\r\\n/g, \"\\n\").trim();\n}\n"
+  },
+  {
+    "name": "candidatesToCombinedScores",
+    "origin": "985c697cc9353dd5b809d95b629c36e46606e698c25b20ff92903d9b46aa7313",
+    "identity": "981a621a3ec839e54522997bb550d5615d6638fa3d300366a4cb6673db4cd6d3",
+    "constructs": ["array", "closure", "number"],
+    "args": [
+      {
+        "arr": {
+          "obj": {
+            "cosineDistance": "num"
+          }
+        },
+        "max": 4
+      }
+    ],
+    "source": "export function candidatesToCombinedScores(candidates: readonly CandidateMatch[]): number[] {\n  return candidates.map((c) => {\n    const d = c.cosineDistance;\n    return Math.max(0, Math.min(1, 1 - (d * d) / 4));\n  });\n}"
+  },
+  {
+    "name": "propsArtifactPath",
+    "origin": "85f2dc95ec6720cb25f782c3c980b954107722bc08d2dc1bdd9d10da8b7d6971",
+    "identity": "6654ab9cde570200078da0a1ae5607703960a52cc54e596242830bd1124b9453",
+    "constructs": ["string"],
+    "args": ["str"],
+    "source": "function propsArtifactPath(atomName: string): string {\n  return `${atomName}.props.ts`;\n}"
+  },
+  {
+    "name": "collapseWhitespace",
+    "origin": "dc29dd0af3022c96ffb31ce0a5c4b99b490d32148e2c0a3317e8669e1ad5486e",
+    "identity": "fb06b11fc3fd7dc84df653a0dd596c284e92c3bb90b5c87439bac4b4a3efbbc1",
+    "constructs": ["string", "regex"],
+    "args": [
+      {
+        "str": "a \t\n ",
+        "max": 8
+      }
+    ],
+    "source": "function collapseWhitespace(text: string): string {\n  return text.replace(/\\s+/g, \" \").trim();\n}"
+  },
+  {
+    "name": "escapeRegex",
+    "origin": "4aec71ca159c59215c709bb6e07a6d36af9b2a8948ba2455902f16edba348861",
+    "identity": "afbd03debfc116d88baaee4f3a905a825ee5adab01e7e9730383efe3025b3939",
+    "constructs": ["string", "regex"],
+    "args": [
+      {
+        "str": "a.*+?^${}()|[]\\",
+        "max": 6
+      }
+    ],
+    "source": "function escapeRegex(s: string): string {\n  return s.replace(/[.*+?^${}()|[\\]\\\\]/g, \"\\\\$&\");\n}"
+  },
+  {
+    "name": "normalizeId",
+    "origin": "d63e7bcb4889a0ec56b83e44af4d643c6d776fd961cd9589f4f40669b3c2e8c9",
+    "identity": "07a5a3a57c8839bfde8cfb273379389682ad59341d7185be65a02cbf7fb27697",
+    "constructs": ["string", "regex"],
+    "args": [
+      {
+        "str": "(a b)",
+        "max": 8
+      }
+    ],
+    "source": "function normalize(id: string): string {\n  let s = id.trim();\n  if (s.startsWith(\"(\") && s.endsWith(\")\")) {\n    s = s.slice(1, -1).trim();\n  }\n  s = s.replace(/\\s+/g, \"-\");\n  return s.toUpperCase();\n}"
+  },
+  {
+    "name": "mapParam",
+    "origin": "5c305103efed1272b003da82db0651002fd393f450a0a76848d8e0ba632df87e",
+    "identity": "5e8a6309c83a8023a7d9171a666a9b01f29d4031922dc766a0d5f8b6c39f60d6",
+    "constructs": ["object"],
+    "args": [
+      {
+        "obj": {
+          "name": "str",
+          "typeHint": "str",
+          "description": "str"
+        }
+      }
+    ],
+    "source": "function mapParam(param: IntentParam): SpecYakParameter {\n  return {\n    name: param.name,\n    type: param.typeHint,\n    description: param.description,\n  };\n}"
+  },
+  {
+    "name": "deriveSpecName",
+    "origin": "ab986670f9ece7578a57491799e7f7e07beb2a47d92bc0236b3a54b3b1198607",
+    "identity": "151d66802aae855f9414f696604a1caffd15d078bece3e201ee9791c27f49e22",
+    "constructs": ["string", "regex"],
+    "args": [
+      "str",
+      {
+        "str": "0123456789abcdef",
+        "max": 16
+      }
+    ],
+    "source": "function deriveSpecName(behavior: string, canonicalAstHash: string): string {\n  const prefix = behavior\n    .slice(0, 30)\n    .replace(/\\W+/g, \"-\")\n    .replace(/^-+|-+$/g, \"\");\n\n  const hashSuffix = canonicalAstHash.slice(-6);\n\n  return `${prefix}-${hashSuffix}`;\n}"
+  },
+  {
+    "name": "normalizeSentence",
+    "origin": "ea87254f07e65668087b052870453de09cfe78ea9ae75e3a01bb0f07fb063c15",
+    "identity": "33cea0d4e6a7c8549a3f529257af7ec0f0fe64b5afcc7b7b3a66f5f19c16348a",
+    "constructs": ["string", "regex"],
+    "args": [
+      {
+        "str": "Ab .;!?,\t",
+        "max": 10
+      }
+    ],
+    "source": "function normalize(s: string): string {\n  return s\n    .toLowerCase()\n    .replace(/\\s+/g, \" \")\n    .trim()\n    .replace(/[.;!?,]+$/, \"\");\n}"
+  },
+  {
+    "name": "parseArgv",
+    "origin": "6142909d11ac7b5d058975d0d9b1c0a4e9bac5859b4b7859e3d443b543124808",
+    "identity": "8ec1cce9b7e4c725b1e8ab69fea73e6881f9675bc79b8076aba3e7c5c7d11a9c",
+    "constructs": ["loop", "closure", "object", "array", "string"],
+    "args": [
+      {
+        "arr": {
+          "str": "-ab=c1",
+          "max": 4
+        },
+        "max": 5
+      },
+      {
+        "opt": {
+          "obj": {
+            "boolean": {
+              "arr": {
+                "lit": ["a", "b"]
+              },
+              "max": 2
+            },
+            "alias": {
+              "obj": {
+                "a": {
+                  "arr": {
+                    "lit": ["x"]
+                  },
+                  "max": 1
+                }
+              }
+            },
+            "default": {
+              "obj": {
+                "b": "bool"
+              }
+            }
+          },
+          "opt": ["boolean", "alias", "default"]
+        }
+      }
+    ],
+    "source": "/**\n * Adapted from lukeed/mri (MIT License)\n *  https://github.com/lukeed/mri  (commit: 20c4fb7 — latest main as of 2025-01)\n *\n * SPDX-License-Identifier: MIT\n *\n * Implements the core algorithmic shape: positional args, --flag, --flag=value,\n * --flag value, alias resolution. Simplified TS adaptation for v0.7 demo.\n *\n * @decision DEC-DECOMPOSE-STAGE-015-CORRECTION\n * title: TS argv-parser as mri demo target (not literal mri JS vendoring)\n * status: decided\n * rationale: mri is a JavaScript package; yakcc's IR pipeline is strict-TS.\n *   A TS adaptation preserves the algorithmic shape of mri (the subject of the\n *   demo) while remaining processable by the ts-morph AST canonicalizer. MIT\n *   attribution is preserved in this header. The pipeline behavior is what's\n *   being demonstrated — not byte-equivalent reproduction of the mri source.\n */\n\n// SPDX-License-Identifier: MIT\n\nexport interface ParsedArgs {\n  readonly _: readonly string[];\n  readonly [flag: string]: unknown;\n}\n\nexport interface ParseOptions {\n  /** Alias map: key is canonical flag name, value is array of alias strings. */\n  readonly alias?: Readonly<Record<string, readonly string[]>>;\n  /** Flags that are treated as booleans (no value consumed). */\n  readonly boolean?: readonly string[];\n  /** Default values applied before parsing. */\n  readonly default?: Readonly<Record<string, unknown>>;\n}\n\n/**\n * Parse an argv array into flags and positional arguments.\n *\n * Single function, single control-flow boundary — deliberately shaped so that\n * isAtom() classifies it as atomic at the default maxCF=1 threshold. This\n * exercises the v0.7 universalize() path where the root AtomLeaf maps to a\n * single NovelGlueEntry with an attached intentCard.\n *\n * @param argv    - Argument strings to parse (e.g. process.argv.slice(2)).\n * @param options - Optional alias, boolean, and default configuration.\n */\nexport function parseArgv(argv: readonly string[], options?: ParseOptions): ParsedArgs {\n  const result: Record<string, unknown> = { _: [] };\n\n  // Apply defaults before scanning\n  const defaults = options?.default ?? {};\n  for (const [k, v] of Object.entries(defaults)) {\n    result[k] = v;\n  }\n\n  // Build reverse alias map: alias string → canonical name\n  const aliases = options?.alias ?? {};\n  const canonicalOf: Record<string, string> = {};\n  for (const [canonical, aliasArr] of Object.entries(aliases)) {\n    for (const a of aliasArr) {\n      canonicalOf[a] = canonical;\n    }\n    canonicalOf[canonical] = canonical;\n  }\n\n  const boolFlags = new Set<string>(options?.boolean ?? []);\n\n  const set = (raw: string, val: unknown): void => {\n    const key = canonicalOf[raw] ?? raw;\n    result[key] = val;\n  };\n\n  let i = 0;\n  while (i < argv.length) {\n    const arg = argv[i];\n    if (arg === undefined) {\n      i++;\n      continue;\n    }\n    if (arg === \"--\") {\n      // Everything after `--` is positional\n      for (let j = i + 1; j < argv.length; j++) {\n        (result._ as string[]).push(argv[j] ?? \"\");\n      }\n      break;\n    }\n\n    if (arg.startsWith(\"--\")) {\n      const body = arg.slice(2);\n      const eqIdx = body.indexOf(\"=\");\n      if (eqIdx !== -1) {\n        // --flag=value\n        set(body.slice(0, eqIdx), body.slice(eqIdx + 1));\n      } else {\n        const canonical = canonicalOf[body] ?? body;\n        const isBool = boolFlags.has(body) || boolFlags.has(canonical);\n        const next = argv[i + 1];\n        if (!isBool && next !== undefined && !next.startsWith(\"-\")) {\n          set(body, next);\n          i++;\n        } else {\n          set(body, !isBool || result[canonical] !== false);\n        }\n      }\n    } else if (arg.startsWith(\"-\") && arg.length > 1) {\n      // Expand short flags: -abc → -a -b -c\n      const chars = arg.slice(1);\n      for (let ci = 0; ci < chars.length; ci++) {\n        const ch = chars[ci];\n        if (ch === undefined) continue;\n        const isLast = ci === chars.length - 1;\n        const canonical = canonicalOf[ch] ?? ch;\n        const isBool = boolFlags.has(ch) || boolFlags.has(canonical);\n        if (isLast && !isBool) {\n          const next = argv[i + 1];\n          if (next !== undefined && !next.startsWith(\"-\")) {\n            set(ch, next);\n            i++;\n          } else {\n            set(ch, true);\n          }\n        } else {\n          set(ch, true);\n        }\n      }\n    } else {\n      (result._ as string[]).push(arg);\n    }\n    i++;\n  }\n\n  return result as ParsedArgs;\n}\n"
+  },
+  {
+    "name": "insideSnapshot",
+    "origin": "ec715635d0a34191bf7f2bab19d01e9271e3478bec333a2ee3ed70244eb15dfe",
+    "identity": "92671a6c5285a4d104e5f73292aa3cc9d930e46fcdbacce812b0fd258f8d3913",
+    "constructs": ["string"],
+    "args": [
+      {
+        "str": "/snapshot",
+        "max": 12
+      }
+    ],
+    "source": "function insideSnapshot(p: string): boolean {\n  return p.startsWith(\"/snapshot/\") || p.startsWith(\"/snapshot\");\n}"
+  },
+  {
+    "name": "validateProofManifestL0",
+    "origin": "fb8b23598335710d2b820e99df7fd8192cbf13f167d2495dd31c658e4d1cc4fc",
+    "identity": "d44caee183e87996f9de1e0eb51a41080d40da22c3fdb4c6002f2dccca80db37",
+    "constructs": ["exception", "loop", "object", "in", "typeof"],
+    "args": [
+      {
+        "union": [
+          "any",
+          {
+            "obj": {
+              "artifacts": {
+                "arr": {
+                  "obj": {
+                    "kind": {
+                      "lit": ["property_tests", "smt_cert"]
+                    },
+                    "path": {
+                      "str": "ab",
+                      "max": 2
+                    }
+                  }
+                },
+                "max": 2
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "source": "// SPDX-License-Identifier: MIT\n// @decision DEC-TRIPLET-L0-ONLY-019: The proof/manifest.json schema accepts\n// smt_cert / lean_proof / coq_proof artifact kinds at the type level, but the\n// L0 manifest validator (validateProofManifestL0) rejects any artifact kind\n// other than \"property_tests\". L1/L2/L3 validators are deferred.\n// Status: decided (MASTER_PLAN.md)\n// Rationale: v0.6 ships L0 only; the schema must be expressive for future levels\n// but the L0 enforcement point is explicit and named so future levels add a new\n// validator rather than loosening this one.\n\n// ---------------------------------------------------------------------------\n// ProofManifest types\n// ---------------------------------------------------------------------------\n\n/**\n * The artifact kinds the proof/manifest.json schema recognizes.\n *\n * - property_tests: a fast-check property-test corpus (required at L0).\n * - smt_cert: an SMT-solver certificate (valid at L2+; schema-valid at L0 but\n *   rejected by validateProofManifestL0).\n * - lean_proof: a Lean proof artifact (valid at L3+; schema-valid at L0 but\n *   rejected by validateProofManifestL0).\n * - coq_proof: a Coq proof artifact (valid at L3+; schema-valid at L0 but\n *   rejected by validateProofManifestL0).\n * - fuzz_bounds_witness: a bounded fuzzing result artifact (valid at L2+;\n *   schema-valid at L0 but rejected by validateProofManifestL0).\n */\nexport type ArtifactKind =\n  | \"property_tests\"\n  | \"smt_cert\"\n  | \"lean_proof\"\n  | \"coq_proof\"\n  | \"fuzz_bounds_witness\";\n\n/**\n * One artifact entry in the proof/manifest.json.\n *\n * The path is relative to the proof/ directory. Each artifact kind has a\n * registered checker in the registry's verifier set. The manifest is part of\n * the BlockMerkleRoot, so attestations cover not just the proof bytes but\n * the declaration of what kind of proof it is.\n */\nexport interface ProofArtifact {\n  /** The kind of artifact and which checker to invoke. */\n  readonly kind: ArtifactKind;\n  /** Path to the artifact file, relative to the proof/ directory. */\n  readonly path: string;\n  /**\n   * For smt_cert artifacts: the SMT theory tags used in this certificate.\n   * Optional for other kinds.\n   */\n  readonly theory?: readonly string[] | undefined;\n  /**\n   * For lean_proof / coq_proof artifacts: the checker version used.\n   * E.g. \"lean4@4.7.0\". Optional for other kinds.\n   */\n  readonly checker?: string | undefined;\n}\n\n/**\n * The proof/manifest.json schema.\n *\n * The manifest declares which verification artifacts are present in proof/\n * and which checker each invokes. The order of artifacts in this array is\n * the stable order used when computing proof_root in blockMerkleRoot():\n *   proof_root = BLAKE3(canonicalize(manifest.json) || concat(BLAKE3(artifact_bytes_in_manifest_order)))\n *\n * The manifest itself is included in the Merkle derivation so that changing\n * the manifest (e.g. adding an artifact declaration) changes the block identity,\n * even if no artifact bytes changed.\n */\nexport interface ProofManifest {\n  /**\n   * Ordered list of verification artifacts in this block's proof/ directory.\n   * The order determines the artifact byte concatenation order in proof_root.\n   */\n  readonly artifacts: readonly ProofArtifact[];\n}\n\n// ---------------------------------------------------------------------------\n// Validators\n// ---------------------------------------------------------------------------\n\n/**\n * Validate and narrow an unknown value to ProofManifest for L0 blocks.\n *\n * L0 validation rules:\n * 1. The value must be a non-null object with an \"artifacts\" array.\n * 2. The \"artifacts\" array must contain exactly one entry with kind \"property_tests\".\n * 3. All other artifact kinds (smt_cert, lean_proof, coq_proof, fuzz_bounds_witness)\n *    are schema-valid at the type level but rejected by this L0-specific validator.\n *    L1+/L2+/L3+ validators are deferred (DEC-TRIPLET-L0-ONLY-019).\n * 4. Each artifact entry must have a non-empty \"path\" string.\n *\n * Throws a TypeError with a descriptive message on invalid input.\n */\nexport function validateProofManifestL0(value: unknown): ProofManifest {\n  if (value === null || typeof value !== \"object\" || Array.isArray(value)) {\n    throw new TypeError(\"validateProofManifestL0: expected a non-null object\");\n  }\n\n  const obj = value as Record<string, unknown>;\n\n  if (!(\"artifacts\" in obj) || obj.artifacts === undefined) {\n    throw new TypeError('validateProofManifestL0: missing required field \"artifacts\"');\n  }\n\n  if (!Array.isArray(obj.artifacts)) {\n    throw new TypeError('validateProofManifestL0: field \"artifacts\" must be an array');\n  }\n\n  const artifacts = obj.artifacts as unknown[];\n\n  if (artifacts.length === 0) {\n    throw new TypeError(\n      \"validateProofManifestL0: L0 manifest must contain at least one artifact; \" +\n        'expected exactly one \"property_tests\" entry',\n    );\n  }\n\n  // Validate each artifact entry and enforce L0 artifact-kind constraint.\n  let propertyTestsCount = 0;\n  for (let i = 0; i < artifacts.length; i++) {\n    const entry = artifacts[i];\n    if (entry === null || typeof entry !== \"object\" || Array.isArray(entry)) {\n      throw new TypeError(`validateProofManifestL0: artifacts[${i}] must be a non-null object`);\n    }\n\n    const artifact = entry as Record<string, unknown>;\n\n    if (!(\"kind\" in artifact) || artifact.kind === undefined) {\n      throw new TypeError(`validateProofManifestL0: artifacts[${i}] missing required field \"kind\"`);\n    }\n\n    if (!(\"path\" in artifact) || artifact.path === undefined) {\n      throw new TypeError(`validateProofManifestL0: artifacts[${i}] missing required field \"path\"`);\n    }\n\n    if (typeof artifact.path !== \"string\" || artifact.path.length === 0) {\n      throw new TypeError(\n        `validateProofManifestL0: artifacts[${i}].path must be a non-empty string`,\n      );\n    }\n\n    const kind = artifact.kind;\n\n    // L0 enforcement: only property_tests is allowed.\n    if (kind !== \"property_tests\") {\n      throw new TypeError(\n        `validateProofManifestL0: artifacts[${i}].kind is \"${String(kind)}\" — only \"property_tests\" is allowed at L0. smt_cert, lean_proof, coq_proof, and fuzz_bounds_witness are schema-valid types but require L2+/L3+ validators (DEC-TRIPLET-L0-ONLY-019).`,\n      );\n    }\n\n    propertyTestsCount++;\n  }\n\n  // L0 requires exactly one property_tests artifact.\n  if (propertyTestsCount !== 1) {\n    throw new TypeError(\n      `validateProofManifestL0: L0 manifest must declare exactly one \"property_tests\" artifact; found ${propertyTestsCount}`,\n    );\n  }\n\n  return obj as unknown as ProofManifest;\n}\n"
+  },
+  {
+    "name": "buildFragmentFallback",
+    "origin": "355decb5236f33a04acc8daf64dbd68fa4d69dd72d7247ddf0f3832a8409dd8a",
+    "identity": "94f8f39e2b6eabf477ebed54c11a0b3c1d88be5e6bd6ed50943dcefc9023bee7",
+    "constructs": ["string", "number"],
+    "args": ["int", "int"],
+    "source": "function buildFragmentFallback(stmtCount: number, byteCount: number): string {\n  return `source fragment (${stmtCount} statements, ${byteCount} bytes)`;\n}"
+  },
+  {
+    "name": "isTestEmission",
+    "origin": "7c8f7e55c62bc7b05ee67ce18fc750c97e1c701f4c6a0310b15f9c0e428ae7c0",
+    "identity": "e383f893ab429d2c38cdb50d65b202f5185ab6b9e509e9a4eead1ccd0a616c30",
+    "constructs": ["string", "regex"],
+    "args": [
+      {
+        "str": "describe(it ",
+        "max": 12
+      },
+      {
+        "opt": {
+          "lit": ["a.test.ts", "b.ts", "c.spec.js"]
+        }
+      }
+    ],
+    "source": "function isTestEmission(code: string, filePath: string | undefined): boolean {\n  if (filePath !== undefined && /\\.(test|spec)\\.[jt]sx?$/.test(filePath)) {\n    return true;\n  }\n  // Content heuristic: test-framework API calls.\n  return /(?:^|\\s)(?:describe|it|test|expect|beforeEach|afterEach|beforeAll|afterAll)\\s*\\(/.test(\n    code,\n  );\n}"
+  },
+  {
+    "name": "extractFunctionName",
+    "origin": "6653796f339d542c99f6c1d05111746d938330a3d56a2541ea92172ea15822b2",
+    "identity": "5cdc428351c009c7eac1f469c58a2ae908e70a1bdb99874beed67a75a38076bd",
+    "constructs": ["regex", "optional-chain"],
+    "args": [
+      {
+        "lit": ["export function foo() {}", "export async function bar(x)", "function baz", ""]
+      }
+    ],
+    "source": "function extractFunctionName(code: string): string | null {\n  return /(?:export\\s+(?:async\\s+)?function\\s+)(\\w+)/.exec(code)?.[1] ?? null;\n}"
+  },
+  {
+    "name": "renderAtomNewComment",
+    "origin": "80502491912aa898ad8e42d121a3895303cd74901033c835041695c8c0eb1a06",
+    "identity": "a981d5cdffe2e1765501f07577e64913943e633f47523dd8b3cc9e83736d6863",
+    "constructs": ["string"],
+    "args": ["str", "str"],
+    "source": "export function renderAtomNewComment(blockMerkleRoot: string, atomName: string): string {\n  const shortBmr = blockMerkleRoot.slice(0, 8);\n  return `// @atom-new: ${shortBmr} — yakcc:${atomName}`;\n}"
+  },
+  {
+    "name": "outcomeFromResponse",
+    "origin": "f3ad41d8d8a422fd4a340ed1f201bef190a8dd972c882ce0fb18167c3a4480fa",
+    "identity": "e46ba655b83d5ab5e60d71a6f4085125635e9ddfc35aca8722ed8c54f6197173",
+    "constructs": ["object", "undefined"],
+    "args": [
+      {
+        "obj": {
+          "kind": {
+            "lit": ["registry-hit", "passthrough"]
+          }
+        }
+      },
+      {
+        "opt": {
+          "lit": ["atomized"]
+        }
+      }
+    ],
+    "source": "export function outcomeFromResponse(\n  response: HookResponse,\n  outcomeOverride?: \"atomized\",\n): \"registry-hit\" | \"synthesis-required\" | \"passthrough\" | \"atomized\" {\n  if (outcomeOverride !== undefined) return outcomeOverride;\n  return response.kind;\n}"
+  },
+  {
+    "name": "cosineDistanceToCombinedScore",
+    "origin": "549cfea79fd8165b45d934cfb32a85950b91e9185d0430be645deb00177d98e9",
+    "identity": "692ad688d88405c339b0c91b72195fdb58300831f72ac52bf5e920bd6760ef6a",
+    "constructs": ["number", "math"],
+    "args": ["num"],
+    "source": "export function cosineDistanceToCombinedScore(cosineDistance: number): number {\n  return Math.max(0, Math.min(1, 1 - (cosineDistance * cosineDistance) / 4));\n}"
+  },
+  {
+    "name": "benchmarkQueryToIntentQuery",
+    "origin": "7fcc130325292005726fc13f02cdeb8fbfa142a9439f16ae3aac7e3145f0f83a",
+    "identity": "8ebaaef22abcdfd6b78d285dac716aecda0a077ea0c65024ec10df5623b7720c",
+    "constructs": ["object", "closure", "optional-chain"],
+    "args": [
+      {
+        "obj": {
+          "behavior": "str",
+          "signature": {
+            "opt": {
+              "obj": {
+                "inputs": {
+                  "arr": {
+                    "obj": {
+                      "name": {
+                        "str": "ab",
+                        "max": 2
+                      },
+                      "type": {
+                        "lit": ["string", "number"]
+                      }
+                    }
+                  },
+                  "max": 3
+                },
+                "outputs": {
+                  "arr": {
+                    "obj": {
+                      "name": {
+                        "str": "ab",
+                        "max": 2
+                      },
+                      "type": {
+                        "lit": ["string", "number"]
+                      }
+                    }
+                  },
+                  "max": 3
+                }
+              },
+              "opt": ["inputs", "outputs"]
+            }
+          }
+        },
+        "opt": ["signature"]
+      }
+    ],
+    "source": "function benchmarkQueryToIntentQuery(q: BenchmarkQueryCard): {\n  behavior: string;\n  inputs: ReadonlyArray<{ name: string; typeHint: string }>;\n  outputs: ReadonlyArray<{ name: string; typeHint: string }>;\n} {\n  const inputs = (q.signature?.inputs ?? []).map((p) => ({\n    name: p.name,\n    typeHint: p.type,\n  }));\n  const outputs = (q.signature?.outputs ?? []).map((p) => ({\n    name: p.name,\n    typeHint: p.type,\n  }));\n  return { behavior: q.behavior, inputs, outputs };\n}"
+  },
+  {
+    "name": "worstHitRateEntries",
+    "origin": "ae2a5ef79872d3cf2f6da71eada53115abace4283fda5244e49520926f860542",
+    "identity": "c66522decef714c90c2c6fd1ed7ebdf339954e58641b7ac6b60a6060641a5d00",
+    "constructs": ["array", "closure", "sort", "default-param"],
+    "args": [
+      {
+        "arr": {
+          "obj": {
+            "expectedAtom": {
+              "union": [
+                {
+                  "lit": [null]
+                },
+                {
+                  "str": "abc",
+                  "max": 3
+                }
+              ]
+            },
+            "top1Correct": "bool",
+            "top1Score": "num",
+            "expectedAtomRank": {
+              "union": [
+                {
+                  "lit": [null]
+                },
+                "idx"
+              ]
+            }
+          }
+        },
+        "max": 5
+      },
+      {
+        "opt": "idx"
+      }
+    ],
+    "source": "export function worstHitRateEntries(\n  results: readonly QueryResult[],\n  n = 3,\n): readonly QueryResult[] {\n  return [...results].sort((a, b) => a.top1Score - b.top1Score).slice(0, n);\n}"
+  },
+  {
+    "name": "computePrecisionAt1",
+    "origin": "c70cd690c1c06aa87116fc24bf76b94f145e8a0a72ff7e52592d48580d44a88d",
+    "identity": "2aae254b04ecc3213d1ada7b63a8f9e0e610b456622fb4a416e5563c3b22eaa9",
+    "constructs": ["array", "closure", "number"],
+    "args": [
+      {
+        "arr": {
+          "obj": {
+            "expectedAtom": {
+              "union": [
+                {
+                  "lit": [null]
+                },
+                {
+                  "str": "abc",
+                  "max": 3
+                }
+              ]
+            },
+            "top1Correct": "bool",
+            "top1Score": "num",
+            "expectedAtomRank": {
+              "union": [
+                {
+                  "lit": [null]
+                },
+                "idx"
+              ]
+            }
+          }
+        },
+        "max": 5
+      }
+    ],
+    "source": "export function computePrecisionAt1(results: readonly QueryResult[]): number {\n  const eligible = results.filter((r) => r.expectedAtom !== null);\n  if (eligible.length === 0) return 0;\n  const correct = eligible.filter((r) => r.top1Correct).length;\n  return correct / eligible.length;\n}"
+  },
+  {
+    "name": "computeRecallAtK",
+    "origin": "cffb9d270bcb4671d40633f985abc1509aa7a57877d1e146ac4b2509fce40e91",
+    "identity": "ffaa7ca5af84ea88a6d33a782c7ffa14973b940ea39aae498b51966dd6884926",
+    "constructs": ["array", "closure", "number"],
+    "args": [
+      {
+        "arr": {
+          "obj": {
+            "expectedAtom": {
+              "union": [
+                {
+                  "lit": [null]
+                },
+                {
+                  "str": "abc",
+                  "max": 3
+                }
+              ]
+            },
+            "top1Correct": "bool",
+            "top1Score": "num",
+            "expectedAtomRank": {
+              "union": [
+                {
+                  "lit": [null]
+                },
+                "idx"
+              ]
+            }
+          }
+        },
+        "max": 5
+      }
+    ],
+    "source": "export function computeRecallAtK(results: readonly QueryResult[]): number {\n  const eligible = results.filter((r) => r.expectedAtom !== null);\n  if (eligible.length === 0) return 0;\n  const found = eligible.filter((r) => r.expectedAtomRank !== null).length;\n  return found / eligible.length;\n}"
+  },
+  {
+    "name": "computeAtomComplexity",
+    "origin": "d0a5ca1c69f5afb07bb782eaf890d322491bcaa7a33bd96ddafd453c08657e8e",
+    "identity": "49a07c06e44007d9e09a0c2e711b6363c46d9f5b312e0a3b6545941d3cfae0c0",
+    "constructs": ["object", "number", "nullish"],
+    "args": [
+      {
+        "obj": {
+          "spec": {
+            "obj": {
+              "inputs": {
+                "opt": {
+                  "arr": "int",
+                  "max": 3
+                }
+              },
+              "outputs": {
+                "opt": {
+                  "arr": "int",
+                  "max": 3
+                }
+              }
+            },
+            "opt": ["inputs", "outputs"]
+          },
+          "exportedSurface": "int",
+          "transitiveDeps": "int"
+        }
+      }
+    ],
+    "source": "export function computeAtomComplexity(atom: AtomLike): number {\n  const transitiveNodes =\n    (atom.spec.inputs?.length ?? 0) +\n    (atom.spec.outputs?.length ?? 0) +\n    (atom.spec.guarantees?.length ?? 0);\n\n  return transitiveNodes + 5 * atom.exportedSurface + 2 * atom.transitiveDeps;\n}"
+  },
+  {
+    "name": "computeNeedComplexity",
+    "origin": "c8fe85d625ad8bd5cb6e56667d29d398e302e88c80a8bd13ec2f8fbc943beabc",
+    "identity": "d9151324dd50fb7329c08e1875ec4c9bcc91fb64237b30a954221dc961f1317e",
+    "constructs": ["number", "math"],
+    "args": [
+      {
+        "obj": {
+          "bindingsUsed": "num",
+          "statementCount": "num"
+        }
+      }
+    ],
+    "source": "export function computeNeedComplexity(callSite: CallSiteAnalysis): number {\n  return Math.max(1, callSite.bindingsUsed * callSite.statementCount);\n}"
+  },
+  {
+    "name": "buildSuggestion",
+    "origin": "1c4451dab5df3375f20bdc530961bd5747176ee77e99515fd79199e9879679f5",
+    "identity": "cb8f2eb042fceab5356ba76de9581ad6deda3c4a152a5ca69a463930d16979a8",
+    "constructs": ["switch", "string", "number-format"],
+    "args": [
+      {
+        "lit": ["specificity_floor", "descent_bypass_rate", "result_set_median", "ratio_median"]
+      },
+      {
+        "obj": {
+          "windowSize": "int",
+          "meanSpecificityScore": "num",
+          "descentBypassRate": "num",
+          "medianResultSetSize": "int",
+          "medianAtomRatio": "num"
+        }
+      },
+      {
+        "obj": {
+          "specificityFloor": "num",
+          "descentBypassMax": "num",
+          "resultSetMedianMax": "int",
+          "ratioMedianMax": "num"
+        }
+      }
+    ],
+    "source": "function buildSuggestion(\n  primary: DriftMetric,\n  metrics: DriftWindowMetrics,\n  cfg: Layer5Config,\n): string {\n  const w = metrics.windowSize;\n  switch (primary) {\n    case \"specificity_floor\":\n      return (\n        `Layer 5 drift alert: mean specificity score ${metrics.meanSpecificityScore.toFixed(3)} ` +\n        `is below floor ${cfg.specificityFloor} over a ${w}-event window. ` +\n        `The LLM is producing consistently vague intents. ` +\n        `Follow the descent-and-compose discipline to produce more specific queries.`\n      );\n    case \"descent_bypass_rate\":\n      return (\n        `Layer 5 drift alert: descent-bypass-warning rate ${(metrics.descentBypassRate * 100).toFixed(1)}% ` +\n        `exceeds max ${(cfg.descentBypassMax * 100).toFixed(1)}% over a ${w}-event window. ` +\n        `The LLM is skipping the required descent path before substitution. ` +\n        `Record enough import-intercept misses before calling substitute.`\n      );\n    case \"result_set_median\":\n      return (\n        `Layer 5 drift alert: median result-set size ${metrics.medianResultSetSize} ` +\n        `exceeds max ${cfg.resultSetMedianMax} over a ${w}-event window. ` +\n        `Registry queries are persistently too broad. ` +\n        `Decompose or narrow the intent before querying.`\n      );\n    case \"ratio_median\":\n      return (\n        `Layer 5 drift alert: median atom/need ratio ${metrics.medianAtomRatio.toFixed(2)} ` +\n        `exceeds max ${cfg.ratioMedianMax} over a ${w}-event window. ` +\n        `The LLM is consistently over-substituting large atoms for small call sites. ` +\n        `Prefer atoms whose complexity is closer to the call-site need.`\n      );\n  }\n}"
+  },
+  {
+    "name": "tokenize",
+    "origin": "55829234954f35c0fc90f111726134b0014d2358c478e9a81691ae755a76a6e1",
+    "identity": "f9f9ffe65b868f11cf1e1a35f4d3efc99fdb7bcf78f4b32ce9fae9fac271203a",
+    "constructs": ["string", "regex", "closure", "array"],
+    "args": [
+      {
+        "str": "Ab -_1 ",
+        "max": 12
+      }
+    ],
+    "source": "function tokenize(intent: string): readonly string[] {\n  return intent\n    .trim()\n    .split(/\\s+/)\n    .filter((t) => t.length > 0)\n    .map((t) => t.toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, \"\"));\n}"
+  },
+  {
+    "name": "withCompletion",
+    "origin": "b37c8738c4582149b15001f6354c6be43e1fe5807fa2e35cad97980c3256bbda",
+    "identity": "6db691512354e38b5997e983a552dc599a3a847e8f14cf355940160657c33fe7",
+    "constructs": ["object", "spread", "array"],
+    "args": [
+      {
+        "obj": {
+          "completedBindings": {
+            "arr": {
+              "lit": ["a", "b"]
+            },
+            "max": 2
+          }
+        }
+      },
+      {
+        "lit": ["a", "c"]
+      }
+    ],
+    "source": "export function withCompletion(state: ShaveOnMissState, key: string): ShaveOnMissState {\n  if (state.completedBindings.includes(key)) return state;\n  return {\n    ...state,\n    completedBindings: [...state.completedBindings, key],\n  };\n}"
+  },
+  {
+    "name": "withHitIncrement",
+    "origin": "f2efd15031e929b7c725eca95e9ea72bdc0aa2781e6b02e0ce92f8eaf105402f",
+    "identity": "a1d266ad46e59727bfdeed180213294288da3d1bb64cc423ec8d0c5de5fd827c",
+    "constructs": ["object", "spread", "computed-key"],
+    "args": [
+      {
+        "obj": {
+          "hitCounts": {
+            "obj": {
+              "a": {
+                "opt": "int"
+              }
+            },
+            "opt": ["a"]
+          }
+        }
+      },
+      {
+        "lit": ["a", "b"]
+      }
+    ],
+    "source": "export function withHitIncrement(state: ShaveOnMissState, key: string): ShaveOnMissState {\n  const prev = state.hitCounts[key] ?? 0;\n  return {\n    ...state,\n    hitCounts: { ...state.hitCounts, [key]: prev + 1 },\n  };\n}"
+  },
+  {
+    "name": "makeBindingKey",
+    "origin": "0f089e81fcc3364d0ac5cc935a6eb3596cb133e2f44cf36b51c18d766bbb1293",
+    "identity": "6742c94754b2fcb65580a28a5b4a56cf7bb4a8d3fdd2f6119e5f8bc467b2f400",
+    "constructs": ["string"],
+    "args": ["str", "str"],
+    "source": "export function makeBindingKey(packageName: string, binding: string): string {\n  return `${packageName}::${binding}`;\n}"
+  },
+  {
+    "name": "makeLruNode",
+    "origin": "c4417a5b79490d444ea5673ecbdb746a9c5085a0a12c83fa58ca610e15908675",
+    "identity": "eb22b85d5acd14d8785a4a71fdc72710be064a7a067f26de2dce6b4062641724",
+    "constructs": ["object"],
+    "args": ["str", "any"],
+    "source": "// SPDX-License-Identifier: MIT\n//\n// @decision DEC-V0-B4-SEED-lru-node-001\n// @title lru-node: doubly-linked list node for O(1) LRU eviction\n// @status accepted\n// @rationale\n//   The lru-cache-with-ttl B4 task requires a doubly-linked list as the ordered\n//   eviction structure. O(1) insert-at-head, O(1) remove-any, and O(1)\n//   move-to-head all depend on prev/next pointer wiring. This atom is the\n//   fundamental allocation unit: create a node, wire its pointers externally.\n//\n//   Design decisions:\n//   (A) MUTABLE FIELDS: prev and next are mutable (not readonly) because the\n//       LRU algorithm must rewire pointers in-place on every cache hit. Readonly\n//       fields would require allocating a new node on every access -- O(n) space\n//       for an O(n) operation sequence, defeating the purpose.\n//\n//   (B) PLAIN OBJECT RETURN: Returns a plain JS object that satisfies the\n//       LruNode interface. No class needed; the interface provides the type\n//       contract and the plain-object implementation avoids prototype overhead.\n//\n//   (C) UNKNOWN VALUE TYPE: value is typed as unknown (not generic) to keep\n//       the atom strictly within the validated TypeScript subset. Callers cast\n//       to their concrete type after retrieval, which is idiomatic for a low-\n//       level building block.\n//\n//   Reference: Cormen et al., \"Introduction to Algorithms\" 4th ed., Section 10.2\n//   (doubly linked lists) and Section 20.1 (hash table + list for O(1) LRU).\n\n/** A node in a doubly-linked intrusive list used by the LRU eviction policy. */\nexport interface LruNode {\n  key: string;\n  value: unknown;\n  prev: LruNode | null;\n  next: LruNode | null;\n}\n\n/**\n * Allocate a new LRU list node for the given key-value pair.\n *\n * Both prev and next are initialised to null. The caller is responsible for\n * wiring pointers when inserting the node into the eviction list.\n *\n * @param key   - Cache key. Stored by reference (no copy).\n * @param value - Cached value. Stored by reference (no copy).\n * @returns A new LruNode with null prev/next pointers.\n */\nexport function makeLruNode(key: string, value: unknown): LruNode {\n  return { key, value, prev: null, next: null };\n}\n"
+  },
+  {
+    "name": "parseSemver",
+    "origin": "4021ed3d573147275ae7a86c0cfd629265b0032b30f207f3526c707b0a4abc3e",
+    "identity": "27fda643b3d234b31c30df81dc5e3892396438bb14c574c11bab36676ffe486b",
+    "constructs": ["exception", "loop", "string", "object"],
+    "args": [
+      {
+        "union": [
+          {
+            "lit": ["1.2.3", "0.0.1-alpha.1+build.5", "01.2.3", "1.2", "1.2.3-", "10.20.30+x"]
+          },
+          {
+            "str": "0123.-+a",
+            "max": 9
+          }
+        ]
+      }
+    ],
+    "source": "// SPDX-License-Identifier: MIT\n//\n// @decision DEC-V0-B4-SEED-semver-component-parser-001\n// @title semver-component-parser: version-string parser for MAJOR.MINOR.PATCH[-pre][+build]\n// @status accepted\n// @rationale\n//   The semver-range-satisfies B4 task requires parsing version strings into\n//   their numeric and string components before any range comparison. This atom\n//   implements the parsing primitive so the range-comparison logic can operate\n//   on structured data rather than raw strings.\n//\n//   Design decisions:\n//   (A) SPLIT THEN PARSE: The implementation splits the input string rather\n//       than using a hand-rolled character-position parser. The split approach\n//       is more readable and the O(n) allocation cost is acceptable for version\n//       strings, which are short (typically < 30 chars). A position-based\n//       parser would save zero allocations in practice at the cost of\n//       significant code complexity.\n//\n//   (B) BUILD BEFORE PRERELEASE: The '+' (build metadata) separator is handled\n//       AFTER splitting on '-' (prerelease). If the patch field contains '+',\n//       we split again. This correctly handles '1.0.0-beta+sha' where '-beta'\n//       is prerelease and 'sha' is build metadata appended to the patch field.\n//       Order matters: split on '-' first, then on '+'.\n//\n//   (C) NO SEMANTIC VALIDATION OF IDENTIFIERS: Prerelease and build identifier\n//       characters are not validated (the spec only requires capturing them as\n//       strings). Full validation per semver.org spec section 9-10 would add\n//       complexity without benefit for the B4 task's comparator use-case.\n//\n//   (D) EXPLICIT GUARD FOR ARRAY INDEXING: After verifying parts.length === 3\n//       via SyntaxError throw, TypeScript still types parts[n] as\n//       string | undefined. We use explicit string coercion (\"\" fallback via\n//       ?? \"\") to satisfy the type checker while maintaining the invariant\n//       that the value is always defined at this point in the code.\n//\n//   Reference: Semantic Versioning 2.0.0 specification (semver.org),\n//   sections 2-10. Tom Preston-Werner, original author.\n\n/** Parsed components of a semver version string. */\nexport interface SemverComponents {\n  readonly major: number;\n  readonly minor: number;\n  readonly patch: number;\n  readonly prerelease: string | null;\n  readonly build: string | null;\n}\n\n/**\n * Parse a semver version string into its numeric and string components.\n *\n * Handles the full MAJOR.MINOR.PATCH[-PRERELEASE][+BUILD] grammar.\n * Prerelease and build identifiers are captured as raw strings without\n * further validation.\n *\n * @param input - Version string to parse.\n * @returns Parsed SemverComponents.\n * @throws SyntaxError if input does not match MAJOR.MINOR.PATCH structure.\n */\nexport function parseSemver(input: string): SemverComponents {\n  if (input.length === 0) {\n    throw new SyntaxError(\"parseSemver: empty input\");\n  }\n\n  // Separate prerelease suffix (everything after first '-')\n  let prerelease: string | null = null;\n  let build: string | null = null;\n\n  // Find build metadata first ('+' in the original string)\n  const plusIndex = input.indexOf(\"+\");\n  let versionWithPre = input;\n  if (plusIndex !== -1) {\n    build = input.slice(plusIndex + 1);\n    versionWithPre = input.slice(0, plusIndex);\n  }\n\n  // Find prerelease ('-' in the version-without-build string)\n  const dashIndex = versionWithPre.indexOf(\"-\");\n  let coreVersion = versionWithPre;\n  if (dashIndex !== -1) {\n    prerelease = versionWithPre.slice(dashIndex + 1);\n    coreVersion = versionWithPre.slice(0, dashIndex);\n  }\n\n  // Parse MAJOR.MINOR.PATCH\n  const parts = coreVersion.split(\".\");\n  if (parts.length !== 3) {\n    throw new SyntaxError(\n      `parseSemver: expected MAJOR.MINOR.PATCH, got ${JSON.stringify(coreVersion)}`,\n    );\n  }\n\n  // After the length guard above, parts[0..2] are always defined.\n  // The ?? \"\" fallback satisfies TypeScript's string | undefined narrowing\n  // while being unreachable in practice.\n  const majorStr = parts[0] ?? \"\";\n  const minorStr = parts[1] ?? \"\";\n  const patchStr = parts[2] ?? \"\";\n\n  const major = Number.parseInt(majorStr, 10);\n  const minor = Number.parseInt(minorStr, 10);\n  const patch = Number.parseInt(patchStr, 10);\n\n  if (Number.isNaN(major) || major < 0) {\n    throw new SyntaxError(`parseSemver: invalid MAJOR component ${JSON.stringify(majorStr)}`);\n  }\n  if (Number.isNaN(minor) || minor < 0) {\n    throw new SyntaxError(`parseSemver: invalid MINOR component ${JSON.stringify(minorStr)}`);\n  }\n  if (Number.isNaN(patch) || patch < 0) {\n    throw new SyntaxError(`parseSemver: invalid PATCH component ${JSON.stringify(patchStr)}`);\n  }\n\n  return { major, minor, patch, prerelease, build };\n}\n"
+  },
+  {
+    "name": "seed:ascii-char",
+    "origin": "seed:ascii-char",
+    "identity": "2286d9d3145bfd764e57e7ff93704ce8abfc5a12e3e6e63a0a0baff4699b0bfa",
+    "constructs": ["string", "exception"],
+    "args": [
+      {
+        "str": "0123456789,[] \t-+.xé😀",
+        "max": 10
+      },
+      "idx"
+    ],
+    "source": "// SPDX-License-Identifier: MIT\n// @decision DEC-SEEDS-ASCIICHAR-001: ascii-char is the positional consumption primitive.\n// Status: implemented (WI-006)\n// Rationale: Many parsing blocks need to consume a character at a known offset without\n// interpretation. This block is the positional-read utility that others compose.\n\nexport function asciiChar(input: string, position: number): string {\n  if (position < 0 || position >= input.length) {\n    throw new RangeError(`Position ${position} out of bounds for input of length ${input.length}`);\n  }\n  const code = input.charCodeAt(position);\n  if (code > 127) {\n    throw new RangeError(`Non-ASCII character at position ${position}: code ${code}`);\n  }\n  return input[position] as string;\n}\n"
+  },
+  {
+    "name": "seed:bracket",
+    "origin": "seed:bracket",
+    "identity": "742e8ec99ebd1ce67f44ae17c1e094a41b6c9f3c5c5369a5352809d1e7e1432d",
+    "constructs": ["string", "exception"],
+    "args": [
+      {
+        "str": "0123456789,[] \t-+.xé😀",
+        "max": 10
+      },
+      "idx",
+      {
+        "lit": ["[", "]"]
+      }
+    ],
+    "source": "// SPDX-License-Identifier: MIT\n// @decision DEC-SEEDS-BRACKET-001: bracket matches a single bracket char and returns next position.\n// Status: implemented (WI-006)\n// Rationale: Bracket matching is a hot path in list parsing. Returning the post-bracket position\n// follows the positional combinator convention used by all other blocks in this corpus.\n\nexport function bracket(input: string, position: number, kind: \"[\" | \"]\"): number {\n  if (position < 0) {\n    throw new RangeError(`Position ${position} is negative`);\n  }\n  if (position >= input.length) {\n    throw new SyntaxError(`Expected '${kind}' at position ${position} but reached end of input`);\n  }\n  if (input[position] !== kind) {\n    throw new SyntaxError(\n      `Expected '${kind}' at position ${position} but found ${JSON.stringify(input[position])}`,\n    );\n  }\n  return position + 1;\n}\n"
+  },
+  {
+    "name": "seed:char-code",
+    "origin": "seed:char-code",
+    "identity": "f5b40eb13b40620033abe7921c0a3dee3499743f1e3715c2a61d3070aa4c443e",
+    "constructs": ["string", "exception"],
+    "args": [
+      {
+        "str": "0123456789,[] \t-+.xé😀",
+        "max": 10
+      },
+      "idx"
+    ],
+    "source": "// SPDX-License-Identifier: MIT\n// @decision DEC-SEEDS-CHARCODE-001: char-code exposes char-code lookup as an explicit contract.\n// Status: implemented (WI-006)\n// Rationale: Multiple blocks rely on charCodeAt arithmetic. Making it an explicit block\n// documents the zero-extension property (always non-negative) and enables registry reuse.\n\nexport function charCode(input: string, position: number): number {\n  if (position < 0) {\n    throw new RangeError(`Position ${position} is negative`);\n  }\n  if (position >= input.length) {\n    throw new RangeError(`Position ${position} out of bounds for input of length ${input.length}`);\n  }\n  return input.charCodeAt(position);\n}\n"
+  },
+  {
+    "name": "seed:digit-or-throw",
+    "origin": "seed:digit-or-throw",
+    "identity": "d8ed08ea6ecf0c34c7df6832f2b6c12f266cbc520bc50ae100df743da56b8d67",
+    "constructs": ["string", "exception", "tuple"],
+    "args": [
+      {
+        "str": "0123456789,[] \t-+.xé😀",
+        "max": 10
+      },
+      "idx"
+    ],
+    "source": "// SPDX-License-Identifier: MIT\n// @decision DEC-SEEDS-DIGITORTHROW-001: digit-or-throw wraps positional digit reading with context.\n// Status: implemented (WI-006)\n// Rationale: Callers that have already peeked and confirmed a digit want a single call that\n// reads-and-advances with a descriptive error. This combinator adds the position context\n// that the raw digit() function lacks.\n\nexport function digitOrThrow(input: string, position: number): readonly [number, number] {\n  if (position < 0) {\n    throw new RangeError(`Position ${position} is negative`);\n  }\n  if (position >= input.length) {\n    throw new SyntaxError(`Expected digit at position ${position} but reached end of input`);\n  }\n  const c = input[position] as string;\n  if (c < \"0\" || c > \"9\") {\n    throw new SyntaxError(`Expected digit at position ${position} but found ${JSON.stringify(c)}`);\n  }\n  return [c.charCodeAt(0) - 48, position + 1] as const;\n}\n"
+  },
+  {
+    "name": "seed:eof-check",
+    "origin": "seed:eof-check",
+    "identity": "5129f6399665bb673ba4ef54a3f9c05894d842f5e4ae7d51485da0d940097f7b",
+    "constructs": ["exception"],
+    "args": [
+      {
+        "str": "0123456789,[] \t-+.xé😀",
+        "max": 10
+      },
+      "idx"
+    ],
+    "source": "// SPDX-License-Identifier: MIT\n// @decision DEC-SEEDS-EOFCHECK-001: eof-check is the trailing-input rejection gate.\n// Status: implemented (WI-006)\n// Rationale: A parser that accepts input must also reject trailing garbage. This block\n// is the explicit end-of-input assertion that composition blocks call after parsing.\n\nexport function eofCheck(input: string, position: number): void {\n  if (position > input.length) {\n    throw new RangeError(`Position ${position} overruns input of length ${input.length}`);\n  }\n  if (position < input.length) {\n    throw new SyntaxError(\n      `Expected end of input at position ${position} but found ${JSON.stringify(input.slice(position))}`,\n    );\n  }\n}\n"
+  },
+  {
+    "name": "seed:integer",
+    "origin": "seed:integer",
+    "identity": "6b6aa2162aba630885b1d22faf460215e01f11906dbe8a9c88811940ba256a78",
+    "constructs": ["loop", "exception", "number"],
+    "args": [
+      {
+        "str": "0123456789,[] \t-+.xé😀",
+        "max": 10
+      },
+      "idx"
+    ],
+    "source": "// SPDX-License-Identifier: MIT\n// @decision DEC-SEEDS-INTEGER-001: integer composes digit; returns value + new position as a tuple.\n// Status: implemented (WI-006)\n// Rationale: Returning [value, newPosition] keeps the block pure while providing both the\n// parsed value and the advanced cursor to the caller without a mutable context object.\n\nexport function integer(input: string, position: number): readonly [number, number] {\n  if (position < 0) {\n    throw new RangeError(`Position ${position} is negative`);\n  }\n  if (position >= input.length || input[position] === undefined) {\n    throw new SyntaxError(`Expected digit at position ${position} but reached end of input`);\n  }\n  const first = input[position] as string;\n  if (first < \"0\" || first > \"9\") {\n    throw new SyntaxError(\n      `Expected digit at position ${position} but found ${JSON.stringify(first)}`,\n    );\n  }\n  let value = 0;\n  let pos = position;\n  while (pos < input.length) {\n    const c = input[pos] as string;\n    if (c < \"0\" || c > \"9\") break;\n    value = value * 10 + (c.charCodeAt(0) - 48);\n    pos++;\n  }\n  return [value, pos] as const;\n}\n"
+  },
+  {
+    "name": "seed:signed-integer",
+    "origin": "seed:signed-integer",
+    "identity": "6ceb40197e3a2074a2aea7cea18aee369f6c4a22d24d90af57ddaf95b244cc5b",
+    "constructs": ["loop", "exception", "number"],
+    "args": [
+      {
+        "str": "0123456789,[] \t-+.xé😀",
+        "max": 10
+      },
+      "idx"
+    ],
+    "source": "// SPDX-License-Identifier: MIT\n// @decision DEC-SEEDS-SIGNEDINT-001: signed-integer extends integer with optional leading minus.\n// Status: implemented (WI-006)\n// Rationale: A common extension of unsigned integer parsing. Demonstrates contract refinement:\n// signed-integer has a strictly wider input domain than integer but same output type contract.\n\nexport function signedInteger(input: string, position: number): readonly [number, number] {\n  if (position < 0) {\n    throw new RangeError(`Position ${position} is negative`);\n  }\n  if (position >= input.length) {\n    throw new SyntaxError(`Expected digit or '-' at position ${position} but reached end of input`);\n  }\n\n  let pos = position;\n  let sign = 1;\n\n  if (input[pos] === \"-\") {\n    sign = -1;\n    pos++;\n    if (pos >= input.length) {\n      throw new SyntaxError(`Expected digit after '-' at position ${pos} but reached end of input`);\n    }\n  }\n\n  const c = input[pos] as string;\n  if (c < \"0\" || c > \"9\") {\n    throw new SyntaxError(`Expected digit at position ${pos} but found ${JSON.stringify(c)}`);\n  }\n\n  let value = 0;\n  while (pos < input.length) {\n    const ch = input[pos] as string;\n    if (ch < \"0\" || ch > \"9\") break;\n    value = value * 10 + (ch.charCodeAt(0) - 48);\n    pos++;\n  }\n\n  return [sign * value, pos] as const;\n}\n"
+  },
+  {
+    "name": "seed:whitespace",
+    "origin": "seed:whitespace",
+    "identity": "2db382f93c885b36bc387a1275d7013f5f66b6225aacdb32380552295d26f191",
+    "constructs": ["loop", "exception"],
+    "args": [
+      {
+        "str": "0123456789,[] \t-+.xé😀",
+        "max": 10
+      },
+      "idx"
+    ],
+    "source": "// SPDX-License-Identifier: MIT\n// @decision DEC-SEEDS-WHITESPACE-001: whitespace skipping returns a new position, not stripped text.\n// Status: implemented (WI-006)\n// Rationale: Position-returning parsers compose without allocating substrings.\n// Returning the new position after whitespace is cheaper and composable with all other blocks.\n\nexport function whitespace(input: string, position: number): number {\n  if (position < 0) {\n    throw new RangeError(`Position ${position} is negative`);\n  }\n  let pos = position;\n  while (pos < input.length) {\n    const c = input[pos];\n    if (c !== \" \" && c !== \"\\t\") {\n      break;\n    }\n    pos++;\n  }\n  return pos;\n}\n"
+  },
+  {
+    "name": "seed:string-from-position",
+    "origin": "seed:string-from-position",
+    "identity": "ecd8e34e79b4dc1249632d1102727cf72271c81453b60f5305e07ecca6488fdd",
+    "constructs": ["string", "exception"],
+    "args": [
+      {
+        "str": "0123456789,[] \t-+.xé😀",
+        "max": 10
+      },
+      "idx",
+      "idx"
+    ],
+    "source": "// SPDX-License-Identifier: MIT\n// @decision DEC-SEEDS-STRFROMPOS-001: substring extraction at a position is a reusable primitive.\n// Status: implemented (WI-006)\n// Rationale: Multiple blocks need to extract substrings starting at a position. Centralising\n// bounds checking avoids each block duplicating the same guard logic.\n\nexport function stringFromPosition(input: string, start: number, end: number): string {\n  if (start < 0 || end < 0) {\n    throw new RangeError(`Negative index: start=${start}, end=${end}`);\n  }\n  if (start > end) {\n    throw new RangeError(`start ${start} > end ${end}`);\n  }\n  if (end > input.length) {\n    throw new RangeError(`end ${end} exceeds input length ${input.length}`);\n  }\n  return input.slice(start, end);\n}\n"
+  },
+  {
+    "name": "seed:position-step",
+    "origin": "seed:position-step",
+    "identity": "61203f47e1481c210599a6e99e995d3001695a266696dc1efe6b9ad9b3abb05c",
+    "constructs": ["number", "exception"],
+    "args": ["idx", "idx", "idx"],
+    "source": "// SPDX-License-Identifier: MIT\n// @decision DEC-SEEDS-POSSTEP-001: position advancement is an explicit operation, not implicit mutation.\n// Status: implemented (WI-006)\n// Rationale: Parser blocks work with immutable position values. positionStep returns\n// the new position rather than mutating any state, keeping all blocks pure.\n\nexport function positionStep(position: number, n: number, inputLength: number): number {\n  if (position < 0) {\n    throw new RangeError(`position ${position} is negative`);\n  }\n  if (n < 0) {\n    throw new RangeError(`step ${n} is negative`);\n  }\n  const next = position + n;\n  if (next > inputLength) {\n    throw new RangeError(\n      `position ${position} + step ${n} = ${next} exceeds input length ${inputLength}`,\n    );\n  }\n  return next;\n}\n"
+  },
+  {
+    "name": "seed:peek-char",
+    "origin": "seed:peek-char",
+    "identity": "446e66a865810e911fd538eed02db7ec93ab72048954fd16f5af89609c8bdd58",
+    "constructs": ["string", "exception", "null"],
+    "args": [
+      {
+        "str": "0123456789,[] \t-+.xé😀",
+        "max": 10
+      },
+      "idx"
+    ],
+    "source": "// SPDX-License-Identifier: MIT\n// @decision DEC-SEEDS-PEEKCHAR-001: peek-without-advance is a fundamental parser combinator primitive.\n// Status: implemented (WI-006)\n// Rationale: Many parsing decisions are made by inspecting the next character without consuming it.\n// Separating peek from consume avoids coupling lookahead to position advancement.\n\nexport function peekChar(input: string, position: number): string | null {\n  if (position < 0) {\n    throw new RangeError(`Position ${position} is negative`);\n  }\n  if (position >= input.length) {\n    return null;\n  }\n  return input[position] as string;\n}\n"
+  },
+  {
+    "name": "seed:non-ascii-rejector",
+    "origin": "seed:non-ascii-rejector",
+    "identity": "5d3a9684a02252416f05b3c78ed1f85348bc96fcc9b362dd3a2cdc1e2b564c21",
+    "constructs": ["loop", "exception", "string"],
+    "args": [
+      {
+        "str": "0123456789,[] \t-+.xé😀",
+        "max": 10
+      }
+    ],
+    "source": "// SPDX-License-Identifier: MIT\n// @decision DEC-SEEDS-NONASCII-001: non-ascii-rejector is a full-input validation gate.\n// Status: implemented (WI-006)\n// Rationale: The seed corpus parsers only handle ASCII. Failing fast on non-ASCII at the\n// entry point gives a clear error rather than a cryptic failure mid-parse.\n\nexport function nonAsciiRejector(input: string): void {\n  for (let i = 0; i < input.length; i++) {\n    const code = input.charCodeAt(i);\n    if (code > 127) {\n      throw new RangeError(`Non-ASCII character at position ${i}: code ${code}`);\n    }\n  }\n}\n"
+  },
+  {
+    "name": "seed:comma-separated-integers",
+    "origin": "seed:comma-separated-integers",
+    "identity": "74af7120fd4fa60ab1bf311631a5d283c53c6a68ad6d95a9525d0de8d01c63de",
+    "constructs": ["loop", "exception", "array", "tuple"],
+    "args": [
+      {
+        "str": "0123456789,[] \t-+.xé😀",
+        "max": 10
+      },
+      "idx"
+    ],
+    "source": "// SPDX-License-Identifier: MIT\n// @decision DEC-SEEDS-COMMASEP-001: comma-separated-integers parses the interior of a list after the first element.\n// Status: implemented (WI-006)\n// Rationale: The import-type declarations below declare the composition graph. Relative \"./\"\n// imports are used so TypeScript can resolve the sibling block declarations; seedRegistry\n// passes blockPatterns: [\"./\"] to parseBlock so extractComposition captures these as\n// sub-block references in the provenance manifest. `import type` is used because\n// strict-subset validates each block in an isolated single-file ts-morph project where\n// sibling value imports resolve to `any` and fail no-untyped-imports. Type-only imports\n// are unconditionally skipped by that rule.\n// Composition graph — captured by extractComposition via the @yakcc/seeds/ builtin pattern.\n// WI-T05-fix: import paths use \"@yakcc/seeds/blocks/<name>\" so the compile resolver's\n// SUB_BLOCK_IMPORT_RE (which matches \"@yakcc/seeds/\" prefix) can extract sub-block deps.\n// All imports are \"import type\" so the strict-subset validator skips them unconditionally\n// and vitest/Vite erases them at transpile time (no runtime module resolution needed).\nimport type { comma } from \"@yakcc/seeds/blocks/comma\";\nimport type { integer } from \"@yakcc/seeds/blocks/integer\";\nimport type { optionalWhitespace } from \"@yakcc/seeds/blocks/optional-whitespace\";\nimport type { peekChar } from \"@yakcc/seeds/blocks/peek-char\";\n\n// Suppress \"imported but never used as a value\" by surfacing type aliases.\ntype _Comma = typeof comma;\ntype _Integer = typeof integer;\ntype _OptionalWhitespace = typeof optionalWhitespace;\ntype _PeekChar = typeof peekChar;\n\n// ---------------------------------------------------------------------------\n// Implementation\n//\n// Each section mirrors one sub-block's contract boundary exactly:\n//   peekChar(input, pos)            → return char at pos or null (no advance)\n//   comma(input, pos)               → assert ','; return pos+1\n//   optionalWhitespace(input, pos)  → skip spaces/tabs; return new pos\n//   integer(input, pos)             → parse digits; return [value, newPos]\n// ---------------------------------------------------------------------------\n\nexport function commaSeparatedIntegers(\n  input: string,\n  position: number,\n): readonly [ReadonlyArray<number>, number] {\n  if (position < 0) {\n    throw new RangeError(`Position ${position} is negative`);\n  }\n  const values: number[] = [];\n  let pos = position;\n\n  // peekChar: inspect next char without advancing; loop while ',' is next.\n  while (pos < input.length && input[pos] === \",\") {\n    // comma: assert ',' and advance past it.\n    pos++;\n\n    // optionalWhitespace: skip spaces/tabs after comma.\n    while (pos < input.length && (input[pos] === \" \" || input[pos] === \"\\t\")) {\n      pos++;\n    }\n\n    // integer: parse one or more digits.\n    if (pos >= input.length) {\n      throw new SyntaxError(\n        `Expected integer after ',' at position ${pos} but reached end of input`,\n      );\n    }\n    const c = input[pos] as string;\n    if (c < \"0\" || c > \"9\") {\n      throw new SyntaxError(\n        `Expected integer after ',' at position ${pos} but found ${JSON.stringify(c)}`,\n      );\n    }\n    let value = 0;\n    while (pos < input.length) {\n      const ch = input[pos] as string;\n      if (ch < \"0\" || ch > \"9\") break;\n      value = value * 10 + (ch.charCodeAt(0) - 48);\n      pos++;\n    }\n    values.push(value);\n\n    // optionalWhitespace: skip spaces/tabs after integer.\n    while (pos < input.length && (input[pos] === \" \" || input[pos] === \"\\t\")) {\n      pos++;\n    }\n  }\n\n  return [values, pos] as const;\n}\n"
+  },
+  {
+    "name": "seed:nonempty-list-content",
+    "origin": "seed:nonempty-list-content",
+    "identity": "69421681e542c6421e32048d8e8d2194c06bce209b8ef070c8a66878023569b6",
+    "constructs": ["loop", "exception", "array"],
+    "args": [
+      {
+        "str": "0123456789,[] \t-+.xé😀",
+        "max": 10
+      },
+      "idx"
+    ],
+    "source": "// SPDX-License-Identifier: MIT\n// @decision DEC-SEEDS-NONEMPTYLIST-001: nonempty-list-content parses interior with at least one element.\n// Status: implemented (WI-006)\n// Rationale: The import-type declarations below declare the composition graph. Relative \"./\"\n// imports are used so TypeScript can resolve the sibling block declarations; seedRegistry\n// passes blockPatterns: [\"./\"] to parseBlock so extractComposition captures these as\n// sub-block references in the provenance manifest. `import type` is used because\n// strict-subset validates each block in an isolated single-file ts-morph project where\n// sibling value imports resolve to `any` and fail no-untyped-imports. Type-only imports\n// are unconditionally skipped by that rule.\n// Composition graph — captured by extractComposition via the @yakcc/seeds/ builtin pattern.\n// WI-T05-fix: import paths use \"@yakcc/seeds/blocks/<name>\" so the compile resolver's\n// SUB_BLOCK_IMPORT_RE (which matches \"@yakcc/seeds/\" prefix) can extract sub-block deps.\n// All imports are \"import type\" so the strict-subset validator skips them unconditionally\n// and vitest/Vite erases them at transpile time (no runtime module resolution needed).\nimport type { bracket } from \"@yakcc/seeds/blocks/bracket\";\nimport type { comma } from \"@yakcc/seeds/blocks/comma\";\nimport type { integer } from \"@yakcc/seeds/blocks/integer\";\nimport type { optionalWhitespace } from \"@yakcc/seeds/blocks/optional-whitespace\";\nimport type { peekChar } from \"@yakcc/seeds/blocks/peek-char\";\n\n// Suppress \"imported but never used as a value\" by surfacing type aliases.\ntype _Bracket = typeof bracket;\ntype _Comma = typeof comma;\ntype _Integer = typeof integer;\ntype _OptionalWhitespace = typeof optionalWhitespace;\ntype _PeekChar = typeof peekChar;\n\n// ---------------------------------------------------------------------------\n// Implementation\n//\n// Each section mirrors one sub-block's contract boundary exactly:\n//   optionalWhitespace(input, pos)  → skip spaces/tabs; return new pos\n//   integer(input, pos)             → parse digits; return [value, newPos]\n//   peekChar(input, pos)            → return char at pos or null (no advance)\n//   comma(input, pos)               → assert ','; return pos+1\n//   bracket(input, pos, ']')        → assert ']'; return pos+1\n// ---------------------------------------------------------------------------\n\nexport function nonemptyListContent(\n  input: string,\n  position: number,\n): readonly [ReadonlyArray<number>, number] {\n  if (position < 0) {\n    throw new RangeError(`Position ${position} is negative`);\n  }\n\n  const values: number[] = [];\n  let pos = position;\n\n  // optionalWhitespace: skip leading spaces/tabs before first integer.\n  while (pos < input.length && (input[pos] === \" \" || input[pos] === \"\\t\")) {\n    pos++;\n  }\n\n  // integer: parse first integer (one or more digits required).\n  if (pos >= input.length || (input[pos] as string) < \"0\" || (input[pos] as string) > \"9\") {\n    throw new SyntaxError(\n      `Expected digit at position ${pos} but found ${JSON.stringify(input[pos] ?? \"EOF\")}`,\n    );\n  }\n  let first = 0;\n  while (pos < input.length) {\n    const c = input[pos] as string;\n    if (c < \"0\" || c > \"9\") break;\n    first = first * 10 + (c.charCodeAt(0) - 48);\n    pos++;\n  }\n  values.push(first);\n\n  // optionalWhitespace: skip whitespace after first integer.\n  while (pos < input.length && (input[pos] === \" \" || input[pos] === \"\\t\")) {\n    pos++;\n  }\n\n  // peekChar + comma loop: consume each \", integer\" pair while ',' is next.\n  while (pos < input.length && input[pos] === \",\") {\n    // comma: assert ',' and advance.\n    pos++;\n\n    // optionalWhitespace: skip whitespace after comma.\n    while (pos < input.length && (input[pos] === \" \" || input[pos] === \"\\t\")) {\n      pos++;\n    }\n\n    // integer: parse next integer.\n    if (pos >= input.length || (input[pos] as string) < \"0\" || (input[pos] as string) > \"9\") {\n      throw new SyntaxError(\n        `Expected digit after ',' at position ${pos} but found ${JSON.stringify(input[pos] ?? \"EOF\")}`,\n      );\n    }\n    let val = 0;\n    while (pos < input.length) {\n      const c = input[pos] as string;\n      if (c < \"0\" || c > \"9\") break;\n      val = val * 10 + (c.charCodeAt(0) - 48);\n      pos++;\n    }\n    values.push(val);\n\n    // optionalWhitespace: skip whitespace after integer.\n    while (pos < input.length && (input[pos] === \" \" || input[pos] === \"\\t\")) {\n      pos++;\n    }\n  }\n\n  // bracket(input, pos, ']'): expect closing ']'.\n  if (pos >= input.length || input[pos] !== \"]\") {\n    throw new SyntaxError(\n      `Expected ']' at position ${pos} but found ${JSON.stringify(input[pos] ?? \"EOF\")}`,\n    );\n  }\n  pos++;\n\n  return [values, pos] as const;\n}\n"
+  }
+]

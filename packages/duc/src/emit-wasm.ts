@@ -16,8 +16,14 @@
  * Anything else (strings, arrays, objects, free names, throws, closures, iteration) is refused, with
  * the reason.
  */
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { emitLlvmBoxed } from "./emit-llvm-boxed.js";
 import { type DucType, parseType } from "./infer-types.js";
 import { bodyPathOf, joinOwners, sidePath } from "./line-form.js";
+import { RUNTIME_SOURCE, compileObject } from "./native.js";
 import { loweringView } from "./ordering.js";
 import { paramIndex } from "./params.js";
 import { type ScopeItem, scopePlanner } from "./scopes.js";
@@ -611,4 +617,224 @@ export async function instantiateWasm(
     const r = f(...args.map((a, i) => (m.params[i] === "i32" ? (a ? 1 : 0) : (a as number))));
     return m.booleanResult ? r !== 0 : r;
   };
+}
+
+// =================================================================================================
+// Beyond the typed subset: boxed values in linear memory, with the native runtime (#1300)
+//
+// DEC-DUC-WASM-MEMORY-001 (proposed): strings, arrays, objects, closures and exceptions are lowered
+// to wasm as the native lowering lowers them (DEC-DUC-NATIVE-RUNTIME-001). Every value is a
+// NaN-boxed i64, and every operation is a call into the runtime, `runtime/yk.c`. That file is
+// compiled unchanged for wasm32-wasi by clang, against a WASI sysroot. The graph goes to LLVM IR
+// (`emitLlvmBoxed`), and LLVM's wasm32 backend writes the object. The heap is the module's linear
+// memory, and the runtime's longjmp becomes wasm exception handling. One runtime and one value
+// semantics serve every native target and wasm.
+// =================================================================================================
+
+/** Where the tools for the boxed wasm lowering are. */
+export interface WasmToolchain {
+  /** A WASI sysroot (wasi-libc): `include/` and `lib/wasm32-wasi/`. */
+  readonly sysroot: string;
+  /** compiler-rt's builtins for wasm32 (`libclang_rt.builtins-wasm32.a`). */
+  readonly builtins: string;
+  readonly clang?: string;
+  readonly llc?: string;
+  readonly wasmLd?: string;
+}
+
+/**
+ * The toolchain the environment names (YAKCC_WASI_SYSROOT, YAKCC_WASM_BUILTINS), or undefined when
+ * either is missing, so a caller can say what is needed instead of failing in a tool.
+ */
+export function wasmToolchainFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): WasmToolchain | undefined {
+  const sysroot = env.YAKCC_WASI_SYSROOT;
+  const builtins = env.YAKCC_WASM_BUILTINS;
+  if (sysroot === undefined || builtins === undefined) return undefined;
+  if (!existsSync(join(sysroot, "lib", "wasm32-wasi", "libc.a")) || !existsSync(builtins))
+    return undefined;
+  return { sysroot, builtins };
+}
+
+/**
+ * LLVM 18 lowers setjmp/longjmp to wasm exceptions (`-mllvm -wasm-enable-sjlj`) by calling
+ * `saveSetjmp`, `testSetjmp` and `getTempRet0`, as Emscripten defined them. wasi-libc's libsetjmp
+ * has only the later names (`__wasm_setjmp`), from LLVM 19. These are the earlier ones. The throw
+ * itself is wasi-libc's `__wasm_longjmp`, whose payload ({env, val}) LLVM 18's catch reads. A
+ * toolchain with the later names links none of these.
+ */
+export const WASM_SJLJ_SHIM = `#include <stdint.h>
+#include <stdlib.h>
+typedef struct { uintptr_t id; uint32_t label; } yk_sjlj_entry;
+static uint32_t yk_sjlj_next = 0;
+static uint32_t yk_sjlj_temp = 0;
+uint32_t getTempRet0(void) { return yk_sjlj_temp; }
+void setTempRet0(uint32_t v) { yk_sjlj_temp = v; }
+yk_sjlj_entry *saveSetjmp(uintptr_t *env, uint32_t label, yk_sjlj_entry *table, uint32_t size) {
+  yk_sjlj_next++;
+  *env = yk_sjlj_next;
+  for (uint32_t i = 0; i < size; i++) {
+    if (table[i].id == 0) {
+      table[i].id = yk_sjlj_next;
+      table[i].label = label;
+      table[i + 1].id = 0;
+      yk_sjlj_temp = size;
+      return table;
+    }
+  }
+  size *= 2;
+  table = realloc(table, sizeof(yk_sjlj_entry) * (size + 1));
+  table = saveSetjmp(env, label, table, size);
+  yk_sjlj_temp = size;
+  return table;
+}
+uint32_t testSetjmp(uintptr_t id, yk_sjlj_entry *table, uint32_t size) {
+  for (uint32_t i = 0; i < size && table[i].id != 0; i++)
+    if (table[i].id == id) return table[i].label;
+  return 0;
+}
+`;
+
+/**
+ * WASI has no `ucontext`. The runtime gives async functions and generators their own stacks with it
+ * (#1295), and wasm has no stack switching without the stack-switching proposal or a transform
+ * such as Asyncify. So the wasm build compiles the runtime against this header. Its functions
+ * trap, and `emitWasmBoxed` refuses any graph that would reach them: one with an async function or
+ * a generator.
+ */
+export const WASM_UCONTEXT_SHIM = `#ifndef YK_WASM_UCONTEXT_H
+#define YK_WASM_UCONTEXT_H
+#include <stddef.h>
+typedef struct { void *ss_sp; size_t ss_size; int ss_flags; } stack_t;
+typedef struct ucontext_t { struct ucontext_t *uc_link; stack_t uc_stack; } ucontext_t;
+static inline int getcontext(ucontext_t *c) { (void)c; __builtin_trap(); }
+static inline void makecontext(ucontext_t *c, void (*f)(void), int n, ...) { (void)c; (void)f; (void)n; __builtin_trap(); }
+static inline int swapcontext(ucontext_t *a, const ucontext_t *b) { (void)a; (void)b; __builtin_trap(); }
+static inline int setcontext(const ucontext_t *c) { (void)c; __builtin_trap(); }
+#endif
+`;
+
+/** The first async function or generator in a graph or a closure inside it, if any. */
+function coroutineMode(g: DucGraph): string | undefined {
+  if (g.mode !== undefined) return g.mode;
+  for (const n of g.nodes) {
+    // A closure's mode is in its label: `async closure`, `function*`, `async function*`.
+    const label = n.label ?? "";
+    if (n.closure !== undefined && (/\basync\b/.test(label) || label.includes("*")))
+      return label.includes("*")
+        ? /\basync\b/.test(label)
+          ? "async generator"
+          : "generator"
+        : "async";
+    const inner = n.closure !== undefined ? coroutineMode(n.closure) : undefined;
+    if (inner !== undefined) return inner;
+  }
+  return undefined;
+}
+
+const WASM_TRIPLE = "wasm32-unknown-wasi";
+
+function runTool(tool: string, args: readonly string[], what: string): void {
+  const run = spawnSync(tool, args, { maxBuffer: 1 << 26 });
+  if (run.error !== undefined)
+    throw new WasmEmitError(`${tool} could not be run for ${what} (${run.error.message})`);
+  if (run.status !== 0)
+    throw new WasmEmitError(`${tool} failed for ${what}: ${run.stderr.toString().trim()}`);
+}
+
+/** The runtime (yk.c, unchanged) and the setjmp shim, compiled for wasm32-wasi, once per directory. */
+function wasmRuntimeObjects(tc: WasmToolchain, dir: string): string[] {
+  const yk = join(dir, "yk.o");
+  const shim = join(dir, "sjlj.o");
+  if (!existsSync(yk)) {
+    const common = [`--target=${WASM_TRIPLE}`, `--sysroot=${tc.sysroot}`, "-O2", "-c"];
+    mkdirSync(join(dir, "include"), { recursive: true });
+    writeFileSync(join(dir, "include", "ucontext.h"), WASM_UCONTEXT_SHIM);
+    runTool(
+      tc.clang ?? "clang",
+      [
+        ...common,
+        "-std=c11",
+        "-I",
+        join(dir, "include"),
+        "-mllvm",
+        "-wasm-enable-sjlj",
+        RUNTIME_SOURCE,
+        "-o",
+        yk,
+      ],
+      "the runtime",
+    );
+    writeFileSync(join(dir, "sjlj.c"), WASM_SJLJ_SHIM);
+    runTool(tc.clang ?? "clang", [...common, join(dir, "sjlj.c"), "-o", shim], "the setjmp shim");
+  }
+  return [yk, shim];
+}
+
+/**
+ * A boxed graph lowered to a WASI command module: the function, the runtime and wasi-libc in one
+ * linear memory. The command reads one call per line on stdin, its arguments in the runtime's text
+ * form (`yk_read`), and writes each result (`yk_write`). An uncaught throw ends it with exit code
+ * 70 and `Uncaught <value>` on stderr. It also exports the function, `f(i64, …) -> i64` on boxed
+ * values. Refusals are emitLlvmBoxed's (LlvmEmitError); a missing tool is a WasmEmitError.
+ */
+export function emitWasmBoxed(source: DucGraph, tc: WasmToolchain, work?: string): Uint8Array {
+  const coroutine = coroutineMode(source);
+  if (coroutine !== undefined)
+    throw new WasmEmitError(
+      `an ${coroutine} function needs its own stack, and wasm has no stack switching here (WASI has no ucontext)`,
+    );
+  const m = emitLlvmBoxed(source);
+  const dir = work ?? mkdtempSync(join(tmpdir(), "duc-wasm-"));
+  const [yk, shim] = wasmRuntimeObjects(tc, dir);
+  // Each build has its own directory and fixed file names: wasm-ld writes the output's name into
+  // the module (its name section), and the same graph must give the same bytes.
+  const build = mkdtempSync(join(dir, "build-"));
+  const fo = join(build, "f.o");
+  writeFileSync(
+    fo,
+    compileObject(m, { target: WASM_TRIPLE, ...(tc.llc !== undefined ? { llc: tc.llc } : {}) }),
+  );
+  const n = m.params.length;
+  const main = join(dir, `main-${n}.c`);
+  if (!existsSync(`${main}.o`)) {
+    writeFileSync(
+      main,
+      [
+        "#include <stdio.h>",
+        "#include <stdint.h>",
+        "typedef uint64_t yk;",
+        `extern yk ${m.symbol}(${Array(n).fill("yk").join(", ") || "void"});`,
+        "yk yk_read(FILE *); void yk_write(FILE *, yk);",
+        `int main(void) { for (;;) { ${Array.from({ length: n }, (_, i) => `yk a${i} = yk_read(stdin);`).join(" ")} yk_write(stdout, ${m.symbol}(${Array.from({ length: n }, (_, i) => `a${i}`).join(", ")})); fputc('\\n', stdout); fflush(stdout); } }`,
+      ].join("\n"),
+    );
+    runTool(
+      tc.clang ?? "clang",
+      [`--target=${WASM_TRIPLE}`, `--sysroot=${tc.sysroot}`, "-O2", "-c", main, "-o", `${main}.o`],
+      "the command's main",
+    );
+  }
+  const out = join(build, "module.wasm");
+  const lib = join(tc.sysroot, "lib", "wasm32-wasi");
+  runTool(
+    tc.wasmLd ?? "wasm-ld",
+    [
+      join(lib, "crt1-command.o"),
+      `${main}.o`,
+      fo,
+      yk as string,
+      shim as string,
+      `-L${lib}`,
+      "-lc",
+      "-lsetjmp",
+      tc.builtins,
+      `--export=${m.symbol}`,
+      "-o",
+      out,
+    ],
+    "the module",
+  );
+  return new Uint8Array(readFileSync(out));
 }
