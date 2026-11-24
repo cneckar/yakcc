@@ -1,0 +1,167 @@
+{
+ "id": "issn-valid",
+ "cases": [
+  {
+   "args": [
+    "0378-5955"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "03785955"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2434-561X"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2434-561x"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0378-5954"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0378 5955"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0378-59555"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "7265-3059"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2873-3631"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "8713-7158"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "9641-7799"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "8808-9146"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1395-7224"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0317-8986"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "3045-4766"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "4274-8359"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "3877-3191"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "6892-5168"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "6551-2603"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1594-2648"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2103-7038"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0745-4705"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "8486-5942"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "6702-1868"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "5899-9367"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0647-0193"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "9130-1240"
+   ],
+   "returns": false
+  }
+ ]
+}

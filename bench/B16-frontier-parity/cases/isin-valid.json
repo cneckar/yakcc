@@ -1,0 +1,89 @@
+{
+ "id": "isin-valid",
+ "cases": [
+  {
+   "args": [
+    "US0378331005"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "US0378331004"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "AU0000XVGZA3"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "us0378331005"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "GB0002634946"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "US037833100"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "DE000BAY0017"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "US5949181047"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "GB0002634949"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "US5949181045"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "DE000BAY0010"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "AU0000XVGZA4"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "US5949181043"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "GB0002634944"
+   ],
+   "returns": false
+  }
+ ]
+}

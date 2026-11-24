@@ -1,0 +1,167 @@
+{
+ "id": "iban-valid",
+ "cases": [
+  {
+   "args": [
+    "GB82WEST12345698765432"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "GB82 WEST 1234 5698 7654 32"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "gb82west12345698765432"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "GB82WEST12345698765433"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "DE89370400440532013000"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "DE89-3704-0044-0532-0130-00"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "FR1420041010050500013M02606"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "NO9386011117947"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "MT84MALT011000012345MTLCAST001S"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "XX82WEST12345698765432"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "GB82WEST1234569876543"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "DE8937040044053201300A"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "FR1420041010050500013M12606"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "NO3386011117947"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "NL91ABNY0417164300"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "FR1420041510050500013M02606"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "FR1420041010050500010M02606"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "NL91ABNA0417164300"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "FR1520041010050500013M02606"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "NO9386011817947"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "DE89370470440532013000"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "NL91AXNA0417164300"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "FR1420041010050506013M02606"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "GB82WEST72345698765432"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "BE68539007547034"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "NL31ABNA0417164300"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "DE89370400440532513000"
+   ],
+   "returns": false
+  }
+ ]
+}

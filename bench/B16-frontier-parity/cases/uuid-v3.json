@@ -1,0 +1,173 @@
+{
+ "id": "uuid-v3",
+ "cases": [
+  {
+   "args": [
+    "www.example.com",
+    "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+   ],
+   "returns": "5df41881-3aed-3515-88a7-2f4a814cf09e"
+  },
+  {
+   "args": [
+    "",
+    "6ba7b811-9dad-11d1-80b4-00c04fd430c8"
+   ],
+   "returns": "14cdb9b4-de01-3faa-aff5-65bc2f771745"
+  },
+  {
+   "args": [
+    "é漢😀",
+    "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+   ],
+   "returns": "c5fc40fe-e8db-3124-a9c6-2d1a009351ba"
+  },
+  {
+   "args": [
+    "x",
+    "not-a-uuid"
+   ],
+   "throws": true
+  },
+  {
+   "args": [
+    "b漢A//y~.😀a.\"\nB",
+    "02c3aa8c-9dc4-4472-a15a-f90fe9b4ec71"
+   ],
+   "returns": "6ac5797e-b467-30c2-8528-624d67be107c"
+  },
+  {
+   "args": [
+    "_\n é\n9c1yc\nAcAAa-\"z/xz~. ",
+    "83d96e34-51cb-4c0b-a4f6-2826615cf0f1"
+   ],
+   "returns": "07bbe3cd-93e4-3fff-bc18-77524294d26f"
+  },
+  {
+   "args": [
+    "b -z ",
+    "c968cf37-b850-43f9-a4c3-a989b78edec5"
+   ],
+   "returns": "2812cdd7-72b8-3a03-9a9a-c89e6d74a276"
+  },
+  {
+   "args": [
+    "xa\n  \n-./A0 ",
+    "4aa86d4a-0724-488e-ad6f-a8c78a94307c"
+   ],
+   "returns": "0f5454e0-c10e-32ec-96cb-c4f33dcad1bc"
+  },
+  {
+   "args": [
+    "A~..C\n.AAA\"  \t 0azBy' '1漢cz-B\tx\tB _b_Aa9é'100  A9x😀Cc\"\" AA_",
+    "5f312ac0-dbda-41b1-ae52-05c2b2c6c115"
+   ],
+   "returns": "c0ca46d5-307d-3308-affb-e5146f52b90a"
+  },
+  {
+   "args": [
+    "0. 'x-_bbc\t1\n\" C1x \tx bbyy😀\tb~\n\"1yA  éB漢_9za-1c 😀z0B'\t-b0~c",
+    "cf93c482-f4e0-4169-a091-11a926d5ae1f"
+   ],
+   "returns": "aef88f27-c8ce-30f9-89ab-c67f3b2d6ac4"
+  },
+  {
+   "args": [
+    "c漢~\"_9bby\"cb\"A\tza/B \"Bbz a\ty\"\n漢-",
+    "57d5cc4d-0a35-4cac-aee1-b8a33e44cd86"
+   ],
+   "returns": "84c7df99-1bb0-3981-9252-53444d40c158"
+  },
+  {
+   "args": [
+    ".Ba\t9B9A\n/'  ~ b",
+    "ba303064-cfb5-444f-ab36-a9242d0485e0"
+   ],
+   "returns": "c776b243-83a7-396f-a3d0-3922d24767be"
+  },
+  {
+   "args": [
+    "y\"-C漢/C-bzbC.y9c\ny9./éA_/A9-~ x  .axxy'\"/_99b0/1. C a\n",
+    "a1a41910-777c-482d-abf8-ec081695072f"
+   ],
+   "returns": "ce64234c-c8f1-33fb-a54c-5fd1cf132743"
+  },
+  {
+   "args": [
+    "b .漢 y 漢\t.漢__ 09z_/._~a'\tbCzB.éCBy/'C/éx_",
+    "d6cbd18b-71e8-4ff2-a72b-02b1f9cf038f"
+   ],
+   "returns": "daea7d7c-a3c5-3842-9b9b-9c9f727bc501"
+  },
+  {
+   "args": [
+    "Azbxaé~B~9\nA1éC\t11x漢1 😀 C漢 \t/  c\"漢\t9 ~é'\n漢B\n._1_",
+    "956bbdd0-17fa-42fe-a80c-f6ccc62c36bd"
+   ],
+   "returns": "40e2081a-62e4-38ba-9524-0161ca0df508"
+  },
+  {
+   "args": [
+    "\"b\n\t\n_Ca_\tAaé",
+    "aa65e8c2-7e7f-4b63-a1b6-f6dda856e131"
+   ],
+   "returns": "964f256b-6409-3ede-85ad-2990c7ba935b"
+  },
+  {
+   "args": [
+    "9abaC9漢",
+    "35f725b2-5c36-43ff-a6c7-0e00880dd958"
+   ],
+   "returns": "6f843f05-bdb7-3b14-b8b4-c673d08c04b0"
+  },
+  {
+   "args": [
+    "yCc\t0Ba \t_ab-9b.zCA\nB\" \t",
+    "9661fd76-72b3-4689-afca-0396128e66b4"
+   ],
+   "returns": "ad35fdcd-86a6-3e8f-916f-d2910f5ab05d"
+  },
+  {
+   "args": [
+    " /_--/b ..ya/10漢9漢_A~9éC0c😀 ~-9-y'cA-9_'😀😀xz 漢0漢B'byéc 漢 é",
+    "e9461af3-fcc0-4b18-a21b-d56db39da3ca"
+   ],
+   "returns": "ab1123dc-67b9-3787-834f-e559f0553982"
+  },
+  {
+   "args": [
+    "_0b1Aa_é\n_\taca\tba'/1AA 😀y",
+    "70c00757-a132-454e-ac4a-f284ae6fc7b5"
+   ],
+   "returns": "d7bb05fc-bceb-369f-b8a2-e44eb3b0518d"
+  },
+  {
+   "args": [
+    "b0.- 90-😀_-\t😀",
+    "41984bcc-dc28-4b48-a808-d9acc8a37c99"
+   ],
+   "returns": "80c969db-3755-3a1d-b630-5d8498e98c11"
+  },
+  {
+   "args": [
+    "",
+    "fb9dc066-b1e3-4f6b-a047-b976cb87f947"
+   ],
+   "returns": "35a900d5-1cbc-3a51-90f3-0509d9f446b7"
+  },
+  {
+   "args": [
+    "9\nCA0漢BA._z",
+    "42e83580-b569-4ab6-ae97-717cb214dddb"
+   ],
+   "returns": "20da8306-557a-32b6-9aa0-0d7b721759b6"
+  },
+  {
+   "args": [
+    "\nxBa\t\"C_BA0é",
+    "3714bfdf-7f43-4040-ae3d-d8e0fcc1220d"
+   ],
+   "returns": "d58695e5-d1ef-32cf-9cc1-964e27db3157"
+  }
+ ]
+}

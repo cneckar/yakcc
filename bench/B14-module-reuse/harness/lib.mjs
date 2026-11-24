@@ -163,14 +163,17 @@ export const isTargetEntry = (task, e) =>
   e.sourceFile === task.lib.file && e.name === task.lib.name;
 
 /** The scratch arm: one call, the model writes everything. */
-export async function runScratch({ task, client }) {
+export async function runScratch({ task, client, score: scoreFn = scoreSolution }) {
   const t0 = Date.now();
   const r = await client.complete(scratchPrompt(task));
-  const score = scoreSolution(task, extractCode(r.text));
+  const code = extractCode(r.text);
+  const score = scoreFn(task, code);
   return {
     arm: "scratch",
     task: task.id,
     ...score,
+    code,
+    stopReason: r.stopReason ?? null,
     inputTokens: r.inputTokens,
     outputTokens: r.outputTokens,
     turns: 1,
@@ -194,6 +197,8 @@ export async function runReuse({
   k = 5,
   route = false,
   routeLines = ROUTE_LINES,
+  // The scorer (task, code, reuse?) → { pass, ... }; B16 passes one that counts every case.
+  score: scoreFn = scoreSolution,
 }) {
   const t0 = Date.now();
   let inputTokens = 0;
@@ -209,7 +214,8 @@ export async function runReuse({
   const arm = route ? "routed" : "reuse";
   const first = (await call(route ? routePrompt(task, routeLines) : needPrompt(task))).trim();
   if (route && /```/.test(first)) {
-    const score = scoreSolution(task, extractCode(first));
+    const code = extractCode(first);
+    const score = scoreFn(task, code);
     return {
       arm,
       task: task.id,
@@ -219,6 +225,7 @@ export async function runReuse({
       turns,
       ms: Date.now() - t0,
       routedTo: "write",
+      code,
       need: null,
       targetShown: false,
       picked: null,
@@ -237,10 +244,10 @@ export async function runReuse({
   let score;
   if (picked) {
     code = extractCode(await call(gluePrompt(task, picked.name, rootSourceOf(picked.id))));
-    score = scoreSolution(task, code, { file: picked.sourceFile, name: picked.name });
+    score = scoreFn(task, code, { file: picked.sourceFile, name: picked.name });
   } else {
     code = extractCode(await call(scratchPrompt(task)));
-    score = scoreSolution(task, code);
+    score = scoreFn(task, code);
   }
   return {
     arm,
@@ -251,6 +258,7 @@ export async function runReuse({
     turns,
     ms: Date.now() - t0,
     ...(route ? { routedTo: "search" } : {}),
+    code,
     need: needText.slice(0, 300),
     targetShown: shown.some((e) => isTargetEntry(task, e)),
     picked: picked?.id ?? null,
