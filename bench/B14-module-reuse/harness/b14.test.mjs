@@ -158,7 +158,8 @@ describe("arms (scripted client)", () => {
     assert.equal(r.routedTo, "write");
     assert.equal(r.turns, 1);
     assert.equal(r.pass, true);
-    assert.match(c.prompts[0], /about 60 lines/);
+    assert.match(c.prompts[0], /about 15 lines/);
+    assert.match(routePrompt(s, 20), /about 20 lines/);
   });
   it("routed: a reply without code is the need, and the reuse path continues", async () => {
     const c = scripted([
