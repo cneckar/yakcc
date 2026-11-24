@@ -72,7 +72,8 @@ async function main() {
   ).descriptions;
   const callableCards = cards.filter((c) => c.callable);
   const emb = await embedder();
-  const textOf = (c) => cardText(c.doc || !descriptions[c.id] ? c : { ...c, doc: descriptions[c.id] });
+  const textOf = (c) =>
+    cardText(c.doc || !descriptions[c.id] ? c : { ...c, doc: descriptions[c.id] });
   const ids = callableCards.map((c) => c.id);
   const vecs = [];
   for (const c of callableCards) vecs.push(await emb.embed(textOf(c)));
@@ -101,7 +102,8 @@ async function main() {
 
   const rows = [];
   for (const [qi, q] of queries.entries()) {
-    if (qi % 10 === 0) console.error(`${qi}/${queries.length} ${Math.round((Date.now() - t0) / 1000)}s`);
+    if (qi % 10 === 0)
+      console.error(`${qi}/${queries.length} ${Math.round((Date.now() - t0) / 1000)}s`);
     const impl = impls[q.id];
     const nc = standaloneCallable(impl.code, impl.name);
     const row = { query: q.id, name: impl.name };
@@ -146,7 +148,10 @@ async function main() {
     row.targetCounterexamples = tn?.verdict === "near" ? tn.counterexamples : undefined;
     row.otherEquivalent = neighbors
       .filter((n) => n.id !== target.id && n.verdict === "equivalent")
-      .map((n) => ({ id: n.id, sameName: atoms.find((a) => a.id === n.id).card.name === target.card.name }));
+      .map((n) => ({
+        id: n.id,
+        sameName: atoms.find((a) => a.id === n.id).card.name === target.card.name,
+      }));
     row.topVerdict = neighbors[0]?.verdict ?? null;
     row.topIsTarget = neighbors[0]?.id === target.id;
 
@@ -164,7 +169,9 @@ async function main() {
       ...(target.card.examples ?? []).map((e) => e.args).filter((args) => fitsTypes(args, types)),
     ]);
     const targetRun = runInputs(target.callable, inputs);
-    row.mutants = killed.map((mc) => verdict(compareRuns(inputs, runInputs(mc, inputs), targetRun)));
+    row.mutants = killed.map((mc) =>
+      verdict(compareRuns(inputs, runInputs(mc, inputs), targetRun)),
+    );
   }
 
   const summary = summarize(rows, k);
@@ -182,7 +189,8 @@ const median = (xs) => {
 
 export function summarize(rows, k) {
   const scored = rows.filter((r) => !r.skipped);
-  const frac = (f, of = scored) => (of.length ? +(of.filter(f).length / of.length).toFixed(3) : null);
+  const frac = (f, of = scored) =>
+    of.length ? +(of.filter(f).length / of.length).toFixed(3) : null;
   const within = (r, key) => r[key] !== null && r[key] <= k;
   const verdicts = {};
   for (const r of scored) verdicts[r.targetVerdict] = (verdicts[r.targetVerdict] ?? 0) + 1;
@@ -212,14 +220,23 @@ export function summarize(rows, k) {
     otherEquivalent: {
       queriesWithAny: frac((r) => r.otherEquivalent.length > 0),
       total: scored.reduce((n, r) => n + r.otherEquivalent.length, 0),
-      sameNameAsTarget: scored.reduce((n, r) => n + r.otherEquivalent.filter((o) => o.sameName).length, 0),
+      sameNameAsTarget: scored.reduce(
+        (n, r) => n + r.otherEquivalent.filter((o) => o.sameName).length,
+        0,
+      ),
     },
     speed: {
       pairs: timed.length,
       newFaster: frac((r) => r.targetTiming.ratio < 1, timed),
-      medianNewOverStored: timed.length ? +median(timed.map((r) => r.targetTiming.ratio)).toFixed(2) : null,
+      medianNewOverStored: timed.length
+        ? +median(timed.map((r) => r.targetTiming.ratio)).toFixed(2)
+        : null,
     },
-    mutants: { total: mutants.length, verdicts: mv, falseEquivalent: mutants.length ? +((mv.equivalent ?? 0) / mutants.length).toFixed(3) : null },
+    mutants: {
+      total: mutants.length,
+      verdicts: mv,
+      falseEquivalent: mutants.length ? +((mv.equivalent ?? 0) / mutants.length).toFixed(3) : null,
+    },
   };
 }
 

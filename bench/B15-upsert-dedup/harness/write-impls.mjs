@@ -11,7 +11,6 @@ process.env.TZ = "UTC";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { extractCode } from "../../B14-module-reuse/harness/lib.mjs";
 import {
   DEFAULT_MODEL,
   checkBudget,
@@ -20,6 +19,7 @@ import {
   mapLimit,
   modelClient,
 } from "../../B12-need-to-code/harness/model.mjs";
+import { extractCode } from "../../B14-module-reuse/harness/lib.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const bench = resolve(here, "..");
@@ -81,7 +81,9 @@ async function main() {
   });
   const out = join(bench, "results", "impls.json");
   writeFileSync(out, `${JSON.stringify({ model, usage: client.usage, impls }, null, 2)}\n`);
-  console.log(`wrote ${Object.keys(impls).length} implementations; usage ${JSON.stringify(client.usage)}`);
+  console.log(
+    `wrote ${Object.keys(impls).length} implementations; usage ${JSON.stringify(client.usage)}`,
+  );
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

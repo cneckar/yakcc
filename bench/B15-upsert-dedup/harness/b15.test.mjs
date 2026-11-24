@@ -20,8 +20,8 @@ import {
   upsertCheck,
   verdict,
 } from "./dedup.mjs";
-import { fnName, implPrompt } from "./write-impls.mjs";
 import { summarize } from "./run.mjs";
+import { fnName, implPrompt } from "./write-impls.mjs";
 
 const fn = (code) => {
   const c = standaloneCallable(code);
@@ -33,9 +33,15 @@ const reverseLoop = fn(
 );
 const reverseSplit = fn("export function r(s) { return String(s).split('').reverse().join(''); }");
 const upper = fn("export function up(s) { return String(s).toUpperCase(); }");
-const sumTo = fn("export function sum(n) { let t = 0; for (let i = 1; i <= n; i++) t += i; return t; }");
-const sumClosed = fn("export function s(n) { return n >= 1 ? Math.floor(n) * (Math.floor(n) + 1) / 2 : 0; }");
-const sumOffByOne = fn("export function s(n) { let t = 0; for (let i = 1; i < n; i++) t += i; return t; }");
+const sumTo = fn(
+  "export function sum(n) { let t = 0; for (let i = 1; i <= n; i++) t += i; return t; }",
+);
+const sumClosed = fn(
+  "export function s(n) { return n >= 1 ? Math.floor(n) * (Math.floor(n) + 1) / 2 : 0; }",
+);
+const sumOffByOne = fn(
+  "export function s(n) { let t = 0; for (let i = 1; i < n; i++) t += i; return t; }",
+);
 const nothing = fn("export function f() { return undefined; }");
 
 const cmp = (a, b, types = ["string"]) => {

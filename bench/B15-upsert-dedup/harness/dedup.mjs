@@ -162,7 +162,8 @@ export function fitsType(v, type) {
   if (!kinds.has(kindOf(v))) return false;
   const t = String(type).trim();
   const elem = /^(?:readonly\s+)?(.+)\[\]$/.exec(t)?.[1] ?? /^Array<(.+)>$/.exec(t)?.[1];
-  if (Array.isArray(v) && elem && !/\|/.test(t)) return v.every((x) => fitsType(x, elem.replace(/^\((.*)\)$/, "$1")));
+  if (Array.isArray(v) && elem && !/\|/.test(t))
+    return v.every((x) => fitsType(x, elem.replace(/^\((.*)\)$/, "$1")));
   return true;
 }
 
@@ -265,7 +266,9 @@ export function upsertCheck({
     ]);
     const all = compareRuns(inputs, runInputs(newCallable, inputs), runInputs(a.callable, inputs));
     const ex =
-      exampleArgs.length > 0 ? compareRuns(exampleArgs, newEx, runInputs(a.callable, exampleArgs)) : null;
+      exampleArgs.length > 0
+        ? compareRuns(exampleArgs, newEx, runInputs(a.callable, exampleArgs))
+        : null;
     const v = verdict(all, ex);
     let timing = null;
     if (v === "equivalent" || v === "near") {
