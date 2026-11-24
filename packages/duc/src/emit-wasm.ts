@@ -24,6 +24,7 @@ import { emitLlvmBoxed } from "./emit-llvm-boxed.js";
 import { type DucType, parseType } from "./infer-types.js";
 import { bodyPathOf, joinOwners, sidePath } from "./line-form.js";
 import { RUNTIME_SOURCE, compileObject } from "./native.js";
+import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
 import { paramIndex } from "./params.js";
 import { type ScopeItem, scopePlanner } from "./scopes.js";
@@ -215,7 +216,9 @@ function wtype(t: DucType | undefined, what: string): WType {
 }
 
 /** The graph lowered to a WebAssembly module exporting `f`. Throws WasmEmitError outside the subset. */
-export function emitWasm(source: DucGraph, signature: WasmSignature): WasmModule {
+export function emitWasm(input: DucGraph, signature: WasmSignature): WasmModule {
+  // ECMAScript's operations: each generic operation as the case of them it is (#1310).
+  const source = ecmaScriptView(input);
   if (source.mode !== undefined)
     throw new WasmEmitError(`an ${source.mode} function has no form here`);
   if (source.obs.length !== 1) throw new WasmEmitError("the subset has exactly one result");
@@ -779,7 +782,8 @@ function wasmRuntimeObjects(tc: WasmToolchain, dir: string): string[] {
  * 70 and `Uncaught <value>` on stderr. It also exports the function, `f(i64, …) -> i64` on boxed
  * values. Refusals are emitLlvmBoxed's (LlvmEmitError); a missing tool is a WasmEmitError.
  */
-export function emitWasmBoxed(source: DucGraph, tc: WasmToolchain, work?: string): Uint8Array {
+export function emitWasmBoxed(input: DucGraph, tc: WasmToolchain, work?: string): Uint8Array {
+  const source = ecmaScriptView(input);
   const coroutine = coroutineMode(source);
   if (coroutine !== undefined)
     throw new WasmEmitError(
