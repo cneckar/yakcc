@@ -2,7 +2,9 @@
 // The C front end's musl harness (raise-c*.test.ts): a closure of musl functions shaved from the
 // vendored sources (#1365). Each root, each function its atoms call, and each static they use is
 // found in musl's own src/ and shaved, to a fixpoint; what is left is the leaves.
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ShavedUnit, shaveCUnit } from "../raise-c.js";
 
@@ -14,7 +16,6 @@ export const MUSL_ARGS = [
   "-nostdinc",
   "-ffreestanding",
   "-D_XOPEN_SOURCE=700",
-  "-D_GNU_SOURCE",
   "-mlong-double-64",
   `-I${MUSL}yakcc`,
   `-I${MUSL}arch/x86_64`,
@@ -90,13 +91,17 @@ export function shaveMusl(roots: readonly string[]): {
   const refused: string[] = [];
   const missing = new Set<string>();
   const seen = new Set<string>();
+  const weakIn = new Map<string, string>();
   const todo = [...roots];
   const unitName = (f: string): string => f.slice(MUSL.length);
   while (todo.length > 0) {
     const name = todo.pop() as string;
     if (seen.has(name) || atoms.has(name) || MUSL_LEAVES.has(name)) continue;
     seen.add(name);
-    const file = definingFile(name);
+    // A weak alias in a file already shaved (`weak_alias(dummy, __aio_close)`) is what a static
+    // link uses when nothing else brings the strong definition in; mallocng's are overrides.
+    const file =
+      (OVERRIDES[name] === undefined ? weakIn.get(name) : undefined) ?? definingFile(name);
     if (file === undefined || !existsSync(file)) {
       missing.add(name);
       continue;
@@ -105,6 +110,8 @@ export function shaveMusl(roots: readonly string[]): {
       readFileSync(file, "utf8"),
     )?.[1];
     const unit = shaveCUnit(file, [alias ?? name], MUSL_ARGS, "clang", unitName(file));
+    for (const m of readFileSync(file, "utf8").matchAll(/weak_alias\(\w+,\s*(\w+)\)/g))
+      if (!weakIn.has(m[1] as string)) weakIn.set(m[1] as string, file);
     units.push(unit);
     for (const [k, r] of unit.refused) refused.push(`${k} (${unitName(file)}): ${r}`);
     for (const [k, a] of unit.atoms) {
@@ -113,6 +120,13 @@ export function shaveMusl(roots: readonly string[]): {
     }
     if (alias !== undefined && unit.atoms.has(alias))
       atoms.set(name, unit.atoms.get(alias) as never);
+    // Functions that statics' initializers name (a FILE's write and seek).
+    const follow = (u: ShavedUnit): void => {
+      for (const [k, a] of u.atoms) if (!atoms.has(k)) atoms.set(k, a);
+      for (const d of u.statics.values())
+        for (const item of d.init) if ("fn" in item && !atoms.has(item.fn)) todo.push(item.fn);
+    };
+    follow(unit);
     // Statics this unit uses that another unit defines: shave their definitions.
     const defined = new Set(units.flatMap((u) => [...u.statics.keys()]));
     for (const key of unit.staticRefs) {
@@ -122,9 +136,86 @@ export function shaveMusl(roots: readonly string[]): {
         missing.add(key);
         continue;
       }
-      units.push(shaveCUnit(f, [], MUSL_ARGS, "clang", unitName(f), [key]));
+      const defining = shaveCUnit(f, [], MUSL_ARGS, "clang", unitName(f), [key]);
+      units.push(defining);
+      for (const [k, r] of defining.refused) refused.push(`${k} (${unitName(f)}): ${r}`);
+      follow(defining);
+      for (const a of defining.atoms.values())
+        for (const x of a.externals) if (!atoms.has(x)) todo.push(x);
       defined.add(key);
     }
   }
   return { atoms, units, refused, missing: [...missing] };
+}
+
+/** What musl's process start sets up (the auxiliary vector, the page size), as a C function. */
+export const MUSL_INIT = fileURLToPath(new URL("./c/musl-init.c", import.meta.url));
+
+/** The leaves in C over the host: the system call (brk and mremap refused, as createCSystem). */
+const NATIVE_LEAVES = `#define _GNU_SOURCE
+#include <errno.h>
+#include <stdint.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+long __yk_syscall(long n, long a, long b, long c, long d, long e, long f) {
+  if (n == SYS_brk) return 0; /* as the JavaScript leaf: no break, so malloc maps */
+  if (n == SYS_mremap) return -12;
+  long r = syscall(n, a, b, c, d, e, f);
+  return r == -1 ? -(long)errno : r;
+}
+int *___errno_location(void) { return &errno; } /* musl's internal name for errno */
+static _Alignas(64) unsigned char tp[4096];
+uintptr_t __yk_tp(void) { *(uintptr_t *)tp = (uintptr_t)tp; return (uintptr_t)tp; }
+`;
+
+/**
+ * The oracle for a shaved closure: the same musl sources compiled natively (they take the host
+ * libc's names over), the leaves in C, and a driver (`main`, which writes with write(2) only).
+ * errno stays the host's (musl's would replace it for the whole process). Returns the program.
+ */
+export function buildMuslNative(
+  units: readonly Pick<ShavedUnit, "file">[],
+  work: string,
+  name: string,
+  driver: string,
+): string {
+  const files = [...new Set(units.map((u) => u.file))].filter(
+    (f) => !f.endsWith("__errno_location.c"),
+  );
+  const objs = files.map((f, i) => {
+    const o = join(work, `${name}-${i}.o`);
+    execFileSync("clang", [...MUSL_ARGS, "-O0", "-fno-builtin", "-fwrapv", "-c", f, "-o", o]);
+    return o;
+  });
+  const leaves = join(work, `${name}-leaves.c`);
+  writeFileSync(leaves, NATIVE_LEAVES);
+  const main = join(work, `${name}-driver.c`);
+  writeFileSync(main, driver);
+  const exe = join(work, name);
+  // Names the shaved side has as builtins (fabsl) are calls natively: add their musl files.
+  for (let round = 0; ; round++) {
+    try {
+      execFileSync("clang", ["-std=c11", "-O0", "-fno-builtin", main, leaves, ...objs, "-o", exe], {
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      return exe;
+    } catch (e) {
+      const err = String((e as { stderr?: unknown }).stderr ?? e);
+      const names = [
+        ...new Set(
+          [...err.matchAll(/undefined reference to `([^']+)'/g)].map((m) => m[1] as string),
+        ),
+      ];
+      const more = names
+        .map((n) => definingFile(n))
+        .filter((f): f is string => f !== undefined && !files.includes(f));
+      if (round > 8 || more.length === 0) throw e;
+      for (const f of new Set(more)) {
+        files.push(f);
+        const o = join(work, `${name}-${files.length}.o`);
+        execFileSync("clang", [...MUSL_ARGS, "-O0", "-fno-builtin", "-fwrapv", "-c", f, "-o", o]);
+        objs.push(o);
+      }
+    }
+  }
 }

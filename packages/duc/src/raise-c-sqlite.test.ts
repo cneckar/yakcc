@@ -86,7 +86,7 @@ describe.skipIf(!hasClang)("SQLite's record helpers, shaved from the amalgamatio
   it("every root, and every function it calls, shaves with no refusal", () => {
     expect([...unit.refused, ...libc.flatMap((u) => [...u.refused])]).toEqual([]);
     expect([...unit.atoms.keys()]).toEqual(
-      expect.arrayContaining([...ROOTS, "putVarint64", "serialGet"]),
+      expect.arrayContaining([...ROOTS, "putVarint64__sqlite3", "serialGet__sqlite3"]),
     );
     // What SQLite calls and does not define is the C library's: linked to musl's atoms.
     const externals = new Set([...unit.atoms.values()].flatMap((a) => a.externals));

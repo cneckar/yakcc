@@ -57,6 +57,7 @@ const FIXTURE_FNS = [
   "yk_state",
   "yk_varargs",
   "yk_bits",
+  "yk_switch",
   "yk_cmp_int",
   "yk_cmp_bytes",
 ];
@@ -83,17 +84,20 @@ describe.skipIf(!hasClang)("C's memory: musl's string functions and qsort, and a
         "strcmp",
         "__qsort_r",
         "qsort",
-        "sift",
-        "trinkle",
-        "cycle",
-        "pntz",
-        "a_ctz_64",
-        "wrapper_cmp",
+        // qsort.c's static functions: keyed with their unit's name.
+        "sift__qsort",
+        "trinkle__qsort",
+        "cycle__qsort",
+        "pntz__qsort",
+        "a_ctz_64__qsort",
+        "wrapper_cmp__qsort_nr",
         ...FIXTURE_FNS,
       ]),
     );
     // qsort's cycle calls memcpy: an external reference, linked to memcpy's atom.
-    expect(atoms.get("cycle") && units[4]?.atoms.get("cycle")?.externals).toEqual(["memcpy"]);
+    expect(atoms.get("cycle__qsort") && units[4]?.atoms.get("cycle__qsort")?.externals).toEqual([
+      "memcpy",
+    ]);
     expect(units[5]?.atoms.get("qsort")?.externals).toEqual(["__qsort_r"]);
   });
 
@@ -188,6 +192,7 @@ double yk_struct_walk(struct pt *, int);
 ${["yk_local_struct", "yk_string_sum", "yk_local_array", "yk_swap", "yk_char_array"].map((n) => `int ${n}(int${n === "yk_swap" ? ", int" : ""});`).join("\n")}
 long yk_ptr_diff(int);
 int yk_goto(int, int);
+int yk_switch(int, int);
 int yk_state(int);
 int yk_varargs(int, int);
 int yk_bits(int, int);
@@ -234,6 +239,7 @@ int main(void) {
       if (!strcmp(op, "yk_state")) r = yk_state(a);
       if (!strcmp(op, "yk_varargs")) r = yk_varargs(a, b);
       if (!strcmp(op, "yk_bits")) r = yk_bits(a, b);
+      if (!strcmp(op, "yk_switch")) r = yk_switch(a, b);
       printf("%ld\\n", r);
     }
   }
@@ -364,6 +370,7 @@ int main(void) {
       "yk_state",
       "yk_varargs",
       "yk_bits",
+      "yk_switch",
     ])
       xs.forEach((x, k) => {
         const y = xs[(k * 7 + 3) % xs.length] as number;

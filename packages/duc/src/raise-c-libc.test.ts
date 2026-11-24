@@ -6,13 +6,13 @@
 // allocations, reallocations and frees runs on both; each step's result (the usable size, the
 // alignment, every live block still holding its own bytes) must be the same.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import fc from "fast-check";
 import { afterAll, describe, expect, it } from "vitest";
 import { type Fn, link } from "./__fixtures__/c-link.js";
-import { MUSL, MUSL_ARGS, shaveMusl } from "./__fixtures__/c-musl.js";
+import { MUSL_ARGS, MUSL_INIT, buildMuslNative, shaveMusl } from "./__fixtures__/c-musl.js";
 import { createCMemory, createCSystem, shaveCUnit } from "./raise-c.js";
 
 const hasClang = (() => {
@@ -35,12 +35,9 @@ const ROOTS = [
   "calloc",
 ];
 
-// What musl's process start sets up (the auxiliary vector, the page size), as a shaved function.
-const INIT = new URL("./__fixtures__/c/musl-init.c", import.meta.url).pathname;
-
 describe.skipIf(!hasClang)("musl's mallocng, shaved down to the system-call leaf", () => {
   const closure = shaveMusl(ROOTS);
-  const init = shaveCUnit(INIT, ["yk_musl_init"], MUSL_ARGS, "clang", "musl-init.c");
+  const init = shaveCUnit(MUSL_INIT, ["yk_musl_init"], MUSL_ARGS, "clang", "musl-init.c");
   closure.atoms.set("yk_musl_init", init.atoms.get("yk_musl_init") as never);
   closure.units.push(init);
 
@@ -68,39 +65,12 @@ describe.skipIf(!hasClang)("musl's mallocng, shaved down to the system-call leaf
     ) as Op[];
 
   // The native side: the closure's files compiled from the same sources, with the leaves in C.
-  const exe = join(work, "malloc");
+  let exe = "";
   const build = (): void => {
-    // errno is the leaves file's natively (musl's would replace the host's for the whole process).
-    const files = [...new Set(closure.units.map((u) => u.file))].filter(
-      (f) => !f.endsWith("__errno_location.c"),
-    );
-    const objs = files.map((f, i) => {
-      const o = join(work, `m${i}.o`);
-      execFileSync("clang", [...MUSL_ARGS, "-O0", "-fno-builtin", "-fwrapv", "-c", f, "-o", o]);
-      return o;
-    });
-    const leaves = join(work, "leaves.c");
-    writeFileSync(
-      leaves,
-      `#define _GNU_SOURCE
-#include <errno.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <sys/syscall.h>
-long __yk_syscall(long n, long a, long b, long c, long d, long e, long f) {
-  if (n == SYS_brk) return 0; /* as the JavaScript leaf: no break, so malloc maps */
-  if (n == SYS_mremap) return -12;
-  long r = syscall(n, a, b, c, d, e, f);
-  return r == -1 ? -(long)errno : r;
-}
-int *___errno_location(void) { static int e; return &e; }
-static _Alignas(64) unsigned char tp[4096];
-uintptr_t __yk_tp(void) { *(uintptr_t *)tp = (uintptr_t)tp; return (uintptr_t)tp; }
-`,
-    );
-    const driver = join(work, "driver.c");
-    writeFileSync(
-      driver,
+    exe = buildMuslNative(
+      closure.units,
+      work,
+      "malloc",
       `#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -131,7 +101,6 @@ int main(void) {
 }
 `,
     );
-    execFileSync("clang", ["-std=c11", "-O0", driver, leaves, ...objs, "-o", exe]);
   };
 
   /** The same steps on the shaved atoms. */
@@ -218,5 +187,4 @@ int main(void) {
       expect(memory.get(q, n).every((b) => b === 0)).toBe(true);
     }
   });
-  void MUSL;
 });

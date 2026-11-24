@@ -109,11 +109,20 @@ function readJsonValue(text: string, at: number): [unknown, number] {
  * `inner`.
  */
 const initItems = (n: ClangNode): readonly ClangNode[] =>
-  n.array_filler !== undefined ? n.array_filler.slice(1) : (n.inner ?? []);
+  (n.array_filler !== undefined ? n.array_filler.slice(1) : (n.inner ?? [])).map(unbrace);
+
+/** A character array's string in braces (`char x[16] = {"0123.."}`) is the string. */
+const unbrace = (n: ClangNode): ClangNode => {
+  if (n.kind !== "InitListExpr" || n.array_filler !== undefined) return n;
+  const only = n.inner?.length === 1 ? (n.inner[0] as ClangNode) : undefined;
+  return only?.kind === "StringLiteral" && /\[\d*\]$/.test(n.type?.qualType ?? "") ? only : n;
+};
 
 /** A variable declaration's initializer: its child that is not an attribute (`__attribute__((visibility))` comes first). */
-const initOf = (d: ClangNode): ClangNode | undefined =>
-  (d.inner ?? []).find((c) => !c.kind.endsWith("Attr") && c.kind !== "FullComment");
+const initOf = (d: ClangNode): ClangNode | undefined => {
+  const i = (d.inner ?? []).find((c) => !c.kind.endsWith("Attr") && c.kind !== "FullComment");
+  return i === undefined ? undefined : unbrace(i);
+};
 
 const body = (fn: ClangNode): ClangNode | undefined =>
   fn.inner?.find((c) => c.kind === "CompoundStmt");
@@ -171,6 +180,42 @@ let unitTypedef: TypedefResolver = () => undefined;
 let unitLayout: LayoutResolver = () => undefined;
 // Whether the unit is parsed with -mlong-double-64 (long double is IEEE double).
 let unitLongDouble64 = false;
+/** The unit's enumeration constants, by name (UnitTypes.enumValue). */
+let unitEnumValue: (name: string) => bigint | undefined = () => undefined;
+/** The unit's offsetof values (UnitTypes.offsetOf). */
+let unitOffsetOf: (e: ClangNode) => number | undefined = () => undefined;
+
+/** A node's source range as offsets only (clang's JSON leaves out a location's repeated parts). */
+export function rangeKey(e: ClangNode): string {
+  const r = (e as { range?: Record<string, Record<string, unknown>> }).range ?? {};
+  const at = (l: Record<string, unknown> | undefined): string =>
+    [
+      l?.offset,
+      (l?.spellingLoc as { offset?: number })?.offset,
+      (l?.expansionLoc as { offset?: number })?.offset,
+    ].join(",");
+  return `${at(r.begin)};${at(r.end)}`;
+}
+
+/** The offset of `struct x, a.b[2].c` (as clang's -ast-print writes offsetof) from the layouts. */
+function offsetOfDesignator(type: string, path: string): number | undefined {
+  let t = parseType(type.trim());
+  let offset = 0;
+  for (const part of path.trim().match(/\.?[A-Za-z_]\w*|\[\s*\d+\s*\]/g) ?? []) {
+    if (part.startsWith("[")) {
+      if (t.k !== "arr") return undefined;
+      t = t.of;
+      offset += Number(part.slice(1, -1)) * sizeOf(t);
+      continue;
+    }
+    if (t.k !== "rec") return undefined;
+    const field = unitLayout(t.name)?.fields.get(part.replace(/^\./, ""));
+    if (field === undefined) return undefined;
+    offset += field.offset;
+    t = parseType(field.type);
+  }
+  return offset;
+}
 const localTypedefs = new Map<string, string>();
 
 /** The C library's fixed typedefs on LP64, for a unit whose headers clang did not show. */
@@ -571,6 +616,10 @@ export interface UnitTypes {
   readonly static?: (decl: ClangNode, fn?: string) => string | undefined;
   /** The unit is parsed with clang's -mlong-double-64: long double is double. */
   readonly longDouble64?: boolean;
+  /** An enumeration constant's value, by its name (one scope in C; ids differ between dumps). */
+  readonly enumValue?: (name: string) => bigint | undefined;
+  /** An offsetof expression's value (clang's JSON does not say which member). */
+  readonly offsetOf?: (e: ClangNode) => number | undefined;
 }
 
 /**
@@ -773,11 +822,15 @@ export function raiseCFunction(
   unitTypedef = types.typedef ?? (() => undefined);
   unitLayout = types.layout ?? (() => undefined);
   unitLongDouble64 = types.longDouble64 === true;
+  const savedEnum = [unitEnumValue, unitOffsetOf] as const;
+  unitEnumValue = types.enumValue ?? (() => undefined);
+  unitOffsetOf = types.offsetOf ?? (() => undefined);
   localTypedefs.clear();
   try {
     return raiseBody(fn, resolve, externals, resolveGlobal, types.static);
   } finally {
     [unitTypedef, unitLayout, unitLongDouble64] = saved;
+    [unitEnumValue, unitOffsetOf] = savedEnum;
     localTypedefs.clear();
   }
 }
@@ -829,7 +882,24 @@ function raiseBody(
         return s.kind === "UnaryOperator" && s.opcode === "&";
       })();
     if (n.kind === "UnaryOperator" && n.opcode === "&" && !viaDeref) {
-      const target = stripParens((n.inner ?? [])[0] as ClangNode);
+      // The address of a variable, or of an element or member of one (`&buf[12]`, `&s.f`).
+      let target = stripParens((n.inner ?? [])[0] as ClangNode);
+      for (;;) {
+        const base = (target.inner ?? [])[0];
+        if (
+          target.kind === "ArraySubscriptExpr" &&
+          base?.kind === "ImplicitCastExpr" &&
+          base.castKind === "ArrayToPointerDecay"
+        )
+          target = stripParens((base.inner ?? [])[0] as ClangNode);
+        else if (
+          target.kind === "MemberExpr" &&
+          (target as { isArrow?: boolean }).isArrow !== true &&
+          base !== undefined
+        )
+          target = stripParens(base);
+        else break;
+      }
       if (target.kind === "DeclRefExpr") inMemory.add(target.referencedDecl?.id ?? "");
     }
     const writes =
@@ -1128,7 +1198,8 @@ function raiseBody(
         return Object.is(v, -0) ? "-0" : String(v);
       }
       case "StringLiteral":
-        return JSON.stringify(JSON.parse(e.value ?? '""'));
+        // A string as an array's value (an initializer): its bytes, with the NUL.
+        return `[${cStringBytes(e.value ?? '""').join(", ")}]`;
       case "CXXBoolLiteralExpr":
         return e.value === "true" || (e as { value?: unknown }).value === true ? "true" : "false";
       case "ImplicitValueInitExpr":
@@ -1137,6 +1208,11 @@ function raiseBody(
         const arg = (e as { argType?: { qualType: string; desugaredQualType?: string } }).argType;
         const t = arg !== undefined ? ctype(arg) : typeOf(k0);
         const v = e.name === "sizeof" ? sizeOf(t) : alignOf(t);
+        return wide(typeOf(e)) ? `${v}n` : String(v);
+      }
+      case "OffsetOfExpr": {
+        const v = unitOffsetOf(e);
+        if (v === undefined) throw new RaiseCError("an offsetof whose member is not known");
         return wide(typeOf(e)) ? `${v}n` : String(v);
       }
       case "DeclRefExpr": {
@@ -1152,8 +1228,12 @@ function raiseBody(
           externals.add(d.name ?? "");
           return `__ykFnAddr(${ident(d.name ?? "")})`;
         }
-        if (d.kind === "EnumConstantDecl")
-          throw new RaiseCError("an enumeration constant is not raised yet");
+        if (d.kind === "EnumConstantDecl") {
+          const v = unitEnumValue(d.name ?? "");
+          if (v === undefined)
+            throw new RaiseCError(`the enumeration constant ${d.name} has no value`);
+          return wide(typeOf(e)) ? `${v}n` : String(v);
+        }
         return read(place(e));
       }
       case "ImplicitCastExpr":
@@ -1531,7 +1611,107 @@ function raiseBody(
   }
 
   let switchType: CType | undefined;
+  /**
+   * The switch being dispatched (see SwitchStmt): its target variable, its jump variable, its
+   * targets' numbers, and how many loops or switches of its body the statement is inside.
+   */
+  let dispatch:
+    | {
+        sw: string;
+        j: string;
+        targets: Map<ClangNode, number>;
+        depth: number;
+        continues: boolean;
+        /** The jumps out of the body (gotos), each made after it when the jump code is 3 + its index. */
+        exits: string[];
+      }
+    | undefined;
   const stmt = (s: ClangNode): void => {
+    if (
+      dispatch !== undefined &&
+      ["ForStmt", "WhileStmt", "DoStmt", "SwitchStmt"].includes(s.kind)
+    ) {
+      const d = dispatch;
+      d.depth++;
+      try {
+        stmtOf(s);
+      } finally {
+        d.depth--;
+      }
+      return;
+    }
+    if (dispatch !== undefined && dispatch.depth === 0 && s.kind === "ReturnStmt") {
+      // A return out of a dispatched switch's body: made after the body, as a goto out is (the
+      // value is the same there: nothing runs between).
+      const d = dispatch;
+      const at = lines.length;
+      stmtOf(s);
+      const jump = lines.splice(at).join("\n");
+      const code = d.exits.push(jump) - 1;
+      push(`${d.sw} = -1; ${d.j} = ${code + 3};`);
+      return;
+    }
+    stmtOf(s);
+  };
+  /** Whether `s` has a jump of a dispatched switch's body (not of a loop or switch inside it). */
+  const bodyJump = (s: ClangNode): boolean => {
+    if (["BreakStmt", "ContinueStmt", "GotoStmt", "ReturnStmt"].includes(s.kind)) return true;
+    if (["ForStmt", "WhileStmt", "DoStmt", "SwitchStmt"].includes(s.kind)) return false;
+    return (s.inner ?? []).some(bodyJump);
+  };
+  /** A dispatched statement: run while the target is 0 (reached), entered toward a target in it. */
+  const guarded = (s: ClangNode): void => {
+    const d = dispatch as NonNullable<typeof dispatch>;
+    const inside = (n: ClangNode): number[] => [
+      ...(d.targets.has(n) ? [d.targets.get(n) as number] : []),
+      ...(n.inner ?? []).flatMap(inside),
+    ];
+    const here = inside(s);
+    const jumps = ["BreakStmt", "ContinueStmt", "GotoStmt", "ReturnStmt"].includes(s.kind);
+    if (here.length === 0 && (jumps || !bodyJump(s))) {
+      if (s.kind === "NullStmt") return;
+      if (s.kind === "DeclStmt")
+        throw new RaiseCError("a declaration in a switch body entered at a nested case");
+      push(`if (${d.sw} === 0) {`);
+      stmt(s);
+      push("}");
+      return;
+    }
+    const k = d.targets.get(s);
+    if (k !== undefined || s.kind === "LabelStmt") {
+      // Reached (a goto's target in this pass, too): the goto's jump code is spent.
+      if (k !== undefined) push(`if (${d.sw} === ${k}) { ${d.sw} = 0; ${d.j} = 0; }`);
+      const kids = s.inner ?? [];
+      guarded(
+        (s.kind === "DefaultStmt" || s.kind === "LabelStmt"
+          ? kids[0]
+          : kids[kids.length - 1]) as ClangNode,
+      );
+      return;
+    }
+    if (s.kind === "CompoundStmt") {
+      push("{");
+      for (const c of s.inner ?? []) guarded(c);
+      push("}");
+      return;
+    }
+    if (s.kind === "IfStmt") {
+      const [c, then, otherwise] = (s.inner ?? []) as [ClangNode, ClangNode, ClangNode?];
+      const into = inside(then).map((t) => `${d.sw} === ${t}`);
+      push(
+        `if (${d.sw} === 0 ? ${cond(c)} : ${into.length > 0 ? `(${into.join(" || ")})` : "false"}) {`,
+      );
+      guarded(then);
+      if (otherwise !== undefined) {
+        push("} else {");
+        guarded(otherwise);
+      }
+      push("}");
+      return;
+    }
+    throw new RaiseCError(`a case label, goto target or jump inside a ${s.kind} of a switch body`);
+  };
+  const stmtOf = (s: ClangNode): void => {
     const kids = s.inner ?? [];
     switch (s.kind) {
       case "CompoundStmt": {
@@ -1606,18 +1786,34 @@ function raiseBody(
       }
       case "GotoStmt": {
         const target = (s as { targetLabelDeclId?: string }).targetLabelDeclId ?? "";
+        if (dispatch !== undefined) {
+          const d = dispatch;
+          const k = [...d.targets].find(([n]) => (n as { declId?: string }).declId === target)?.[1];
+          if (k !== undefined) {
+            if (d.depth > 0)
+              throw new RaiseCError("a goto into a switch body from a loop inside it");
+            push(`${d.sw} = ${k}; ${d.j} = 2;`);
+            return;
+          }
+        }
         const enter = enterLabels.get(target);
         if (enter !== undefined) {
           push(`${enter} = true;`);
           return;
         }
         const fwd = forwardLabels.get(target);
-        if (fwd !== undefined) {
-          push(`break ${fwd};`);
+        if (fwd === undefined && !continueLabels.has(target))
+          throw new RaiseCError("a goto into a block, or out of it");
+        const jump = fwd !== undefined ? `break ${fwd};` : "continue;";
+        // Out of a dispatched switch's body: a jump code, the jump made after the body.
+        if (dispatch !== undefined && dispatch.depth === 0) {
+          const d = dispatch;
+          let code = d.exits.indexOf(jump);
+          if (code < 0) code = d.exits.push(jump) - 1;
+          push(`${d.sw} = -1; ${d.j} = ${code + 3};`);
           return;
         }
-        if (!continueLabels.has(target)) throw new RaiseCError("a goto into a block, or out of it");
-        push("continue;");
+        push(jump);
         return;
       }
       case "LabelStmt":
@@ -1782,13 +1978,70 @@ function raiseBody(
         return;
       }
       case "BreakStmt":
-        push("break;");
+        // Out of a dispatched switch's body: what follows is skipped.
+        if (dispatch !== undefined && dispatch.depth === 0) push(`${dispatch.sw} = -1;`);
+        else push("break;");
         return;
       case "ContinueStmt":
+        if (dispatch !== undefined && dispatch.depth === 0) {
+          dispatch.continues = true;
+          push(`${dispatch.sw} = -1; ${dispatch.j} = 1;`);
+          return;
+        }
         push("continue;");
         return;
       case "SwitchStmt": {
         const [c, b] = kids as [ClangNode, ClangNode];
+        // Case labels inside the body's statements (`if (0) { case 'o': .. }`), or gotos to
+        // labels of the body: the case is a number, and the body runs once, each statement
+        // when the number is 0 and entered toward its target otherwise. A jump of the body sets
+        // the number to -1, which skips the rest (no JavaScript jump, which the lifter would
+        // have to carry through every statement after it): a break, a continue of the loop
+        // outside, a goto out and a return also set a jump code, made after the body; a goto to
+        // a label of the body sets the number to the label's, and the body runs again.
+        const targets = dispatchTargets(b);
+        if (targets.length > 0) {
+          const outer = dispatch;
+          if (outer !== undefined) throw new RaiseCError("a dispatched switch inside another");
+          const sw = `__sw${temps++}`;
+          const j = `__j${temps++}`;
+          top.push(`let ${sw} = -1;`, `let ${j} = 0;`);
+          const t = typeOf(c);
+          push(`${sw} = -1;`);
+          push(`switch (${expr(c)}) {`);
+          targets.forEach((n, i) => {
+            if (n.kind === "CaseStmt") {
+              const v = (n.inner ?? [])[0] as ClangNode;
+              if ((n.inner ?? []).length !== 2) throw new RaiseCError("a case range");
+              push(`case ${convert(expr(v), typeOf(v), t)}: ${sw} = ${i + 1}; break;`);
+            } else if (n.kind === "DefaultStmt") push(`default: ${sw} = ${i + 1}; break;`);
+          });
+          push("}");
+          const again = targets.some((n) => n.kind === "LabelStmt");
+          if (again) push("while (true) {");
+          push(`${j} = 0;`);
+          const d = {
+            sw,
+            j,
+            targets: new Map(targets.map((n, i) => [n, i + 1] as const)),
+            depth: 0,
+            continues: false,
+            exits: [] as string[],
+          };
+          dispatch = d;
+          try {
+            guarded(b);
+          } finally {
+            dispatch = outer;
+          }
+          if (again) {
+            push(`if (${j} !== 2) break;`);
+            push("}");
+          }
+          if (d.continues) push(`if (${j} === 1) continue;`);
+          d.exits.forEach((jump, i) => push(`if (${j} === ${i + 3}) ${jump}`));
+          return;
+        }
         const outer = switchType;
         switchType = typeOf(c);
         push(`switch (${expr(c)}) {`);
@@ -1939,6 +2192,44 @@ function gotosInTail(s: ClangNode, label: string): boolean {
   }
 }
 
+/**
+ * The places a switch's dispatch enters its body (SwitchStmt), in order, when a case label is
+ * inside a statement of the body or a goto in the body names a label of it: the case labels
+ * (not those of a switch inside), and the labels gotos in the body name (not inside a loop or
+ * switch of it). None when every case label is one of the body's own statements.
+ */
+function dispatchTargets(body: ClangNode): ClangNode[] {
+  const gotos = new Set<string>();
+  const collect = (s: ClangNode): void => {
+    if (s.kind === "GotoStmt")
+      gotos.add((s as { targetLabelDeclId?: string }).targetLabelDeclId ?? "");
+    for (const k of s.inner ?? []) collect(k);
+  };
+  collect(body);
+  const out: ClangNode[] = [];
+  let nested = false;
+  const walk = (s: ClangNode, inLoop: boolean, top: boolean): void => {
+    if (s.kind === "SwitchStmt") return;
+    const isCase = s.kind === "CaseStmt" || s.kind === "DefaultStmt";
+    if (isCase) {
+      out.push(s);
+      if (!top) nested = true;
+    }
+    if (s.kind === "LabelStmt" && !inLoop && gotos.has((s as { declId?: string }).declId ?? "")) {
+      out.push(s);
+      nested = true;
+    }
+    const loop = ["ForStmt", "WhileStmt", "DoStmt"].includes(s.kind);
+    const kids = s.inner ?? [];
+    kids.forEach((k, i) =>
+      walk(k, inLoop || loop, top && (isCase || s.kind === "LabelStmt") && i === kids.length - 1),
+    );
+  };
+  if (body.kind === "CompoundStmt") for (const k of body.inner ?? []) walk(k, false, true);
+  else walk(body, false, false);
+  return nested ? out : [];
+}
+
 /** Whether `s` has a break or continue that leaves it (not one of a loop or switch inside it). */
 function escapingJump(s: ClangNode, inSwitch = false): boolean {
   if (s.kind === "ContinueStmt") return true;
@@ -2049,8 +2340,14 @@ export function shaveCUnit(
     if (known !== undefined) return known;
     const decl = lookup(c);
     if (decl === undefined) return undefined;
-    let key = ident(c.name);
-    for (let n = 2; found.has(key); n++) key = `${ident(c.name)}_${n}`;
+    // A static function's name is its unit's alone (strtol.c's strtox is not strtod.c's): its key
+    // carries the unit's.
+    const base =
+      decl.kind === "FunctionDecl" && decl.storageClass === "static"
+        ? `${ident(c.name)}__${ident((unit.split("/").pop() ?? unit).replace(/\.\w+$/, ""))}`
+        : ident(c.name);
+    let key = base;
+    for (let n = 2; found.has(key); n++) key = `${base}_${n}`;
     found.set(key, decl);
     keyOf.set(sig(c.name, c.type), key);
     return key;
@@ -2075,6 +2372,73 @@ export function shaveCUnit(
     };
     for (const n of nodes) walk(n, false);
     return hit;
+  };
+  // The whole unit's declarations, read once, when an enumeration constant or offsetof is used.
+  let whole: ClangNode | undefined;
+  const wholeUnit = (): ClangNode => {
+    whole ??= JSON.parse(
+      execFileSync(clang, [...args, "-fsyntax-only", "-Xclang", "-ast-dump=json", file], {
+        encoding: "utf8",
+        maxBuffer: 1 << 30,
+        stdio: ["ignore", "pipe", "ignore"],
+      }),
+    ) as ClangNode;
+    return whole;
+  };
+  // offsetof: clang's -ast-print writes each one's member, in the order of the unit's nodes.
+  let offsets: Map<string, [string, string]> | undefined;
+  const offsetOf = (e: ClangNode): number | undefined => {
+    if (offsets === undefined) {
+      const printed = execFileSync(
+        clang,
+        [...args, "-fsyntax-only", "-Xclang", "-ast-print", file],
+        {
+          encoding: "utf8",
+          maxBuffer: 1 << 30,
+          stdio: ["ignore", "pipe", "ignore"],
+        },
+      );
+      const written = [...printed.matchAll(/__builtin_offsetof\(([^,()]+),([^()]*)\)/g)].map(
+        (m) => [m[1] as string, m[2] as string] as [string, string],
+      );
+      const nodes: ClangNode[] = [];
+      const walk = (v: unknown): void => {
+        if (Array.isArray(v)) for (const x of v) walk(x);
+        else if (v !== null && typeof v === "object") {
+          if ((v as ClangNode).kind === "OffsetOfExpr") nodes.push(v as ClangNode);
+          for (const x of Object.values(v)) walk(x);
+        }
+      };
+      walk(wholeUnit());
+      offsets = new Map();
+      if (nodes.length === written.length)
+        nodes.forEach((n, i) => offsets?.set(rangeKey(n), written[i] as [string, string]));
+    }
+    const d = offsets.get(rangeKey(e));
+    return d === undefined ? undefined : offsetOfDesignator(...d);
+  };
+  // Enumeration constants, from the whole unit's declarations.
+  let enums: Map<string, bigint> | undefined;
+  const enumValue = (name: string): bigint | undefined => {
+    if (enums === undefined) {
+      const values = new Map<string, bigint>();
+      const walk = (n: ClangNode): void => {
+        if (n.kind === "EnumDecl") {
+          let next = 0n;
+          for (const c of n.inner ?? []) {
+            if (c.kind !== "EnumConstantDecl") continue;
+            const v = (c.inner ?? []).find((k) => k.kind === "ConstantExpr")?.value;
+            if (v !== undefined) next = BigInt(v);
+            values.set(c.name ?? "", next);
+            next += 1n;
+          }
+        }
+        for (const k of n.inner ?? []) walk(k);
+      };
+      walk(wholeUnit());
+      enums = values;
+    }
+    return enums.get(name);
   };
   const typedef: TypedefResolver = (name) => {
     let hit: string | undefined;
@@ -2167,6 +2531,22 @@ export function shaveCUnit(
     }
     return key;
   };
+  // Statics another unit uses and this one defines (first: the functions their initializers
+  // name in this unit are then raised with the rest).
+  if (defineStatics.length > 0) {
+    const saved = [unitTypedef, unitLayout, unitLongDouble64, unitEnumValue, unitOffsetOf] as const;
+    unitTypedef = typedef;
+    unitLayout = layout;
+    unitLongDouble64 = args.includes("-mlong-double-64");
+    unitEnumValue = enumValue;
+    unitOffsetOf = offsetOf;
+    try {
+      for (const name of defineStatics)
+        staticHook({ kind: "VarDecl", name, type: { qualType: "" } } as ClangNode);
+    } finally {
+      [unitTypedef, unitLayout, unitLongDouble64, unitEnumValue, unitOffsetOf] = saved;
+    }
+  }
   const atoms = new Map<string, { source: string; externals: string[] }>();
   const refused = new Map<string, string>();
   const done = new Set<string>();
@@ -2184,25 +2564,14 @@ export function shaveCUnit(
             layout,
             static: staticHook,
             longDouble64: args.includes("-mlong-double-64"),
+            enumValue,
+            offsetOf,
           }),
           externals: [...externals],
         });
       } catch (e) {
         refused.set(key, e instanceof Error ? e.message : String(e));
       }
-    }
-  }
-  // Statics another unit uses and this one defines.
-  if (defineStatics.length > 0) {
-    const saved = [unitTypedef, unitLayout, unitLongDouble64] as const;
-    unitTypedef = typedef;
-    unitLayout = layout;
-    unitLongDouble64 = args.includes("-mlong-double-64");
-    try {
-      for (const name of defineStatics)
-        staticHook({ kind: "VarDecl", name, type: { qualType: "" } } as ClangNode);
-    } finally {
-      [unitTypedef, unitLayout, unitLongDouble64] = saved;
     }
   }
   return {
@@ -2244,6 +2613,12 @@ function staticDefinition(
         return scalar(k0);
       case "IntegerLiteral":
         return { k: "v", v: BigInt(e.value ?? "0") };
+      case "DeclRefExpr": {
+        const d = e.referencedDecl as ClangNode;
+        const v = d.kind === "EnumConstantDecl" ? unitEnumValue(d.name ?? "") : undefined;
+        if (v === undefined) break;
+        return { k: "v", v };
+      }
       case "CharacterLiteral":
         return { k: "v", v: BigInt(Number(e.value)) };
       case "FloatingLiteral":
@@ -2252,6 +2627,11 @@ function staticDefinition(
         const arg = (e as { argType?: { qualType: string; desugaredQualType?: string } }).argType;
         const at = arg !== undefined ? ctype(arg) : typeOf(k0);
         return { k: "v", v: BigInt(e.name === "sizeof" ? sizeOf(at) : alignOf(at)) };
+      }
+      case "OffsetOfExpr": {
+        const v = unitOffsetOf(e);
+        if (v === undefined) throw new RaiseCError("an offsetof whose member is not known");
+        return { k: "v", v: BigInt(v) };
       }
       case "ImplicitCastExpr":
       case "CStyleCastExpr": {

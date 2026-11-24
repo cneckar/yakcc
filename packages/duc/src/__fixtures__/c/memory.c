@@ -197,3 +197,38 @@ int yk_bits(int x, int y) {
   int last = (f.b = x);
   return f.a + f.b * 10 + (int)(f.c % 100000) + f.d * 7 + f.e * 1000 + last * 3;
 }
+
+/* A switch whose case labels are inside its statements (musl's vfprintf), a goto back to a label
+ * of its body, a continue of the loop outside it, a default, and a goto out. */
+int yk_switch(int a, int b) {
+  static const char ops[] = "npxodu cmsC!z";
+  int n = 0, r = 0;
+  for (int k = 0; k < 6; k++) {
+    char c = ops[(unsigned)(a + k * b) % 13];
+    if (c == '!' && b > 5) goto overflow;
+    switch (c) {
+    case 'n': n++; continue;
+    case 'p': r = 2;
+    case 'x': r += 3;
+      if (0) {
+    case 'o': r = 5;
+      } if (0) {
+    case 'd': r = 7;
+    case 'u': r += 1;
+      }
+      if (r > 40 + b) goto overflow;
+      break;
+    narrow_c:
+    case 'c': r = r * 2 + 9; break;
+    case 'm': if (1) r = 4; else
+    case 's': r = 6;
+      break;
+    case 'C': if (!(b & 1)) goto narrow_c; r = 11; continue;
+    default: r -= 1;
+    }
+    n += r;
+  }
+  return n;
+overflow:
+  return -n - 1;
+}
