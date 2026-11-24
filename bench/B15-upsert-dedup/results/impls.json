@@ -1,0 +1,1270 @@
+{
+  "model": "claude-haiku-5-5",
+  "usage": {
+    "inputTokens": 64739,
+    "outputTokens": 206095,
+    "calls": 210
+  },
+  "impls": {
+    "nodes-of-edge-list": {
+      "name": "nodesOfEdgeList",
+      "code": "export function nodesOfEdgeList(edges: [string, string][]): string[] {\n  const seen = new Set<string>();\n  const result: string[] = [];\n  for (const [from, to] of edges) {\n    if (!seen.has(from)) {\n      seen.add(from);\n      result.push(from);\n    }\n    if (!seen.has(to)) {\n      seen.add(to);\n      result.push(to);\n    }\n  }\n  return result;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 153
+    },
+    "adjacency-from-edges": {
+      "name": "adjacencyFromEdges",
+      "code": "export function adjacencyFromEdges(edges: [string, string][]): Map<string, Set<string>> {\n  const adj = new Map<string, Set<string>>();\n  for (const [from, to] of edges) {\n    if (!adj.has(from)) adj.set(from, new Set<string>());\n    if (!adj.has(to)) adj.set(to, new Set<string>());\n    adj.get(from)!.add(to);\n  }\n  return adj;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 285
+    },
+    "bytes-to-base64": {
+      "name": "bytesToBase64",
+      "code": "export function bytesToBase64(bytes: number[]): string {\n  const alphabet = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\";\n  let out = \"\";\n  let i = 0;\n  while (i < bytes.length) {\n    const b0 = bytes[i] & 0xff;\n    const hasB1 = i + 1 < bytes.length;\n    const hasB2 = i + 2 < bytes.length;\n    const b1 = hasB1 ? bytes[i + 1] & 0xff : 0;\n    const b2 = hasB2 ? bytes[i + 2] & 0xff : 0;\n    const triple = (b0 << 16) | (b1 << 8) | b2;\n\n    out += alphabet[(triple >> 18) & 0x3f];\n    out += alphabet[(triple >> 12) & 0x3f];\n    out += hasB1 ? alphabet[(triple >> 6) & 0x3f] : \"=\";\n    out += hasB2 ? alphabet[triple & 0x3f] : \"=\";\n\n    i += 3;\n  }\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 399
+    },
+    "is-real-calendar-date": {
+      "name": "isRealCalendarDate",
+      "code": "export function isRealCalendarDate(year: number, month: number, day: number): boolean {\n  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {\n    return false;\n  }\n  if (month < 0 || month > 11) {\n    return false;\n  }\n  if (day < 1) {\n    return false;\n  }\n\n  const isLeap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;\n  const daysInMonth = [31, isLeap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];\n\n  return day <= daysInMonth[month];\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 240
+    },
+    "ms-between-dates": {
+      "name": "msBetweenDates",
+      "code": "export function msBetweenDates(later: Date, earlier: Date): number {\n  return later.getTime() - earlier.getTime();\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 53
+    },
+    "base64-encode-byte-range": {
+      "name": "base64EncodeByteRange",
+      "code": "export function base64EncodeByteRange(bytes: number[], start: number, end: number): string {\n  const alphabet = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\";\n  let out = \"\";\n  for (let i = start; i < end; i += 3) {\n    const b0 = bytes[i] & 0xff;\n    const b1 = bytes[i + 1] & 0xff;\n    const b2 = bytes[i + 2] & 0xff;\n    const n = (b0 << 16) | (b1 << 8) | b2;\n    out += alphabet[(n >> 18) & 0x3f];\n    out += alphabet[(n >> 12) & 0x3f];\n    out += alphabet[(n >> 6) & 0x3f];\n    out += alphabet[n & 0x3f];\n  }\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 498
+    },
+    "int24-to-base64-chars": {
+      "name": "int24ToBase64Chars",
+      "code": "const BASE64_ALPHABET =\n  \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\";\n\nexport function int24ToBase64Chars(value: number): string {\n  const v = value & 0xffffff;\n  return (\n    BASE64_ALPHABET[(v >>> 18) & 63] +\n    BASE64_ALPHABET[(v >>> 12) & 63] +\n    BASE64_ALPHABET[(v >>> 6) & 63] +\n    BASE64_ALPHABET[v & 63]\n  );\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 559
+    },
+    "zero-pad-number": {
+      "name": "zeroPadNumber",
+      "code": "export function zeroPadNumber(value: number, width: number): string {\n  const negative = value < 0;\n  const digits = String(Math.abs(value));\n  const padded = digits.length >= width ? digits : \"0\".repeat(width - digits.length) + digits;\n  return negative ? \"-\" + padded : padded;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 112
+    },
+    "duration-to-ms": {
+      "name": "durationToMs",
+      "code": "export function durationToMs(text: string): number | undefined {\n  const units = new Map<string, number>([\n    [\"ms\", 1],\n    [\"msec\", 1],\n    [\"msecs\", 1],\n    [\"millisecond\", 1],\n    [\"milliseconds\", 1],\n    [\"s\", 1000],\n    [\"sec\", 1000],\n    [\"secs\", 1000],\n    [\"second\", 1000],\n    [\"seconds\", 1000],\n    [\"m\", 60_000],\n    [\"min\", 60_000],\n    [\"mins\", 60_000],\n    [\"minute\", 60_000],\n    [\"minutes\", 60_000],\n    [\"h\", 3_600_000],\n    [\"hr\", 3_600_000],\n    [\"hrs\", 3_600_000],\n    [\"hour\", 3_600_000],\n    [\"hours\", 3_600_000],\n    [\"d\", 86_400_000],\n    [\"day\", 86_400_000],\n    [\"days\", 86_400_000],\n    [\"w\", 604_800_000],\n    [\"week\", 604_800_000],\n    [\"weeks\", 604_800_000],\n  ]);\n\n  const match = /^\\s*(\\d+(?:\\.\\d+)?|\\.\\d+)\\s*([a-zA-Z]+)\\s*$/.exec(text);\n  if (!match) {\n    return undefined;\n  }\n\n  const value = Number(match[1]);\n  const factor = units.get(match[2].toLowerCase());\n  if (factor === undefined || !Number.isFinite(value)) {\n    return undefined;\n  }\n\n  return value * factor;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 873
+    },
+    "order-by-dependencies": {
+      "name": "orderByDependencies",
+      "code": "export function orderByDependencies(nodes: string[], edges: [string, string][]): string[] {\n  const indegree = new Map<string, number>();\n  const adjacency = new Map<string, string[]>();\n\n  for (const node of nodes) {\n    if (!indegree.has(node)) {\n      indegree.set(node, 0);\n      adjacency.set(node, []);\n    }\n  }\n\n  for (const [from, to] of edges) {\n    if (!indegree.has(from) || !indegree.has(to)) {\n      throw new Error(`Edge references unknown node: [${from}, ${to}]`);\n    }\n    adjacency.get(from)!.push(to);\n    indegree.set(to, indegree.get(to)! + 1);\n  }\n\n  // Seed the queue with zero-indegree nodes in input order for stable results.\n  const queue: string[] = [];\n  for (const node of indegree.keys()) {\n    if (indegree.get(node) === 0) queue.push(node);\n  }\n\n  const result: string[] = [];\n  let head = 0;\n  while (head < queue.length) {\n    const node = queue[head++];\n    result.push(node);\n    for (const next of adjacency.get(node)!) {\n      const remaining = indegree.get(next)! - 1;\n      indegree.set(next, remaining);\n      if (remaining === 0) queue.push(next);\n    }\n  }\n\n  if (result.length !== indegree.size) {\n    throw new Error(\"Cycle detected in dependency edges\");\n  }\n\n  return result;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 893
+    },
+    "date-plus-days": {
+      "name": "datePlusDays",
+      "code": "export function datePlusDays(date: Date, days: number): Date {\n  const result = new Date(date.getTime());\n  result.setUTCDate(result.getUTCDate() + days);\n  return result;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 325
+    },
+    "ms-to-short-duration": {
+      "name": "msToShortDuration",
+      "code": "export function msToShortDuration(ms: number): string {\n  const SECOND = 1000;\n  const MINUTE = 60 * SECOND;\n  const HOUR = 60 * MINUTE;\n  const DAY = 24 * HOUR;\n\n  if (Math.abs(ms) < SECOND) {\n    return `${Math.round(ms)}ms`;\n  }\n\n  const units: Array<[number, string]> = [\n    [DAY, \"d\"],\n    [HOUR, \"h\"],\n    [MINUTE, \"m\"],\n    [SECOND, \"s\"],\n  ];\n\n  for (const [size, label] of units) {\n    const rounded = Math.round(ms / size);\n    if (Math.abs(rounded) >= 1) {\n      return `${rounded}${label}`;\n    }\n  }\n\n  return `${Math.round(ms)}ms`;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 870
+    },
+    "split-json-pointer": {
+      "name": "splitJsonPointer",
+      "code": "export function splitJsonPointer(pointer: string): string[] {\n  if (pointer === \"\") {\n    return [\"\"];\n  }\n  if (!pointer.startsWith(\"/\")) {\n    throw new Error(`Invalid JSON Pointer: must start with \"/\" or be empty, got \"${pointer}\"`);\n  }\n  return pointer.split(\"/\");\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 428
+    },
+    "cache-function-results": {
+      "name": "cacheFunctionResults",
+      "code": "export function cacheFunctionResults<A, R>(fn: (arg: A) => R): (arg: A) => R {\n  const cache = new Map<A, R>();\n\n  return (arg: A): R => {\n    if (cache.has(arg)) {\n      return cache.get(arg) as R;\n    }\n    const result = fn(arg);\n    cache.set(arg, result);\n    return result;\n  };\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 560
+    },
+    "parse-iso-date": {
+      "name": "parseIsoDate",
+      "code": "export function parseIsoDate(text: string): Date {\n  const m = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(text);\n  if (!m) return new Date(NaN);\n\n  const year = Number(m[1]);\n  const month = Number(m[2]);\n  const day = Number(m[3]);\n\n  if (month < 1 || month > 12 || day < 1) return new Date(NaN);\n\n  // setUTCFullYear avoids Date.UTC's mapping of years 0-99 to 1900-1999.\n  const d = new Date(0);\n  d.setUTCFullYear(year, month - 1, day);\n  d.setUTCHours(0, 0, 0, 0);\n\n  // Reject days that overflowed into the next month (e.g. Feb 29 in a non-leap year).\n  if (\n    d.getUTCFullYear() !== year ||\n    d.getUTCMonth() !== month - 1 ||\n    d.getUTCDate() !== day\n  ) {\n    return new Date(NaN);\n  }\n\n  return d;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 783
+    },
+    "unescape-pointer-token": {
+      "name": "unescapePointerToken",
+      "code": "export function unescapePointerToken(token: string): string {\n  return token.replace(/~[01]/g, (match) => (match === \"~1\" ? \"/\" : \"~\"));\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 351
+    },
+    "value-at-json-pointer": {
+      "name": "valueAtJsonPointer",
+      "code": "export function valueAtJsonPointer(doc: object, pointer: string): unknown {\n  if (pointer === \"\") {\n    return doc;\n  }\n  if (!pointer.startsWith(\"/\")) {\n    return undefined;\n  }\n\n  const tokens = pointer\n    .slice(1)\n    .split(\"/\")\n    .map((token) => token.replace(/~1/g, \"/\").replace(/~0/g, \"~\"));\n\n  let current: unknown = doc;\n\n  for (const token of tokens) {\n    if (Array.isArray(current)) {\n      if (!/^(0|[1-9]\\d*)$/.test(token)) {\n        return undefined;\n      }\n      const index = Number(token);\n      if (index >= current.length) {\n        return undefined;\n      }\n      current = current[index];\n    } else if (typeof current === \"object\" && current !== null) {\n      if (!Object.prototype.hasOwnProperty.call(current, token)) {\n        return undefined;\n      }\n      current = (current as Record<string, unknown>)[token];\n    } else {\n      return undefined;\n    }\n  }\n\n  return current;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 658
+    },
+    "compare-version-core": {
+      "name": "compareVersionCore",
+      "code": "export function compareVersionCore(a: string, b: string): -1 | 0 | 1 {\n  const parse = (v: string): [number, number, number] => {\n    let core = v.trim();\n    const plus = core.indexOf(\"+\");\n    if (plus !== -1) core = core.slice(0, plus);\n    const dash = core.indexOf(\"-\");\n    if (dash !== -1) core = core.slice(0, dash);\n    if (core.startsWith(\"v\") || core.startsWith(\"V\")) core = core.slice(1);\n\n    const parts = core.split(\".\");\n    const nums: number[] = [];\n    for (let i = 0; i < 3; i++) {\n      const n = parseInt(parts[i] ?? \"0\", 10);\n      nums.push(Number.isNaN(n) ? 0 : n);\n    }\n    return [nums[0], nums[1], nums[2]];\n  };\n\n  const pa = parse(a);\n  const pb = parse(b);\n\n  for (let i = 0; i < 3; i++) {\n    if (pa[i] < pb[i]) return -1;\n    if (pa[i] > pb[i]) return 1;\n  }\n  return 0;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 586
+    },
+    "bounded-recent-cache": {
+      "name": "boundedRecentCache",
+      "code": "export function boundedRecentCache(capacity: number = 100): {\n  get(key: unknown): unknown;\n  set(key: unknown, value: unknown): void;\n  has(key: unknown): boolean;\n  delete(key: unknown): boolean;\n  clear(): void;\n  readonly size: number;\n} {\n  if (!Number.isInteger(capacity) || capacity < 1) {\n    throw new RangeError(\"capacity must be a positive integer\");\n  }\n\n  // Map preserves insertion order: first key = least recently used,\n  // last key = most recently used.\n  const store = new Map<unknown, unknown>();\n\n  return {\n    get(key: unknown): unknown {\n      if (!store.has(key)) return undefined;\n      const value = store.get(key);\n      // Refresh recency by moving the entry to the end.\n      store.delete(key);\n      store.set(key, value);\n      return value;\n    },\n\n    set(key: unknown, value: unknown): void {\n      if (store.has(key)) {\n        store.delete(key);\n      } else if (store.size >= capacity) {\n        // Evict the least recently used entry (first in iteration order).\n        const oldest = store.keys().next().value;\n        store.delete(oldest);\n      }\n      store.set(key, value);\n    },\n\n    has(key: unknown): boolean {\n      return store.has(key);\n    },\n\n    delete(key: unknown): boolean {\n      return store.delete(key);\n    },\n\n    clear(): void {\n      store.clear();\n    },\n\n    get size(): number {\n      return store.size;\n    },\n  };\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 976
+    },
+    "edit-count-between-strings": {
+      "name": "editCountBetweenStrings",
+      "code": "export function editCountBetweenStrings(a: string, b: string): number {\n  // Ensure b is the shorter string to minimize memory usage\n  let s = a;\n  let t = b;\n  if (t.length > s.length) {\n    s = b;\n    t = a;\n  }\n  const n = s.length;\n  const m = t.length;\n  if (m === 0) return n;\n\n  let prev: number[] = new Array(m + 1);\n  let curr: number[] = new Array(m + 1);\n  for (let j = 0; j <= m; j++) prev[j] = j;\n\n  for (let i = 1; i <= n; i++) {\n    curr[0] = i;\n    const sc = s.charCodeAt(i - 1);\n    for (let j = 1; j <= m; j++) {\n      const cost = sc === t.charCodeAt(j - 1) ? 0 : 1;\n      const del = prev[j] + 1;\n      const ins = curr[j - 1] + 1;\n      const sub = prev[j - 1] + cost;\n      let best = del < ins ? del : ins;\n      if (sub < best) best = sub;\n      curr[j] = best;\n    }\n    const tmp = prev;\n    prev = curr;\n    curr = tmp;\n  }\n  return prev[m];\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 482
+    },
+    "compare-prerelease-identifiers": {
+      "name": "comparePrereleaseIdentifiers",
+      "code": "export function comparePrereleaseIdentifiers(a: string, b: string): -1 | 0 | 1 {\n  const isNumeric = (s: string): boolean => /^[0-9]+$/.test(s);\n\n  const aNum = isNumeric(a);\n  const bNum = isNumeric(b);\n\n  if (aNum && bNum) {\n    // Strip leading zeros (keeping at least one digit), then compare\n    // by length and lexicographically to avoid precision loss on large numbers.\n    const x = a.replace(/^0+(?=\\d)/, \"\");\n    const y = b.replace(/^0+(?=\\d)/, \"\");\n    if (x.length !== y.length) return x.length < y.length ? -1 : 1;\n    if (x === y) return 0;\n    return x < y ? -1 : 1;\n  }\n\n  // Numeric identifiers rank below alphanumeric identifiers.\n  if (aNum) return -1;\n  if (bNum) return 1;\n\n  // Both alphanumeric: compare as text.\n  if (a === b) return 0;\n  return a < b ? -1 : 1;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 860
+    },
+    "nearest-string": {
+      "name": "nearestString",
+      "code": "export function nearestString(word: string, candidates: string[]): string {\n  const levenshtein = (a: string, b: string): number => {\n    if (a === b) return 0;\n    if (a.length === 0) return b.length;\n    if (b.length === 0) return a.length;\n\n    let prev: number[] = new Array(b.length + 1);\n    let curr: number[] = new Array(b.length + 1);\n    for (let j = 0; j <= b.length; j++) prev[j] = j;\n\n    for (let i = 1; i <= a.length; i++) {\n      curr[0] = i;\n      for (let j = 1; j <= b.length; j++) {\n        const cost = a[i - 1] === b[j - 1] ? 0 : 1;\n        curr[j] = Math.min(\n          prev[j] + 1,\n          curr[j - 1] + 1,\n          prev[j - 1] + cost\n        );\n      }\n      [prev, curr] = [curr, prev];\n    }\n    return prev[b.length];\n  };\n\n  let best = \"\";\n  let bestDist = Infinity;\n  for (const candidate of candidates) {\n    const d = levenshtein(word, candidate);\n    if (d < bestDist) {\n      bestDist = d;\n      best = candidate;\n    }\n  }\n  return best;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 602
+    },
+    "is-uuid": {
+      "name": "isUuid",
+      "code": "export function isUuid(text: string): boolean {\n  const rfcUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\n  const nilUuid = /^0{8}-0{4}-0{4}-0{4}-0{12}$/;\n  const maxUuid = /^[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12}$/;\n  return rfcUuid.test(text) || nilUuid.test(text) || maxUuid.test(text);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 521
+    },
+    "bytes-to-uuid-text": {
+      "name": "bytesToUuidText",
+      "code": "export function bytesToUuidText(bytes: Uint8Array): string {\n  let hex = \"\";\n  for (let i = 0; i < bytes.length; i++) {\n    hex += bytes[i].toString(16).padStart(2, \"0\");\n  }\n  return (\n    hex.slice(0, 8) + \"-\" +\n    hex.slice(8, 12) + \"-\" +\n    hex.slice(12, 16) + \"-\" +\n    hex.slice(16, 20) + \"-\" +\n    hex.slice(20, 32)\n  );\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 299
+    },
+    "uuid-version-number": {
+      "name": "uuidVersionNumber",
+      "code": "export function uuidVersionNumber(uuid: string): number {\n  const pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-([0-9a-f])[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n  const match = pattern.exec(uuid);\n  if (match === null) {\n    throw new Error(`Not a valid UUID: ${uuid}`);\n  }\n  return parseInt(match[1], 16);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 471
+    },
+    "uuid-to-bytes": {
+      "name": "uuidToBytes",
+      "code": "export function uuidToBytes(uuid: string): Uint8Array {\n  const pattern =\n    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;\n  if (typeof uuid !== \"string\" || !pattern.test(uuid)) {\n    throw new TypeError(`Invalid UUID: ${String(uuid)}`);\n  }\n  const hex = uuid.replace(/-/g, \"\");\n  const out = new Uint8Array(16);\n  for (let i = 0; i < 16; i++) {\n    out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);\n  }\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 613
+    },
+    "bump-semver": {
+      "name": "bumpSemver",
+      "code": "export function bumpSemver(version: string, release: string): string {\n  const match = /^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$/.exec(version);\n  if (!match) {\n    throw new Error(`Invalid semantic version: ${version}`);\n  }\n\n  let major = Number(match[1]);\n  let minor = Number(match[2]);\n  let patch = Number(match[3]);\n\n  switch (release) {\n    case \"major\":\n      major += 1;\n      minor = 0;\n      patch = 0;\n      break;\n    case \"minor\":\n      minor += 1;\n      patch = 0;\n      break;\n    case \"patch\":\n      patch += 1;\n      break;\n    default:\n      throw new Error(`Invalid release type: ${release}`);\n  }\n\n  return `${major}.${minor}.${patch}`;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 481
+    },
+    "is-integer-text": {
+      "name": "isIntegerText",
+      "code": "export function isIntegerText(text: string): boolean {\n  return /^[+-]?\\d+$/.test(text);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 48
+    },
+    "is-hex-color": {
+      "name": "isHexColor",
+      "code": "export function isHexColor(text: string): boolean {\n  return /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(text);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 72
+    },
+    "escape-html": {
+      "name": "escapeHtml",
+      "code": "export function escapeHtml(text: string): string {\n  const entities: Record<string, string> = {\n    \"&\": \"&amp;\",\n    \"<\": \"&lt;\",\n    \">\": \"&gt;\",\n    '\"': \"&quot;\",\n    \"'\": \"&#39;\",\n  };\n  return text.replace(/[&<>\"']/g, (ch) => entities[ch]);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 129
+    },
+    "compare-version-prerelease": {
+      "name": "compareVersionPrerelease",
+      "code": "export function compareVersionPrerelease(a: string, b: string): -1 | 0 | 1 {\n  const parsePrerelease = (version: string): string[] | null => {\n    const withoutBuild = version.split(\"+\")[0];\n    const dash = withoutBuild.indexOf(\"-\");\n    if (dash === -1) return null;\n    const pre = withoutBuild.slice(dash + 1);\n    if (pre === \"\") return null;\n    return pre.split(\".\");\n  };\n\n  const isNumeric = (id: string): boolean => /^\\d+$/.test(id);\n\n  const compareIdentifiers = (x: string, y: string): -1 | 0 | 1 => {\n    const xNum = isNumeric(x);\n    const yNum = isNumeric(y);\n\n    if (xNum && yNum) {\n      const xs = x.replace(/^0+(?=\\d)/, \"\");\n      const ys = y.replace(/^0+(?=\\d)/, \"\");\n      if (xs.length !== ys.length) return xs.length < ys.length ? -1 : 1;\n      if (xs === ys) return 0;\n      return xs < ys ? -1 : 1;\n    }\n\n    // Numeric identifiers have lower precedence than alphanumeric ones.\n    if (xNum) return -1;\n    if (yNum) return 1;\n\n    if (x === y) return 0;\n    return x < y ? -1 : 1;\n  };\n\n  const pa = parsePrerelease(a);\n  const pb = parsePrerelease(b);\n\n  // No pre-release ranks higher than any pre-release.\n  if (pa === null && pb === null) return 0;\n  if (pa === null) return 1;\n  if (pb === null) return -1;\n\n  const len = Math.min(pa.length, pb.length);\n  for (let i = 0; i < len; i++) {\n    const c = compareIdentifiers(pa[i], pb[i]);\n    if (c !== 0) return c;\n  }\n\n  // Shared identifiers are equal: the shorter list ranks lower.\n  if (pa.length === pb.length) return 0;\n  return pa.length < pb.length ? -1 : 1;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1436
+    },
+    "is-email": {
+      "name": "isEmail",
+      "code": "export function isEmail(text: string): boolean {\n  if (typeof text !== \"string\") return false;\n  if (text.length > 254) return false;\n\n  const at = text.lastIndexOf(\"@\");\n  if (at < 1 || at === text.length - 1) return false;\n\n  const local = text.slice(0, at);\n  const domain = text.slice(at + 1);\n\n  if (local.length > 64) return false;\n\n  // Local part: letters, digits, and common special characters, dot-separated\n  // with no leading, trailing, or consecutive dots.\n  const localPattern = /^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(\\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/;\n  if (!localPattern.test(local)) return false;\n\n  // Domain: at least two labels, each alphanumeric with optional inner hyphens,\n  // and a final alphabetic TLD of at least two letters.\n  const labels = domain.split(\".\");\n  if (labels.length < 2) return false;\n\n  const labelPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;\n  for (const label of labels) {\n    if (label.length === 0 || label.length > 63) return false;\n    if (!labelPattern.test(label)) return false;\n  }\n\n  const tld = labels[labels.length - 1];\n  if (!/^[A-Za-z]{2,}$/.test(tld)) return false;\n\n  return true;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 520
+    },
+    "normalize-semver": {
+      "name": "normalizeSemver",
+      "code": "export function normalizeSemver(version: string): string | null {\n  const re =\n    /^\\s*=?\\s*v?\\s*(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(\\+[0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*)?\\s*$/;\n\n  const m = re.exec(version);\n  if (m === null) {\n    return null;\n  }\n\n  const major = m[1];\n  const minor = m[2];\n  const patch = m[3];\n  const pre = m[4] ?? \"\";\n  const build = m[5] ?? \"\";\n\n  return `${major}.${minor}.${patch}${pre}${build}`;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1069
+    },
+    "version-difference-kind": {
+      "name": "versionDifferenceKind",
+      "code": "export function versionDifferenceKind(a: string, b: string): string | null {\n  const pattern =\n    /^v?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$/;\n\n  const parse = (v: string) => {\n    const m = pattern.exec(v.trim());\n    if (!m) {\n      throw new TypeError(`Invalid semantic version: ${v}`);\n    }\n    return {\n      major: m[1],\n      minor: m[2],\n      patch: m[3],\n      prerelease: m[4] ?? null,\n      build: m[5] ?? null,\n    };\n  };\n\n  const x = parse(a);\n  const y = parse(b);\n\n  // Numeric identifiers are compared by value; leading zeros are already\n  // excluded by the grammar, so string equality is numeric equality.\n  if (x.major !== y.major) return \"major\";\n  if (x.minor !== y.minor) return \"minor\";\n  if (x.patch !== y.patch) return \"patch\";\n  if (x.prerelease !== y.prerelease) return \"prerelease\";\n  if (x.build !== y.build) return \"build\";\n  return null;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 973
+    },
+    "gen-1": {
+      "name": "gen1",
+      "code": "export function gen1(b64: string): [number, number] {\n  if (b64.length % 4 !== 0) {\n    throw new Error(\"Invalid base64 string: length must be a multiple of 4\");\n  }\n\n  const idx = b64.indexOf(\"=\");\n  if (idx === -1) {\n    return [b64.length, 0];\n  }\n\n  const validLen = idx;\n  const placeHoldersLen = 4 - (validLen % 4);\n  return [validLen, placeHoldersLen];\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 316
+    },
+    "sort-versions-descending": {
+      "name": "sortVersionsDescending",
+      "code": "export function sortVersionsDescending(versions: string[]): string[] {\n  interface Parsed {\n    core: number[];\n    pre: string[] | null;\n  }\n\n  const parse = (v: string): Parsed => {\n    let s = v.trim();\n    if (s[0] === \"v\" || s[0] === \"V\") s = s.slice(1);\n    const plus = s.indexOf(\"+\");\n    if (plus !== -1) s = s.slice(0, plus);\n    const dash = s.indexOf(\"-\");\n    const corePart = dash === -1 ? s : s.slice(0, dash);\n    const prePart = dash === -1 ? null : s.slice(dash + 1);\n    const core = corePart.split(\".\").map((p) => {\n      const n = parseInt(p, 10);\n      return Number.isNaN(n) ? 0 : n;\n    });\n    while (core.length < 3) core.push(0);\n    const pre = prePart === null || prePart === \"\" ? null : prePart.split(\".\");\n    return { core, pre };\n  };\n\n  const isNumeric = (s: string) => /^\\d+$/.test(s);\n\n  const comparePre = (a: string[], b: string[]): number => {\n    const len = Math.min(a.length, b.length);\n    for (let i = 0; i < len; i++) {\n      const x = a[i];\n      const y = b[i];\n      const xn = isNumeric(x);\n      const yn = isNumeric(y);\n      if (xn && yn) {\n        const d = parseInt(x, 10) - parseInt(y, 10);\n        if (d !== 0) return d < 0 ? -1 : 1;\n      } else if (xn !== yn) {\n        return xn ? -1 : 1; // numeric identifiers have lower precedence\n      } else if (x !== y) {\n        return x < y ? -1 : 1;\n      }\n    }\n    if (a.length === b.length) return 0;\n    return a.length < b.length ? -1 : 1;\n  };\n\n  const compare = (a: Parsed, b: Parsed): number => {\n    const len = Math.max(a.core.length, b.core.length);\n    for (let i = 0; i < len; i++) {\n      const d = (a.core[i] ?? 0) - (b.core[i] ?? 0);\n      if (d !== 0) return d < 0 ? -1 : 1;\n    }\n    if (a.pre === null && b.pre === null) return 0;\n    if (a.pre === null) return 1;\n    if (b.pre === null) return -1;\n    return comparePre(a.pre, b.pre);\n  };\n\n  return versions\n    .map((v) => ({ original: v, parsed: parse(v) }))\n    .sort((x, y) => compare(y.parsed, x.parsed))\n    .map((e) => e.original);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1169
+    },
+    "gen-3": {
+      "name": "gen3",
+      "code": "export function gen3(columns: Array<string | number | object | null | undefined | boolean>): Array<object> {\n  return columns.map((column): object => {\n    if (column === null || column === undefined || column === false) {\n      return { disabled: true };\n    }\n    if (typeof column === \"string\" || typeof column === \"number\") {\n      return { name: String(column) };\n    }\n    if (typeof column === \"object\" && !Array.isArray(column)) {\n      if (typeof (column as { name?: unknown }).name === \"string\") {\n        return column;\n      }\n      throw new Error(\"CSV error: missing column name\");\n    }\n    throw new Error(\"CSV error: invalid column definition\");\n  });\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 527
+    },
+    "value-at-object-path": {
+      "name": "valueAtObjectPath",
+      "code": "export function valueAtObjectPath(object: object, path: string, fallback: unknown): unknown {\n  // Split on dots and brackets, keeping only non-empty segments.\n  // \"a[0].b.c\" -> [\"a\", \"0\", \"b\", \"c\"]\n  const keys = path.match(/[^.[\\]]+/g) ?? [];\n\n  let current: unknown = object;\n  for (const key of keys) {\n    if (\n      current === null ||\n      (typeof current !== \"object\" && typeof current !== \"function\")\n    ) {\n      return fallback;\n    }\n    if (!Object.prototype.hasOwnProperty.call(current, key)) {\n      return fallback;\n    }\n    current = (current as Record<string, unknown>)[key];\n  }\n\n  return current === undefined ? fallback : current;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 889
+    },
+    "coerce-to-number": {
+      "name": "coerceToNumber",
+      "code": "export function coerceToNumber(value: unknown): number {\n  if (typeof value === \"number\") {\n    return value;\n  }\n\n  if (typeof value === \"bigint\") {\n    return Number(value);\n  }\n\n  if (typeof value === \"boolean\") {\n    return value ? 1 : 0;\n  }\n\n  if (value === null) {\n    return 0;\n  }\n\n  if (value === undefined) {\n    return NaN;\n  }\n\n  if (typeof value === \"string\") {\n    const s = value.trim();\n    if (s === \"\") {\n      return NaN;\n    }\n    const hex = /^([+-])?0x([0-9a-f]+)$/i.exec(s);\n    if (hex) {\n      const magnitude = parseInt(hex[2], 16);\n      return hex[1] === \"-\" ? -magnitude : magnitude;\n    }\n    return Number(s);\n  }\n\n  if (value instanceof Date) {\n    return value.getTime();\n  }\n\n  if (typeof value === \"object\") {\n    const tagged = value as Record<string, unknown>;\n    if (\"$type\" in tagged && tagged[\"$type\"] === \"undefined\") {\n      return NaN;\n    }\n    if (\"$date\" in tagged) {\n      const d = new Date(tagged[\"$date\"] as string | number);\n      return d.getTime();\n    }\n  }\n\n  return NaN;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 997
+    },
+    "gen-4": {
+      "name": "gen4",
+      "code": "export function gen4(value: number, length: number): string {\n  const sign = value < 0 ? \"-\" : \"\";\n  const digits = String(Math.abs(value)).padStart(length, \"0\");\n  return sign + digits;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 398
+    },
+    "gen-5": {
+      "name": "gen5",
+      "code": "export function gen5(a: string, b: string): number {\n  // Levenshtein distance; `integer` in the spec maps to TypeScript's `number`.\n  const m = a.length;\n  const n = b.length;\n  let prev: number[] = new Array(n + 1);\n  let curr: number[] = new Array(n + 1);\n\n  for (let j = 0; j <= n; j++) {\n    prev[j] = j;\n  }\n\n  for (let i = 1; i <= m; i++) {\n    curr[0] = i;\n    const ca = a.charCodeAt(i - 1);\n    for (let j = 1; j <= n; j++) {\n      const cost = ca === b.charCodeAt(j - 1) ? 0 : 1;\n      const del = prev[j] + 1;\n      const ins = curr[j - 1] + 1;\n      const sub = prev[j - 1] + cost;\n      let best = del < ins ? del : ins;\n      if (sub < best) best = sub;\n      curr[j] = best;\n    }\n    const tmp = prev;\n    prev = curr;\n    curr = tmp;\n  }\n\n  return prev[n];\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 562
+    },
+    "gen-6": {
+      "name": "gen6",
+      "code": "export function gen6(text: string): string {\n  if (typeof text !== \"string\") {\n    return text as unknown as string;\n  }\n  const escaped = text.replace(/[&<>\"']/g, (ch) => {\n    switch (ch) {\n      case \"&\": return \"&amp;\";\n      case \"<\": return \"&lt;\";\n      case \">\": return \"&gt;\";\n      case '\"': return \"&quot;\";\n      case \"'\": return \"&#39;\";\n      default: return ch;\n    }\n  });\n  return escaped;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 438
+    },
+    "gen-2": {
+      "name": "gen2",
+      "code": "export function gen2(data: number[], offset: number): { word: number; offp: number } {\n  const len = data.length;\n  if (len === 0) {\n    return { word: 0, offp: offset };\n  }\n  let word = 0;\n  let j = offset % len;\n  for (let i = 0; i < 4; i++) {\n    word = (word << 8) | (data[j] & 0xff);\n    j = (j + 1) % len;\n  }\n  return { word: word | 0, offp: j };\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 967
+    },
+    "gen-8": {
+      "name": "gen8",
+      "code": "export function gen8(metrics: object, tracing: object, propertyName: string): any {\n  if (metrics === null || metrics === undefined) {\n    throw new TypeError(\"metrics must not be null or undefined\");\n  }\n\n  const fromMetrics = (metrics as any)[propertyName];\n  if (fromMetrics) {\n    return fromMetrics;\n  }\n\n  if (tracing === null || tracing === undefined) {\n    throw new TypeError(\"tracing must not be null or undefined when consulted\");\n  }\n\n  return (tracing as any)[propertyName];\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 341
+    },
+    "gen-10": {
+      "name": "gen10",
+      "code": "export function gen10(comparator: object): boolean {\n  return (comparator as { value?: unknown }).value === \"<0.0.0-0\";\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 220
+    },
+    "gen-12": {
+      "name": "gen12",
+      "code": "export function gen12(uuid: string): Uint8Array {\n  if (typeof uuid !== \"string\" || !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid)) {\n    throw new TypeError(\"Invalid UUID: \" + String(uuid));\n  }\n  const hex = uuid.replace(/-/g, \"\");\n  const out = new Uint8Array(16);\n  for (let i = 0; i < 16; i++) {\n    out[i] = parseInt(hex.substr(i * 2, 2), 16);\n  }\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 254
+    },
+    "gen-7": {
+      "name": "gen7",
+      "code": "export function gen7<T extends ArrayLike<any> | null | undefined>(\n  collection: T,\n  iteratee: (value: any, index: number, collection: any) => any\n): T {\n  if (collection === null || collection === undefined) {\n    return collection;\n  }\n  if (typeof iteratee !== \"function\") {\n    throw new TypeError(\"iteratee must be a function\");\n  }\n  const length = Math.max(0, Math.floor(Number(collection.length)) || 0);\n  for (let i = 0; i < length; i++) {\n    const result = iteratee(collection[i], i, collection);\n    if (result === false) {\n      break;\n    }\n  }\n  return collection;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 617
+    },
+    "gen-15": {
+      "name": "gen15",
+      "code": "export function gen15(b64: string): number {\n  if (b64.length % 4 !== 0) {\n    throw new Error(\"Base64 string length must be a multiple of four\");\n  }\n  if (b64.length === 0) {\n    return 0;\n  }\n  let padding = 0;\n  if (b64.endsWith(\"==\")) {\n    padding = 2;\n  } else if (b64.endsWith(\"=\")) {\n    padding = 1;\n  }\n  return (b64.length / 4) * 3 - padding;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 172
+    },
+    "gen-17": {
+      "name": "gen17",
+      "code": "export function gen17(value: any): boolean {\n  return typeof value === \"object\" && value !== null && !Array.isArray(value);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 52
+    },
+    "gen-19": {
+      "name": "gen19",
+      "code": "export function gen19(a: string, b: string): number {\n  const n = a.length;\n  const m = b.length;\n  if (n === 0) return m;\n  if (m === 0) return n;\n\n  let prev: number[] = new Array(m + 1);\n  let curr: number[] = new Array(m + 1);\n  for (let j = 0; j <= m; j++) prev[j] = j;\n\n  for (let i = 1; i <= n; i++) {\n    curr[0] = i;\n    const ca = a.charCodeAt(i - 1);\n    for (let j = 1; j <= m; j++) {\n      const cost = ca === b.charCodeAt(j - 1) ? 0 : 1;\n      let best = prev[j - 1] + cost;\n      const del = prev[j] + 1;\n      if (del < best) best = del;\n      const ins = curr[j - 1] + 1;\n      if (ins < best) best = ins;\n      curr[j] = best;\n    }\n    const tmp = prev;\n    prev = curr;\n    curr = tmp;\n  }\n\n  return prev[m];\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 359
+    },
+    "gen-13": {
+      "name": "gen13",
+      "code": "export function gen13(value: any): string {\n  // Tagged JSON placeholder: {\"$type\":\"undefined\"} stands for undefined.\n  if (\n    value !== null &&\n    typeof value === \"object\" &&\n    !Array.isArray(value) &&\n    Object.prototype.hasOwnProperty.call(value, \"$type\") &&\n    (value as any).$type === \"undefined\"\n  ) {\n    return \"undefined\";\n  }\n\n  // Polyfilled symbols: objects whose internal tag reports \"Symbol\".\n  if (\n    value !== null &&\n    (typeof value === \"object\" || typeof value === \"function\") &&\n    Object.prototype.toString.call(value) === \"[object Symbol]\"\n  ) {\n    return \"symbol\";\n  }\n\n  return typeof value;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 831
+    },
+    "gen-9": {
+      "name": "gen9",
+      "code": "export function gen9(value: any): number | undefined {\n  try {\n    if (typeof value !== \"string\") return undefined;\n    if (value.length > 100) return undefined;\n\n    const match = /^([+-]?(?:\\d+\\.?\\d*|\\.\\d+))\\s*([a-zA-Z]*)$/.exec(value);\n    if (!match) return undefined;\n\n    const amount = Number(match[1]);\n    if (!Number.isFinite(amount)) return undefined;\n\n    const unit = match[2].toLowerCase();\n    const units: Record<string, number> = {\n      \"\": 1,\n      ms: 1,\n      msec: 1,\n      msecs: 1,\n      millisecond: 1,\n      milliseconds: 1,\n      s: 1000,\n      sec: 1000,\n      secs: 1000,\n      second: 1000,\n      seconds: 1000,\n      m: 60000,\n      min: 60000,\n      mins: 60000,\n      minute: 60000,\n      minutes: 60000,\n      h: 3600000,\n      hr: 3600000,\n      hrs: 3600000,\n      hour: 3600000,\n      hours: 3600000,\n      d: 86400000,\n      day: 86400000,\n      days: 86400000,\n      w: 604800000,\n      wk: 604800000,\n      wks: 604800000,\n      week: 604800000,\n      weeks: 604800000,\n    };\n\n    if (!Object.prototype.hasOwnProperty.call(units, unit)) return undefined;\n\n    const result = amount * units[unit];\n    return Number.isFinite(result) ? result : undefined;\n  } catch {\n    return undefined;\n  }\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1236
+    },
+    "gen-11": {
+      "name": "gen11",
+      "code": "export function gen11(items: any[], edges: [any, any][]): any[] {\n  const index = new Map<any, number>();\n  items.forEach((value, i) => {\n    if (!index.has(value)) index.set(value, i);\n  });\n\n  const n = items.length;\n  const adj: number[][] = Array.from({ length: n }, () => []);\n  const indeg: number[] = new Array(n).fill(0);\n\n  for (const [before, after] of edges) {\n    if (!index.has(before) || !index.has(after)) {\n      throw new Error(\"Edge references an item not in the list\");\n    }\n    const u = index.get(before)!;\n    const v = index.get(after)!;\n    adj[u].push(v);\n    indeg[v]++;\n  }\n\n  const queue: number[] = [];\n  for (let i = 0; i < n; i++) {\n    if (indeg[i] === 0) queue.push(i);\n  }\n\n  const order: number[] = [];\n  let head = 0;\n  while (head < queue.length) {\n    const u = queue[head++];\n    order.push(u);\n    for (const v of adj[u]) {\n      indeg[v]--;\n      if (indeg[v] === 0) queue.push(v);\n    }\n  }\n\n  if (order.length !== n) {\n    throw new Error(\"Cycle detected in ordering constraints\");\n  }\n\n  return order.map((i) => items[i]);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1208
+    },
+    "gen-20": {
+      "name": "gen20",
+      "code": "export function gen20(pointer: string | Array<string|number>): Array<string|number> {\n  if (typeof pointer === \"string\") {\n    if (pointer !== \"\" && !pointer.startsWith(\"/\")) {\n      throw new TypeError(\"JSON Pointer string must be empty or start with '/'\");\n    }\n    return pointer.split(\"/\");\n  }\n  if (Array.isArray(pointer)) {\n    for (const el of pointer) {\n      if (typeof el !== \"string\" && typeof el !== \"number\") {\n        throw new TypeError(\"JSON Pointer array elements must be strings or numbers\");\n      }\n    }\n    return pointer;\n  }\n  throw new TypeError(\"JSON Pointer must be a string or an array\");\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 431
+    },
+    "gen-18": {
+      "name": "gen18",
+      "code": "export function gen18(date: Date | number, amount: number, options?: object): Date {\n  const anyOpts = options as { constructor?: unknown } | undefined;\n  const Ctor: new (value: number) => Date =\n    anyOpts &&\n    typeof anyOpts.constructor === \"function\" &&\n    anyOpts.constructor !== Object\n      ? (anyOpts.constructor as new (value: number) => Date)\n      : Date;\n\n  const time =\n    typeof date === \"number\" ? date : date instanceof Date ? date.getTime() : NaN;\n\n  if (\n    typeof amount !== \"number\" ||\n    !Number.isFinite(amount) ||\n    Number.isNaN(time)\n  ) {\n    return new Ctor(NaN);\n  }\n\n  const days = Math.trunc(amount);\n  const result = new Date(time);\n\n  // setDate operates on local calendar days, so the local wall-clock time\n  // is preserved across DST transitions.\n  result.setDate(result.getDate() + days);\n\n  return new Ctor(result.getTime());\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 911
+    },
+    "gen-24": {
+      "name": "gen24",
+      "code": "export function gen24(field: object): boolean {\n  if (field === null || field === undefined) {\n    throw new TypeError(\"gen24: field must not be null or undefined\");\n  }\n  return (field as { value?: unknown }).value === \"\";\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 173
+    },
+    "gen-22": {
+      "name": "gen22",
+      "code": "declare const issuedWarnings: Set<any>;\n\nexport function gen22(warningId: any): boolean {\n  return !issuedWarnings.has(warningId);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 395
+    },
+    "gen-21": {
+      "name": "gen21",
+      "code": "export function gen21(\n  collection: Array<any> | ArrayLike<any> | null | undefined,\n  predicate: (element: any, index: number, collection: any) => any\n): Array<any> {\n  if (typeof predicate !== \"function\") {\n    throw new TypeError(\"predicate must be a function\");\n  }\n  if (collection === null || collection === undefined) {\n    return [];\n  }\n\n  const obj = Object(collection) as ArrayLike<any>;\n  let len = Number(obj.length);\n  if (Number.isNaN(len) || len <= 0) {\n    len = 0;\n  } else {\n    len = Math.min(Math.trunc(len), Number.MAX_SAFE_INTEGER);\n  }\n\n  const result: any[] = [];\n  for (let i = 0; i < len; i++) {\n    const element = obj[i];\n    if (predicate(element, i, collection)) {\n      result.push(element);\n    }\n  }\n  return result;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 663
+    },
+    "gen-16": {
+      "name": "gen16",
+      "code": "export function gen16(bytes: number[], count: number): string {\n  const ALPHABET = \"./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789\";\n\n  if (count <= 0) {\n    throw new RangeError(\"count must be greater than zero\");\n  }\n  if (count > bytes.length) {\n    throw new RangeError(\"count exceeds array length\");\n  }\n\n  let out = \"\";\n  let acc = 0;\n  let accBits = 0;\n\n  for (let i = 0; i < count; i++) {\n    const b = bytes[i] & 0xff;\n    acc = ((acc << 8) | b) & 0xffff;\n    accBits += 8;\n    while (accBits >= 6) {\n      accBits -= 6;\n      out += ALPHABET[(acc >> accBits) & 63];\n    }\n  }\n\n  if (accBits > 0) {\n    out += ALPHABET[(acc << (6 - accBits)) & 63];\n  }\n\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1349
+    },
+    "gen-29": {
+      "name": "gen29",
+      "code": "export function gen29(b64: string, validLen: number, placeHoldersLen: number): number {\n  return (validLen + placeHoldersLen) * 3 / 4 - placeHoldersLen;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 76
+    },
+    "gen-25": {
+      "name": "gen25",
+      "code": "export function gen25(edges: Array<[any, any]>): Array<any> {\n  const seen = new Set<any>();\n  const out: Array<any> = [];\n  for (const edge of edges) {\n    const first = edge[0];\n    const second = edge[1];\n    if (!seen.has(first)) {\n      seen.add(first);\n      out.push(first);\n    }\n    if (!seen.has(second)) {\n      seen.add(second);\n      out.push(second);\n    }\n  }\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 417
+    },
+    "gen-23": {
+      "name": "gen23",
+      "code": "export function gen23(ms: number): string {\n  const a = Math.abs(ms);\n  const sign = ms < 0 ? \"-\" : \"\";\n  if (a < 1000) return `${ms}ms`;\n  const units: [number, string][] = [\n    [86400000, \"d\"],\n    [3600000, \"h\"],\n    [60000, \"m\"],\n    [1000, \"s\"],\n  ];\n  for (const [threshold, unit] of units) {\n    if (a >= threshold) {\n      return `${sign}${Math.round(a / threshold)}${unit}`;\n    }\n  }\n  return `${ms}ms`;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 800
+    },
+    "gen-28": {
+      "name": "gen28",
+      "code": "type ErrorMapFn = (issue: unknown) => string;\n\nlet globalErrorMapOverride: ErrorMapFn | null | undefined = undefined;\n\nexport function gen28(): ErrorMapFn | null | undefined {\n  return globalErrorMapOverride;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 406
+    },
+    "gen-14": {
+      "name": "gen14",
+      "code": "export function gen14(value: any): string {\n  const json = JSON.stringify(value, null, 2);\n  if (json === undefined) {\n    throw new TypeError(\"gen14: value cannot be serialized to JSON\");\n  }\n\n  let out = \"\";\n  let i = 0;\n  const n = json.length;\n\n  while (i < n) {\n    const c = json[i];\n    if (c === '\"') {\n      // Find the end of this string literal, honoring escapes.\n      let j = i + 1;\n      while (j < n && json[j] !== '\"') {\n        if (json[j] === \"\\\\\") j++;\n        j++;\n      }\n      const token = json.slice(i, j + 1);\n\n      // Check whether this string is an object property name (followed by ':').\n      let k = j + 1;\n      while (k < n && json[k] === \" \") k++;\n      const isKey = json[k] === \":\";\n\n      if (isKey && token.length > 2) {\n        // Strip the surrounding quotes from non-empty keys.\n        out += token.slice(1, -1);\n      } else {\n        out += token;\n      }\n      i = j + 1;\n    } else {\n      out += c;\n      i++;\n    }\n  }\n\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1829
+    },
+    "gen-31": {
+      "name": "gen31",
+      "code": "export function gen31(text: string): string {\n  if (typeof text !== \"string\") {\n    throw new TypeError(\"gen31: input must be a string\");\n  }\n  return text.replace(/[A-Z]/g, (ch) => \"_\" + ch.toLowerCase());\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 188
+    },
+    "gen-33": {
+      "name": "gen33",
+      "code": "export function gen33(a: string, b: string): number {\n  const m = a.length;\n  const n = b.length;\n  if (m === 0) return n;\n  if (n === 0) return m;\n\n  let prev: number[] = new Array(n + 1);\n  let curr: number[] = new Array(n + 1);\n  for (let j = 0; j <= n; j++) prev[j] = j;\n\n  for (let i = 1; i <= m; i++) {\n    curr[0] = i;\n    const ca = a.charCodeAt(i - 1);\n    for (let j = 1; j <= n; j++) {\n      const cost = ca === b.charCodeAt(j - 1) ? 0 : 1;\n      const del = prev[j] + 1;\n      const ins = curr[j - 1] + 1;\n      const sub = prev[j - 1] + cost;\n      let best = del < ins ? del : ins;\n      if (sub < best) best = sub;\n      curr[j] = best;\n    }\n    const tmp = prev;\n    prev = curr;\n    curr = tmp;\n  }\n\n  return prev[n];\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 480
+    },
+    "gen-27": {
+      "name": "gen27",
+      "code": "const wrapCacheDefault = new WeakMap<object, object>();\nconst wrapCacheForced = new WeakMap<object, object>();\n\nexport function gen27(mod: any, forceWrap: boolean | undefined): object {\n  const isObj = mod !== null && (typeof mod === \"object\" || typeof mod === \"function\");\n\n  if (isObj && !forceWrap && (mod as any).__esModule) {\n    return mod;\n  }\n\n  const cache = forceWrap ? wrapCacheForced : wrapCacheDefault;\n  if (isObj) {\n    const cached = cache.get(mod);\n    if (cached !== undefined) {\n      return cached;\n    }\n  }\n\n  const ns: any = Object.create(null);\n  Object.defineProperty(ns, \"default\", {\n    value: mod,\n    enumerable: true,\n    writable: true,\n    configurable: true,\n  });\n\n  if (isObj) {\n    for (const key of Object.keys(mod)) {\n      if (key === \"default\") continue;\n      Object.defineProperty(ns, key, {\n        enumerable: true,\n        configurable: true,\n        get() {\n          return mod[key];\n        },\n      });\n    }\n    cache.set(mod, ns);\n  }\n\n  return ns;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 939
+    },
+    "gen-36": {
+      "name": "gen36",
+      "code": "export function gen36(value: any): boolean {\n  return typeof value === \"number\" && Number.isInteger(value) && value > 0;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 53
+    },
+    "gen-38": {
+      "name": "gen38",
+      "code": "export function gen38(\n  comparators: Array<{ intersects(other: any, options: any): boolean }>,\n  options: object | boolean | undefined\n): boolean {\n  const n = comparators.length;\n  for (let i = 0; i < n; i++) {\n    for (let j = i + 1; j < n; j++) {\n      if (!comparators[i].intersects(comparators[j], options)) {\n        return false;\n      }\n    }\n  }\n  return true;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 345
+    },
+    "gen-32": {
+      "name": "gen32",
+      "code": "const GEN32_CONSTRUCT: unique symbol = Symbol.for(\"gen32.construct\") as any;\n\nexport function gen32(\n  reference: Date | Function | object | null | undefined | number | string,\n  value: number | string | Date\n): Date {\n  // Object (or function) carrying the construction hook: delegate to it.\n  if (reference !== null && (typeof reference === \"object\" || typeof reference === \"function\")) {\n    const hook = (reference as any)[GEN32_CONSTRUCT];\n    if (typeof hook === \"function\") {\n      const result = hook.call(reference, value);\n      return result instanceof Date ? result : new Date(result);\n    }\n  }\n\n  // Function reference: acts as a factory.\n  if (typeof reference === \"function\" && !(reference instanceof Date)) {\n    const result = (reference as (v: number | string | Date) => unknown)(value);\n    return result instanceof Date ? result : new Date(result as any);\n  }\n\n  // Date or Date subclass: use its own constructor.\n  if (reference instanceof Date) {\n    const Ctor = reference.constructor as new (v: number | string | Date) => Date;\n    if (typeof Ctor === \"function\") {\n      return new Ctor(value);\n    }\n    return new Date(value);\n  }\n\n  // Anything else: plain Date.\n  return new Date(value);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1074
+    },
+    "gen-30": {
+      "name": "gen30",
+      "code": "export function gen30(encoded: string, maxBytes: number): number[] {\n  if (!(maxBytes > 0)) {\n    throw new RangeError(\"maxBytes must be a positive number\");\n  }\n\n  // bcrypt base64 alphabet: ./A-Za-z0-9\n  const alphabet =\n    \"./\" +\n    \"ABCDEFGHIJKLMNOPQRSTUVWXYZ\" +\n    \"abcdefghijklmnopqrstuvwxyz\" +\n    \"0123456789\";\n\n  const out: number[] = [];\n  let acc = 0;\n  let bits = 0;\n\n  for (const ch of encoded) {\n    const v = alphabet.indexOf(ch);\n    if (v < 0) {\n      break; // invalid character: stop decoding\n    }\n    acc = ((acc << 6) | v) & 0xffffff;\n    bits += 6;\n    if (bits >= 8) {\n      bits -= 8;\n      out.push((acc >> bits) & 0xff);\n      if (out.length >= maxBytes) {\n        return out;\n      }\n    }\n  }\n\n  // Any leftover partial bits (truncated input) are discarded.\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1223
+    },
+    "gen-34": {
+      "name": "gen34",
+      "code": "export function gen34(container: object | array, pointer: string | string[]): any {\n  if (container === null || typeof container !== \"object\") {\n    throw new TypeError(\"container must be an object or array\");\n  }\n\n  let tokens: string[];\n  if (Array.isArray(pointer)) {\n    // Already-split reference tokens, used as given.\n    tokens = pointer.map((t) => String(t));\n  } else {\n    if (typeof pointer !== \"string\") {\n      throw new TypeError(\"pointer must be a string or array of strings\");\n    }\n    if (pointer === \"\") {\n      return container;\n    }\n    if (pointer[0] !== \"/\") {\n      throw new SyntaxError(\"JSON Pointer must be empty or start with '/'\");\n    }\n    tokens = pointer\n      .slice(1)\n      .split(\"/\")\n      .map((t) => t.replace(/~1/g, \"/\").replace(/~0/g, \"~\"));\n  }\n\n  const isArrayIndex = (s: string): boolean => /^(0|[1-9][0-9]*)$/.test(s);\n\n  let current: any = container;\n  for (const token of tokens) {\n    if (current === null || typeof current !== \"object\") {\n      return undefined;\n    }\n    if (Array.isArray(current)) {\n      if (!isArrayIndex(token)) {\n        return undefined;\n      }\n      const idx = Number(token);\n      if (idx >= current.length) {\n        return undefined;\n      }\n      current = current[idx];\n    } else {\n      if (!Object.prototype.hasOwnProperty.call(current, token)) {\n        return undefined;\n      }\n      current = (current as Record<string, any>)[token];\n    }\n  }\n  return current;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 984
+    },
+    "gen-41": {
+      "name": "gen41",
+      "code": "export function gen41(mod: any): object {\n  if (mod && mod.__esModule) {\n    return mod;\n  }\n  return { default: mod };\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 58
+    },
+    "gen-42": {
+      "name": "gen42",
+      "code": "export function gen42<T = any>(value: T): { status: \"dirty\"; value: T } {\n  return { status: \"dirty\", value };\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 110
+    },
+    "gen-37": {
+      "name": "gen37",
+      "code": "export function gen37(ms: number): string {\n  const sign = ms < 0 ? \"-\" : \"\";\n  const abs = Math.abs(ms);\n\n  if (abs < 1000) {\n    return `${ms} ms`;\n  }\n\n  const units: [string, number][] = [\n    [\"day\", 86400000],\n    [\"hour\", 3600000],\n    [\"minute\", 60000],\n    [\"second\", 1000],\n  ];\n\n  for (const [name, size] of units) {\n    if (abs >= size) {\n      const n = Math.round(abs / size);\n      return `${sign}${n} ${name}${n === 1 ? \"\" : \"s\"}`;\n    }\n  }\n\n  return `${ms} ms`;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 788
+    },
+    "gen-44": {
+      "name": "gen44",
+      "code": "export function gen44(laterDate: Date | number, earlierDate: Date | number): number {\n  const later = typeof laterDate === \"number\" ? laterDate : laterDate.getTime();\n  const earlier = typeof earlierDate === \"number\" ? earlierDate : earlierDate.getTime();\n  return later - earlier;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 184
+    },
+    "gen-39": {
+      "name": "gen39",
+      "code": "export function gen39(edges: Array<[any, any]>): Map<any, Set<any>> {\n  const g = new Map<any, Set<any>>();\n  for (const edge of edges) {\n    const [from, to] = edge;\n    let out = g.get(from);\n    if (out === undefined) {\n      out = new Set<any>();\n      g.set(from, out);\n    }\n    if (!g.has(to)) {\n      g.set(to, new Set<any>());\n    }\n    out.add(to);\n  }\n  return g;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 562
+    },
+    "gen-45": {
+      "name": "gen45",
+      "code": "export function gen45(target: string, candidates: string[]): string | undefined {\n  if (candidates.length === 0) return undefined;\n\n  const levenshtein = (a: string, b: string): number => {\n    const m = a.length;\n    const n = b.length;\n    let prev: number[] = new Array(n + 1);\n    for (let j = 0; j <= n; j++) prev[j] = j;\n    for (let i = 1; i <= m; i++) {\n      const curr: number[] = new Array(n + 1);\n      curr[0] = i;\n      for (let j = 1; j <= n; j++) {\n        const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;\n        curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);\n      }\n      prev = curr;\n    }\n    return prev[n];\n  };\n\n  let best: string | undefined = undefined;\n  let bestDist = Infinity;\n  for (const c of candidates) {\n    const d = levenshtein(target, c);\n    if (d < bestDist) {\n      bestDist = d;\n      best = c;\n    }\n  }\n  return best;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 412
+    },
+    "gen-35": {
+      "name": "gen35",
+      "code": "export function gen35(value: any, inherited: boolean): string[] {\n  if (value === null || value === undefined) return [];\n\n  const obj = Object(value);\n  const result: string[] = [];\n  const seen = new Set<string>();\n\n  const tag = Object.prototype.toString.call(value);\n  const indexed =\n    Array.isArray(value) ||\n    tag === \"[object Arguments]\" ||\n    (ArrayBuffer.isView(value) && !(value instanceof DataView));\n\n  const isIndexKey = (k: string): boolean =>\n    /^(0|[1-9]\\d*)$/.test(k) && Number(k) < 4294967295;\n\n  let len = 0;\n  if (indexed) {\n    len = Number(obj.length) >>> 0;\n    for (let i = 0; i < len; i++) {\n      const k = String(i);\n      result.push(k);\n      seen.add(k);\n    }\n  }\n\n  for (const k of Object.keys(obj)) {\n    if (indexed && isIndexKey(k) && Number(k) < len) continue;\n    if (!seen.has(k)) {\n      result.push(k);\n      seen.add(k);\n    }\n  }\n\n  if (inherited) {\n    for (const k in obj) {\n      if (!seen.has(k)) {\n        result.push(k);\n        seen.add(k);\n      }\n    }\n  }\n\n  return result;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1741
+    },
+    "gen-43": {
+      "name": "gen43",
+      "code": "export function gen43(b64: string): Uint8Array {\n  const alphabet = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\";\n  let end = b64.length;\n  while (end > 0 && b64[end - 1] === \"=\") end--;\n\n  const out: number[] = [];\n  let buffer = 0;\n  let bits = 0;\n  for (let i = 0; i < end; i++) {\n    const v = alphabet.indexOf(b64[i]);\n    if (v < 0) throw new Error(\"invalid base64 character\");\n    buffer = ((buffer << 6) | v) & 0xffffff;\n    bits += 6;\n    if (bits >= 8) {\n      bits -= 8;\n      out.push((buffer >> bits) & 0xff);\n    }\n  }\n  return new Uint8Array(out);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 871
+    },
+    "version-in-range": {
+      "name": "versionInRange",
+      "code": "```typescript\ntype Ver = [number, number, number, string[] | null];\ntype Cmp = [string, Ver];\n\nfunction parseFull(s: string): Ver | null {\n  const m = /^v?(\\d+)\\.(\\d+)\\.(\\d+)(?:-([0-9A-Za-z.-]+))?(?:\\+[0-9A-Za-z.-]+)?$/.exec(s.trim());\n  if (!m) return null;\n  return [Number(m[1]), Number(m[2]), Number(m[3]), m[4] ? m[4].split(\".\") : null];\n}\n\ninterface Part {\n  M: number | null;\n  m: number | null;\n  p: number | null;\n  pre: string[] | null;\n}\n\nfunction parsePart(s: string): Part | null {\n  const re = /^v?(\\d+|[xX*])(?:\\.(\\d+|[xX*]))?(?:\\.(\\d+|[xX*]))?(?:-([0-9A-Za-z.-]+))?(?:\\+[0-9A-Za-z.-]+)?$/;\n  const m = re.exec(s.trim());\n  if (!m) return null;\n  const num = (x: string | undefined): number | null =>\n    x === undefined || /^[xX*]$/.test(x) ? null : Number(x);\n  return {\n    M: num(m[1]),\n    m: num(m[2]),\n    p: num(m[3]),\n    pre: m[4] ? m[4].split(\".\") : null,\n  };\n}\n\nfunction expandToken(op: string, part: Part): Cmp[] | null {\n  const { M, m, p, pre } = part;\n  const ANY: Ver = [0, 0, 0, null];\n  const ge = (a: number, b: number, c: number): Cmp => [\">=\", [a, b, c, null]];\n  const lt = (a: number, b: number, c: number): Cmp => [\"<\", [a, b, c, null]];\n  const full: Ver = [M ?? 0, m ?? 0, p ?? 0, pre];\n\n  switch (op) {\n    case \"\":\n    case \"=\":\n      if (M === null) return [[\">=\", ANY]];\n      if (m === null) return [ge(M, 0, 0), lt(M + 1, 0, 0)];\n      if (p === null) return [ge(M, m, 0), lt(M, m + 1, 0)];\n      return [[\"=\", full]];\n    case \">\":\n      if (M === null) return [[\"<\", ANY]];\n      if (m === null) return [ge(M + 1, 0, 0)];\n      if (p === null) return [ge(M, m + 1, 0)];\n      return [[\">\", full]];\n    case \">=\":\n      if (M === null) return [[\">=\", ANY]];\n      if (m === null) return [ge(M, 0, 0)];\n      if (p === null) return [ge(M, m, 0)];\n      return [[\">=\", full]];\n    case \"<\":\n      if (M === null) return [[\"<\", ANY]];\n      if (m === null) return [lt(M, 0, 0)];\n      if (p === null) return [lt(M, m, 0)];\n      return [[\"<\", full]];\n    case \"<=\":\n      if (M === null) return [[\">=\", ANY]];\n      if (m === null) return [lt(M + 1, 0, 0)];\n      if (p === null) return [lt(M, m + 1, 0)];\n      return [[\"<=\", full]];\n    case \"~\":\n    case \"~>\":\n      if (M === null) return [[\">=\", ANY]];\n      if (m === null) return [ge(M, 0, 0), lt(M + 1, 0, 0)];\n      if (p === null) return [ge(M, m, 0), lt(M, m + 1, 0)];\n      return [[\">=\", full], lt(M, m + 1, 0)];\n    case \"^\":\n      if (M === null) return [[\">=\", ANY]];\n      if (m === null) return [ge(M, 0, 0), lt(M + 1, 0, 0)];\n      if (p === null) {\n        return M > 0\n          ? [ge(M, m, 0), lt(M + 1, 0, 0)]\n          : [ge(0, m, 0), lt(0, m + 1, 0)];\n      }\n      if (M > 0) return [[\">=\", full], lt(M + 1, 0",
+      "stopReason": "max_tokens",
+      "outputTokens": 6000
+    },
+    "gen-26": {
+      "name": "gen26",
+      "code": "export function gen26(uuid: string | Uint8Array): string | Uint8Array {\n  let b: Uint8Array;\n  const isString = typeof uuid === \"string\";\n\n  if (isString) {\n    const s = uuid as string;\n    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s)) {\n      throw new Error(\"Invalid UUID string\");\n    }\n    const hex = s.replace(/-/g, \"\");\n    b = new Uint8Array(16);\n    for (let i = 0; i < 16; i++) {\n      b[i] = parseInt(hex.substr(i * 2, 2), 16);\n    }\n  } else {\n    if (!(uuid instanceof Uint8Array) || uuid.length !== 16) {\n      throw new Error(\"UUID bytes must be a Uint8Array of length 16\");\n    }\n    b = new Uint8Array(uuid);\n  }\n\n  // Version must be 1\n  if (((b[6] >> 4) & 0x0f) !== 1) {\n    throw new Error(\"UUID is not version 1\");\n  }\n\n  // Extract timestamp fields from v1 layout\n  const L = ((b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3]) >>> 0; // time_low\n  const M = ((b[4] << 8) | b[5]) & 0xffff;                           // time_mid\n  const H = ((b[6] & 0x0f) << 8) | b[7];                             // time_hi (12 bits)\n\n  // Rebuild as v6: time_high(32) | time_mid(16) | version+time_low(12)\n  const high = ((H << 20) | (M << 4) | (L >>> 28)) >>> 0;\n  const mid = (L >>> 12) & 0xffff;\n  const low12 = L & 0xfff;\n\n  const out = new Uint8Array(16);\n  out[0] = (high >>> 24) & 0xff;\n  out[1] = (high >>> 16) & 0xff;\n  out[2] = (high >>> 8) & 0xff;\n  out[3] = high & 0xff;\n  out[4] = (mid >>> 8) & 0xff;\n  out[5] = mid & 0xff;\n  out[6] = 0x60 | ((low12 >>> 8) & 0x0f);\n  out[7] = low12 & 0xff;\n  for (let i = 8; i < 16; i++) {\n    out[i] = b[i];\n  }\n\n  if (isString) {\n    const h: string[] = [];\n    for (let i = 0; i < 16; i++) {\n      h.push(out[i].toString(16).padStart(2, \"0\"));\n    }\n    const x = h.join(\"\");\n    return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20, 32)}`;\n  }\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2920
+    },
+    "gen-49": {
+      "name": "gen49",
+      "code": "export function gen49(arrayLike: Array<any> | string | ArrayLike<any>): Map<any, number> {\n  if (arrayLike === null || arrayLike === undefined) {\n    throw new TypeError(\"gen49: argument must be an array-like value\");\n  }\n  const map = new Map<any, number>();\n  const length = arrayLike.length;\n  for (let i = 0; i < length; i++) {\n    map.set(arrayLike[i], i);\n  }\n  return map;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 520
+    },
+    "gen-50": {
+      "name": "gen50",
+      "code": "export function gen50(text: string): Uint8Array {\n  const out: number[] = [];\n  for (let i = 0; i < text.length; i++) {\n    let cp = text.charCodeAt(i);\n    if (cp >= 0xd800 && cp <= 0xdbff) {\n      const next = i + 1 < text.length ? text.charCodeAt(i + 1) : 0;\n      if (next >= 0xdc00 && next <= 0xdfff) {\n        cp = 0x10000 + ((cp - 0xd800) << 10) + (next - 0xdc00);\n        i++;\n      } else {\n        throw new Error(\"Lone surrogate in input\");\n      }\n    } else if (cp >= 0xdc00 && cp <= 0xdfff) {\n      throw new Error(\"Lone surrogate in input\");\n    }\n\n    if (cp < 0x80) {\n      out.push(cp);\n    } else if (cp < 0x800) {\n      out.push(0xc0 | (cp >> 6), 0x80 | (cp & 0x3f));\n    } else if (cp < 0x10000) {\n      out.push(\n        0xe0 | (cp >> 12),\n        0x80 | ((cp >> 6) & 0x3f),\n        0x80 | (cp & 0x3f)\n      );\n    } else {\n      out.push(\n        0xf0 | (cp >> 18),\n        0x80 | ((cp >> 12) & 0x3f),\n        0x80 | ((cp >> 6) & 0x3f),\n        0x80 | (cp & 0x3f)\n      );\n    }\n  }\n  return new Uint8Array(out);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 549
+    },
+    "gen-46": {
+      "name": "gen46",
+      "code": "export function gen46(\n  collection: ArrayLike<any> | null | undefined,\n  iteratee: (value: any, index: number, collection: ArrayLike<any> | null | undefined) => any\n): any[] {\n  if (typeof iteratee !== \"function\") {\n    throw new TypeError(\"iteratee must be a function\");\n  }\n  if (collection === null || collection === undefined) {\n    return [];\n  }\n  const source = collection as any;\n  const raw = Number(source.length);\n  const len = Number.isNaN(raw) || raw <= 0 ? 0 : Math.floor(raw);\n  const result: any[] = [];\n  for (let i = 0; i < len; i++) {\n    result.push(iteratee(source[i], i, collection));\n  }\n  return result;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1027
+    },
+    "gen-47": {
+      "name": "gen47",
+      "code": "class ZeroFilledArray extends Array<number> {\n  constructor(length: number = 0) {\n    super();\n    this.length = length;\n    this.fill(0);\n  }\n}\n\nexport function gen47(\n  maxValue: number\n): Uint8ArrayConstructor | Uint16ArrayConstructor | Uint32ArrayConstructor | typeof ZeroFilledArray | null {\n  try {\n    if (typeof maxValue !== \"number\" || !Number.isSafeInteger(maxValue) || maxValue <= 0) {\n      return null;\n    }\n    if (maxValue <= 256) return Uint8Array;\n    if (maxValue <= 65536) return Uint16Array;\n    if (maxValue <= 4294967296) return Uint32Array;\n    return ZeroFilledArray;\n  } catch {\n    return null;\n  }\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 959
+    },
+    "gen-51": {
+      "name": "gen51",
+      "code": "export function gen51(text: string, chars: string): string {\n  if (typeof text !== \"string\") {\n    throw new TypeError(\"gen51: text must be a string\");\n  }\n  const re = new RegExp(`[${chars}]`, \"g\");\n  return text.replace(re, \"\");\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 390
+    },
+    "gen-52": {
+      "name": "gen52",
+      "code": "export function gen52(result: object): boolean {\n  return (result as { status?: unknown }).status === \"aborted\";\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 257
+    },
+    "gen-55": {
+      "name": "gen55",
+      "code": "export function gen55(id: string | undefined | null): boolean {\n  if (!id) {\n    return true;\n  }\n  if (typeof id !== \"string\") {\n    throw new TypeError(\"gen55: expected a string, undefined, or null\");\n  }\n  return id === \"x\" || id === \"X\" || id === \"*\";\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 242
+    },
+    "gen-53": {
+      "name": "gen53",
+      "code": "export function gen53(triplet: number): string {\n  const alphabet = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\";\n  const v = triplet & 0xFFFFFF;\n  return (\n    alphabet[(v >>> 18) & 0x3F] +\n    alphabet[(v >>> 12) & 0x3F] +\n    alphabet[(v >>> 6) & 0x3F] +\n    alphabet[v & 0x3F]\n  );\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 367
+    },
+    "gen-54": {
+      "name": "gen54",
+      "code": "export function gen54(destination: Array<any> | ArrayLike<any>, source: ArrayLike<any>): Array<any> | ArrayLike<any> {\n  const dest: any = destination;\n  const src: any = source;\n  const start: number = dest.length;\n  for (let i = 0; i < src.length; i++) {\n    dest[start + i] = src[i];\n  }\n  return destination;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 364
+    },
+    "gen-61": {
+      "name": "gen61",
+      "code": "export function gen61(pairs: Array<[any, any]>, key: any): number {\n  const sameValueZero = (a: any, b: any): boolean => {\n    if (a === b) return true;\n    return a !== a && b !== b;\n  };\n\n  for (let i = pairs.length - 1; i >= 0; i--) {\n    if (sameValueZero(pairs[i][0], key)) {\n      return i;\n    }\n  }\n  return -1;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 257
+    },
+    "gen-58": {
+      "name": "gen58",
+      "code": "type ParseReturnType<T> =\n  | { status: \"aborted\" }\n  | { status: \"dirty\"; value: T }\n  | { status: \"valid\"; value: T }\n  | Promise<\n      | { status: \"aborted\" }\n      | { status: \"dirty\"; value: T }\n      | { status: \"valid\"; value: T }\n    >;\n\nexport function gen58<T = unknown>(result: ParseReturnType<T>): boolean {\n  return (result as { status?: unknown }).status === \"dirty\";\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 522
+    },
+    "gen-57": {
+      "name": "gen57",
+      "code": "export function gen57(text: string, search: any, options: {ignoreCase?: boolean, minOccurrences?: number} | undefined): boolean {\n  if (typeof text !== \"string\") {\n    throw new TypeError(\"text must be a string\");\n  }\n  if (typeof search !== \"string\") {\n    throw new TypeError(\"search must be a string\");\n  }\n\n  const ignoreCase = !!(options && options.ignoreCase);\n  const min = options && options.minOccurrences !== undefined ? options.minOccurrences : 1;\n\n  let hay = text;\n  let needle = search;\n  if (ignoreCase) {\n    hay = hay.toLowerCase();\n    needle = needle.toLowerCase();\n  }\n\n  let count = 0;\n  let pos = 0;\n  while (pos <= hay.length) {\n    const idx = hay.indexOf(needle, pos);\n    if (idx === -1) break;\n    count++;\n    pos = idx + Math.max(needle.length, 1);\n  }\n\n  return count >= min;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1117
+    },
+    "gen-64": {
+      "name": "gen64",
+      "code": "export function gen64(str: string, comparison: any): boolean {\n  if (typeof str !== \"string\") {\n    throw new TypeError(\"First argument must be a string\");\n  }\n  return str === comparison;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 75
+    },
+    "gen-40": {
+      "name": "gen40",
+      "code": "export function gen40(bytes: Uint8Array | number[]): Uint8Array {\n  const b = (i: number): number => (i < bytes.length ? bytes[i] & 0xff : 0);\n\n  // UUIDv1 fields\n  const low = ((b(0) << 24) | (b(1) << 16) | (b(2) << 8) | b(3)) >>> 0; // time_low\n  const mid = ((b(4) << 8) | b(5)) & 0xffff;                            // time_mid\n  const hi = (((b(6) & 0x0f) << 8) | b(7)) & 0xfff;                     // time_hi (12 bits)\n\n  const out = new Uint8Array(16);\n\n  // Top 32 bits of the v6 timestamp: time_hi (12) | time_mid (16) | top nibble of time_low (4)\n  const t0 = ((hi << 20) | (mid << 4) | (low >>> 28)) >>> 0;\n  out[0] = (t0 >>> 24) & 0xff;\n  out[1] = (t0 >>> 16) & 0xff;\n  out[2] = (t0 >>> 8) & 0xff;\n  out[3] = t0 & 0xff;\n\n  // Next 16 bits: time_low bits 27..12\n  out[4] = (low >>> 20) & 0xff;\n  out[5] = (low >>> 12) & 0xff;\n\n  // Version 6 nibble plus time_low bits 11..0\n  out[6] = 0x60 | ((low >>> 8) & 0x0f);\n  out[7] = low & 0xff;\n\n  // Clock sequence and node are copied unchanged\n  for (let i = 8; i < 16; i++) {\n    out[i] = b(i);\n  }\n\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2890
+    },
+    "gen-59": {
+      "name": "gen59",
+      "code": "export function gen59(bytes: Uint8Array, start: number, end: number): string {\n  const alphabet = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\";\n  let out = \"\";\n  for (let i = start; i < end; i += 3) {\n    const b0 = bytes[i] ?? 0;\n    const b1 = i + 1 < end ? (bytes[i + 1] ?? 0) : 0;\n    const b2 = i + 2 < end ? (bytes[i + 2] ?? 0) : 0;\n    const n = (b0 << 16) | (b1 << 8) | b2;\n    out +=\n      alphabet[(n >> 18) & 63] +\n      alphabet[(n >> 12) & 63] +\n      alphabet[(n >> 6) & 63] +\n      alphabet[n & 63];\n  }\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1097
+    },
+    "gen-65": {
+      "name": "gen65",
+      "code": "type ParseReturnType<T> =\n  | { status: \"valid\"; value: T }\n  | { status: \"dirty\"; value: T }\n  | { status: \"aborted\" };\n\nexport function gen65<T>(result: ParseReturnType<T>): boolean {\n  return result.status === \"valid\";\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 368
+    },
+    "gen-66": {
+      "name": "gen66",
+      "code": "export function gen66(bytes: Uint8Array): string {\n  const alphabet = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\";\n  let out = \"\";\n  const len = bytes.length;\n  let i = 0;\n  for (; i + 2 < len; i += 3) {\n    const n = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];\n    out += alphabet[(n >> 18) & 63] + alphabet[(n >> 12) & 63] +\n           alphabet[(n >> 6) & 63] + alphabet[n & 63];\n  }\n  const rem = len - i;\n  if (rem === 1) {\n    const n = bytes[i] << 16;\n    out += alphabet[(n >> 18) & 63] + alphabet[(n >> 12) & 63] + \"==\";\n  } else if (rem === 2) {\n    const n = (bytes[i] << 16) | (bytes[i + 1] << 8);\n    out += alphabet[(n >> 18) & 63] + alphabet[(n >> 12) & 63] +\n           alphabet[(n >> 6) & 63] + \"=\";\n  }\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 436
+    },
+    "gen-62": {
+      "name": "gen62",
+      "code": "export function gen62(comp: string, options: object): string {\n  if (typeof comp !== \"string\") {\n    throw new TypeError(\"comp must be a string\");\n  }\n\n  const tilde =\n    /^~(\\d+)(?:\\.(\\d+|x|X|\\*))?(?:\\.(\\d+|x|X|\\*))?(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$/;\n\n  const pieces = comp.trim().split(/\\s+/).filter((p) => p.length > 0);\n  const out: string[] = [];\n\n  for (const piece of pieces) {\n    const m = tilde.exec(piece);\n    if (!m) {\n      out.push(piece);\n      continue;\n    }\n\n    const major = parseInt(m[1], 10);\n    const minorRaw = m[2];\n    const patchRaw = m[3];\n    const pre = m[4] ?? \"\";\n    const minorWild = minorRaw === undefined || /^[xX*]$/.test(minorRaw);\n    const patchWild = patchRaw === undefined || /^[xX*]$/.test(patchRaw);\n\n    if (minorWild) {\n      out.push(`>=${major}.0.0 <${major + 1}.0.0-0`);\n    } else {\n      const minor = parseInt(minorRaw as string, 10);\n      if (patchWild) {\n        out.push(`>=${major}.${minor}.0 <${major}.${minor + 1}.0-0`);\n      } else {\n        const patch = parseInt(patchRaw as string, 10);\n        out.push(`>=${major}.${minor}.${patch}${pre} <${major}.${minor + 1}.0-0`);\n      }\n    }\n  }\n\n  return out.join(\" \");\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1238
+    },
+    "gen-68": {
+      "name": "gen68",
+      "code": "export function gen68(destination: object, source: object): object {\n  if (!destination) {\n    return destination;\n  }\n  if (source == null) {\n    return destination;\n  }\n  for (const key of Object.keys(source)) {\n    (destination as Record<string, unknown>)[key] = (source as Record<string, unknown>)[key];\n  }\n  return destination;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 386
+    },
+    "gen-48": {
+      "name": "gen48",
+      "code": "export function gen48(comp: string, options: object): string {\n  void options;\n\n  // Strip build metadata and surrounding whitespace.\n  const s = comp.replace(/\\+.*$/, '').trim();\n\n  if (s === '' || s === '*' || s === 'x' || s === 'X') {\n    return '';\n  }\n\n  const m = /^(\\^|~|<=|>=|<|>|=)?\\s*v?(\\d+|[xX*])(?:\\.(\\d+|[xX*]))?(?:\\.(\\d+|[xX*]))?(-[0-9A-Za-z.-]+)?$/.exec(s);\n  if (!m) {\n    return s;\n  }\n\n  const op = m[1] ?? '';\n  const isX = (p: string | undefined): boolean => p === undefined || /^[xX*]$/.test(p);\n  const pre = m[5] ?? '';\n  const M = isX(m[2]) ? 0 : Number(m[2]);\n  const mn = isX(m[3]) ? 0 : Number(m[3]);\n  const p = isX(m[4]) ? 0 : Number(m[4]);\n  const mX = isX(m[3]);\n  const pX = isX(m[4]);\n  const MX = isX(m[2]);\n\n  if (op === '^') {\n    if (MX) return '';\n    if (mX) return `>=${M}.0.0 <${M + 1}.0.0-0`;\n    const lower = `>=${M}.${mn}.${p}${pre}`;\n    if (pX) {\n      if (M > 0) return `>=${M}.${mn}.0 <${M + 1}.0.0-0`;\n      return `>=0.${mn}.0 <0.${mn + 1}.0-0`;\n    }\n    if (M > 0) return `${lower} <${M + 1}.0.0-0`;\n    if (mn > 0) return `${lower} <0.${mn + 1}.0-0`;\n    return `${lower} <0.0.${p + 1}-0`;\n  }\n\n  if (op === '~') {\n    if (MX) return '';\n    if (mX) return `>=${M}.0.0 <${M + 1}.0.0-0`;\n    if (pX) return `>=${M}.${mn}.0 <${M}.${mn + 1}.0-0`;\n    return `>=${M}.${mn}.${p}${pre} <${M}.${mn + 1}.0-0`;\n  }\n\n  if (op === '' || op === '=') {\n    if (MX) return '';\n    if (mX) return `>=${M}.0.0 <${M + 1}.0.0-0`;\n    if (pX) return `>=${M}.${mn}.0 <${M}.${mn + 1}.0-0`;\n    return `${op}${M}.${mn}.${p}${pre}`;\n  }\n\n  if (op === '<') {\n    if (MX) return '<0.0.0-0';\n    if (mX) return `<${M}.0.0-0`;\n    if (pX) return `<${M}.${mn}.0-0`;\n    return `<${M}.${mn}.${p}${pre}`;\n  }\n\n  if (op === '<=') {\n    if (MX) return '';\n    if (mX) return `<${M + 1}.0.0-0`;\n    if (pX) return `<${M}.${mn + 1}.0-0`;\n    return `<=${M}.${mn}.${p}${pre}`;\n  }\n\n  if (op === '>') {\n    if (MX) return '<0.0.0-0';\n    if (mX) return `>=${M + 1}.0.0`;\n    if (pX) return `>=${M}.${mn + 1}.0`;\n    return `>${M}.${mn}.${p}${pre}`;\n  }\n\n  if (op === '>=') {\n    if (MX) return '';\n    if (mX) return `>=${M}.0.0`;\n    if (pX) return `>=${M}.${mn}.0`;\n    return `>=${M}.${mn}.${p}${pre}`;\n  }\n\n  return s;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 3429
+    },
+    "gen-70": {
+      "name": "gen70",
+      "code": "export function gen70(value: any): boolean {\n  if (typeof value !== \"string\") {\n    return false;\n  }\n  if (value === \"00000000-0000-0000-0000-000000000000\") {\n    return true;\n  }\n  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 455
+    },
+    "gen-56": {
+      "name": "gen56",
+      "code": "export function gen56(uuid: string | Uint8Array): string | Uint8Array {\n  let bytes: Uint8Array;\n  const isString = typeof uuid === \"string\";\n\n  if (isString) {\n    const re = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;\n    if (!re.test(uuid)) {\n      throw new Error(\"Malformed UUID string\");\n    }\n    const hex = uuid.replace(/-/g, \"\");\n    bytes = new Uint8Array(16);\n    for (let i = 0; i < 16; i++) {\n      bytes[i] = parseInt(hex.substr(i * 2, 2), 16);\n    }\n  } else {\n    if (!(uuid instanceof Uint8Array) || uuid.length !== 16) {\n      throw new Error(\"UUID bytes must be a Uint8Array of length 16\");\n    }\n    bytes = new Uint8Array(uuid);\n  }\n\n  if ((bytes[6] >> 4) !== 6) {\n    throw new Error(\"UUID is not version 6\");\n  }\n\n  // Extract v6 timestamp fields\n  const th =\n    ((bytes[0] << 24) >>> 0) |\n    (bytes[1] << 16) |\n    (bytes[2] << 8) |\n    bytes[3];\n  const tm = (bytes[4] << 8) | bytes[5];\n  const tl = ((bytes[6] & 0x0f) << 8) | bytes[7];\n\n  // Reassemble 60-bit timestamp\n  const ts =\n    (BigInt(th >>> 0) << 28n) |\n    (BigInt(tm) << 12n) |\n    BigInt(tl);\n\n  const low32 = Number(ts & 0xffffffffn);\n  const mid16 = Number((ts >> 32n) & 0xffffn);\n  const hi12 = Number((ts >> 48n) & 0xfffn);\n\n  const out = new Uint8Array(16);\n  out[0] = (low32 >>> 24) & 0xff;\n  out[1] = (low32 >>> 16) & 0xff;\n  out[2] = (low32 >>> 8) & 0xff;\n  out[3] = low32 & 0xff;\n  out[4] = (mid16 >>> 8) & 0xff;\n  out[5] = mid16 & 0xff;\n  out[6] = 0x10 | ((hi12 >>> 8) & 0x0f);\n  out[7] = hi12 & 0xff;\n  for (let i = 8; i < 16; i++) {\n    out[i] = bytes[i];\n  }\n\n  if (!isString) {\n    return out;\n  }\n\n  const h: string[] = [];\n  for (let i = 0; i < 16; i++) {\n    h.push(out[i].toString(16).padStart(2, \"0\"));\n  }\n  return (\n    h.slice(0, 4).join(\"\") + \"-\" +\n    h.slice(4, 6).join(\"\") + \"-\" +\n    h.slice(6, 8).join(\"\") + \"-\" +\n    h.slice(8, 10).join(\"\") + \"-\" +\n    h.slice(10, 16).join(\"\")\n  );\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2773
+    },
+    "gen-71": {
+      "name": "gen71",
+      "code": "export function gen71(text: string): string {\n  if (typeof text !== \"string\") {\n    throw new TypeError(\"gen71: input must be a string\");\n  }\n  const map: Record<string, string> = {\n    \"&\": \"&amp;\",\n    '\"': \"&quot;\",\n    \"'\": \"&#x27;\",\n    \"<\": \"&lt;\",\n    \">\": \"&gt;\",\n    \"/\": \"&#x2F;\",\n    \"\\\\\": \"&#x5C;\",\n    \"`\": \"&#96;\",\n  };\n  // Single-pass replacement: \"&\" is handled by the same pass, so it is\n  // never re-escaped and the result matches \"replace & first\".\n  return text.replace(/[&\"'<>\\/\\\\`]/g, (ch) => map[ch]);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 376
+    },
+    "gen-72": {
+      "name": "gen72",
+      "code": "type ParseReturnType = { status: \"valid\"; value: unknown } | { status: \"aborted\" | \"dirty\"; value?: unknown } | unknown;\n\nexport function gen72(result: ParseReturnType | Promise<ParseReturnType>): boolean {\n  try {\n    return typeof Promise !== \"undefined\" && result instanceof Promise;\n  } catch {\n    return false;\n  }\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 420
+    },
+    "gen-73": {
+      "name": "gen73",
+      "code": "export function gen73(destination: object, source: object): object {\n  if (!destination) {\n    return destination;\n  }\n  // for...in visits own and inherited enumerable string-keyed properties.\n  // It is a no-op when source is null or undefined.\n  for (const key in source) {\n    (destination as Record<string, unknown>)[key] = (source as Record<string, unknown>)[key];\n  }\n  return destination;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 321
+    },
+    "gen-75": {
+      "name": "gen75",
+      "code": "export function gen75(uuid: string): number {\n  const pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n  if (typeof uuid !== \"string\" || !pattern.test(uuid)) {\n    throw new TypeError(\"UUID is invalid\");\n  }\n  return parseInt(uuid[14], 16);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 349
+    },
+    "gen-67": {
+      "name": "gen67",
+      "code": "export function gen67(dateString: string): {date?: string, time?: string, timezone?: string} {\n  const separators = dateString.match(/[Tt]/g) ?? [];\n  if (separators.length > 1) {\n    return {};\n  }\n\n  const result: {date?: string, time?: string, timezone?: string} = {};\n  let datePart = \"\";\n  let timePart = \"\";\n\n  if (separators.length === 1) {\n    const idx = dateString.search(/[Tt]/);\n    datePart = dateString.slice(0, idx);\n    timePart = dateString.slice(idx + 1);\n  } else if (dateString.includes(\":\")) {\n    timePart = dateString;\n  } else {\n    datePart = dateString;\n  }\n\n  if (timePart) {\n    const tzMatch = timePart.match(/(Z|z|[+-]\\d{2}(?::?\\d{2})?)$/);\n    if (tzMatch && tzMatch.index !== undefined) {\n      result.timezone = tzMatch[1];\n      timePart = timePart.slice(0, tzMatch.index);\n    }\n  }\n\n  if (datePart) {\n    result.date = datePart;\n  }\n  if (timePart) {\n    result.time = timePart;\n  }\n\n  return result;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1523
+    },
+    "gen-76": {
+      "name": "gen76",
+      "code": "export function gen76(value: string): boolean {\n  if (typeof value !== \"string\") {\n    throw new TypeError(\"gen76: input must be a string\");\n  }\n  if (!/^[0-9]{9}$/.test(value)) {\n    return false;\n  }\n  const weights = [3, 7, 1, 3, 7, 1, 3, 7, 1];\n  let sum = 0;\n  for (let i = 0; i < 9; i++) {\n    sum += (value.charCodeAt(i) - 48) * weights[i];\n  }\n  return sum % 10 === 0;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 335
+    },
+    "gen-69": {
+      "name": "gen69",
+      "code": "export function gen69(comp: string, options: { loose: boolean }): string {\n  const loose = options.loose;\n  const prefix = loose ? \"[v=]?\\\\s*\" : \"\";\n  const re = new RegExp(\n    `^~>?\\\\s*${prefix}(\\\\d+|[xX*])(?:\\\\.(\\\\d+|[xX*]))?(?:\\\\.(\\\\d+|[xX*]))?(-[0-9A-Za-z.-]+)?(\\\\+[0-9A-Za-z.-]+)?$`\n  );\n\n  const m = comp.match(re);\n  if (!m) {\n    return comp;\n  }\n\n  const major = m[1];\n  const minor = m[2];\n  const patch = m[3];\n  const pre = m[4] ?? \"\";\n\n  const isWild = (s: string | undefined): boolean =>\n    s === undefined || /^[xX*]$/.test(s);\n\n  if (isWild(major)) {\n    return \"\";\n  }\n\n  if (isWild(minor)) {\n    const upper = `${Number(major) + 1}.0.0-0`;\n    return `>=${major}.0.0 <${upper}`;\n  }\n\n  if (isWild(patch)) {\n    const upper = `${major}.${Number(minor) + 1}.0-0`;\n    return `>=${major}.${minor}.0 <${upper}`;\n  }\n\n  const lower = `${major}.${minor}.${patch}${pre}`;\n  const upper = `${major}.${Number(minor) + 1}.0-0`;\n  return `>=${lower} <${upper}`;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1961
+    },
+    "gen-63": {
+      "name": "gen63",
+      "code": "export function gen63(bytes: number[]): Uint8Array {\n  const b = (i: number): number => (bytes[i] ?? 0) & 0xff;\n\n  // Timestamp fields from the v6 layout\n  const H = ((b(0) << 24) | (b(1) << 16) | (b(2) << 8) | b(3)) >>> 0; // ts bits 28..59\n  const L28 = ((b(4) << 8 | b(5)) << 12) | ((b(6) & 0x0f) << 8) | b(7); // ts bits 0..27\n\n  const timeLow = (((H & 0x0f) << 28) | L28) >>> 0; // ts bits 0..31\n  const timeMid = (H >>> 4) & 0xffff;               // ts bits 32..47\n  const timeHigh = (H >>> 20) & 0x0fff;             // ts bits 48..59\n\n  const out = new Uint8Array(16);\n  out[0] = (timeLow >>> 24) & 0xff;\n  out[1] = (timeLow >>> 16) & 0xff;\n  out[2] = (timeLow >>> 8) & 0xff;\n  out[3] = timeLow & 0xff;\n  out[4] = (timeMid >>> 8) & 0xff;\n  out[5] = timeMid & 0xff;\n  out[6] = 0x10 | ((timeHigh >>> 8) & 0x0f);\n  out[7] = timeHigh & 0xff;\n  for (let i = 8; i < 16; i++) {\n    out[i] = b(i);\n  }\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 3169
+    },
+    "gen-77": {
+      "name": "gen77",
+      "code": "export function gen77(value: any): string {\n  const KNOWN = new Set([\n    'nan', 'number', 'null', 'undefined', 'array', 'promise', 'map', 'set',\n    'date', 'object', 'string', 'boolean', 'bigint', 'symbol', 'function'\n  ]);\n\n  // Tagged JSON forms: {\"$type\": \"<label>\"} and {\"$date\": ...}\n  if (\n    value !== null &&\n    typeof value === 'object' &&\n    !Array.isArray(value) &&\n    Object.getPrototypeOf(value) === Object.prototype\n  ) {\n    const keys = Object.keys(value);\n    if (keys.length === 1) {\n      if (keys[0] === '$type' && typeof value.$type === 'string' && KNOWN.has(value.$type)) {\n        return value.$type;\n      }\n      if (keys[0] === '$date') {\n        return 'date';\n      }\n    }\n  }\n\n  if (value === null) return 'null';\n  if (value === undefined) return 'undefined';\n\n  switch (typeof value) {\n    case 'number':\n      return Number.isNaN(value) ? 'nan' : 'number';\n    case 'string':\n      return 'string';\n    case 'boolean':\n      return 'boolean';\n    case 'bigint':\n      return 'bigint';\n    case 'symbol':\n      return 'symbol';\n    case 'function':\n      if (typeof value.then === 'function' && typeof value.catch === 'function') {\n        return 'promise';\n      }\n      return 'function';\n  }\n\n  // Object (non-null)\n  if (typeof value.then === 'function' && typeof value.catch === 'function') {\n    return 'promise';\n  }\n  if (Array.isArray(value)) return 'array';\n  if (value instanceof Map) return 'map';\n  if (value instanceof Set) return 'set';\n  if (value instanceof Date) return 'date';\n  return 'object';\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1392
+    },
+    "gen-74": {
+      "name": "gen74",
+      "code": "export function gen74(range: string, options: object): string {\n  const terms = range.split(/\\s+/).filter((t) => t.length > 0);\n  const out: string[] = [];\n  const re =\n    /^\\^v?(\\d+|[xX*])(?:\\.(\\d+|[xX*]))?(?:\\.(\\d+|[xX*]))?(-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$/;\n  const isWild = (s: string | undefined): boolean =>\n    s === undefined || s === \"x\" || s === \"X\" || s === \"*\";\n\n  for (const term of terms) {\n    const m = re.exec(term);\n    if (!m) {\n      out.push(term);\n      continue;\n    }\n    const a = m[1];\n    const b = m[2];\n    const c = m[3];\n    const pre = m[4] ?? \"\";\n\n    if (isWild(a)) {\n      out.push(\">=0.0.0\");\n      continue;\n    }\n\n    const M = Number(a);\n    const wildMinor = isWild(b);\n    const wildPatch = wildMinor || isWild(c);\n    const mi = wildMinor ? 0 : Number(b);\n    const pa = wildPatch ? 0 : Number(c);\n    const lowerPre = wildPatch ? \"\" : pre;\n    const lower = `${M}.${mi}.${pa}${lowerPre}`;\n\n    let upper: string;\n    if (M > 0) {\n      upper = `${M + 1}.0.0`;\n    } else if (wildMinor) {\n      upper = `1.0.0`;\n    } else if (wildPatch) {\n      upper = `0.${mi + 1}.0`;\n    } else if (mi > 0) {\n      upper = `0.${mi + 1}.0`;\n    } else {\n      upper = `0.0.${pa + 1}`;\n    }\n\n    out.push(`>=${lower} <${upper}-0`);\n  }\n\n  return out.join(\" \");\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2425
+    },
+    "gen-78": {
+      "name": "gen78",
+      "code": "export function gen78(dateString: string, year: number | null): Date {\n  const invalid = new Date(NaN);\n  if (year === null || typeof year !== \"number\" || !Number.isFinite(year)) {\n    return invalid;\n  }\n  if (typeof dateString !== \"string\") {\n    return invalid;\n  }\n\n  const DAY = 86400000;\n\n  const makeUTC = (y: number, m: number, d: number): Date => {\n    const dt = new Date(0);\n    dt.setUTCFullYear(y, m, d);\n    dt.setUTCHours(0, 0, 0, 0);\n    return dt;\n  };\n\n  const isoDayOf = (dt: Date): number => ((dt.getUTCDay() + 6) % 7) + 1;\n\n  let m: RegExpMatchArray | null;\n\n  // Calendar: -MM-DD\n  if ((m = dateString.match(/^-(\\d{2})-(\\d{2})$/))) {\n    const month = parseInt(m[1], 10);\n    const day = parseInt(m[2], 10);\n    if (month < 1 || month > 12 || day < 1) return invalid;\n    const dt = makeUTC(year, month - 1, day);\n    if (\n      dt.getUTCFullYear() !== year ||\n      dt.getUTCMonth() !== month - 1 ||\n      dt.getUTCDate() !== day\n    ) {\n      return invalid;\n    }\n    return dt;\n  }\n\n  // Ordinal: -DDD\n  if ((m = dateString.match(/^-(\\d{3})$/))) {\n    const n = parseInt(m[1], 10);\n    if (n < 1 || n > 366) return invalid;\n    const dt = makeUTC(year, 0, 1);\n    dt.setTime(dt.getTime() + (n - 1) * DAY);\n    if (dt.getUTCFullYear() !== year) return invalid;\n    return dt;\n  }\n\n  // Week: -Www-D\n  if ((m = dateString.match(/^-W(\\d{2})-(\\d)$/))) {\n    const week = parseInt(m[1], 10);\n    const day = parseInt(m[2], 10);\n    if (week < 1 || week > 53 || day < 1 || day > 7) return invalid;\n\n    const jan4 = makeUTC(year, 0, 4);\n    const monday = new Date(jan4.getTime() - (isoDayOf(jan4) - 1) * DAY);\n    const d = new Date(monday.getTime() + ((week - 1) * 7 + (day - 1)) * DAY);\n\n    // Ensure the week actually belongs to this ISO week-year\n    // (validates week 53 and similar boundary cases).\n    const thursday = new Date(d.getTime() + (4 - isoDayOf(d)) * DAY);\n    if (thursday.getUTCFullYear() !== year) return invalid;\n\n    return d;\n  }\n\n  return invalid;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2093
+    },
+    "gen-82": {
+      "name": "gen82",
+      "code": "export function gen82(date: string, options: object | string | undefined): boolean {\n  const toTime = (v: unknown): number => {\n    if (v instanceof Date) return v.getTime();\n    if (typeof v === \"string\") return Date.parse(v);\n    return NaN;\n  };\n\n  let refTime: number;\n  if (options === undefined) {\n    refTime = Date.now();\n  } else if (typeof options === \"string\") {\n    refTime = toTime(options);\n  } else {\n    // Accessing a property on null throws a TypeError, as required.\n    const ref = (options as { reference?: unknown }).reference;\n    refTime = ref === undefined ? Date.now() : toTime(ref);\n  }\n\n  const t = toTime(date);\n  if (Number.isNaN(t) || Number.isNaN(refTime)) return false;\n  return t > refTime;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 964
+    },
+    "gen-84": {
+      "name": "gen84",
+      "code": "export function gen84(value: any): number {\n  if (!value) {\n    return 1;\n  }\n  return parseInt(String(value), undefined);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 396
+    },
+    "gen-85": {
+      "name": "gen85",
+      "code": "export function gen85(value: any): boolean {\n  try {\n    if (value === null || typeof value !== \"object\") {\n      return false;\n    }\n    return Object.prototype.toString.call(value) === \"[object Arguments]\";\n  } catch {\n    return false;\n  }\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 330
+    },
+    "gen-83": {
+      "name": "gen83",
+      "code": "export function gen83(params: {\n  errorMap?: (issue: { code: string }, ctx: { data: any; defaultError: string }) => { message: string };\n  invalid_type_error?: string;\n  required_error?: string;\n  description?: string;\n  message?: string;\n} | undefined): {\n  errorMap?: (issue: { code: string }, ctx: { data: any; defaultError: string }) => { message: string };\n  description?: string;\n} {\n  if (params === undefined || params === null) {\n    return {};\n  }\n\n  const { errorMap, invalid_type_error, required_error, description, message } = params;\n\n  if (errorMap !== undefined && (invalid_type_error !== undefined || required_error !== undefined)) {\n    throw new Error(\n      \"Cannot combine a custom errorMap with 'invalid_type_error' or 'required_error' shorthand messages\"\n    );\n  }\n\n  const result: {\n    errorMap?: (issue: { code: string }, ctx: { data: any; defaultError: string }) => { message: string };\n    description?: string;\n  } = {};\n\n  if (description !== undefined) {\n    result.description = description;\n  }\n\n  if (errorMap !== undefined) {\n    result.errorMap = errorMap;\n  } else if (\n    invalid_type_error !== undefined ||\n    required_error !== undefined ||\n    message !== undefined\n  ) {\n    result.errorMap = (issue, ctx) => {\n      if (issue.code === \"invalid_type\") {\n        if (ctx.data === undefined && required_error !== undefined) {\n          return { message: required_error };\n        }\n        if (ctx.data !== undefined && invalid_type_error !== undefined) {\n          return { message: invalid_type_error };\n        }\n      }\n      if (message !== undefined) {\n        return { message };\n      }\n      return { message: ctx.defaultError };\n    };\n  }\n\n  return result;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1318
+    },
+    "gen-79": {
+      "name": "gen79",
+      "code": "export function gen79(object: any, path: string | Array<string | number | symbol>): any {\n  const hasOwn = (o: any, k: PropertyKey): boolean =>\n    Object.prototype.hasOwnProperty.call(o, k);\n\n  const isObj = (o: any): boolean =>\n    o !== null && (typeof o === \"object\" || typeof o === \"function\");\n\n  if (Array.isArray(path)) {\n    if (path.length === 0) return undefined;\n    let cur: any = object;\n    for (const key of path) {\n      if (!isObj(cur) || !hasOwn(cur, key)) return undefined;\n      cur = cur[key];\n    }\n    return cur;\n  }\n\n  if (typeof path !== \"string\" || path.length === 0) return undefined;\n\n  const s = path;\n  const MISS: { found: false; value?: undefined } = { found: false };\n\n  // Parse the remainder of the string starting at index i against cur.\n  // Returns the first successful resolution, preferring longer literal keys.\n  const walk = (cur: any, i: number): { found: boolean; value?: any } => {\n    if (i === s.length) return { found: true, value: cur };\n\n    if (s[i] === \"[\") {\n      const close = s.indexOf(\"]\", i);\n      if (close < 0) return MISS;\n      let raw = s.slice(i + 1, close);\n      if (\n        raw.length >= 2 &&\n        (raw[0] === '\"' || raw[0] === \"'\") &&\n        raw[raw.length - 1] === raw[0]\n      ) {\n        raw = raw.slice(1, -1);\n      }\n      return step(cur, raw, close + 1);\n    }\n\n    const start = s[i] === \".\" ? i + 1 : i;\n    // Try the longest possible key first, then shorter ones.\n    for (let e = s.length; e > start; e--) {\n      if (e !== s.length && s[e] !== \".\" && s[e] !== \"[\") continue;\n      const r = step(cur, s.slice(start, e), e);\n      if (r.found) return r;\n    }\n    return MISS;\n  };\n\n  const step = (cur: any, key: string, next: number): { found: boolean; value?: any } => {\n    if (!isObj(cur) || !hasOwn(cur, key)) return MISS;\n    return walk(cur[key], next);\n  };\n\n  const result = walk(object, 0);\n  return result.found ? result.value : undefined;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2303
+    },
+    "gen-86": {
+      "name": "gen86",
+      "code": "export function gen86(words: ArrayLike<unknown>): Uint8Array {\n  const n = words.length;\n  const out = new Uint8Array(n * 4);\n  for (let i = 0; i < n; i++) {\n    const v = (words[i] as number) | 0;\n    const o = i * 4;\n    out[o] = v & 0xff;\n    out[o + 1] = (v >>> 8) & 0xff;\n    out[o + 2] = (v >>> 16) & 0xff;\n    out[o + 3] = (v >>> 24) & 0xff;\n  }\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 615
+    },
+    "gen-89": {
+      "name": "gen89",
+      "code": "export function gen89(text: string): number {\n  if (!text || typeof text !== \"string\") return 0;\n  const normalized = text.replace(\",\", \".\");\n  const n = parseFloat(normalized);\n  if (Number.isNaN(n) || n === 0) return 0;\n  return n;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 422
+    },
+    "gen-81": {
+      "name": "gen81",
+      "code": "export function gen81(data: Uint8Array): Uint8Array {\n  // Per-round shift amounts\n  const S: number[] = [\n    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,\n    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,\n    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,\n    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21\n  ];\n\n  // Sine-derived constants\n  const K: number[] = [];\n  for (let i = 0; i < 64; i++) {\n    K.push(Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296) | 0);\n  }\n\n  const len = data.length;\n  const total = Math.ceil((len + 9) / 64) * 64;\n  const buf = new Uint8Array(total);\n  buf.set(data);\n  buf[len] = 0x80;\n\n  // Append original length in bits as 64-bit little-endian\n  const bitLo = (len * 8) >>> 0;\n  const bitHi = Math.floor(len / 0x20000000) >>> 0;\n  for (let i = 0; i < 4; i++) {\n    buf[total - 8 + i] = (bitLo >>> (8 * i)) & 0xff;\n    buf[total - 4 + i] = (bitHi >>> (8 * i)) & 0xff;\n  }\n\n  let a0 = 0x67452301 | 0;\n  let b0 = 0xefcdab89 | 0;\n  let c0 = 0x98badcfe | 0;\n  let d0 = 0x10325476 | 0;\n\n  const M: number[] = new Array(16);\n\n  for (let off = 0; off < total; off += 64) {\n    for (let j = 0; j < 16; j++) {\n      const p = off + j * 4;\n      M[j] = (buf[p] | (buf[p + 1] << 8) | (buf[p + 2] << 16) | (buf[p + 3] << 24)) | 0;\n    }\n\n    let A = a0;\n    let B = b0;\n    let C = c0;\n    let D = d0;\n\n    for (let i = 0; i < 64; i++) {\n      let F: number;\n      let g: number;\n      if (i < 16) {\n        F = (B & C) | (~B & D);\n        g = i;\n      } else if (i < 32) {\n        F = (D & B) | (~D & C);\n        g = (5 * i + 1) % 16;\n      } else if (i < 48) {\n        F = B ^ C ^ D;\n        g = (3 * i + 5) % 16;\n      } else {\n        F = C ^ (B | ~D);\n        g = (7 * i) % 16;\n      }\n      F = (F + A + K[i] + M[g]) | 0;\n      A = D;\n      D = C;\n      C = B;\n      const s = S[i];\n      B = (B + ((F << s) | (F >>> (32 - s)))) | 0;\n    }\n\n    a0 = (a0 + A) | 0;\n    b0 = (b0 + B) | 0;\n    c0 = (c0 + C) | 0;\n    d0 = (d0 + D) | 0;\n  }\n\n  const out = new Uint8Array(16);\n  const words = [a0, b0, c0, d0];\n  for (let w = 0; w < 4; w++) {\n    for (let i = 0; i < 4; i++) {\n      out[w * 4 + i] = (words[w] >>> (8 * i)) & 0xff;\n    }\n  }\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2334
+    },
+    "gen-90": {
+      "name": "gen90",
+      "code": "export function gen90(value: any): boolean {\n  return typeof value === \"object\" &&\n    value !== null &&\n    Object.prototype.toString.call(value) === \"[object Map]\";\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 170
+    },
+    "gen-88": {
+      "name": "gen88",
+      "code": "export function gen88(options: { precision?: number | null }): string {\n  const base = \"([01]\\\\d|2[0-3]):[0-5]\\\\d\";\n  const precision = options.precision;\n\n  let seconds: string;\n  if (precision) {\n    seconds = `(:[0-5]\\\\d\\\\.\\\\d{${precision}})+`;\n  } else if (precision === 0) {\n    seconds = \"(:[0-5]\\\\d)?\";\n  } else {\n    seconds = \"(:[0-5]\\\\d(\\\\.\\\\d+)?)?\";\n  }\n\n  return base + seconds;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 730
+    },
+    "gen-92": {
+      "name": "gen92",
+      "code": "export function gen92(bitLength: number): number {\n  return (((bitLength + 64) >>> 9) << 4) + 15;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 361
+    },
+    "gen-80": {
+      "name": "gen80",
+      "code": "export function gen80(\n  comp: string,\n  options: { loose?: boolean; includePrerelease?: boolean } = {}\n): string {\n  const loose = !!(options && options.loose);\n  const includePrerelease = !!(options && options.includePrerelease);\n\n  let s = String(comp).trim();\n  if (s.startsWith(\"^\")) {\n    s = s.slice(1).trim();\n  }\n\n  // Lenient mode permits a leading \"v\"/\"=\" and whitespace; strict mode does not.\n  if (!loose && /^[v=\\s]/.test(s)) {\n    throw new TypeError(`Invalid caret range: ${comp}`);\n  }\n  if (loose) {\n    s = s.replace(/^[v=]\\s*/, \"\");\n  }\n\n  const re =\n    /^(\\d+|x|X|\\*)(?:\\.(\\d+|x|X|\\*)(?:\\.(\\d+|x|X|\\*)(?:-([0-9A-Za-z.-]+))?)?)?(?:\\+[0-9A-Za-z.-]+)?$/;\n  const match = s === \"\" ? [\"\", \"*\"] : s.match(re);\n  if (!match) {\n    throw new TypeError(`Invalid caret range: ${comp}`);\n  }\n\n  const isX = (v: string | undefined): boolean =>\n    v === undefined || /^[xX*]$/.test(v);\n\n  const [, M, m, p, pre] = match;\n\n  if (isX(M)) {\n    return \"\";\n  }\n\n  const major = Number(M);\n  const pr = pre ? `-${pre}` : \"\";\n  const lowerPre = pr || (includePrerelease ? \"-0\" : \"\");\n\n  if (isX(m)) {\n    const minor = \"0\";\n    const patch = \"0\";\n    return `>=${major}.${minor}.${patch}${lowerPre} <${major + 1}.0.0-0`;\n  }\n\n  const minor = Number(m);\n\n  if (isX(p)) {\n    if (major === 0) {\n      return `>=${major}.${minor}.0${lowerPre} <${major}.${minor + 1}.0-0`;\n    }\n    return `>=${major}.${minor}.0${lowerPre} <${major + 1}.0.0-0`;\n  }\n\n  const patch = Number(p);\n  const lower = `${major}.${minor}.${patch}${pr || (includePrerelease ? \"-0\" : \"\")}`;\n\n  if (major === 0) {\n    if (minor === 0) {\n      return `>=${lower} <${major}.${minor}.${patch + 1}-0`;\n    }\n    return `>=${lower} <${major}.${minor + 1}.0-0`;\n  }\n\n  return `>=${lower} <${major + 1}.0.0-0`;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 3120
+    },
+    "gen-95": {
+      "name": "gen95",
+      "code": "export function gen95(offset: string): number {\n  if (offset === \"Z\") return 0;\n\n  const match = /^([+-])(\\d{2})(?::?(\\d{2}))?$/.exec(offset);\n  if (!match) return 0;\n\n  const sign = match[1];\n  const hours = Number(match[2]);\n  const minutes = match[3] === undefined ? 0 : Number(match[3]);\n\n  if (hours > 23 || minutes > 59) return NaN;\n\n  const ms = (hours * 60 + minutes) * 60000;\n  if (ms === 0) return 0;\n  return sign === \"+\" ? -ms : ms;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 715
+    },
+    "gen-94": {
+      "name": "gen94",
+      "code": "export function gen94(args: { offset?: boolean, local?: boolean, precision?: number | null }): RegExp {\n  const timePattern = (settings: { offset?: boolean, local?: boolean, precision?: number | null }): string => {\n    const p = settings.precision;\n    let fraction: string;\n    if (p === undefined || p === null) {\n      fraction = \"(\\\\.\\\\d+)?\";\n    } else if (p > 0) {\n      fraction = `\\\\.\\\\d{${p}}`;\n    } else {\n      fraction = \"\";\n    }\n    return `([01]\\\\d|2[0-3]):[0-5]\\\\d:[0-5]\\\\d${fraction}`;\n  };\n\n  return new RegExp(`^${timePattern(args)}$`);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 922
+    },
+    "gen-97": {
+      "name": "gen97",
+      "code": "export function gen97(comp: string, options: object): string {\n  if (typeof comp !== \"string\") {\n    throw new TypeError(\"comp must be a string\");\n  }\n  const trimmed = comp.trim();\n  // Match-anything wildcard: \"*\" or \">=*\", with optional whitespace around the operator.\n  if (/^(?:>=\\s*)?\\*$/.test(trimmed)) {\n    return \"\";\n  }\n  return trimmed;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 660
+    },
+    "gen-96": {
+      "name": "gen96",
+      "code": "export function gen96(value: any): boolean {\n  if (typeof value !== \"function\") {\n    return false;\n  }\n\n  try {\n    // Flagged as masked or patched by convention: treat as not genuine.\n    if (value.__masked === true || value.__patched === true) {\n      return false;\n    }\n\n    // Use the intrinsic toString so an overridden instance method cannot spoof the result.\n    const source: string = Function.prototype.toString.call(value);\n\n    return /\\{\\s*\\[native code\\]\\s*\\}\\s*$/.test(source);\n  } catch {\n    return false;\n  }\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 661
+    },
+    "gen-99": {
+      "name": "gen99",
+      "code": "export function gen99(str: string): boolean {\n  if (typeof str !== \"string\") {\n    throw new TypeError(\"gen99: input must be a string\");\n  }\n  if (str.length === 0) {\n    return false;\n  }\n  for (let i = 0; i < str.length; i++) {\n    if (str.charCodeAt(i) > 127) {\n      return false;\n    }\n  }\n  return true;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 138
+    },
+    "gen-60": {
+      "name": "gen60",
+      "code": "```ts\nexport function gen60(\n  text: string,\n  options: { additionalDigits?: 0 | 1 | 2; in?: (...args: any[]) => any } | undefined\n): Date {\n  const invalid = () => new Date(NaN);\n  if (typeof text !== \"string\") return invalid();\n\n  const additionalDigits =\n    options && options.additionalDigits !== undefined ? options.additionalDigits : 2;\n  if (![0, 1, 2].includes(additionalDigits)) return invalid();\n\n  const parts = /^([^T ]+)(?:[T ](.+))?$/.exec(text);\n  if (!parts) return invalid();\n  const datePart = parts[1];\n  const timePart = parts[2];\n\n  const isLeap = (y: number) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;\n  const daysInMonth = (y: number, m: number) =>\n    [31, isLeap(y) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m];\n\n  const utc = (y: number, m: number, d: number) => {\n    const x = new Date(0);\n    x.setUTCFullYear(y, m, d);\n    x.setUTCHours(0, 0, 0, 0);\n    return x;\n  };\n  const addDays = (x: Date, n: number) => {\n    const y = new Date(x.getTime());\n    y.setUTCDate(y.getUTC",
+      "stopReason": "max_tokens",
+      "outputTokens": 6000
+    },
+    "gen-102": {
+      "name": "gen102",
+      "code": "export function gen102(value: any): boolean {\n  return (\n    typeof value === \"object\" &&\n    value !== null &&\n    Object.prototype.toString.call(value) === \"[object Set]\"\n  );\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 76
+    },
+    "gen-87": {
+      "name": "gen87",
+      "code": "export function gen87(\n  text: string,\n  locale: string = 'en-US',\n  options: { ignore?: string | RegExp } = {}\n): boolean {\n  // Letter ranges per supported locale (keys lowercase). Language-only keys act as fallbacks.\n  const ALPHABETS: Record<string, string> = {\n    'en-us': 'A-Za-z',\n    'en-gb': 'A-Za-z',\n    'en': 'A-Za-z',\n    'de-de': 'A-Za-zÄÖÜäöüß',\n    'de': 'A-Za-zÄÖÜäöüß',\n    'fr-fr': 'A-Za-zÀÂÆÇÉÈÊËÎÏÔŒÙÛÜŸàâæçéèêëîïôœùûüÿ',\n    'fr': 'A-Za-zÀÂÆÇÉÈÊËÎÏÔŒÙÛÜŸàâæçéèêëîïôœùûüÿ',\n    'es-es': 'A-Za-zÁÉÍÓÚÜÑáéíóúüñ',\n    'es': 'A-Za-zÁÉÍÓÚÜÑáéíóúüñ',\n    'ru-ru': '\\\\u0410-\\\\u044F\\\\u0401\\\\u0451',\n    'ru': '\\\\u0410-\\\\u044F\\\\u0401\\\\u0451',\n  };\n\n  const key = locale.toLowerCase();\n  let cls = ALPHABETS[key];\n  if (cls === undefined) {\n    const lang = key.split('-')[0];\n    cls = ALPHABETS[lang];\n  }\n  if (cls === undefined) {\n    throw new RangeError(`Unsupported locale: ${locale}`);\n  }\n\n  let s = text;\n  const ignore = options?.ignore;\n  if (typeof ignore === 'string') {\n    const ignored = new Set(Array.from(ignore));\n    s = Array.from(s).filter((c) => !ignored.has(c)).join('');\n  } else if (ignore instanceof RegExp) {\n    const flags = ignore.flags.includes('g') ? ignore.flags : ignore.flags + 'g';\n    s = s.replace(new RegExp(ignore.source, flags), '');\n  }\n\n  return new RegExp(`^[${cls}]*$`, 'u').test(s);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2122
+    },
+    "gen-103": {
+      "name": "gen103",
+      "code": "export function gen103(comp: string, options: object): string {\n  const trimmed = comp.trim();\n  const includePrerelease = (options as { includePrerelease?: unknown }).includePrerelease;\n  const redundant = includePrerelease ? \">=0.0.0-0\" : \">=0.0.0\";\n  return trimmed === redundant ? \"\" : trimmed;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 470
+    },
+    "gen-101": {
+      "name": "gen101",
+      "code": "export function gen101(isoYear: number, week: number, dayOfWeek: number): Date {\n  const DAY = 86400000;\n  const jan4 = new Date(0);\n  jan4.setUTCFullYear(isoYear, 0, 4);\n  jan4.setUTCHours(0, 0, 0, 0);\n  // Monday-based weekday index: Monday = 0, Sunday = 6\n  const dow = (jan4.getUTCDay() + 6) % 7;\n  const monday1 = jan4.getTime() - dow * DAY;\n  return new Date(monday1 + ((week - 1) * 7 + dayOfWeek) * DAY);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 754
+    },
+    "gen-107": {
+      "name": "gen107",
+      "code": "export function gen107(year: number): boolean {\n  if (typeof year !== \"number\" || !Number.isInteger(year)) {\n    return false;\n  }\n  return (year % 400 === 0) || (year % 4 === 0 && year % 100 !== 0);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 95
+    },
+    "gen-93": {
+      "name": "gen93",
+      "code": "const ALPHABETS: Record<string, string> = {\n  en: 'A-Za-z',\n  de: 'A-Za-zÄÖÜäöüß',\n  fr: 'A-Za-zÀÂÆÇÈÉÊËÎÏÔŒÙÛÜŸàâæçèéêëîïôœùûüÿ',\n  es: 'A-Za-zÁÉÍÑÓÚÜáéíñóúü',\n  it: 'A-Za-zÀÈÉÌÍÎÒÓÙÚàèéìíîòóùú',\n  pt: 'A-Za-zÁÀÂÃÇÉÊÍÓÔÕÚáàâãçéêíóôõú',\n  ru: 'А-ЯЁа-яё',\n  uk: 'А-ЯІЇЄҐа-яіїєґ',\n  el: 'Α-Ωα-ωΆΈΉΊΌΎΏάέήίόύώΪΫϊϋΐΰ',\n  ja: '\\\\p{Script=Hiragana}\\\\p{Script=Katakana}\\\\p{Script=Han}',\n  zh: '\\\\p{Script=Han}',\n  ko: '\\\\p{Script=Hangul}',\n  ar: '\\\\u0621-\\\\u064A',\n  he: '\\\\u05D0-\\\\u05EA',\n};\n\nexport function gen93(\n  str: string,\n  locale: string = 'en-US',\n  options: object = {}\n): boolean {\n  if (typeof str !== 'string') {\n    throw new TypeError('gen93: input must be a string');\n  }\n  if (typeof locale !== 'string') {\n    throw new TypeError('gen93: locale must be a string');\n  }\n  const lang = locale.split(/[-_]/)[0].toLowerCase();\n  const letters = ALPHABETS[lang];\n  if (letters === undefined) {\n    throw new RangeError(`gen93: unsupported locale \"${locale}\"`);\n  }\n\n  const opts = (options && typeof options === 'object') ? (options as any) : {};\n  let value = str;\n  const ignore = opts.ignore;\n\n  if (typeof ignore === 'string') {\n    const skip = new Set(Array.from(ignore));\n    value = Array.from(value).filter((ch) => !skip.has(ch)).join('');\n  } else if (ignore instanceof RegExp) {\n    const flags = ignore.flags.includes('g') ? ignore.flags : ignore.flags + 'g';\n    value = value.replace(new RegExp(ignore.source, flags), '');\n  }\n\n  if (value.length === 0) {\n    return false;\n  }\n\n  const pattern = new RegExp(`^[${letters}0-9]+$`, 'u');\n  return pattern.test(value);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2036
+    },
+    "gen-104": {
+      "name": "gen104",
+      "code": "export function gen104(bytes: number[] | Uint8Array): Uint32Array {\n  const n = bytes.length;\n  if (n === 0) {\n    return new Uint32Array(0);\n  }\n\n  // MD5-style length helper: bit length = bytes * 8\n  const bits = n * 8;\n  const words = ((((bits + 64) >>> 9) << 4) + 15);\n\n  const out = new Uint32Array(words);\n  for (let i = 0; i < n; i++) {\n    const b = bytes[i] & 0xff;\n    const w = i >>> 2;\n    const shift = (i & 3) * 8;\n    out[w] = (out[w] | (b << shift)) >>> 0;\n  }\n\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 869
+    },
+    "gen-100": {
+      "name": "gen100",
+      "code": "export function gen100(options: {precision?: number | null, offset?: boolean, local?: boolean}): RegExp {\n  const date = \"\\\\d{4}-\\\\d{2}-\\\\d{2}\";\n  const base = \"\\\\d{2}:\\\\d{2}:\\\\d{2}\";\n\n  // undefined -> no fractional seconds\n  // number n -> exactly n fractional digits (required)\n  // null -> any number of fractional digits (optional)\n  const precision = options.precision;\n  let frac = \"\";\n  if (typeof precision === \"number\") {\n    frac = `\\\\.\\\\d{${precision}}`;\n  } else if (precision === null) {\n    frac = \"(\\\\.\\\\d+)?\";\n  }\n  const time = base + frac;\n\n  const offsetAlt = \"([+-]\\\\d{2}:?\\\\d{2})\";\n  const zulu = options.local ? \"Z?\" : \"Z\";\n  const tz = options.offset ? `(${zulu}|${offsetAlt})` : `(${zulu})`;\n\n  return new RegExp(`^${date}T${time}${tz}$`);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1264
+    },
+    "gen-108": {
+      "name": "gen108",
+      "code": "export function gen108(value: any): boolean {\n  if (!ArrayBuffer.isView(value)) {\n    return false;\n  }\n  // ArrayBuffer.isView is true for DataView as well; exclude it by its tag.\n  const tag = Object.prototype.toString.call(value).slice(8, -1);\n  return tag !== \"DataView\";\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 442
+    },
+    "gen-110": {
+      "name": "gen110",
+      "code": "export function gen110(x: number, y: number): number {\n  // Reduce each operand modulo 2^32 (ToUint32), add, then wrap to signed 32-bit.\n  const lsw = ((x >>> 0) & 0xffff) + ((y >>> 0) & 0xffff);\n  const msw = ((x >>> 16) & 0xffff) + ((y >>> 16) & 0xffff) + (lsw >>> 16);\n  return ((msw << 16) | (lsw & 0xffff)) | 0;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 342
+    },
+    "gen-105": {
+      "name": "gen105",
+      "code": "export function gen105(str: string): boolean {\n  if (typeof str !== \"string\") {\n    throw new TypeError(\"Input must be a string\");\n  }\n\n  const s = str.toUpperCase();\n\n  // BIC: 4-letter bank code, 2-letter country code, 2-char location code,\n  // optional 3-char branch code.\n  if (!/^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(s)) {\n    return false;\n  }\n\n  const countries = new Set(\n    (\n      \"AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ \" +\n      \"BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ \" +\n      \"CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ \" +\n      \"DE DJ DK DM DO DZ \" +\n      \"EC EE EG EH ER ES ET \" +\n      \"FI FJ FK FM FO FR \" +\n      \"GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY \" +\n      \"HK HM HN HR HT HU \" +\n      \"ID IE IL IM IN IO IQ IR IS IT \" +\n      \"JE JM JO JP \" +\n      \"KE KG KH KI KM KN KP KR KW KY KZ \" +\n      \"LA LB LC LI LK LR LS LT LU LV LY \" +\n      \"MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ \" +\n      \"NA NC NE NF NG NI NL NO NP NR NU NZ \" +\n      \"OM \" +\n      \"PA PE PF PG PH PK PL PM PN PR PS PT PW PY \" +\n      \"QA \" +\n      \"RE RO RS RU RW \" +\n      \"SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ \" +\n      \"TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ \" +\n      \"UA UG UM US UY UZ \" +\n      \"VA VC VE VG VI VN VU \" +\n      \"WF WS \" +\n      \"XK \" +\n      \"YE YT \" +\n      \"ZA ZM ZW\"\n    ).split(\" \")\n  );\n\n  return countries.has(s.substring(4, 6));\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1733
+    },
+    "gen-113": {
+      "name": "gen113",
+      "code": "export function gen113(year: number, month: number, day: number): boolean {\n  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {\n    return false;\n  }\n  if (month < 0 || month > 11 || day < 1) {\n    return false;\n  }\n  const isLeap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;\n  const daysInMonth = [31, isLeap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];\n  return day <= daysInMonth[month];\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 354
+    },
+    "gen-106": {
+      "name": "gen106",
+      "code": "export function gen106(address: string, family: string | undefined): boolean {\n  const isIPv4 = (s: string): boolean => {\n    const parts = s.split(\".\");\n    if (parts.length !== 4) return false;\n    for (const p of parts) {\n      if (!/^(0|[1-9]\\d{0,2})$/.test(p)) return false;\n      if (Number(p) > 255) return false;\n    }\n    return true;\n  };\n\n  const isIPv6 = (input: string): boolean => {\n    let s = input;\n    const idx = s.lastIndexOf(\":\");\n    if (idx < 0) return false;\n\n    // Handle embedded IPv4 in the final 32 bits.\n    const tail = s.slice(idx + 1);\n    if (tail.includes(\".\")) {\n      if (!isIPv4(tail)) return false;\n      s = s.slice(0, idx + 1) + \"0:0\";\n    }\n\n    const parseGroups = (str: string): string[] | null => {\n      if (str === \"\") return [];\n      const groups = str.split(\":\");\n      for (const g of groups) {\n        if (!/^[0-9a-fA-F]{1,4}$/.test(g)) return null;\n      }\n      return groups;\n    };\n\n    const compressionCount = s.split(\"::\").length - 1;\n    if (compressionCount > 1) return false;\n\n    if (compressionCount === 1) {\n      const [left, right] = s.split(\"::\");\n      const l = parseGroups(left);\n      const r = parseGroups(right);\n      if (l === null || r === null) return false;\n      return l.length + r.length <= 7;\n    }\n\n    const groups = parseGroups(s);\n    return groups !== null && groups.length === 8;\n  };\n\n  if (family === undefined) {\n    return isIPv4(address) || isIPv6(address);\n  }\n  if (family === \"ipv4\") {\n    return isIPv4(address);\n  }\n  if (family === \"ipv6\") {\n    return isIPv6(address);\n  }\n  return false;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1447
+    },
+    "gen-109": {
+      "name": "gen109",
+      "code": "export function gen109(version: string, options: object | undefined): string | null {\n  if (typeof version !== \"string\") {\n    throw new TypeError(\"version must be a string\");\n  }\n\n  let s = version.trim();\n  let i = 0;\n  while (i < s.length && (s[i] === \"=\" || s[i] === \"v\")) {\n    i++;\n  }\n  s = s.slice(i);\n\n  const identifier = \"(?:0|[1-9]\\\\d*|\\\\d*[a-zA-Z-][0-9a-zA-Z-]*)\";\n  const pattern = new RegExp(\n    \"^(0|[1-9]\\\\d*)\\\\.(0|[1-9]\\\\d*)\\\\.(0|[1-9]\\\\d*)\" +\n      \"(?:-(\" + identifier + \"(?:\\\\.\" + identifier + \")*))?\" +\n      \"(?:\\\\+([0-9a-zA-Z-]+(?:\\\\.[0-9a-zA-Z-]+)*))?$\"\n  );\n\n  const m = pattern.exec(s);\n  if (!m) {\n    return null;\n  }\n\n  let result = `${m[1]}.${m[2]}.${m[3]}`;\n  if (m[4] !== undefined) {\n    result += `-${m[4]}`;\n  }\n  return result;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1185
+    },
+    "gen-98": {
+      "name": "gen98",
+      "code": "export function gen98(words: number[], bitLength: number): Uint32Array {\n  const S: number[] = [\n    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,\n    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,\n    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,\n    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,\n  ];\n  const K: number[] = [];\n  for (let i = 0; i < 64; i++) {\n    K.push(Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296) >>> 0);\n  }\n\n  // Number of message bytes (byte-aligned assumption; partial byte included)\n  const nbytes = Math.ceil(bitLength / 8);\n\n  // Padded length: message + 0x80 + zeros so that length ≡ 56 (mod 64), then 8 bytes of length\n  let padded = nbytes + 1;\n  while (padded % 64 !== 56) padded++;\n  const buf = new Uint8Array(padded + 8);\n\n  for (let k = 0; k < nbytes; k++) {\n    const w = (words[k >> 2] ?? 0) >>> 0;\n    buf[k] = (w >>> ((k & 3) * 8)) & 0xff;\n  }\n  buf[nbytes] = 0x80;\n\n  const lo = bitLength >>> 0;\n  const hi = Math.floor(bitLength / 4294967296) >>> 0;\n  for (let i = 0; i < 4; i++) {\n    buf[padded + i] = (lo >>> (8 * i)) & 0xff;\n    buf[padded + 4 + i] = (hi >>> (8 * i)) & 0xff;\n  }\n\n  let a0 = 0x67452301 >>> 0;\n  let b0 = 0xefcdab89 >>> 0;\n  let c0 = 0x98badcfe >>> 0;\n  let d0 = 0x10325476 >>> 0;\n\n  const M: number[] = new Array(16);\n  for (let off = 0; off < buf.length; off += 64) {\n    for (let g = 0; g < 16; g++) {\n      const p = off + 4 * g;\n      M[g] = (buf[p] | (buf[p + 1] << 8) | (buf[p + 2] << 16) | (buf[p + 3] << 24)) >>> 0;\n    }\n\n    let A = a0, B = b0, C = c0, D = d0;\n\n    for (let i = 0; i < 64; i++) {\n      let F: number;\n      let g: number;\n      if (i < 16) {\n        F = (B & C) | (~B & D);\n        g = i;\n      } else if (i < 32) {\n        F = (D & B) | (~D & C);\n        g = (5 * i + 1) % 16;\n      } else if (i < 48) {\n        F = B ^ C ^ D;\n        g = (3 * i + 5) % 16;\n      } else {\n        F = C ^ (B | ~D);\n        g = (7 * i) % 16;\n      }\n      F = (F + A + K[i] + M[g]) >>> 0;\n      A = D;\n      D = C;\n      C = B;\n      const s = S[i];\n      B = (B + ((F << s) | (F >>> (32 - s)))) >>> 0;\n    }\n\n    a0 = (a0 + A) >>> 0;\n    b0 = (b0 + B) >>> 0;\n    c0 = (c0 + C) >>> 0;\n    d0 = (d0 + D) >>> 0;\n  }\n\n  return new Uint32Array([a0, b0, c0, d0]);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2529
+    },
+    "gen-117": {
+      "name": "gen117",
+      "code": "export function gen117(str: string): boolean {\n  if (typeof str !== \"string\") {\n    throw new TypeError(\"gen117: input must be a string\");\n  }\n  if (str.length === 0) {\n    return false;\n  }\n  return /^[1-9A-HJ-NP-Za-km-z]+$/.test(str);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 115
+    },
+    "gen-116": {
+      "name": "gen116",
+      "code": "export function gen116(value: number, shift: number): number {\n  const v = value >>> 0;\n  const s = ((shift % 32) + 32) % 32;\n  if (s === 0) {\n    return v | 0;\n  }\n  const rotated = ((v << s) | (v >>> (32 - s))) >>> 0;\n  return rotated | 0;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 216
+    },
+    "gen-114": {
+      "name": "gen114",
+      "code": "export function gen114(value: any): string[] {\n  // Object.keys throws a TypeError for null and undefined, as required.\n  const keys = Object.keys(value);\n\n  // Detect a prototype object: it owns a 'constructor' whose .prototype is the object itself.\n  const isPrototype =\n    Object.prototype.hasOwnProperty.call(value, \"constructor\") &&\n    typeof value.constructor === \"function\" &&\n    value.constructor.prototype === value;\n\n  if (!isPrototype) {\n    return keys;\n  }\n\n  return keys.filter((k) => k !== \"constructor\");\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 563
+    },
+    "gen-119": {
+      "name": "gen119",
+      "code": "export function gen119(year: number, dayOfYear: number): boolean {\n  const isLeap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;\n  const max = isLeap ? 366 : 365;\n  return dayOfYear >= 1 && dayOfYear <= max;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 264
+    },
+    "gen-91": {
+      "name": "gen91",
+      "code": "export function gen91(\n  comparator: string,\n  options: { loose?: boolean; includePrerelease?: boolean }\n): string {\n  const trimmed = comparator.trim();\n  const match = trimmed.match(\n    /^(<=|>=|<|>|=|~>|~|\\^)?\\s*v?=?\\s*([0-9]+|[xX*])?(?:\\.([0-9]+|[xX*]))?(?:\\.([0-9]+|[xX*]))?$/\n  );\n  if (!match) return trimmed;\n\n  let op = match[1] ?? \"\";\n  let M: string | undefined = match[2];\n  let m: string | undefined = match[3];\n  let p: string | undefined = match[4];\n\n  if (M === undefined) return trimmed;\n\n  const isX = (v: string | undefined): boolean =>\n    v === undefined || /^[xX*]$/.test(v);\n\n  const xM = isX(M);\n  const xm = xM || isX(m);\n  const xp = xm || isX(p);\n\n  // Not a wildcard comparator: return unchanged (trimmed).\n  if (!xp) return trimmed;\n\n  if (op === \"~>\") op = \"~\";\n  if (op === \"=\" && xp) op = \"\";\n\n  const pr = options.includePrerelease ? \"-0\" : \"\";\n\n  if (xM) {\n    if (op === \">\" || op === \"<\") return \"<0.0.0-0\";\n    return \"*\";\n  }\n\n  if (op === \"<\" || op === \"<=\" || op === \">\" || op === \">=\") {\n    if (xm) {\n      m = \"0\";\n    }\n    p = \"0\";\n    if (op === \">\") {\n      op = \">=\";\n      if (xm) {\n        M = String(+M + 1);\n        m = \"0\";\n      } else {\n        m = String(+(m as string) + 1);\n      }\n      p = \"0\";\n    } else if (op === \"<=\") {\n      op = \"<\";\n      if (xm) {\n        M = String(+M + 1);\n      } else {\n        m = String(+(m as string) + 1);\n      }\n    }\n    const finalPr = op === \"<\" ? \"-0\" : pr;\n    return `${op}${M}.${m}.${p}${op === \"<\" ? \"-0\" : finalPr}`.replace(\n      /-0-0$/,\n      \"-0\"\n    );\n  }\n\n  if (op === \"~\") {\n    if (xm) {\n      return `>=${M}.0.0${pr} <${+M + 1}.0.0-0`;\n    }\n    return `>=${M}.${m}.0${pr} <${M}.${+(m as string) + 1}.0-0`;\n  }\n\n  if (op === \"^\") {\n    if (xm) {\n      return `>=${M}.0.0${pr} <${+M + 1}.0.0-0`;\n    }\n    if (M === \"0\") {\n      return `>=${M}.${m}.0${pr} <${M}.${+(m as string) + 1}.0-0`;\n    }\n    return `>=${M}.${m}.0${pr} <${+M + 1}.0.0-0`;\n  }\n\n  // Plain comparator (no operator or '=').\n  if (xm) {\n    return `>=${M}.0.0${pr} <${+M + 1}.0.0-0`;\n  }\n  return `>=${M}.${m}.0${pr} <${M}.${+(m as string) + 1}.0-0`;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 4511
+    },
+    "gen-112": {
+      "name": "gen112",
+      "code": "export function gen112(token: string, expectedAlg: string | undefined): boolean {\n  try {\n    if (typeof token !== \"string\") return false;\n\n    const parts = token.split(\".\");\n    if (parts.length !== 3) return false;\n\n    const [headerSeg, payloadSeg, sigSeg] = parts;\n    if (headerSeg.length === 0 || payloadSeg.length === 0) return false;\n\n    const B64 = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_\";\n\n    // Validates base64url charset and decodes to bytes (no padding).\n    const decodeB64url = (s: string): number[] | null => {\n      if (!/^[A-Za-z0-9_-]*$/.test(s)) return null;\n      if (s.length % 4 === 1) return null;\n      const out: number[] = [];\n      let acc = 0;\n      let bits = 0;\n      for (let i = 0; i < s.length; i++) {\n        const v = B64.indexOf(s[i]);\n        acc = ((acc << 6) | v) & 0xffffff;\n        bits += 6;\n        if (bits >= 8) {\n          bits -= 8;\n          out.push((acc >> bits) & 0xff);\n        }\n      }\n      return out;\n    };\n\n    // Signature segment: base64url charset, may be empty (unsecured tokens).\n    if (!/^[A-Za-z0-9_-]*$/.test(sigSeg)) return false;\n    if (payloadSeg.length > 0 && !/^[A-Za-z0-9_-]+$/.test(payloadSeg)) return false;\n\n    const headerBytes = decodeB64url(headerSeg);\n    if (headerBytes === null) return false;\n\n    // Bytes -> UTF-8 string via percent-decoding (throws on invalid UTF-8).\n    const pct = headerBytes\n      .map((b) => \"%\" + b.toString(16).padStart(2, \"0\"))\n      .join(\"\");\n    const headerJson = decodeURIComponent(pct);\n\n    const header: unknown = JSON.parse(headerJson);\n    if (header === null || typeof header !== \"object\" || Array.isArray(header)) {\n      return false;\n    }\n\n    const h = header as Record<string, unknown>;\n\n    if (Object.prototype.hasOwnProperty.call(h, \"typ\")) {\n      if (h[\"typ\"] !== \"JWT\") return false;\n    }\n\n    const alg = h[\"alg\"];\n    if (!alg) return false;\n\n    if (typeof expectedAlg === \"string\" && expectedAlg.length > 0) {\n      if (alg !== expectedAlg) return false;\n    }\n\n    return true;\n  } catch {\n    return false;\n  }\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1956
+    },
+    "gen-124": {
+      "name": "gen124",
+      "code": "export function gen124(year: number, week: number, day: number): boolean {\n  return Number.isInteger(week) && week >= 1 && week <= 53 &&\n         Number.isInteger(day) && day >= 0 && day <= 6;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 88
+    },
+    "gen-120": {
+      "name": "gen120",
+      "code": "export function gen120(value: any): string[] {\n  const result: string[] = [];\n  if (value === null || value === undefined) {\n    return result;\n  }\n\n  const isObject = typeof value === 'object' || typeof value === 'function';\n\n  // An object is treated as a prototype when it owns a `constructor`\n  // function whose `prototype` property points back at the object itself.\n  let isPrototype = false;\n  if (isObject && Object.prototype.hasOwnProperty.call(value, 'constructor')) {\n    const ctor = value.constructor;\n    isPrototype = typeof ctor === 'function' && ctor.prototype === value;\n  }\n\n  for (const key in value) {\n    if (key === 'constructor') {\n      const own = Object.prototype.hasOwnProperty.call(value, key);\n      if (isPrototype || !own) {\n        continue;\n      }\n    }\n    result.push(key);\n  }\n\n  return result;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1056
+    },
+    "gen-122": {
+      "name": "gen122",
+      "code": "export function gen122(q: number, a: number, b: number, x: number, s: number, t: number): number {\n  const sum = (q + a + x + t) >>> 0;\n  const r = s & 31;\n  const rotated = r === 0 ? sum : ((sum << r) | (sum >>> (32 - r))) >>> 0;\n  return (rotated + b) | 0;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 839
+    },
+    "gen-111": {
+      "name": "gen111",
+      "code": "export function gen111(str: string, options: { crockford?: boolean } | undefined): boolean {\n  if (typeof str !== 'string') {\n    throw new TypeError('gen111: input must be a string');\n  }\n\n  const crockford = !!(options && options.crockford);\n\n  // Overall length must be a multiple of 8 (one 40-bit block = 8 characters).\n  if (str.length % 8 !== 0) {\n    return false;\n  }\n\n  if (crockford) {\n    // Crockford Base32: 0-9 and A-Z without I, L, O, U; case-insensitive; no padding.\n    return /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]*$/.test(str);\n  }\n\n  // RFC 4648 Base32: A-Z, 2-7, optional trailing '=' padding.\n  const padMatch = /=*$/.exec(str);\n  const pad = padMatch ? padMatch[0].length : 0;\n  if (pad > 0) {\n    if (pad > 6) {\n      return false;\n    }\n    const body = str.slice(0, str.length - pad);\n    const r = body.length % 8;\n    // Valid unpadded remainders and the padding each requires.\n    const expectedPad: Record<number, number> = { 2: 6, 4: 4, 5: 3, 7: 1 };\n    if (r === 0 || expectedPad[r] !== pad) {\n      return false;\n    }\n    return /^[A-Z2-7]*$/.test(body);\n  }\n\n  return /^[A-Z2-7]*$/.test(str);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2350
+    },
+    "gen-115": {
+      "name": "gen115",
+      "code": "class SemVer {\n  major: number;\n  minor: number;\n  patch: number;\n  prerelease: string;\n  build: string;\n\n  constructor(major: number, minor: number, patch: number, prerelease = \"\", build = \"\") {\n    this.major = major;\n    this.minor = minor;\n    this.patch = patch;\n    this.prerelease = prerelease;\n    this.build = build;\n  }\n\n  toString(): string {\n    let s = `${this.major}.${this.minor}.${this.patch}`;\n    if (this.prerelease) s += `-${this.prerelease}`;\n    if (this.build) s += `+${this.build}`;\n    return s;\n  }\n}\n\nexport function gen115(\n  version: string | number | SemVer,\n  options: { rtl?: boolean; includePrerelease?: boolean } | undefined\n): SemVer | null {\n  if (version instanceof SemVer) return version;\n  if (typeof version !== \"string\" && typeof version !== \"number\") return null;\n\n  const rtl = !!(options && options.rtl);\n  const includePrerelease = !!(options && options.includePrerelease);\n  const text = String(version);\n\n  const runRe = /\\d+(?:\\.\\d+)*/g;\n  let chosen: { parts: string[]; end: number } | null = null;\n  let m: RegExpExecArray | null;\n  while ((m = runRe.exec(text)) !== null) {\n    const candidate = { parts: m[0].split(\".\"), end: m.index + m[0].length };\n    chosen = candidate;\n    if (!rtl) break;\n  }\n  if (!chosen) return null;\n\n  let nums: string[];\n  if (rtl) {\n    nums = chosen.parts.slice(-3);\n  } else {\n    nums = chosen.parts.slice(0, 3);\n  }\n  const [a, b, c] = [nums[0], nums[1], nums[2]].map((p) => (p === undefined ? 0 : Number(p)));\n\n  let prerelease = \"\";\n  let build = \"\";\n  if (includePrerelease) {\n    const rest = text.slice(chosen.end);\n    const preMatch = /^-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*/.exec(rest);\n    let after = rest;\n    if (preMatch) {\n      prerelease = preMatch[0].slice(1);\n      after = rest.slice(preMatch[0].length);\n    }\n    const buildMatch = /^\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*/.exec(after);\n    if (buildMatch) {\n      build = buildMatch[0].slice(1);\n    }\n  }\n\n  return new SemVer(a, b, c, prerelease, build);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2170
+    },
+    "gen-118": {
+      "name": "gen118",
+      "code": "export function gen118(value: string, version: string | undefined): boolean {\n  const isIPv4 = (s: string): boolean => {\n    const parts = s.split('.');\n    if (parts.length !== 4) return false;\n    return parts.every((p) => /^(0|[1-9]\\d{0,2})$/.test(p) && Number(p) <= 255);\n  };\n\n  const isIPv6 = (s: string): boolean => {\n    if (!/^[0-9a-fA-F:.]+$/.test(s)) return false;\n    let str = s;\n    if (s.includes('.')) {\n      const idx = s.lastIndexOf(':');\n      if (idx < 0) return false;\n      const v4 = s.slice(idx + 1);\n      if (!isIPv4(v4)) return false;\n      // Replace the embedded IPv4 with two placeholder hex groups.\n      str = s.slice(0, idx + 1) + '0:0';\n    }\n    const groupOk = (g: string) => /^[0-9a-fA-F]{1,4}$/.test(g);\n    const dbl = str.split('::');\n    if (dbl.length > 2) return false;\n    if (dbl.length === 1) {\n      const groups = str.split(':');\n      return groups.length === 8 && groups.every(groupOk);\n    }\n    const head = dbl[0] ? dbl[0].split(':') : [];\n    const tail = dbl[1] ? dbl[1].split(':') : [];\n    return (\n      head.every(groupOk) &&\n      tail.every(groupOk) &&\n      head.length + tail.length <= 7\n    );\n  };\n\n  if (typeof value !== 'string') return false;\n\n  const slash = value.split('/');\n  if (slash.length !== 2) return false;\n  const [addr, prefix] = slash;\n\n  if (!/^(0|[1-9]\\d*)$/.test(prefix)) return false;\n  const p = Number(prefix);\n\n  let isV4: boolean;\n  if (isIPv4(addr)) {\n    isV4 = true;\n    if (p > 32) return false;\n  } else if (isIPv6(addr)) {\n    isV4 = false;\n    if (p > 128) return false;\n  } else {\n    return false;\n  }\n\n  if (version === undefined || version === '') return true;\n  if (version === 'v4') return isV4;\n  if (version === 'v6') return !isV4;\n  return false;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2146
+    },
+    "gen-127": {
+      "name": "gen127",
+      "code": "export function gen127(a: number, b: number, c: number, d: number, x: number, s: number, t: number): number {\n  const f = (b & c) | (~b & d);\n  const v = (a + f + x + t) | 0;\n  const rot = (v << s) | (v >>> (32 - s));\n  return (rot + b) | 0;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 716
+    },
+    "gen-130": {
+      "name": "gen130",
+      "code": "export function gen130(hour: number, minute: number, second: number): boolean {\n  const isInt = (n: number) => Number.isInteger(n);\n  if (!isInt(hour) || !isInt(minute) || !isInt(second)) return false;\n  if (minute < 0 || minute > 59) return false;\n  if (second < 0 || second > 59) return false;\n  if (hour === 24) return minute === 0 && second === 0;\n  return hour >= 0 && hour <= 23;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 170
+    },
+    "gen-126": {
+      "name": "gen126",
+      "code": "export function gen126(version: string, options: object | undefined): Array<string | number> | null {\n  const loose =\n    typeof options === \"object\" &&\n    options !== null &&\n    (options as { loose?: unknown }).loose === true;\n\n  if (typeof version !== \"string\") return null;\n\n  let input = version;\n  if (loose) {\n    input = input.trim();\n    input = input.replace(/^[v=]+\\s*/i, \"\");\n  }\n\n  const num = loose ? \"\\\\d+\" : \"0|[1-9]\\\\d*\";\n  const idChar = \"[0-9A-Za-z-]\";\n  const preId = loose\n    ? `(?:\\\\d+|${idChar}*[A-Za-z-]${idChar}*)`\n    : `(?:0|[1-9]\\\\d*|\\\\d*[A-Za-z-]${idChar}*)`;\n  const pattern = new RegExp(\n    `^(?:${num})\\\\.(?:${num})\\\\.(?:${num})` +\n      `(?:-(${preId}(?:\\\\.${preId})*))?` +\n      `(?:\\\\+(${idChar}+(?:\\\\.${idChar}+)*))?$`\n  );\n\n  const match = pattern.exec(input);\n  if (!match) return null;\n\n  const pre = match[1];\n  if (pre === undefined) return null;\n\n  return pre.split(\".\").map((id) =>\n    /^\\d+$/.test(id) ? Number(id) : id\n  );\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1014
+    },
+    "gen-131": {
+      "name": "gen131",
+      "code": "export function gen131(count: number, callback: (index: number) => any): any[] {\n  if (!Number.isInteger(count) || count < 0) {\n    throw new RangeError(`Invalid count: ${String(count)}. Must be a non-negative integer.`);\n  }\n  const result: any[] = [];\n  for (let i = 0; i < count; i++) {\n    result.push(callback(i));\n  }\n  return result;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 355
+    },
+    "gen-134": {
+      "name": "gen134",
+      "code": "export function gen134(str: string, options?: object): boolean {\n  if (typeof str !== \"string\") {\n    throw new TypeError(\"gen134: input must be a string\");\n  }\n\n  const loose =\n    options !== undefined &&\n    options !== null &&\n    (options as { loose?: unknown }).loose === true;\n\n  if (loose) {\n    const normalized = str.toLowerCase();\n    return [\"true\", \"false\", \"1\", \"0\", \"yes\", \"no\"].includes(normalized) &&\n      (normalized === \"true\" || normalized === \"yes\" || normalized === \"1\");\n  }\n\n  return str === \"true\" || str === \"1\";\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 212
+    },
+    "gen-128": {
+      "name": "gen128",
+      "code": "export function gen128(value: string, optionsOrReferenceDate: object | string | undefined): boolean {\n  const target = Date.parse(value);\n  if (Number.isNaN(target)) {\n    return false;\n  }\n\n  let ref: unknown;\n  if (optionsOrReferenceDate === undefined) {\n    ref = undefined;\n  } else if (typeof optionsOrReferenceDate === \"string\") {\n    ref = optionsOrReferenceDate;\n  } else {\n    // Throws a TypeError for null, as required.\n    ref = (optionsOrReferenceDate as { date?: unknown }).date;\n  }\n\n  let referenceTime: number;\n  if (ref === undefined) {\n    referenceTime = Date.now();\n  } else if (ref instanceof Date) {\n    referenceTime = ref.getTime();\n  } else if (typeof ref === \"string\") {\n    referenceTime = Date.parse(ref);\n  } else if (typeof ref === \"number\") {\n    referenceTime = ref;\n  } else {\n    return false;\n  }\n\n  if (Number.isNaN(referenceTime)) {\n    return false;\n  }\n\n  return target < referenceTime;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1071
+    },
+    "gen-123": {
+      "name": "gen123",
+      "code": "export function gen123(str: string, options: { urlSafe?: boolean, padding?: boolean } | undefined): boolean {\n  if (typeof str !== \"string\") {\n    throw new TypeError(\"gen123: input must be a string\");\n  }\n\n  const urlSafe = options?.urlSafe === true;\n  // Padding is required by default for standard Base64, optional for URL-safe.\n  const requirePadding = options?.padding ?? !urlSafe;\n\n  if (str.length === 0) {\n    return true;\n  }\n\n  const alphabet = urlSafe ? /^[A-Za-z0-9\\-_]*$/ : /^[A-Za-z0-9+/]*$/;\n\n  const padMatch = str.match(/=*$/);\n  const padCount = padMatch ? padMatch[0].length : 0;\n  const body = str.slice(0, str.length - padCount);\n\n  if (!alphabet.test(body)) {\n    return false;\n  }\n\n  const rem = body.length % 4;\n  if (rem === 1) {\n    return false;\n  }\n\n  if (padCount > 0) {\n    if (str.length % 4 !== 0) {\n      return false;\n    }\n    const expected = rem === 0 ? 0 : 4 - rem;\n    return padCount === expected;\n  }\n\n  // No padding present.\n  if (requirePadding && rem !== 0) {\n    return false;\n  }\n  return true;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1827
+    },
+    "gen-133": {
+      "name": "gen133",
+      "code": "export function gen133(a: number, b: number, c: number, d: number, x: number, s: number, t: number): number {\n  const f = ((b & d) | (c & ~d)) >>> 0;\n  const sum = (a + f + x + t) >>> 0;\n  const r = ((sum << s) | (sum >>> (32 - s))) >>> 0;\n  return (r + b) >>> 0;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 795
+    },
+    "gen-136": {
+      "name": "gen136",
+      "code": "export function gen136(hours: any, minutes: any): boolean {\n  try {\n    const m = Number(minutes);\n    return m >= 0 && m <= 59;\n  } catch {\n    return false;\n  }\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 319
+    },
+    "gen-129": {
+      "name": "gen129",
+      "code": "type SchemaDescriptor = { type: string; [key: string]: any };\n\nfunction cloneValue(value: any): any {\n  if (Array.isArray(value)) return value.map(cloneValue);\n  if (value !== null && typeof value === \"object\") {\n    const out: Record<string, any> = {};\n    for (const key of Object.keys(value)) out[key] = cloneValue(value[key]);\n    return out;\n  }\n  return value;\n}\n\nfunction genOptionalWrap(child: SchemaDescriptor): SchemaDescriptor {\n  // Avoid double-wrapping: unwrap an existing optional, then wrap once.\n  const base = child.type === \"optional\" ? child.inner : child;\n  return { type: \"optional\", inner: gen129(base) };\n}\n\nexport function gen129(schema: SchemaDescriptor): SchemaDescriptor {\n  if (schema === null || typeof schema !== \"object\") return schema;\n\n  switch (schema.type) {\n    case \"object\": {\n      const shape: Record<string, SchemaDescriptor> = {};\n      const source: Record<string, SchemaDescriptor> = schema.shape ?? {};\n      for (const key of Object.keys(source)) {\n        shape[key] = genOptionalWrap(source[key]);\n      }\n      const result: SchemaDescriptor = { ...cloneValue(schema), type: \"object\", shape };\n      return result;\n    }\n\n    case \"array\": {\n      const result: SchemaDescriptor = cloneValue(schema);\n      if (schema.element !== undefined) {\n        result.element = gen129(schema.element);\n      }\n      return result;\n    }\n\n    case \"optional\":\n    case \"nullable\": {\n      const result: SchemaDescriptor = cloneValue(schema);\n      if (schema.inner !== undefined) {\n        result.inner = gen129(schema.inner);\n      }\n      return result;\n    }\n\n    case \"tuple\": {\n      const result: SchemaDescriptor = cloneValue(schema);\n      if (Array.isArray(schema.items)) {\n        result.items = schema.items.map((item: SchemaDescriptor) => gen129(item));\n      }\n      if (schema.rest !== undefined) {\n        result.rest = null;\n      }\n      return result;\n    }\n\n    default:\n      // Unions, records, lazy, effects, primitives, etc. are returned unchanged.\n      return cloneValue(schema);\n  }\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1467
+    },
+    "gen-137": {
+      "name": "gen137",
+      "code": "export function gen137(value: any): string {\n  if (typeof value === \"string\") {\n    return value;\n  }\n  if (typeof value === \"number\" && Object.is(value, -0)) {\n    return \"-0\";\n  }\n  if (Array.isArray(value)) {\n    return value.map((item) => gen137(item)).join(\",\");\n  }\n  if (typeof value === \"symbol\") {\n    return String(value);\n  }\n  return String(value);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 556
+    },
+    "gen-125": {
+      "name": "gen125",
+      "code": "export function gen125(\n  object: object,\n  path: string | any[],\n  value: any,\n  customizer: ((...args: any[]) => any) | undefined\n): object {\n  const FORBIDDEN = new Set([\"__proto__\", \"constructor\", \"prototype\"]);\n  const INDEX = /^(0|[1-9]\\d*)$/;\n\n  // Parse the path into a list of string keys.\n  let keys: string[];\n  if (Array.isArray(path)) {\n    keys = path.map((k) => String(k));\n  } else {\n    keys = [];\n    const re = /\\[(?:\"([^\"]*)\"|'([^']*)'|([^\\]]*))\\]|[^.[\\]]+/g;\n    let m: RegExpExecArray | null;\n    while ((m = re.exec(String(path))) !== null) {\n      if (m[0].startsWith(\"[\")) {\n        const k = m[1] ?? m[2] ?? m[3] ?? \"\";\n        keys.push(k);\n      } else {\n        keys.push(m[0]);\n      }\n    }\n  }\n\n  if (keys.length === 0) return object;\n\n  const isObj = (x: any) =>\n    x !== null && (typeof x === \"object\" || typeof x === \"function\");\n\n  let cur: any = object;\n  const n = keys.length;\n\n  for (let i = 0; i < n; i++) {\n    const key = keys[i];\n    if (FORBIDDEN.has(key)) return object;\n\n    if (i === n - 1) {\n      cur[key] = value;\n      break;\n    }\n\n    let next = cur[key];\n    if (customizer) {\n      const r = customizer(next, key, cur);\n      if (r !== undefined) next = r;\n    }\n\n    if (!isObj(next)) {\n      next = INDEX.test(keys[i + 1]) ? [] : {};\n      cur[key] = next;\n    }\n    cur = next;\n  }\n\n  return object;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2265
+    },
+    "gen-121": {
+      "name": "gen121",
+      "code": "export function gen121(\n  version: string | SemVer | object,\n  releaseType: string,\n  optionsOrIdentifier?: object | string | undefined,\n  identifier?: string | undefined,\n  identifierBase?: string | false | undefined\n): string | null {\n  try {\n    const parsed = parseVersion(version);\n    if (!parsed) return null;\n\n    let id: string | undefined = identifier;\n    let base: string | false | undefined = identifierBase;\n    if (optionsOrIdentifier !== null && typeof optionsOrIdentifier === \"object\") {\n      const opts = optionsOrIdentifier as {\n        identifier?: unknown;\n        identifierBase?: unknown;\n      };\n      if (typeof opts.identifier === \"string\") id = opts.identifier;\n      if (opts.identifierBase === false || typeof opts.identifierBase === \"string\") {\n        base = opts.identifierBase as string | false;\n      }\n    } else if (typeof optionsOrIdentifier === \"string\") {\n      id = optionsOrIdentifier;\n    }\n\n    if (id !== undefined && !/^[0-9A-Za-z-]+$/.test(id)) return null;\n\n    let startNum = 0;\n    if (typeof base === \"string\") {\n      if (!/^\\d+$/.test(base)) return null;\n      startNum = Number(base);\n    }\n    const noBase = base === false;\n\n    let { major, minor, patch } = parsed;\n    let pre: (string | number)[] = [...parsed.prerelease];\n\n    const preInc = (): boolean => {\n      if (pre.length === 0) {\n        if (id !== undefined) {\n          pre = noBase ? [id] : [id, startNum];\n        } else {\n          if (noBase) return false;\n          pre = [startNum];\n        }\n        return true;\n      }\n      for (let i = pre.length - 1; i >= 0; i--) {\n        if (typeof pre[i] === \"number\") {\n          (pre[i] as number)++;\n          return true;\n        }\n      }\n      if (id !== undefined && pre[0] === id) {\n        if (!noBase) pre.push(startNum);\n      } else if (id !== undefined) {\n        pre = noBase ? [id] : [id, startNum];\n      } else if (!noBase) {\n        pre.push(startNum);\n      }\n      return true;\n    };\n\n    switch (releaseType) {\n      case \"major\":\n        if (minor !== 0 || patch !== 0 || pre.length === 0) major++;\n        minor = 0;\n        patch = 0;\n        pre = [];\n        break;\n      case \"minor\":\n        if (patch !== 0 || pre.length === 0) minor++;\n        patch = 0;\n        pre = [];\n        break;\n      case \"patch\":\n        if (pre.length === 0) patch++;\n        pre = [];\n        break;\n      case \"premajor\":\n        major++;\n        minor = 0;\n        patch = 0;\n        pre = [];\n        if (!preInc()) return null;\n        break;\n      case \"preminor\":\n        minor++;\n        patch = 0;\n        pre = [];\n        if (!preInc()) return null;\n        break;\n      case \"prepatch\":\n        patch++;\n        pre = [];\n        if (!preInc()) return null;\n        break;\n      case \"prerelease\":\n        if (pre.length === 0) patch++;\n        if (!preInc()) return null;\n        break;\n      default:\n        return null;\n    }\n\n    let out = `${major}.${minor}.${patch}`;\n    if (pre.length > 0) out += \"-\" + pre.join(\".\");\n    return out;\n  } catch {\n    return null;\n  }\n}\n\ninterface SemVer {\n  major?: unknown;\n  minor?: unknown;\n  patch?: unknown;\n  prerelease?: unknown;\n  version?: unknown;\n}\n\ninterface ParsedVersion {\n  major: number;\n  minor: number;\n  patch: number;\n  prerelease: (string | number)[];\n}\n\nconst NUM = \"(0|[1-9]\\\\d*)\";\nconst PRE_ID = \"(?:0|[1-9]\\\\d*|\\\\d*[a-zA-Z-][0-9a-zA-Z-]*)\";\nconst SEMVER_RE = new RegExp(\n  `^v?${NUM}\\\\.${NUM}\\\\.${NUM}(?:-(${PRE_ID}(?:\\\\.${PRE_ID})*))?(?:\\\\+[0-9A-Za-z-]+(?:\\\\.[0-9A-Za-z-]+)*)?$`\n);\n\nfunction parseVersion(input: unknown): ParsedVersion | null {\n  if (typeof input === \"string\") {\n    const m = SEMVER_RE.exec(input.trim());\n    if (!m) return null;\n    return {\n      major: Number(m[1]),\n      minor: Number(m[2]),\n      patch: Number(m[3]),\n      prerelease: m[4]\n        ? m[4].split(\".\").map((p) => (/^\\d+$/.test(p) ? Number(p) : p))\n        : [],\n    };\n  }\n  if (input !== null && typeof input === \"object\") {\n    const o = input as SemVer;\n    if (typeof o.version === \"string\") return parseVersion(o.version);\n    if (\n      typeof o.major === \"number\" &&\n      typeof o.minor === \"number\" &&\n      typeof o.patch === \"number\"\n    ) {\n      const pre = Array.isArray(o.prerelease)\n        ? (o.prerelease as (string | number)[]).map((p) =>\n            typeof p === \"number\" ? p : String(p)\n          )\n        : [];\n      return { major: o.major, minor: o.minor, patch: o.patch, prerelease: pre };\n    }\n  }\n  return null;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 3926
+    },
+    "gen-143": {
+      "name": "gen143",
+      "code": "export function gen143(text: string): string {\n  if (!text) {\n    return text;\n  }\n  return text.trim();\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 149
+    },
+    "gen-132": {
+      "name": "gen132",
+      "code": "type Ident = string;\n\ninterface Parsed {\n  major: number;\n  minor: number;\n  patch: number;\n  pre: Ident[] | null;\n  build: Ident[] | null;\n}\n\nconst STRICT =\n  /^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$/;\n\nconst LOOSE =\n  /^[v=]?\\s*(\\d+)\\.(\\d+)\\.(\\d+)(?:-([0-9A-Za-z.-]+))?(?:\\+([0-9A-Za-z.-]+))?$/;\n\nfunction parseVersion(raw: string, loose: boolean): Parsed {\n  if (loose) {\n    const s = raw.trim();\n    const m = LOOSE.exec(s);\n    if (!m) throw new Error(`Invalid version: ${raw}`);\n    return {\n      major: Number(m[1]),\n      minor: Number(m[2]),\n      patch: Number(m[3]),\n      pre: m[4] ? m[4].split(\".\") : null,\n      build: m[5] ? m[5].split(\".\") : null,\n    };\n  }\n  const m = STRICT.exec(raw);\n  if (!m) throw new Error(`Invalid version: ${raw}`);\n  return {\n    major: Number(m[1]),\n    minor: Number(m[2]),\n    patch: Number(m[3]),\n    pre: m[4] ? m[4].split(\".\") : null,\n    build: m[5] ? m[5].split(\".\") : null,\n  };\n}\n\nconst NUMERIC = /^\\d+$/;\n\nfunction cmpIdent(a: Ident, b: Ident): number {\n  const an = NUMERIC.test(a);\n  const bn = NUMERIC.test(b);\n  if (an && bn) {\n    const x = BigInt(a);\n    const y = BigInt(b);\n    return x < y ? -1 : x > y ? 1 : 0;\n  }\n  if (an) return -1;\n  if (bn) return 1;\n  return a < b ? -1 : a > b ? 1 : 0;\n}\n\nfunction cmpIdentList(a: Ident[], b: Ident[]): number {\n  const n = Math.min(a.length, b.length);\n  for (let i = 0; i < n; i++) {\n    const c = cmpIdent(a[i], b[i]);\n    if (c !== 0) return c;\n  }\n  return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;\n}\n\nfunction cmpNum(a: number, b: number): number {\n  return a < b ? -1 : a > b ? 1 : 0;\n}\n\nfunction cmpParsed(a: Parsed, b: Parsed): number {\n  let c = cmpNum(a.major, b.major);\n  if (c !== 0) return c;\n  c = cmpNum(a.minor, b.minor);\n  if (c !== 0) return c;\n  c = cmpNum(a.patch, b.patch);\n  if (c !== 0) return c;\n\n  // Prerelease: absent prerelease has higher precedence.\n  if (a.pre && !b.pre) return -1;\n  if (!a.pre && b.pre) return 1;\n  if (a.pre && b.pre) {\n    c = cmpIdentList(a.pre, b.pre);\n    if (c !== 0) return c;\n  }\n\n  // Build metadata as final tie-breaker: absent sorts lowest.\n  if (a.build && !b.build) return 1;\n  if (!a.build && b.build) return -1;\n  if (a.build && b.build) return cmpIdentList(a.build, b.build);\n  return 0;\n}\n\nexport function gen132(versions: Array<string>, loose: boolean): Array<string> {\n  const parsed = new Map<string, Parsed>();\n  for (const v of versions) {\n    if (!parsed.has(v)) parsed.set(v, parseVersion(v, loose));\n  }\n  versions.sort((x, y) => cmpParsed(parsed.get(y)!, parsed.get(x)!));\n  return versions;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2313
+    },
+    "gen-139": {
+      "name": "gen139",
+      "code": "export function gen139(a: number, b: number, c: number, d: number, x: number, s: number, t: number): number {\n  const sum = (a + (b ^ c ^ d) + x + t) | 0;\n  const rot = (sum << s) | (sum >>> (32 - s));\n  return (rot + b) | 0;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 894
+    },
+    "gen-140": {
+      "name": "gen140",
+      "code": "export function gen140(str: string): boolean {\n  if (typeof str !== \"string\") {\n    throw new TypeError(\"gen140: input must be a string\");\n  }\n\n  // Bech32 / segwit: bc1 or tb1 prefix, lowercase bech32 charset, total length 14..90\n  const bech32 = /^(bc|tb)1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,87}$/;\n\n  // Legacy base58check-style: starts with 1, 2, 3, m or n; base58 charset (no 0, O, I, l); length 26..35\n  const base58 = /^(?:[13][1-9A-HJ-NP-Za-km-z]{25,34}|[mn2][1-9A-HJ-NP-Za-km-z]{25,34})$/;\n\n  return bech32.test(str) || base58.test(str);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 828
+    },
+    "gen-142": {
+      "name": "gen142",
+      "code": "export function gen142(\n  argument: Date | number | string,\n  context: Date | number | string | undefined\n): Date {\n  // Use the context as the reference when it is truthy; otherwise use the input itself.\n  const ref: unknown = context || argument;\n\n  // Pick the constructor from the reference only when it is a real object\n  // with a callable constructor. Primitives (number, string) fall back to Date.\n  let Ctor: new (value: Date | number | string) => Date = Date;\n  if (typeof ref === \"object\" && ref !== null) {\n    const candidate = (ref as { constructor?: unknown }).constructor;\n    if (typeof candidate === \"function\") {\n      Ctor = candidate as new (value: Date | number | string) => Date;\n    }\n  }\n\n  return new Ctor(argument);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 849
+    },
+    "gen-147": {
+      "name": "gen147",
+      "code": "export function gen147(config: any, arg: any): any {\n  let value = config;\n  if (typeof value === \"function\") {\n    value = value(arg);\n  }\n  if (typeof value === \"string\") {\n    return { message: value };\n  }\n  return value;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 316
+    },
+    "gen-135": {
+      "name": "gen135",
+      "code": "type GenPrim = string | number | boolean | null | undefined | bigint;\n\nexport function gen135(schema: any): (string | number | boolean | null | undefined | bigint)[] {\n  const seen = new Set<object>();\n\n  const isPrim = (v: unknown): v is GenPrim =>\n    v === null ||\n    v === undefined ||\n    typeof v === \"string\" ||\n    typeof v === \"number\" ||\n    typeof v === \"boolean\" ||\n    typeof v === \"bigint\";\n\n  const PASS_THROUGH = new Set([\"default\", \"readonly\", \"branded\", \"catch\"]);\n\n  const walk = (s: any): GenPrim[] => {\n    if (!s || typeof s !== \"object\" || seen.has(s)) return [];\n    seen.add(s);\n    try {\n      const kind = s.kind;\n\n      if (kind === \"literal\") {\n        if (Array.isArray(s.value)) return s.value.filter(isPrim);\n        return isPrim(s.value) ? [s.value] : [];\n      }\n\n      if (kind === \"enum\") {\n        return Array.isArray(s.options) ? s.options.filter(isPrim) : [];\n      }\n\n      if (kind === \"union\") {\n        if (!Array.isArray(s.options)) return [];\n        const out: GenPrim[] = [];\n        for (const opt of s.options) out.push(...walk(opt));\n        return out;\n      }\n\n      if (kind === \"optional\") {\n        return [undefined, ...walk(s.inner)];\n      }\n\n      if (kind === \"nullable\") {\n        return [null, ...walk(s.inner)];\n      }\n\n      if (kind === \"nullish\") {\n        return [undefined, null, ...walk(s.inner)];\n      }\n\n      if (PASS_THROUGH.has(kind)) {\n        return walk(s.inner);\n      }\n\n      return [];\n    } finally {\n      seen.delete(s);\n    }\n  };\n\n  const result = walk(schema);\n  return Array.from(new Set(result));\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1977
+    },
+    "gen-141": {
+      "name": "gen141",
+      "code": "export function gen141(a: any, b: any): {valid: true, data: any} | {valid: false} {\n  type R = { ok: true; value: any } | { ok: false };\n\n  const fail: R = { ok: false };\n\n  const isPlainObject = (v: any): boolean => {\n    if (typeof v !== \"object\" || v === null) return false;\n    if (Array.isArray(v) || v instanceof Date) return false;\n    const proto = Object.getPrototypeOf(v);\n    return proto === Object.prototype || proto === null;\n  };\n\n  const hasOwn = (o: any, k: PropertyKey): boolean =>\n    Object.prototype.hasOwnProperty.call(o, k);\n\n  const setProp = (o: any, k: string, v: any): void => {\n    Object.defineProperty(o, k, {\n      value: v,\n      enumerable: true,\n      writable: true,\n      configurable: true,\n    });\n  };\n\n  const merge = (x: any, y: any): R => {\n    if (Object.is(x, y)) return { ok: true, value: x };\n\n    if (x instanceof Date && y instanceof Date) {\n      return x.getTime() === y.getTime() ? { ok: true, value: x } : fail;\n    }\n\n    if (Array.isArray(x) && Array.isArray(y)) {\n      if (x.length !== y.length) return fail;\n      const out: any[] = [];\n      for (let i = 0; i < x.length; i++) {\n        const r = merge(x[i], y[i]);\n        if (!r.ok) return fail;\n        out.push(r.value);\n      }\n      return { ok: true, value: out };\n    }\n\n    if (isPlainObject(x) && isPlainObject(y)) {\n      const out: any = {};\n      for (const k of Object.keys(x)) {\n        if (hasOwn(y, k)) {\n          const r = merge(x[k], y[k]);\n          if (!r.ok) return fail;\n          setProp(out, k, r.value);\n        } else {\n          setProp(out, k, x[k]);\n        }\n      }\n      for (const k of Object.keys(y)) {\n        if (!hasOwn(x, k)) setProp(out, k, y[k]);\n      }\n      return { ok: true, value: out };\n    }\n\n    return fail;\n  };\n\n  const r = merge(a, b);\n  if (!r.ok) return { valid: false };\n  return { valid: true, data: r.value };\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1625
+    },
+    "gen-146": {
+      "name": "gen146",
+      "code": "export function gen146(\n  str: string,\n  options: { min?: number; max?: number } | number,\n  max: number | undefined\n): boolean {\n  if (typeof str !== \"string\") {\n    throw new TypeError(\"gen146: input must be a string\");\n  }\n\n  let min: number | undefined;\n  let upper: number | undefined;\n\n  if (typeof options === \"number\") {\n    // Legacy positional form: (str, min, max)\n    min = options;\n    upper = max;\n  } else if (options !== null && typeof options === \"object\") {\n    min = options.min;\n    upper = options.max;\n  }\n\n  // Count UTF-8 bytes by code point. Lone surrogates are encoded as\n  // U+FFFD (3 bytes), which matches the 3-byte branch below.\n  let bytes = 0;\n  for (const ch of str) {\n    const cp = ch.codePointAt(0) as number;\n    if (cp < 0x80) bytes += 1;\n    else if (cp < 0x800) bytes += 2;\n    else if (cp < 0x10000) bytes += 3;\n    else bytes += 4;\n  }\n\n  if (min !== undefined && bytes < min) return false;\n  if (upper !== undefined && bytes > upper) return false;\n  return true;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 812
+    },
+    "gen-145": {
+      "name": "gen145",
+      "code": "export function gen145(a: number, b: number, c: number, d: number, x: number, s: number, t: number): number {\n  // aux = c XOR (b OR NOT d), computed on 32-bit integers\n  const aux = (c ^ (b | ~d)) | 0;\n  // (a + aux + x + t) mod 2^32, as an unsigned 32-bit value\n  const u = (a + aux + x + t) >>> 0;\n  // rotate left by s bits\n  const k = s & 31;\n  const r = k === 0 ? u : (((u << k) | (u >>> (32 - k))) >>> 0);\n  // add b and return as a signed 32-bit integer\n  return (r + b) | 0;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1027
+    },
+    "gen-150": {
+      "name": "gen150",
+      "code": "export function gen150(value: number, shift: number): number {\n  const x = value >>> 0;\n  const s = shift >>> 0 & 31;\n  if (s === 0) {\n    return x | 0;\n  }\n  return ((x << s) | (x >>> (32 - s))) | 0;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 536
+    },
+    "gen-152": {
+      "name": "gen152",
+      "code": "let registeredErrorFormatter: ((issue: object) => string) | undefined = undefined;\n\nexport function gen152(): ((issue: object) => string) | undefined {\n  return registeredErrorFormatter;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 351
+    },
+    "gen-148": {
+      "name": "gen148",
+      "code": "export function gen148(path: any, object: object | undefined): any[] {\n  if (Array.isArray(path)) {\n    return path;\n  }\n  if (typeof path !== \"string\") {\n    return [path];\n  }\n  if (!/[.[\\]]/.test(path)) {\n    return [path];\n  }\n  if (object != null && Object.prototype.hasOwnProperty.call(object, path)) {\n    return [path];\n  }\n\n  const out: string[] = [];\n  let buf = \"\";\n  let i = 0;\n  const len = path.length;\n\n  while (i < len) {\n    const c = path[i];\n    if (c === \".\") {\n      if (buf !== \"\") out.push(buf);\n      buf = \"\";\n      i++;\n    } else if (c === \"[\") {\n      if (buf !== \"\") out.push(buf);\n      buf = \"\";\n      const j = path.indexOf(\"]\", i);\n      if (j < 0) {\n        buf = path.slice(i + 1);\n        i = len;\n        break;\n      }\n      let inner = path.slice(i + 1, j);\n      if (\n        inner.length >= 2 &&\n        (inner[0] === '\"' || inner[0] === \"'\") &&\n        inner[inner.length - 1] === inner[0]\n      ) {\n        inner = inner.slice(1, -1);\n      }\n      out.push(inner);\n      i = j + 1;\n    } else {\n      buf += c;\n      i++;\n    }\n  }\n\n  if (buf !== \"\") out.push(buf);\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1229
+    },
+    "gen-153": {
+      "name": "gen153",
+      "code": "export function gen153(buffer: ArrayBuffer): ArrayBuffer {\n  if (!(buffer instanceof ArrayBuffer)) {\n    throw new TypeError(\"Expected an ArrayBuffer\");\n  }\n\n  const length = buffer.byteLength;\n\n  // Use the input's own constructor so the copy keeps the same type.\n  let Ctor: any = (buffer as any).constructor;\n  if (typeof Ctor !== \"function\") {\n    Ctor = ArrayBuffer;\n  }\n\n  const copy: unknown = Reflect.construct(Ctor, [length]);\n  if (!(copy instanceof ArrayBuffer)) {\n    throw new TypeError(\"Constructor did not produce an ArrayBuffer\");\n  }\n\n  new Uint8Array(copy).set(new Uint8Array(buffer));\n  return copy;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 783
+    },
+    "gen-149": {
+      "name": "gen149",
+      "code": "type SemVerLike = {\n  major: number;\n  minor: number;\n  patch: number;\n  prerelease?: ReadonlyArray<string | number>;\n  version?: string;\n  raw?: string;\n};\n\nexport function gen149(\n  version: string | SemVerLike,\n  releaseType: string,\n  options: object | boolean\n): string | null {\n  const levels = [\n    \"major\",\n    \"minor\",\n    \"patch\",\n    \"premajor\",\n    \"preminor\",\n    \"prepatch\",\n    \"prerelease\",\n  ];\n  if (typeof releaseType !== \"string\" || !levels.includes(releaseType)) {\n    return null;\n  }\n\n  let major: number;\n  let minor: number;\n  let patch: number;\n  let pre: string | null = null;\n\n  if (typeof version === \"string\") {\n    const m = /^v?=?(\\d+)\\.(\\d+)\\.(\\d+)(?:-([0-9A-Za-z.-]+))?(?:\\+[0-9A-Za-z.-]+)?$/.exec(\n      version.trim()\n    );\n    if (!m) return null;\n    major = Number(m[1]);\n    minor = Number(m[2]);\n    patch = Number(m[3]);\n    pre = m[4] ?? null;\n  } else if (version !== null && typeof version === \"object\") {\n    major = version.major;\n    minor = version.minor;\n    patch = version.patch;\n    if (\n      !Number.isInteger(major) ||\n      !Number.isInteger(minor) ||\n      !Number.isInteger(patch) ||\n      major < 0 ||\n      minor < 0 ||\n      patch < 0\n    ) {\n      return null;\n    }\n    if (Array.isArray(version.prerelease) && version.prerelease.length > 0) {\n      pre = version.prerelease.map(String).join(\".\");\n    }\n  } else {\n    return null;\n  }\n\n  const core = (() => {\n    switch (releaseType) {\n      case \"major\":\n      case \"premajor\":\n        return `${major}.0.0`;\n      case \"minor\":\n      case \"preminor\":\n        return `${major}.${minor}.0`;\n      default:\n        return `${major}.${minor}.${patch}`;\n    }\n  })();\n\n  if (releaseType.startsWith(\"pre\") && releaseType !== \"prerelease\" && pre === null) {\n    return core;\n  }\n  if (releaseType === \"prerelease\" || releaseType.startsWith(\"pre\")) {\n    return pre !== null ? `${core}-${pre}` : core;\n  }\n  return core;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1699
+    },
+    "gen-151": {
+      "name": "gen151",
+      "code": "type Network = { pattern: RegExp; lengths: number[] };\n\nconst NETWORKS: Record<string, Network> = {\n  VISA: { pattern: /^4/, lengths: [13, 16, 19] },\n  MASTERCARD: { pattern: /^(5[1-5]|22[2-9]|2[3-6]|27[01]|2720)/, lengths: [16] },\n  AMEX: { pattern: /^3[47]/, lengths: [15] },\n  DISCOVER: { pattern: /^(6011|65|64[4-9]|622)/, lengths: [16, 17, 18, 19] },\n  DINERS: { pattern: /^(30[0-5]|36|38)/, lengths: [14] },\n  JCB: { pattern: /^35(2[89]|[3-8])/, lengths: [16, 17, 18, 19] },\n};\n\nfunction luhnValid(digits: string): boolean {\n  let sum = 0;\n  let double = false;\n  for (let i = digits.length - 1; i >= 0; i--) {\n    let d = digits.charCodeAt(i) - 48;\n    if (double) {\n      d *= 2;\n      if (d > 9) d -= 9;\n    }\n    sum += d;\n    double = !double;\n  }\n  return sum % 10 === 0;\n}\n\nfunction matchesNetwork(digits: string, net: Network): boolean {\n  return net.pattern.test(digits) && net.lengths.includes(digits.length);\n}\n\nexport function gen151(str: string, options: { provider?: string } | undefined): boolean {\n  if (typeof str !== \"string\") {\n    throw new TypeError(\"gen151: input must be a string\");\n  }\n  const opts = options ?? {};\n  const provider = opts.provider;\n\n  let candidates: Network[];\n  if (provider === undefined) {\n    candidates = Object.values(NETWORKS);\n  } else {\n    if (typeof provider !== \"string\") {\n      throw new TypeError(\"gen151: provider must be a string\");\n    }\n    const key = provider.toUpperCase();\n    if (!Object.prototype.hasOwnProperty.call(NETWORKS, key)) {\n      throw new Error(`gen151: unknown network \"${provider}\"`);\n    }\n    candidates = [NETWORKS[key]];\n  }\n\n  const digits = str.replace(/[- ]/g, \"\");\n  if (!/^[0-9]+$/.test(digits)) {\n    return false;\n  }\n\n  if (!candidates.some((net) => matchesNetwork(digits, net))) {\n    return false;\n  }\n\n  return luhnValid(digits);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1654
+    },
+    "gen-157": {
+      "name": "gen157",
+      "code": "type Issue = { code: string; message: string; input: unknown };\ntype Payload = { value: unknown; issues: Issue[] };\n\nexport function gen157(fn: (payload: Payload) => void) {\n  return {\n    kind: \"custom\" as const,\n    check: fn,\n    run(payload: Payload): void {\n      (fn as (payload: Payload) => void)(payload);\n    },\n  };\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 422
+    },
+    "gen-144": {
+      "name": "gen144",
+      "code": "export function gen144(versions: string[], loose: boolean): string[] {\n  const STRICT = /^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$/;\n  const LOOSE = /^\\s*[v=]*\\s*(\\d+)(?:\\.(\\d+))?(?:\\.(\\d+))?(?:-([0-9A-Za-z.-]+))?(?:\\+([0-9A-Za-z.-]+))?\\s*$/;\n\n  interface Parsed {\n    major: string;\n    minor: string;\n    patch: string;\n    pre: string[];\n    build: string[];\n  }\n\n  const parse = (v: string): Parsed => {\n    if (loose) {\n      const m = LOOSE.exec(v);\n      if (!m) throw new Error(`Invalid version: ${v}`);\n      return {\n        major: m[1],\n        minor: m[2] ?? \"0\",\n        patch: m[3] ?? \"0\",\n        pre: m[4] ? m[4].split(\".\") : [],\n        build: m[5] ? m[5].split(\".\") : [],\n      };\n    }\n    const m = STRICT.exec(v);\n    if (!m) throw new Error(`Invalid version: ${v}`);\n    return {\n      major: m[1],\n      minor: m[2],\n      patch: m[3],\n      pre: m[4] ? m[4].split(\".\") : [],\n      build: m[5] ? m[5].split(\".\") : [],\n    };\n  };\n\n  const stripZeros = (s: string): string => {\n    const t = s.replace(/^0+(?=\\d)/, \"\");\n    return t;\n  };\n\n  const cmpNumStr = (a: string, b: string): number => {\n    const x = stripZeros(a);\n    const y = stripZeros(b);\n    if (x.length !== y.length) return x.length < y.length ? -1 : 1;\n    return x < y ? -1 : x > y ? 1 : 0;\n  };\n\n  const isNum = (s: string) => /^\\d+$/.test(s);\n\n  const cmpId = (x: string, y: string): number => {\n    const xn = isNum(x);\n    const yn = isNum(y);\n    if (xn && yn) return cmpNumStr(x, y);\n    if (xn) return -1;\n    if (yn) return 1;\n    return x < y ? -1 : x > y ? 1 : 0;\n  };\n\n  const cmpIds = (a: string[], b: string[]): number => {\n    const n = Math.min(a.length, b.length);\n    for (let i = 0; i < n; i++) {\n      const c = cmpId(a[i], b[i]);\n      if (c !== 0) return c;\n    }\n    return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;\n  };\n\n  // Absent identifiers sort lower than present ones.\n  const cmpOptional = (a: string[], b: string[]): number => {\n    if (a.length === 0 && b.length === 0) return 0;\n    if (a.length === 0) return 1;\n    if (b.length === 0) return -1;\n    return cmpIds(a, b);\n  };\n\n  const items = versions.map((s) => ({ s, p: parse(s) }));\n\n  items.sort((A, B) => {\n    const a = A.p;\n    const b = B.p;\n    let c = cmpNumStr(a.major, b.major);\n    if (c !== 0) return c;\n    c = cmpNumStr(a.minor, b.minor);\n    if (c !== 0) return c;\n    c = cmpNumStr(a.patch, b.patch);\n    if (c !== 0) return c;\n    // Prerelease: a version without prerelease has higher precedence.\n    if (a.pre.length === 0 && b.pre.length > 0) return 1;\n    if (a.pre.length > 0 && b.pre.length === 0) return -1;\n    c = cmpIds(a.pre, b.pre);\n    if (c !== 0) return c;\n    // Build metadata as deterministic tiebreaker.\n    return cmpOptional(a.build, b.build);\n  });\n\n  for (let i = 0; i < versions.length; i++) {\n    versions[i] = items[i].s;\n  }\n  return versions;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2865
+    },
+    "gen-159": {
+      "name": "gen159",
+      "code": "export function gen159(s: string): boolean {\n  if (typeof s !== \"string\") {\n    throw new TypeError(\"gen159: input must be a string\");\n  }\n  return s.startsWith(\"pre\");\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 146
+    },
+    "gen-160": {
+      "name": "gen160",
+      "code": "export function gen160(uuid: string): Uint8Array {\n  if (typeof uuid !== \"string\" || !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid)) {\n    throw new TypeError(\"Invalid UUID string\");\n  }\n  const hex = uuid.replace(/-/g, \"\");\n  const out = new Uint8Array(16);\n  for (let i = 0; i < 16; i++) {\n    out[i] = parseInt(hex.substr(i * 2, 2), 16);\n  }\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 247
+    },
+    "gen-158": {
+      "name": "gen158",
+      "code": "export function gen158(buffer: Buffer, isDeep: boolean): Buffer {\n  if (isDeep) {\n    return buffer.slice();\n  }\n  const copy = Buffer.alloc(buffer.length);\n  for (let i = 0; i < buffer.length; i++) {\n    copy[i] = buffer[i];\n  }\n  return copy;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 449
+    },
+    "gen-155": {
+      "name": "gen155",
+      "code": "export function gen155(data: Uint8Array): Uint8Array {\n  const rotl = (x: number, n: number): number =>\n    ((x << n) | (x >>> (32 - n))) >>> 0;\n\n  // Initial hash values\n  const h = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];\n\n  // Padding: message + 0x80 + zeros + 64-bit big-endian bit length, total multiple of 64\n  const len = data.length;\n  const bitLen = len * 8;\n  const total = Math.ceil((len + 9) / 64) * 64;\n  const buf = new Uint8Array(total);\n  buf.set(data);\n  buf[len] = 0x80;\n  const dv = new DataView(buf.buffer);\n  dv.setUint32(total - 8, Math.floor(bitLen / 0x100000000) >>> 0);\n  dv.setUint32(total - 4, bitLen >>> 0);\n\n  const w = new Uint32Array(80);\n\n  for (let off = 0; off < total; off += 64) {\n    for (let i = 0; i < 16; i++) {\n      w[i] = dv.getUint32(off + i * 4);\n    }\n    for (let i = 16; i < 80; i++) {\n      w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);\n    }\n\n    let a = h[0];\n    let b = h[1];\n    let c = h[2];\n    let d = h[3];\n    let e = h[4];\n\n    for (let i = 0; i < 80; i++) {\n      let f: number;\n      let k: number;\n      if (i < 20) {\n        f = (b & c) | (~b & d);\n        k = 0x5a827999;\n      } else if (i < 40) {\n        f = b ^ c ^ d;\n        k = 0x6ed9eba1;\n      } else if (i < 60) {\n        f = (b & c) | (b & d) | (c & d);\n        k = 0x8f1bbcdc;\n      } else {\n        f = b ^ c ^ d;\n        k = 0xca62c1d6;\n      }\n      const temp = (rotl(a, 5) + (f >>> 0) + e + k + w[i]) >>> 0;\n      e = d;\n      d = c;\n      c = rotl(b, 30);\n      b = a;\n      a = temp;\n    }\n\n    h[0] = (h[0] + a) >>> 0;\n    h[1] = (h[1] + b) >>> 0;\n    h[2] = (h[2] + c) >>> 0;\n    h[3] = (h[3] + d) >>> 0;\n    h[4] = (h[4] + e) >>> 0;\n  }\n\n  const out = new Uint8Array(20);\n  const odv = new DataView(out.buffer);\n  for (let i = 0; i < 5; i++) {\n    odv.setUint32(i * 4, h[i]);\n  }\n  return out;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1897
+    },
+    "gen-163": {
+      "name": "gen163",
+      "code": "export function gen163(dataView: DataView, isDeep: boolean): DataView {\n  const byteOffset = dataView.byteOffset;\n  const byteLength = dataView.byteLength;\n  const buffer = dataView.buffer;\n  const newBuffer = isDeep ? buffer.slice(0) : buffer;\n  return new DataView(newBuffer, byteOffset, byteLength);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 452
+    },
+    "gen-154": {
+      "name": "gen154",
+      "code": "export class SemVer {\n  raw: string;\n  loose: boolean;\n  includePrerelease: boolean;\n  major: number;\n  minor: number;\n  patch: number;\n  prerelease: (string | number)[];\n  build: string[];\n  version: string;\n\n  constructor(\n    version: string,\n    options?: { loose?: boolean; includePrerelease?: boolean } | undefined\n  ) {\n    const loose = !!(options && options.loose);\n    const includePrerelease = !!(options && options.includePrerelease);\n    const trimmed = version.trim();\n\n    const strictRe =\n      /^v?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][a-zA-Z0-9-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][a-zA-Z0-9-]*))*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$/;\n    const looseRe =\n      /^[v=\\s]*(\\d+)\\.(\\d+)\\.(\\d+)(?:-([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$/;\n\n    const m = loose ? looseRe.exec(trimmed) : strictRe.exec(trimmed);\n    if (!m) {\n      throw new TypeError(`Invalid version: ${version}`);\n    }\n\n    this.raw = version;\n    this.loose = loose;\n    this.includePrerelease = includePrerelease;\n    this.major = Number(m[1]);\n    this.minor = Number(m[2]);\n    this.patch = Number(m[3]);\n\n    const pre = m[4];\n    this.prerelease = pre\n      ? pre.split(\".\").map((id) => (/^[0-9]+$/.test(id) ? Number(id) : id))\n      : [];\n\n    const build = m[5];\n    this.build = build ? build.split(\".\") : [];\n\n    this.version = `${this.major}.${this.minor}.${this.patch}`;\n    if (this.prerelease.length) {\n      this.version += `-${this.prerelease.join(\".\")}`;\n    }\n  }\n}\n\nexport function gen154(\n  version: string | SemVer,\n  options: { loose?: boolean; includePrerelease?: boolean } | undefined\n): SemVer | null {\n  let str: string;\n  if (version instanceof SemVer) {\n    str = version.version;\n  } else if (typeof version === \"string\") {\n    str = version;\n  } else {\n    return null;\n  }\n  try {\n    return new SemVer(str, options);\n  } catch {\n    return null;\n  }\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2195
+    },
+    "gen-164": {
+      "name": "gen164",
+      "code": "export function gen164(version: string, options: object | undefined): string | null {\n  if (typeof version !== \"string\") {\n    return null;\n  }\n\n  // Trim surrounding whitespace and strip a single leading \"v\".\n  let s = version.trim();\n  if (s.startsWith(\"v\")) {\n    s = s.slice(1);\n  }\n\n  // Strict SemVer 2.0.0 grammar (with optional build metadata).\n  const semverRe =\n    /^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$/;\n\n  if (!semverRe.test(s)) {\n    return null;\n  }\n\n  return s;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 828
+    },
+    "gen-162": {
+      "name": "gen162",
+      "code": "type Issue = {\n  code?: string;\n  message?: string;\n  input?: unknown;\n  inst?: unknown;\n  continue?: boolean;\n  fatal?: boolean;\n  [key: string]: unknown;\n};\n\ntype CheckContext = {\n  issues: Issue[];\n  addIssue: (issue: string | Issue) => void;\n  [key: string]: unknown;\n};\n\ntype CheckObject = {\n  kind: \"check\";\n  run: (value: unknown, ctx?: CheckContext) => void | Promise<void>;\n};\n\nexport function gen162(\n  callback: (value: unknown, ctx: CheckContext) => void | Promise<void>\n): CheckObject {\n  const check: CheckObject = {\n    kind: \"check\",\n    run(value: unknown, ctx: CheckContext = { issues: [] } as CheckContext) {\n      if (!Array.isArray(ctx.issues)) ctx.issues = [];\n      ctx.addIssue = (issue: string | Issue): void => {\n        if (typeof issue === \"string\") {\n          ctx.issues.push({ code: \"custom\", message: issue, input: value });\n          return;\n        }\n        if (!(\"continue\" in issue)) issue.continue = !issue.fatal;\n        issue.code = \"custom\";\n        issue.input = value;\n        issue.inst = check;\n        ctx.issues.push(issue);\n      };\n      return callback(value, ctx);\n    },\n  };\n  return check;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1489
+    },
+    "gen-167": {
+      "name": "gen167",
+      "code": "export function gen167(value: number | bigint | Date, params: string | object | undefined): object {\n  const base: Record<string, unknown> = { check: \"less_than\" };\n\n  if (typeof params === \"string\") {\n    base.message = params;\n  } else if (params !== undefined && params !== null && typeof params === \"object\") {\n    const { value: _value, inclusive: _inclusive, check: _check, ...rest } =\n      params as Record<string, unknown>;\n    Object.assign(base, rest);\n  }\n\n  return { ...base, value, inclusive: false };\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 807
+    },
+    "gen-166": {
+      "name": "gen166",
+      "code": "export function gen166(value: any, count: number): any[] {\n  if (Array.isArray(value)) {\n    return value;\n  }\n\n  if (value === null || value === undefined ||\n      typeof value[Symbol.iterator] !== \"function\") {\n    throw new TypeError(\"Value is not iterable\");\n  }\n\n  const result: any[] = [];\n  if (count <= 0) {\n    const iter = value[Symbol.iterator]();\n    if (typeof iter.return === \"function\") {\n      iter.return();\n    }\n    return result;\n  }\n\n  const iterator = value[Symbol.iterator]();\n  let done = false;\n  while (result.length < count) {\n    const step = iterator.next();\n    if (step.done) {\n      done = true;\n      break;\n    }\n    result.push(step.value);\n  }\n\n  if (!done && typeof iterator.return === \"function\") {\n    iterator.return();\n  }\n\n  return result;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 948
+    },
+    "gen-156": {
+      "name": "gen156",
+      "code": "export function gen156(text: string, options?: object): boolean {\n  if (typeof text !== \"string\") {\n    throw new TypeError(\"gen156: input must be a string\");\n  }\n\n  const opts = (options ?? {}) as {\n    currency?: string;\n    allowNegative?: boolean;\n    thousandsSeparator?: string | null;\n    decimalSeparator?: string;\n    decimalDigits?: number;\n    symbolSpacing?: boolean;\n    requireCurrency?: boolean;\n  };\n\n  const currency = opts.currency ?? \"$\";\n  const allowNegative = opts.allowNegative ?? true;\n  const thousands = opts.thousandsSeparator === undefined ? \",\" : opts.thousandsSeparator;\n  const decimal = opts.decimalSeparator ?? \".\";\n  const decimalDigits = opts.decimalDigits ?? 2;\n  const symbolSpacing = opts.symbolSpacing ?? false;\n  const requireCurrency = opts.requireCurrency ?? false;\n\n  if (typeof currency !== \"string\") throw new TypeError(\"gen156: currency must be a string\");\n  if (thousands !== null && typeof thousands !== \"string\") {\n    throw new TypeError(\"gen156: thousandsSeparator must be a string or null\");\n  }\n  if (typeof decimal !== \"string\" || decimal.length === 0) {\n    throw new TypeError(\"gen156: decimalSeparator must be a non-empty string\");\n  }\n  if (!Number.isInteger(decimalDigits) || decimalDigits < 0) {\n    throw new TypeError(\"gen156: decimalDigits must be a non-negative integer\");\n  }\n\n  const esc = (s: string) => s.replace(/[.*+?^${}()|[\\]\\\\\\/-]/g, \"\\\\$&\");\n\n  // Number body: grouped or ungrouped digits\n  const digits = \"\\\\d+\";\n  const grouped =\n    thousands && thousands.length > 0\n      ? `\\\\d{1,3}(?:${esc(thousands)}\\\\d{3})+`\n      : null;\n  const intPart = grouped ? `(?:${grouped}|${digits})` : digits;\n\n  // Decimal part: optional, but exactly decimalDigits digits when present\n  const decPart =\n    decimalDigits === 0\n      ? \"\"\n      : `(?:${esc(decimal)}\\\\d{${decimalDigits}})?`;\n\n  const numberPart = intPart + decPart;\n\n  let pattern: string;\n  if (currency.length === 0) {\n    if (requireCurrency) return false;\n    const sign = allowNegative ? \"-?\" : \"\";\n    pattern = `^${sign}${numberPart}$`;\n  } else {\n    const sym = esc(currency);\n    const space = symbolSpacing ? \" \" : \"\";\n    const body = `${space}${numberPart}`;\n    if (allowNegative) {\n      // \"-$1.00\" or \"$-1.00\"\n      pattern = `^(?:-${sym}${body}|${sym}${space}-?${numberPart})$`;\n    } else {\n      pattern = `^${sym}${body}$`;\n    }\n    if (!requireCurrency) {\n      const sign = allowNegative ? \"-?\" : \"\";\n      pattern = `^(?:${sign}${numberPart}|${pattern.slice(1, -1)})$`;\n    }\n  }\n\n  return new RegExp(pattern).test(text);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2552
+    },
+    "gen-161": {
+      "name": "gen161",
+      "code": "export function gen161(str: string): boolean {\n  if (typeof str !== \"string\") {\n    throw new TypeError(\"gen161: input must be a string\");\n  }\n\n  const TOKEN = \"[!#$%&'*+.^_`|~0-9A-Za-z-]+\";\n  const mediaTypeRe = new RegExp(`^${TOKEN}\\\\/${TOKEN}$`);\n  const paramRe = new RegExp(\n    `^${TOKEN}=(?:\"(?:[^\"\\\\\\\\]|\\\\\\\\.)*\"|[^\\\\s;\",]+)$`\n  );\n  const base64Re = /^[A-Za-z0-9+/]*={0,2}$/;\n\n  // Scheme is case-insensitive per URI rules.\n  if (!/^data:/i.test(str)) return false;\n\n  const comma = str.indexOf(\",\");\n  if (comma < 0) return false;\n\n  const header = str.slice(\"data:\".length, comma);\n  const payload = str.slice(comma + 1);\n\n  const parts = header.split(\";\");\n  const mediaType = parts[0];\n  if (mediaType !== \"\" && !mediaTypeRe.test(mediaType)) return false;\n\n  let params = parts.slice(1);\n  let isBase64 = false;\n  if (params.length > 0 && params[params.length - 1].toLowerCase() === \"base64\") {\n    isBase64 = true;\n    params = params.slice(0, -1);\n  }\n\n  for (const p of params) {\n    if (!paramRe.test(p)) return false;\n  }\n\n  if (isBase64) {\n    if (!base64Re.test(payload)) return false;\n    if (payload.length % 4 !== 0) return false;\n  }\n\n  return true;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1905
+    },
+    "gen-169": {
+      "name": "gen169",
+      "code": "export function gen169(a: string | number, b: string | number): number {\n  const x = String(a);\n  const y = String(b);\n  const isNum = (s: string) => /^\\d+$/.test(s);\n  const xNum = isNum(x);\n  const yNum = isNum(y);\n\n  if (xNum && yNum) {\n    // Compare numerically without precision loss: strip leading zeros,\n    // then compare by length, then lexicographically.\n    const xs = x.replace(/^0+(?=\\d)/, \"\");\n    const ys = y.replace(/^0+(?=\\d)/, \"\");\n    if (xs.length !== ys.length) return xs.length < ys.length ? -1 : 1;\n    if (xs === ys) return 0;\n    return xs < ys ? -1 : 1;\n  }\n  if (xNum) return -1;\n  if (yNum) return 1;\n\n  if (x === y) return 0;\n  return x < y ? -1 : 1;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 487
+    },
+    "gen-168": {
+      "name": "gen168",
+      "code": "type TypedArray =\n  | Int8Array\n  | Uint8Array\n  | Uint8ClampedArray\n  | Int16Array\n  | Uint16Array\n  | Int32Array\n  | Uint32Array\n  | Float32Array\n  | Float64Array\n  | BigInt64Array\n  | BigUint64Array;\n\nexport function gen168(typedArray: TypedArray, isDeep: boolean): TypedArray {\n  const Ctor = typedArray.constructor as new (\n    buffer: ArrayBufferLike,\n    byteOffset?: number,\n    length?: number\n  ) => TypedArray;\n  const buffer: ArrayBufferLike = isDeep\n    ? typedArray.buffer.slice(0)\n    : typedArray.buffer;\n  return new Ctor(buffer, typedArray.byteOffset, typedArray.length);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 942
+    },
+    "gen-170": {
+      "name": "gen170",
+      "code": "export function gen170(text: string): Uint8Array {\n  const out: number[] = [];\n  for (let i = 0; i < text.length; i++) {\n    let cp = text.charCodeAt(i);\n    if (cp >= 0xd800 && cp <= 0xdbff) {\n      const next = i + 1 < text.length ? text.charCodeAt(i + 1) : -1;\n      if (next >= 0xdc00 && next <= 0xdfff) {\n        cp = 0x10000 + ((cp - 0xd800) << 10) + (next - 0xdc00);\n        i++;\n      } else {\n        throw new Error(\"Unpaired surrogate in input\");\n      }\n    } else if (cp >= 0xdc00 && cp <= 0xdfff) {\n      throw new Error(\"Unpaired surrogate in input\");\n    }\n\n    if (cp < 0x80) {\n      out.push(cp);\n    } else if (cp < 0x800) {\n      out.push(0xc0 | (cp >> 6), 0x80 | (cp & 0x3f));\n    } else if (cp < 0x10000) {\n      out.push(\n        0xe0 | (cp >> 12),\n        0x80 | ((cp >> 6) & 0x3f),\n        0x80 | (cp & 0x3f)\n      );\n    } else {\n      out.push(\n        0xf0 | (cp >> 18),\n        0x80 | ((cp >> 12) & 0x3f),\n        0x80 | ((cp >> 6) & 0x3f),\n        0x80 | (cp & 0x3f)\n      );\n    }\n  }\n  return Uint8Array.from(out);\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 773
+    },
+    "gen-172": {
+      "name": "gen172",
+      "code": "export function gen172(\n  value: number | bigint | Date,\n  params: string | { message?: string, abort?: boolean } | undefined\n): object {\n  const normalizedParams: { message?: string, abort?: boolean } =\n    typeof params === \"string\" ? { message: params } : (params ?? {});\n\n  return {\n    check: \"less_than\",\n    ...normalizedParams,\n    value,\n    inclusive: true,\n  };\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 722
+    },
+    "gen-138": {
+      "name": "gen138",
+      "code": "```typescript\ntype Ver = { M: number; m: number; p: number; pre: string | null };\ntype Comp = { op: string; v: Ver };\n\nexport function gen138(\n  version: string,\n  range: string | { raw: string },\n  options: object = {}\n): boolean {\n  try {\n    const opts = (options || {}) as { loose?: boolean; includePrerelease?: boolean };\n    const loose = !!opts.loose;\n    const includePre = !!opts.includePrerelease;\n\n    const rangeStr =\n      typeof range === \"string\"\n        ? range\n        : range && typeof (range as any).raw === \"string\"\n        ? (range as any).raw\n        : null;\n    if (rangeStr === null) return false;\n\n    // ---- version parsing ----\n    const vRe = loose\n      ? /^\\s*[v=]?\\s*(\\d+)\\.(\\d+)\\.(\\d+)(?:-([0-9A-Za-z.-]+))?(?:\\+[0-9A-Za-z.-]+)?\\s*$/\n      : /^v?(\\d+)\\.(\\d+)\\.(\\d+)(?:-([0-9A-Za-z.-]+))?(?:\\+[0-9A-Za-z.-]+)?$/;\n    const vm = vRe.exec(version);\n    if (!vm) return false;\n    const V: Ver = {\n      M: +vm[1],\n      m: +vm[2],\n      p: +vm[3],\n      pre: vm[4] ?? null,\n    };\n\n    // ---- comparison ----\n    const cmpPre = (a: string | null, b: string | null): number => {\n      if (a === null && b === null) return 0;\n      if (a === null) return 1;\n      if (b === null) return -1;\n      const as = a.split(\".\"), bs = b.split(\".\");\n      const n = Math.min(as.length, bs.length);\n      for (let i = 0; i < n; i++) {\n        const an = /^\\d+$/.test(as[i]), bn = /^\\d+$/.test(bs[i]);\n        if (an && bn) {\n          const d = +as[i] - +bs[i];\n          if (d) return d < 0 ? -1 : 1;\n        } else if (an !== bn) {\n          return an ? -1 : 1;\n        } else if (as[i] !== bs[i]) {\n          return as[i] < bs[i] ? -1 : 1;\n        }\n      }\n      return as.length === bs.length ? 0 : as.length < bs.length ? -1 : 1;\n    };\n    const cmp = (a: Ver, b: Ver): number => {\n      if (a.M !== b.M) return a.M < b.M ? -1 : 1;\n      if (a.m !== b.m) return a.m < b.m ? -1 : 1;\n      if (a.p !== b.p) return a.p < b.p ? -1 : 1;\n      return cmpPre(a.pre, b.pre);\n    };\n    const testComp = (c: Comp): boolean => {\n      const d = cmp(V, c.v);\n      switch (c.op) {\n        case \">\": return d > 0;\n        case \">=\": return d >= 0;\n        case \"<\": return d < 0;\n        case \"<=\": return d <= 0;\n        case \"=\": return d === 0;\n      }\n      throw new Error(\"bad op\");\n    };\n\n    // ---- range parsing ----\n    const mk = (op: string, M: number, m: number, p: number, pre: string | null = null): Comp =>\n      ({ op, v: { M, m, p, pre } });\n\n    const parsePartial = (s: string) => {\n      const re = /^[v=]?(\\d+|[xX*])(?:\\.(\\d+|[xX*]))?(",
+      "stopReason": "max_tokens",
+      "outputTokens": 6000
+    },
+    "gen-165": {
+      "name": "gen165",
+      "code": "export function gen165(uuid: string | Uint8Array): string | Uint8Array {\n  let hex: string;\n\n  if (typeof uuid === \"string\") {\n    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(uuid)) {\n      throw new Error(\"Invalid UUID string\");\n    }\n    hex = uuid.replace(/-/g, \"\").toLowerCase();\n  } else {\n    if (!(uuid instanceof Uint8Array) || uuid.length !== 16) {\n      throw new Error(\"Invalid UUID bytes: expected 16 bytes\");\n    }\n    hex = Array.from(uuid, (b) => b.toString(16).padStart(2, \"0\")).join(\"\");\n  }\n\n  // Version nibble is the first digit of the 4th group (index 12).\n  if (hex[12] !== \"1\") {\n    throw new Error(\"Not a version-1 UUID\");\n  }\n\n  // Timestamp as 15 hex digits: time_hi (12 bits) + time_mid + time_low.\n  const ts = hex.slice(13, 16) + hex.slice(8, 12) + hex.slice(0, 8);\n  // Version-6 layout: high 12 digits, version nibble, low 3 digits, then clock_seq and node.\n  const out = ts.slice(0, 12) + \"6\" + ts.slice(12, 15) + hex.slice(16);\n\n  if (typeof uuid === \"string\") {\n    return `${out.slice(0, 8)}-${out.slice(8, 12)}-${out.slice(12, 16)}-${out.slice(16, 20)}-${out.slice(20)}`;\n  }\n\n  const bytes = new Uint8Array(16);\n  for (let i = 0; i < 16; i++) {\n    bytes[i] = parseInt(out.slice(i * 2, i * 2 + 2), 16);\n  }\n  return bytes;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 2616
+    },
+    "gen-171": {
+      "name": "gen171",
+      "code": "export function gen171(source: any, limit: number | undefined): Array<any> | undefined {\n  if (source == null) return undefined;\n\n  const iterFn =\n    typeof Symbol !== \"undefined\" && typeof Symbol.iterator === \"symbol\"\n      ? source[Symbol.iterator]\n      : undefined;\n  if (typeof iterFn !== \"function\") return undefined;\n\n  const iterator = iterFn.call(source);\n  const max: number =\n    typeof limit === \"number\" && !Number.isNaN(limit) ? limit : Infinity;\n\n  const result: Array<any> = [];\n\n  while (result.length < max) {\n    const step = iterator.next();\n    if (step.done) return result;\n    result.push(step.value);\n  }\n\n  // Stopped early: the iterator is not exhausted, so close it.\n  if (typeof iterator.return === \"function\") {\n    iterator.return();\n  }\n\n  return result;\n}",
+      "stopReason": "end_turn",
+      "outputTokens": 1272
+    }
+  }
+}
