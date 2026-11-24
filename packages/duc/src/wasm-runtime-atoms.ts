@@ -874,6 +874,31 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   return o;
 }`,
   },
+  // Where ECMAScript throws a TypeError for reading a property of undefined or null: a TypeError.
+  __ykTypeError: {
+    inputs: [],
+    output: "unknown",
+    source: `export function f(): unknown {
+  throw __ykMakeError("TypeError", "Cannot read properties of undefined or null");
+}`,
+  },
+  // Whether a finally block's completion is a return ([1, value]): it replaces the try's result.
+  __ykIsReturn: {
+    inputs: ["unknown"],
+    output: "boolean",
+    source: `export function f(x: unknown): boolean {
+  const t = __ykTag(x);
+  if (t === 5) {
+    const a = __ykArr(x);
+    return a.length > 0 && a[0] === 1;
+  }
+  if (t === 6) {
+    const b = __ykArrAny(x);
+    return b.length > 0 && __ykStrictEquals(b[0], 1);
+  }
+  return false;
+}`,
+  },
   // An object's toString: "[object Object]", or an error's (Error.prototype.toString).
   __ykObjToString: {
     inputs: ["YkObject"],
@@ -1046,9 +1071,6 @@ export const RUNTIME_PRIMITIVES_JS = {
       .map((k) => (o as Record<string, unknown>)[k]),
   __ykObjCls: (o: object): unknown =>
     o instanceof Error ? (Object.getPrototypeOf(o) as { name: string }).name : undefined,
-  __ykTypeError: (): unknown => {
-    throw new TypeError("a property of undefined or null");
-  },
   __ykSame: (a: unknown, b: unknown): boolean => a === b,
   __ykChar: (u: number): string => String.fromCharCode(u),
   __ykF64Hi: (x: number): number => {

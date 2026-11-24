@@ -33,6 +33,55 @@ import {
   type RuntimeAtom,
 } from "./wasm-runtime-atoms.js";
 
+/**
+ * A closure's typing found something other than a number stored in arrays it was given as arrays of
+ * numbers (its parameters at these indices): its caller grows what it passed, and types again.
+ */
+class GrowParams extends Error {
+  constructor(readonly indices: readonly number[]) {
+    super("parameters to grow");
+  }
+}
+
+/** What a program threw, uncaught, as its caller sees it: the thrown value. */
+export class Thrown {
+  constructor(readonly value: unknown) {}
+}
+
+/**
+ * A JavaScript object as the bytecode targets hold one: its own keys and values, in order, and the
+ * class an error inherits its name from (an error's own properties but its stack).
+ */
+export function jsObjectParts(o: object): { keys: string[]; vals: unknown[]; cls?: string } {
+  if (o instanceof Error) {
+    const keys = Object.getOwnPropertyNames(o).filter((k) => k !== "stack");
+    const vals = keys.map((k) => (o as unknown as Record<string, unknown>)[k]);
+    return { keys, vals, cls: (Object.getPrototypeOf(o) as { name: string }).name };
+  }
+  return { keys: Object.keys(o), vals: Object.values(o) };
+}
+
+/** A JavaScript object from its parts: an error of the class, when it has one. */
+export function jsObjectFrom(
+  keys: readonly string[],
+  vals: readonly unknown[],
+  cls?: unknown,
+): object {
+  let o: Record<string, unknown> = {};
+  if (typeof cls === "string") {
+    const C = (globalThis as Record<string, unknown>)[cls];
+    const e =
+      typeof C === "function" && (C === Error || C.prototype instanceof Error)
+        ? (new (C as ErrorConstructor)() as unknown as Record<string, unknown>)
+        : (Object.assign(new Error(), { name: cls }) as unknown as Record<string, unknown>);
+    o = e;
+  }
+  keys.forEach((k, i) => {
+    o[k] = vals[i];
+  });
+  return o;
+}
+
 /** A graph outside what the lowering covers, with the reason. A target rethrows it as its own. */
 export class LoweringError extends Error {}
 
@@ -104,7 +153,15 @@ export type Ins =
   | { readonly op: "block" }
   | { readonly op: "loop" }
   | { readonly op: "br"; readonly depth: number }
-  | { readonly op: "br_if"; readonly depth: number };
+  | { readonly op: "br_if"; readonly depth: number }
+  /**
+   * Exceptions: `throw` throws the value of any kind on the stack; `try` ... `catch` ... `end` runs
+   * its first part, and when that throws, the second with the thrown value on the stack. Neither
+   * part leaves a value.
+   */
+  | { readonly op: "throw" }
+  | { readonly op: "try" }
+  | { readonly op: "catch" };
 
 /** The error classes `new` makes: an object of that class, whose name it inherits. */
 const ERROR_CLASSES: ReadonlySet<string> = new Set([
@@ -168,7 +225,7 @@ export const PRIMITIVES: Readonly<Record<string, { params: WT[]; result: WT }>> 
   __ykStr: { params: ["any"], result: "str" },
   __ykArr: { params: ["any"], result: "nums" },
   __ykArrAny: { params: ["any"], result: "arr" },
-  // Undefined as a value; and the point where a TypeError is thrown (a trap until exceptions).
+  // Undefined as a value (in an atom a literal undefined stands for a default).
   __ykUndef: { params: [], result: "any" },
   // An object: a cast to one, an empty one of a class (a string, or not one for a plain object),
   // its keys and its values (arrays, shared, in insertion order), and its class.
@@ -177,7 +234,6 @@ export const PRIMITIVES: Readonly<Record<string, { params: WT[]; result: WT }>> 
   __ykObjKeys: { params: ["obj"], result: "arr" },
   __ykObjVals: { params: ["obj"], result: "arr" },
   __ykObjCls: { params: ["obj"], result: "any" },
-  __ykTypeError: { params: [], result: "any" },
   __ykSame: { params: ["any", "any"], result: "i32" },
 };
 
@@ -261,7 +317,7 @@ export class StackProgram {
       const f: StackFunc = { kind: "lowered", params, result, locals: [], code: [] };
       this.funcs.set(fkey, f);
       this.atoms.push(key);
-      const lowered = lowerFunction(atomGraph(key), params, result, this, true);
+      const lowered = topLevel(() => lowerFunction(atomGraph(key), params, result, this, true));
       f.locals = lowered.locals;
       f.code = lowered.code;
     }
@@ -311,6 +367,22 @@ export class StackProgram {
 }
 
 /**
+ * A function no caller can retype: something other than a number stored in an array of numbers it
+ * is given is outside its contract.
+ */
+function topLevel<T>(lower: () => T): T {
+  try {
+    return lower();
+  } catch (e) {
+    if (e instanceof GrowParams)
+      throw new LoweringError(
+        "something other than a number is stored in an array of numbers the function is given",
+      );
+    throw e;
+  }
+}
+
+/**
  * The graph lowered to a program whose function `f` has the contract's types. The contract's output
  * type is required.
  */
@@ -326,7 +398,7 @@ export function lowerProgram(
   const f: StackFunc = { kind: "lowered", params, result, locals: [], code: [] };
   prog.funcs.set("f", f);
   // ECMAScript's operations: each generic operation as the case of them it is (#1310).
-  const lowered = lowerFunction(ecmaScriptView(input), params, result, prog);
+  const lowered = topLevel(() => lowerFunction(ecmaScriptView(input), params, result, prog));
   f.locals = lowered.locals;
   f.code = lowered.code;
   return prog;
@@ -370,6 +442,8 @@ type Callee =
   | { readonly k: "string-of" }
   | { readonly k: "number-of" }
   | { readonly k: "error-class"; readonly name: string }
+  /** `__yakccTry(body, handler, finalizer)`: a try statement (#1276). */
+  | { readonly k: "try" }
   | { readonly k: "method"; readonly recv: ValueId; readonly name: string }
   | { readonly k: "prim"; readonly name: string }
   | { readonly k: "atom"; readonly name: string }
@@ -391,7 +465,7 @@ function lowerFunction(
 ): { result: WT; locals: WT[]; code: Ins[] } {
   if (source.mode !== undefined)
     throw new LoweringError(`an ${source.mode} function has no form here`);
-  if (source.obs.length !== 1) throw new LoweringError("the subset has exactly one result");
+  if (source.obs.length > 1) throw new LoweringError("the subset has at most one result");
   const { graph: g, after } = loweringView(source);
   const owners = joinOwners(g);
   const producer = new Map<ValueId, DucNode>();
@@ -460,6 +534,8 @@ function lowerFunction(
   };
   /** The empty array literals something other than a number is stored in. */
   const grown = new Set<ValueId>();
+  /** The parameters (arrays of numbers) something other than a number is stored in. */
+  const grownParams = new Set<number>();
   /** The empty array literals an array value may be: through carries, choices and writes. */
   const arrayOrigins = (v0: ValueId, seen = new Set<ValueId>()): ValueId[] => {
     const v = resolve(v0);
@@ -483,6 +559,9 @@ function lowerFunction(
         ...arrayOrigins(p.inputs[2] as ValueId, seen),
       ];
     if (p.kind === "op" && p.label === "ArrayLiteral" && p.inputs.length === 0) return [v];
+    // An array the function was given: its caller grows it.
+    if (p.kind === "param-source" && paramTypes[paramIndex(p.label)] === "nums")
+      grownParams.add(paramIndex(p.label));
     if (p.kind === "op" && p.label === "[]=") return arrayOrigins(p.inputs[0] as ValueId, seen);
     return [];
   };
@@ -511,6 +590,45 @@ function lowerFunction(
       sig.push(t === "undef" ? "any" : t);
     }
     return sig;
+  };
+  /**
+   * A closure called with only what it captures, and any further parameter (a handler's thrown
+   * value) of any kind. Undefined while a capture's type is unknown.
+   */
+  const captureSignature = (node: DucNode): WT[] | undefined => {
+    const inner = node.closure as DucGraph;
+    const count = inner.nodes.filter((x) => x.kind === "param-source").length;
+    const captures = node.inputs as readonly ValueId[];
+    const sig: WT[] = [];
+    for (let i = 0; i < count; i++) {
+      const v = captures[i];
+      if (v === undefined) {
+        sig.push("any");
+        continue;
+      }
+      const t = get(v);
+      if (t === "?") return undefined;
+      if (typeof t === "object")
+        throw new LoweringError("a function passed to a closure is not in the subset yet");
+      sig.push(t === "undef" ? "any" : t);
+    }
+    return sig;
+  };
+  /**
+   * A closure's result type for a signature: lowered, or, when it stores other than numbers in
+   * arrays it was given as arrays of numbers, those arrays grown here ("?": typed again).
+   */
+  const closureResult = (node: DucNode, sig: WT[], given: readonly ValueId[]): VT | "?" => {
+    try {
+      return mod.closure(node.closure as DucGraph, sig, trusted).result;
+    } catch (e) {
+      if (!(e instanceof GrowParams)) throw e;
+      for (const i of e.indices) {
+        const v = given[i];
+        if (v !== undefined) stored(v, "any");
+      }
+      return "?";
+    }
   };
   const computeType = (v: ValueId): VT | "?" => {
     const carry = carryOf.get(v);
@@ -544,6 +662,7 @@ function lowerFunction(
       if (sym === "String") return { call: { k: "string-of" } };
       if (sym === "Number") return { call: { k: "number-of" } };
       if (ERROR_CLASSES.has(sym)) return { call: { k: "error-class", name: sym } };
+      if (sym === "__yakccTry") return { call: { k: "try" } };
       if (PRIMITIVES[sym] !== undefined) return { call: { k: "prim", name: sym } };
       if (ATOMS[sym] !== undefined) return { call: { k: "atom", name: sym } };
       throw new LoweringError(`"${sym}" is not in the wasm base set`);
@@ -600,6 +719,23 @@ function lowerFunction(
       if (callee.k === "string-of") return "str";
       if (callee.k === "number-of") return "f64";
       if (callee.k === "error-class") return "obj";
+      if (callee.k === "try") {
+        // Its closures are called with what they capture (and the handler with what was thrown);
+        // its result is a completion record or undefined: a value of any kind.
+        for (const [i, a] of ins.slice(1).entries()) {
+          const ta = get(a);
+          if (ta === "?") return "?";
+          const isClosure = typeof ta === "object" && ta.call.k === "closure";
+          if (!isClosure && !(i > 0 && ta === "undef"))
+            throw new LoweringError("a try whose blocks are not closures is not in the subset");
+          if (!isClosure) continue;
+          const node = (ta as { call: { node: DucNode } }).call.node;
+          const sig = captureSignature(node);
+          if (sig === undefined) return "?";
+          if (closureResult(node, sig, node.inputs as ValueId[]) === "?") return "?";
+        }
+        return "any";
+      }
       if (callee.k === "prim") return (PRIMITIVES[callee.name] as { result: WT }).result;
       if (callee.k === "method" && callee.name === "nums.push") {
         stored(callee.recv, ins[1] === undefined ? "?" : get(ins[1] as ValueId));
@@ -613,9 +749,11 @@ function lowerFunction(
         return wt(parseType((ATOMS[callee.name] as { output: string }).output), callee.name);
       if (callee.k === "closure") {
         const sig = closureSignature(callee.node, ins.slice(1));
-        return sig === undefined
-          ? "?"
-          : mod.closure(callee.node.closure as DucGraph, sig, trusted).result;
+        if (sig === undefined) return "?";
+        return closureResult(callee.node, sig, [
+          ...(callee.node.inputs as ValueId[]),
+          ...ins.slice(1),
+        ]);
       }
       const m = STRING_METHODS[callee.name] as { atom: string; notFound?: boolean };
       if (m.notFound === true) return "i32";
@@ -698,6 +836,8 @@ function lowerFunction(
       return "str";
     }
     if (label === "TypeOfExpression") return "str";
+    // A throw has no value: what follows it does not run.
+    if (label === "throw") return "undef";
     if (label === "??" && ins.length === 2) {
       // A value that is never nullish is the result; undefined gives the other side.
       const t0 = get(ins[0] as ValueId);
@@ -747,6 +887,7 @@ function lowerFunction(
       changed = true;
     }
   }
+  if (grownParams.size > 0) throw new GrowParams([...grownParams]);
   /** A value's settled type: never typed is undefined (it never has a value). */
   const ty = (v: ValueId): VT => {
     const t = get(v);
@@ -774,6 +915,11 @@ function lowerFunction(
     locals.push(value(v, `value ${v}`));
     local.set(v, at);
     return at;
+  };
+  /** A local of the function's own, for a value no graph value names. */
+  const temp = (t: WT): number => {
+    locals.push(t);
+    return params.length + locals.length - 1;
   };
   const pushDefault = (t: WT): void => {
     if (t === "any") emit({ op: "const.undef" });
@@ -960,10 +1106,100 @@ function lowerFunction(
     emit({ op: "call", fn: target.fn });
   };
 
+  /**
+   * A closure called with what it captures and, after those, one value of any kind (or none): the
+   * thrown value a handler takes. Its result is left on the stack as a value of any kind.
+   */
+  const callClosureWith = (closure: ValueId, extra: number | undefined): void => {
+    const node = (ty(closure) as { call: { node: DucNode } }).call.node;
+    const inner = node.closure as DucGraph;
+    const captures = node.inputs as readonly ValueId[];
+    const count = inner.nodes.filter((x) => x.kind === "param-source").length;
+    const sig: WT[] = [];
+    for (let i = 0; i < count; i++) {
+      const v = captures[i];
+      if (v !== undefined) {
+        const tv = get(v);
+        if (typeof tv === "object" || tv === "?")
+          throw new LoweringError("a function passed to a closure is not in the subset yet");
+        sig.push(tv === "undef" ? "any" : tv);
+      } else sig.push("any");
+    }
+    const { fn, result } = mod.closure(inner, sig, trusted);
+    sig.forEach((t, i) => {
+      const v = captures[i];
+      if (v !== undefined) push(v, t);
+      else if (i === captures.length && extra !== undefined) emit({ op: "get", i: extra });
+      else emit({ op: "const.undef" });
+    });
+    emit({ op: "call", fn });
+    if (result !== "any") emit({ op: "to.any", from: result });
+  };
+  /**
+   * `__yakccTry(body, handler, finalizer)` (runtime.ts): the body's result, or, when it throws, the
+   * handler's for what it threw (with no handler, the throw goes on). The finalizer runs however
+   * that ends; a return in it (`[1, value]`) is the result instead, and ends a throw.
+   */
+  const emitTry = (args: readonly ValueId[]): void => {
+    const [body, handler, finalizer] = args as [ValueId, ValueId | undefined, ValueId | undefined];
+    const isClosure = (v: ValueId | undefined): v is ValueId => {
+      if (v === undefined) return false;
+      const tv = ty(v);
+      return typeof tv === "object" && tv.call.k === "closure";
+    };
+    const r = temp("any");
+    const caught = temp("any");
+    const hasHandler = isClosure(handler);
+    if (!isClosure(finalizer)) {
+      // try { r = body() } catch (e) { r = handler(e) }; with no handler, the throw goes on.
+      if (!hasHandler) {
+        callClosureWith(body, undefined);
+        emit({ op: "set", i: r }, { op: "get", i: r });
+        return;
+      }
+      emit({ op: "try" });
+      callClosureWith(body, undefined);
+      emit({ op: "set", i: r }, { op: "catch" }, { op: "set", i: caught });
+      callClosureWith(handler, caught);
+      emit({ op: "set", i: r }, { op: "end" }, { op: "get", i: r });
+      return;
+    }
+    // With a finalizer: what the body and the handler threw is held, the finalizer runs, and the
+    // throw goes on unless the finalizer returned.
+    const threw = temp("i32");
+    emit({ op: "const.i32", x: 0 }, { op: "set", i: threw });
+    emit({ op: "const.undef" }, { op: "set", i: r });
+    emit({ op: "const.undef" }, { op: "set", i: caught });
+    emit({ op: "try" });
+    if (hasHandler) emit({ op: "try" });
+    callClosureWith(body, undefined);
+    emit({ op: "set", i: r });
+    if (hasHandler) {
+      emit({ op: "catch" }, { op: "set", i: caught });
+      callClosureWith(handler, caught);
+      emit({ op: "set", i: r }, { op: "end" });
+    }
+    emit({ op: "catch" }, { op: "set", i: caught });
+    emit({ op: "const.i32", x: 1 }, { op: "set", i: threw }, { op: "end" });
+    callClosureWith(finalizer, undefined);
+    const done = temp("any");
+    emit({ op: "set", i: done }, { op: "get", i: done });
+    emit({ op: "call", fn: mod.atom("__ykIsReturn").fn }, { op: "if" });
+    emit({ op: "get", i: done }, { op: "set", i: r });
+    emit({ op: "const.i32", x: 0 }, { op: "set", i: threw }, { op: "end" });
+    emit({ op: "get", i: threw }, { op: "if" }, { op: "get", i: caught }, { op: "throw" });
+    emit({ op: "end" }, { op: "get", i: r });
+  };
+
   const emitNode = (n: DucNode): void => {
     if (n.kind === "literal-source" || n.kind === "param-source" || n.kind === "carry-source")
       return;
     if (n.kind === "diamond-source") return;
+    if (n.kind === "op" && n.label === "throw") {
+      push(n.inputs[0] as ValueId, "any");
+      emit({ op: "throw" });
+      return;
+    }
     const out = n.outputs[0] as ValueId | undefined;
     if (out === undefined) throw new LoweringError(`"${n.label}" has no result`);
     const t = ty(out);
@@ -1088,6 +1324,8 @@ function lowerFunction(
           else push(v, t);
         });
         emit({ op: "call", fn });
+      } else if (callee.k === "try") {
+        emitTry(args);
       } else {
         const m = STRING_METHODS[callee.name] as (typeof STRING_METHODS)[string];
         const atom = mod.atom(m.atom);
@@ -1406,6 +1644,13 @@ function lowerFunction(
   };
 
   emitScope(undefined);
+  // A function with no result, or whose result is undefined, returns undefined.
+  if (g.obs.length === 0 || ty(g.obs[0] as ValueId) === "undef") {
+    const result = declared ?? "any";
+    if (result !== "any") throw new LoweringError("the result has no value here");
+    emit({ op: "const.undef" });
+    return { result, locals, code };
+  }
   // The result as the contract types it: a value of any kind is read as the kind it says.
   const computed = opType(g.obs[0] as ValueId);
   if (typeof computed !== "string" || computed === "undef")

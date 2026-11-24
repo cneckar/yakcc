@@ -17,7 +17,10 @@ import {
   type Ins,
   LoweringError,
   type StackProgram,
+  Thrown,
   type WT,
+  jsObjectFrom,
+  jsObjectParts,
   lowerProgram,
 } from "./lower-stack.js";
 import type { DucGraph } from "./types.js";
@@ -239,6 +242,7 @@ const BOUNDARY_READS = [
   "__ykObj",
   "__ykObjKeys",
   "__ykObjVals",
+  "__ykObjCls",
 ];
 
 /** The IR as wasm instructions; `index` gives a function's index by key. */
@@ -340,6 +344,16 @@ function encode(code: readonly Ins[], index: (fn: string) => number): number[] {
       case "br_if":
         out.push(I.brIf, ...u32(x.depth));
         break;
+      // Exceptions: one tag (0), whose payload is the thrown value of any kind.
+      case "throw":
+        out.push(0x08, 0);
+        break;
+      case "try":
+        out.push(0x06, 0x40);
+        break;
+      case "catch":
+        out.push(0x07, 0);
+        break;
     }
   }
   return out;
@@ -423,6 +437,7 @@ function writeModule(prog: StackProgram, exports: Readonly<Record<string, string
     }
     return at;
   };
+  const throwType = fnType([VAL.any], []);
   const importEntries = hosts.map((h) => {
     const t = fnType(
       Array.from({ length: prog.hosts.get(h) ?? 1 }, () => VAL.f64),
@@ -445,11 +460,10 @@ function writeModule(prog: StackProgram, exports: Readonly<Record<string, string
     const body = [...vec(f.locals.map((l) => [...u32(1), ...l])), ...f.code(ix)];
     return [...u32(body.length), ...body];
   });
-  const exportEntries = Object.entries(exports).map(([as, k]) => [
-    ...name(as),
-    0x00,
-    ...u32(ix(k)),
-  ]);
+  const exportEntries = [
+    ...Object.entries(exports).map(([as, k]) => [...name(as), 0x00, ...u32(ix(k))]),
+    [...name("ykThrow"), 0x04, 0],
+  ];
   return new Uint8Array([
     0x00,
     0x61,
@@ -462,6 +476,8 @@ function writeModule(prog: StackProgram, exports: Readonly<Record<string, string
     ...section(1, vec(types)),
     ...(importEntries.length > 0 ? section(2, vec(importEntries)) : []),
     ...section(3, vec(funcTypes)),
+    // The tag of what a program throws: a value of any kind.
+    ...section(13, vec([[0x00, ...u32(throwType)]])),
     ...section(7, vec(exportEntries)),
     ...section(10, vec(bodies)),
   ]);
@@ -481,7 +497,7 @@ const MARSHAL: Readonly<Record<string, { params: WT[]; result: WT | undefined }>
   arrSetAt: { params: ["arr", "i32", "any"], result: undefined },
   arrLen: { params: ["arr"], result: "i32" },
   arrGetAt: { params: ["arr", "i32"], result: "any" },
-  objFrom: { params: ["arr", "arr"], result: "obj" },
+  objFrom: { params: ["arr", "arr", "any"], result: "obj" },
   mkNum: { params: ["f64"], result: "any" },
   mkBool: { params: ["i32"], result: "any" },
   mkUndef: { params: [], result: "any" },
@@ -944,12 +960,9 @@ function primitiveBody(key: string): { locals: number[][]; code: Tok[] } {
       return { locals: [], code: [...get(0), 0xfb, 0x02, OBJ, field, I.end] };
     }
     case "objFrom":
-      return { locals: [], code: [...get(0), ...get(1), ...GC.refNullAny, 0xfb, 0x00, OBJ, I.end] };
+      return { locals: [], code: [...get(0), ...get(1), ...get(2), 0xfb, 0x00, OBJ, I.end] };
     case "__ykUndef":
       return { locals: [], code: [I.i32const, UNDEFINED_I31, ...GC.refI31, I.end] };
-    case "__ykTypeError":
-      // A trap, until exceptions: the program stops where ECMAScript throws a TypeError.
-      return { locals: [], code: [0x00, I.end] };
     case "__ykArrAny":
       return { locals: [], code: [...get(0), ...GC.refCastNull(ARR), I.end] };
     case "__ykSame":
@@ -1065,8 +1078,8 @@ export async function instantiateWasmGc(m: WasmGcModule): Promise<(...args: unkn
     if (t === "i32") return v ? 1 : 0;
     if (t === "f64") return v;
     if (t === "obj") {
-      const o = v as Record<string, unknown>;
-      return fn("objFrom")(toWasm(Object.keys(o), "arr"), toWasm(Object.values(o), "arr"));
+      const { keys, vals, cls } = jsObjectParts(v as object);
+      return fn("objFrom")(toWasm(keys, "arr"), toWasm(vals, "arr"), toWasm(cls, "any"));
     }
     if (t === "arr") {
       const a = v as readonly unknown[];
@@ -1102,7 +1115,7 @@ export async function instantiateWasmGc(m: WasmGcModule): Promise<(...args: unkn
     if (t === "obj") {
       const keys = fromWasm(fn("__ykObjKeys")(v), "arr") as string[];
       const vals = fromWasm(fn("__ykObjVals")(v), "arr") as unknown[];
-      return Object.fromEntries(keys.map((k, i) => [k, vals[i]]));
+      return jsObjectFrom(keys, vals, fromWasm(fn("__ykObjCls")(v), "any"));
     }
     if (t === "arr") {
       const n = fn("arrLen")(v) as number;
@@ -1127,6 +1140,18 @@ export async function instantiateWasmGc(m: WasmGcModule): Promise<(...args: unkn
     for (let i = 0; i < n; i++) s += String.fromCharCode(fn("strGet")(v, i) as number);
     return s;
   };
-  return (...args) =>
-    fromWasm(fn("f")(...args.map((a, i) => toWasm(a, m.params[i] as WT))), m.result);
+  // What a program throws, uncaught, reaches the caller as a Thrown of the value.
+  const tag = (instance.exports as Record<string, unknown>).ykThrow as {
+    readonly __brand?: never;
+  };
+  return (...args) => {
+    try {
+      return fromWasm(fn("f")(...args.map((a, i) => toWasm(a, m.params[i] as WT))), m.result);
+    } catch (e) {
+      const ex = e as { is?: (t: unknown) => boolean; getArg?: (t: unknown, i: number) => unknown };
+      if (typeof ex?.is === "function" && ex.is(tag) && typeof ex.getArg === "function")
+        throw new Thrown(fromWasm(ex.getArg(tag, 0), "any"));
+      throw e;
+    }
+  };
 }

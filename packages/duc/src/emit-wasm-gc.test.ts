@@ -18,6 +18,7 @@ import {
   PROGRAMS,
   anyValue,
   atomInJs,
+  outcome,
   same,
 } from "./__fixtures__/bytecode-cases.js";
 import { EMIT_CASES } from "./__fixtures__/emit-cases.js";
@@ -154,8 +155,8 @@ describe("programs over strings, lowered to WasmGC (#1300)", () => {
       const wasm = await instantiateWasmGc(emitWasmGc(g, { inputs, output }));
       const bad: string[] = [];
       for (const a of fc.sample(args, { numRuns: 400, seed: 13001 })) {
-        const want = ref(...a);
-        const got = wasm(...a);
+        const want = outcome(ref, a);
+        const got = outcome(wasm, a);
         if (!same(got, want))
           bad.push(`${JSON.stringify(a)}: ${JSON.stringify(got)} vs ${JSON.stringify(want)}`);
       }
