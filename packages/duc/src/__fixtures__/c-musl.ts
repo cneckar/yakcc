@@ -219,3 +219,11 @@ export function buildMuslNative(
     }
   }
 }
+
+/** A closure with musl's startup added (`yk_musl_init`, and what it calls), as a process has it. */
+export function withMuslInit<C extends ReturnType<typeof shaveMusl>>(closure: C): C {
+  const init = shaveCUnit(MUSL_INIT, ["yk_musl_init"], MUSL_ARGS, "clang", "musl-init.c");
+  for (const [k, a] of init.atoms) if (!closure.atoms.has(k)) closure.atoms.set(k, a);
+  closure.units.push(init);
+  return closure;
+}

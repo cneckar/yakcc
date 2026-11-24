@@ -12,8 +12,8 @@ import { join } from "node:path";
 import fc from "fast-check";
 import { afterAll, describe, expect, it } from "vitest";
 import { type Fn, link } from "./__fixtures__/c-link.js";
-import { MUSL_ARGS, MUSL_INIT, buildMuslNative, shaveMusl } from "./__fixtures__/c-musl.js";
-import { createCMemory, createCSystem, shaveCUnit } from "./raise-c.js";
+import { buildMuslNative, shaveMusl, withMuslInit } from "./__fixtures__/c-musl.js";
+import { createCMemory, createCSystem } from "./raise-c.js";
 
 const hasClang = (() => {
   try {
@@ -36,10 +36,7 @@ const ROOTS = [
 ];
 
 describe.skipIf(!hasClang)("musl's mallocng, shaved down to the system-call leaf", () => {
-  const closure = shaveMusl(ROOTS);
-  const init = shaveCUnit(MUSL_INIT, ["yk_musl_init"], MUSL_ARGS, "clang", "musl-init.c");
-  closure.atoms.set("yk_musl_init", init.atoms.get("yk_musl_init") as never);
-  closure.units.push(init);
+  const closure = withMuslInit(shaveMusl(ROOTS));
 
   it("the closure shaves with no refusal, and stops only at the leaves", () => {
     expect(closure.refused).toEqual([]);

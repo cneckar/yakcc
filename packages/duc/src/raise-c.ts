@@ -528,6 +528,8 @@ const LEAF_CALLS: Readonly<Record<string, (args: readonly string[]) => string>> 
   __builtin_nan: () => "NaN",
   __builtin_nans: () => "NaN",
   __builtin_signbit: (a) => `__ykBigToI32(__ykF64Bits(${a[0]}) >> 63n)`,
+  // A branch hint: its value is its first argument's.
+  __builtin_expect: (a) => `${a[0]}`,
 };
 
 /** A callee: the declaration a call refers to. */
@@ -1118,6 +1120,18 @@ function raiseBody(
         if (field.bit !== undefined) return bitsPlace(addr, field.bit, t);
         return { k: "mem", addr: field.offset === 0 ? addr : `(${addr} + ${field.offset})`, t };
       }
+      case "CompoundLiteralExpr": {
+        // An object of its own (musl's `((union {double _f; uint64_t _i;}){x})._i`): a frame
+        // slot, initialized where the expression is evaluated.
+        const t = typeOf(e);
+        const slot = `__lit${temps++}`;
+        top.push(`const ${slot} = __ykAlloc(${sizeOf(t)}, ${alignOf(t)});`);
+        frame.push(slot);
+        const steps = (
+          t.k === "rec" || t.k === "arr" ? initialize(slot, t, k0) : [storeAt(slot, t, expr(k0))]
+        ).map((x) => `(${x.replace(/;$/, "")})`);
+        return { k: "mem", addr: `(${[...steps, slot].join(", ")})`, t };
+      }
       case "StringLiteral":
         return {
           k: "mem",
@@ -1550,6 +1564,16 @@ function raiseBody(
         return [`(${copyFrom(addr, t, s).join(", ")});`];
       const items = s === undefined ? [] : initItems(s);
       const out: string[] = [];
+      // A union's initializer is the member clang names (else its first).
+      const member = (s as { field?: { name?: string } } | undefined)?.field?.name;
+      if (/^union /.test(t.name) && member !== undefined && l.fields.has(member)) {
+        const f = l.fields.get(member) as { offset: number; type: string };
+        return initialize(
+          f.offset === 0 ? addr : `(${addr} + ${f.offset})`,
+          parseType(f.type),
+          items[0],
+        );
+      }
       let i = 0;
       for (const [, f] of l.fields) {
         const ft = parseType(f.type);
@@ -1572,9 +1596,30 @@ function raiseBody(
   const continueLabels = new Set<string>();
   const forwardLabels = new Map<string, string>(); // label decl id -> its block's JavaScript label
   const enterLabels = new Map<string, string>(); // label decl id -> the flag a goto into it sets
+  // A label that starts a later if's then branch (`if (c) { L: .. }`), reached by forward gotos:
+  // label decl id -> the flag the goto sets; the if is then taken as if its condition held.
+  const enterIf = new Map<string, string>();
+  /** The label that starts an if's then branch. */
+  const ifEntry = (c: ClangNode): ClangNode | undefined => {
+    if (c.kind !== "IfStmt") return undefined;
+    const then = (c.inner ?? [])[1];
+    const first = then?.kind === "CompoundStmt" ? (then.inner ?? [])[0] : then;
+    return first?.kind === "LabelStmt" ? first : undefined;
+  };
   // A union of 64-bit members (`union { double f; uint64_t i; }`) not in memory: one 64-bit word,
   // its members views of it through the float64-bits leaf. By the variable's id: its members.
   const puns = new Map<string, Map<string, CType>>();
+  /** Whether a variable is used as a whole record (`ut = ux`): it is then memory, not a word. */
+  const wholeRecord = (id: string): boolean => {
+    const walk = (n: ClangNode): boolean => {
+      const ref = stripCasts(n);
+      if (ref.kind === "DeclRefExpr" && ref.referencedDecl?.id === id && n.kind !== "MemberExpr")
+        return true;
+      if (n.kind === "MemberExpr") return false;
+      return (n.inner ?? []).some(walk);
+    };
+    return walk(b0);
+  };
   let lastUnion: Map<string, CType> | undefined;
   const punOf = (e: ClangNode): { word: string; field: CType } | undefined => {
     if (e.kind !== "MemberExpr") return undefined;
@@ -1721,11 +1766,14 @@ function raiseBody(
         // written `L: do { .. } while (false)` (the lifter's form of a block left by a jump).
         // Blocks that would overlap are widened to nest (starting earlier changes nothing).
         const forward = new Map<number, { label: string; start: number; js: string }>();
-        kids.forEach((c, j) => {
-          if (c.kind !== "LabelStmt") return;
+        const viaIf = new Set<number>();
+        kids.forEach((c0, j) => {
+          const c = c0.kind === "LabelStmt" ? c0 : ifEntry(c0);
+          if (c === undefined) return;
           const label = (c as { declId?: string }).declId ?? "";
           const start = kids.slice(0, j).findIndex((k) => gotosTo(k, label));
           if (start < 0) return;
+          if (c !== c0) viaIf.add(j);
           const name = ident((c as { name?: string }).name ?? "L");
           forward.set(j, { label, start, js: `${name}_${forwardLabels.size + forward.size}` });
         });
@@ -1748,6 +1796,12 @@ function raiseBody(
             if (kids.slice(i, j).some((k) => escapingJump(k)))
               throw new RaiseCError("a break or continue of an outer loop inside a goto's block");
             forwardLabels.set(f.label, f.js);
+            if (viaIf.has(j)) {
+              const flag = `__enter${temps++}`;
+              top.push(`let ${flag} = false;`);
+              push(`${flag} = false;`);
+              enterIf.set(f.label, flag);
+            }
             push(`${f.js}: do {`);
           }
           const c = kids[i] as ClangNode;
@@ -1804,7 +1858,13 @@ function raiseBody(
         const fwd = forwardLabels.get(target);
         if (fwd === undefined && !continueLabels.has(target))
           throw new RaiseCError("a goto into a block, or out of it");
-        const jump = fwd !== undefined ? `break ${fwd};` : "continue;";
+        const into = enterIf.get(target);
+        const jump =
+          fwd !== undefined
+            ? into !== undefined
+              ? `{ ${into} = true; break ${fwd}; }`
+              : `break ${fwd};`
+            : "continue;";
         // Out of a dispatched switch's body: a jump code, the jump made after the body.
         if (dispatch !== undefined && dispatch.depth === 0) {
           const d = dispatch;
@@ -1866,7 +1926,8 @@ function raiseBody(
             lastUnion !== undefined &&
             /^union\b/.test(t.name) &&
             !inMemory.has(d.id ?? "") &&
-            init === undefined
+            init === undefined &&
+            !wholeRecord(d.id ?? "")
           ) {
             puns.set(d.id ?? "", lastUnion);
             push(`let ${declName(d)} = 0n;`);
@@ -1929,7 +1990,8 @@ function raiseBody(
           push("}");
           return;
         }
-        push(`if (${cond(c)}) {`);
+        const entered = enterIf.get((ifEntry(s) as { declId?: string } | undefined)?.declId ?? "");
+        push(`if (${entered !== undefined ? `${entered} || ` : ""}${cond(c)}) {`);
         stmt(then);
         if (otherwise !== undefined) {
           push("} else {");
@@ -2194,7 +2256,7 @@ function gotosInTail(s: ClangNode, label: string): boolean {
 
 /**
  * The places a switch's dispatch enters its body (SwitchStmt), in order, when a case label is
- * inside a statement of the body or a goto in the body names a label of it: the case labels
+ * inside a statement of the body, a goto in the body names a label of it, or one leaves it: the case labels
  * (not those of a switch inside), and the labels gotos in the body name (not inside a loop or
  * switch of it). None when every case label is one of the body's own statements.
  */
@@ -2227,6 +2289,21 @@ function dispatchTargets(body: ClangNode): ClangNode[] {
   };
   if (body.kind === "CompoundStmt") for (const k of body.inner ?? []) walk(k, false, true);
   else walk(body, false, false);
+  // A goto out of the body (not from a loop or switch inside it) is a jump the lifter cannot carry
+  // out of a switch: dispatched too, the goto is a jump code made after it.
+  const labels = new Set<string>();
+  const ownLabels = (s: ClangNode): void => {
+    if (s.kind === "LabelStmt") labels.add((s as { declId?: string }).declId ?? "");
+    for (const k of s.inner ?? []) ownLabels(k);
+  };
+  ownLabels(body);
+  const out_ = (s: ClangNode): boolean => {
+    if (["ForStmt", "WhileStmt", "DoStmt", "SwitchStmt"].includes(s.kind)) return false;
+    if (s.kind === "GotoStmt")
+      return !labels.has((s as { targetLabelDeclId?: string }).targetLabelDeclId ?? "");
+    return (s.inner ?? []).some(out_);
+  };
+  if (body.kind === "CompoundStmt" && (body.inner ?? []).some(out_)) nested = true;
   return nested ? out : [];
 }
 
@@ -2344,7 +2421,7 @@ export function shaveCUnit(
     // carries the unit's.
     const base =
       decl.kind === "FunctionDecl" && decl.storageClass === "static"
-        ? `${ident(c.name)}__${ident((unit.split("/").pop() ?? unit).replace(/\.\w+$/, ""))}`
+        ? `${ident(c.name)}__${(unit.split("/").pop() ?? unit).replace(/\.\w+$/, "").replace(/\W/g, "_")}`
         : ident(c.name);
     let key = base;
     for (let n = 2; found.has(key); n++) key = `${base}_${n}`;
@@ -2775,7 +2852,17 @@ function staticDefinition(
 }
 
 /** A record's name as a key: C++ scopes dropped (`union P::(unnamed at f.c:1:40)` and the C spelling meet). */
-const recordKey = (name: string): string => normType(name.replace(/\b[A-Za-z_]\w*::/g, ""));
+// An unnamed record is named by where it is: the layout dump writes `(unnamed at rel/f.h:17:2)`,
+// a type `(unnamed struct at /abs/f.h:17:2)`; both are keyed `(unnamed at f.h:17:2)`.
+const recordKey = (name: string): string =>
+  normType(
+    name
+      .replace(/\b[A-Za-z_]\w*::/g, "")
+      .replace(
+        /\(unnamed(?: struct| union| class)? at (?:[^)]*\/)?([^/)]+:\d+:\d+)\)/g,
+        "(unnamed at $1)",
+      ),
+  );
 
 /**
  * The record layouts clang computed for a unit (`-fdump-record-layouts`): each record's size,
