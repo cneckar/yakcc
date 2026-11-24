@@ -1322,6 +1322,86 @@ export const COLLECTION_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     }
     return out;
   }
+  // slice, at, lastIndexOf, reverse (in place), concat.
+  const rel = (v: unknown, d: number): number => {
+    if (__ykTag(v) === 0) return d;
+    const k = __ykToInteger(v);
+    if (k < 0) return k + n < 0 ? 0 : k + n;
+    return k > n ? n : k;
+  };
+  if (__ykStrEquals(name, "slice")) {
+    const from = rel(arg(0), 0);
+    const to = rel(arg(1), n);
+    const out = [];
+    out.push(__ykUndef());
+    out.pop();
+    let i = from;
+    while (i < to) {
+      out.push(__ykIndex(a, i));
+      i = i + 1;
+    }
+    return out;
+  }
+  if (__ykStrEquals(name, "at")) {
+    const k0 = __ykToInteger(arg(0));
+    const k = k0 >= 0 ? k0 : n + k0;
+    if (k < 0 || k >= n) return __ykUndef();
+    return __ykIndex(a, k);
+  }
+  if (__ykStrEquals(name, "lastIndexOf")) {
+    const x = arg(0);
+    let i = args.length > 1 ? __ykToInteger(arg(1)) : n - 1;
+    if (i < 0) i = i + n;
+    if (i >= n) i = n - 1;
+    while (i >= 0) {
+      if (__ykStrictEquals(__ykIndex(a, i), x)) return i;
+      i = i - 1;
+    }
+    return -1;
+  }
+  if (__ykStrEquals(name, "reverse")) {
+    let lo = 0;
+    let hi = n - 1;
+    while (lo < hi) {
+      const x = __ykIndex(a, lo);
+      const y = __ykIndex(a, hi);
+      if (__ykTag(a) === 5) {
+        __ykArr(a)[lo] = __ykNum(y);
+        __ykArr(a)[hi] = __ykNum(x);
+      } else {
+        __ykArrAny(a)[lo] = y;
+        __ykArrAny(a)[hi] = x;
+      }
+      lo = lo + 1;
+      hi = hi - 1;
+    }
+    return a;
+  }
+  if (__ykStrEquals(name, "concat")) {
+    const out = [];
+    out.push(__ykUndef());
+    out.pop();
+    let i = 0;
+    while (i < n) {
+      out.push(__ykIndex(a, i));
+      i = i + 1;
+    }
+    let j = 0;
+    while (j < args.length) {
+      const e = args[j];
+      const te = __ykTag(e);
+      if (te === 5 || te === 6) {
+        const m = __ykNum(__ykGetAny(e, "length"));
+        let k = 0;
+        while (k < m) {
+          out.push(__ykIndex(e, k));
+          k = k + 1;
+        }
+      } else out.push(e);
+      j = j + 1;
+    }
+    return out;
+  }
   const g = arg(0);
   if (__ykStrEquals(name, "forEach") || __ykStrEquals(name, "map") || __ykStrEquals(name, "filter") || __ykStrEquals(name, "some") || __ykStrEquals(name, "every") || __ykStrEquals(name, "find") || __ykStrEquals(name, "findIndex")) {
     if (__ykTag(g) !== 8) return __ykNotAFunction();
@@ -1436,6 +1516,220 @@ export const COLLECTION_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   if (t === 5 || t === 6) return __ykArrayMethod(recv, name, args);
   if (t === 4) return __ykStringMethod(__ykStr(recv), name, args);
   return __ykNoMethod();
+}`,
+  },
+};
+
+/**
+ * More of String.prototype and Array.prototype, as the specification defines them: each argument
+ * a value of any kind, converted as the method does (an absent one is undefined).
+ */
+export const METHOD_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
+  // ToIntegerOrInfinity of any value.
+  __ykToInteger: {
+    inputs: ["unknown"],
+    output: "number",
+    source: String.raw`export function f(x: unknown): number {
+  const n = __ykToNumber(x);
+  if (n !== n) return 0;
+  return Math.trunc(n);
+}`,
+  },
+  // String.prototype.split(separator, limit) for a string separator.
+  __ykSplit: {
+    inputs: ["string", "unknown", "unknown"],
+    output: "unknown[]",
+    source: String.raw`export function f(s: string, sep: unknown, limit: unknown): unknown[] {
+  const out = [];
+  out.push(__ykUndef());
+  out.pop();
+  let lim = 4294967295;
+  if (__ykTag(limit) !== 0) {
+    lim = __ykToInt32(__ykToNumber(limit));
+    if (lim < 0) lim = lim + 4294967296;
+  }
+  const r = __ykToString(sep);
+  if (lim === 0) return out;
+  if (__ykTag(sep) === 0) {
+    out.push(s);
+    return out;
+  }
+  if (s.length === 0) {
+    if (r.length > 0) out.push(s);
+    return out;
+  }
+  if (r.length === 0) {
+    let i = 0;
+    while (i < s.length && out.length < lim) {
+      out.push(__ykSub(s, i, i + 1));
+      i = i + 1;
+    }
+    return out;
+  }
+  let p = 0;
+  let q = __ykIndexOf(s, r, 0);
+  while (q !== -1) {
+    out.push(__ykSub(s, p, q));
+    if (out.length >= lim) return out;
+    p = q + r.length;
+    q = __ykIndexOf(s, r, p);
+  }
+  out.push(__ykSub(s, p, s.length));
+  return out;
+}`,
+  },
+  // String.prototype.repeat(count): a RangeError for a negative or infinite count.
+  __ykRepeat: {
+    inputs: ["string", "unknown"],
+    output: "string",
+    source: String.raw`export function f(s: string, count: unknown): string {
+  const n = __ykToInteger(count);
+  if (n < 0 || n === Infinity) return __ykStr(__ykRangeError());
+  let out = "";
+  let k = 0;
+  while (k < n) {
+    out = out + s;
+    k = k + 1;
+  }
+  return out;
+}`,
+  },
+  // A RangeError: Invalid count value.
+  __ykRangeError: {
+    inputs: [],
+    output: "unknown",
+    source: String.raw`export function f(): unknown {
+  throw __ykMakeError("RangeError", "Invalid count value");
+}`,
+  },
+  // String.prototype.padStart / padEnd.
+  __ykPad: {
+    inputs: ["string", "unknown", "unknown", "boolean"],
+    output: "string",
+    source: String.raw`export function f(s: string, maxLength: unknown, fill: unknown, atStart: boolean): string {
+  let max = __ykToInteger(maxLength);
+  if (max <= s.length) return s;
+  const filler = __ykTag(fill) === 0 ? " " : __ykToString(fill);
+  if (filler.length === 0) return s;
+  const want = max - s.length;
+  let pad = "";
+  while (pad.length < want) pad = pad + filler;
+  pad = __ykSub(pad, 0, want);
+  return atStart ? pad + s : s + pad;
+}`,
+  },
+  // String.prototype.lastIndexOf(search, position).
+  __ykLastIndexOf: {
+    inputs: ["string", "unknown", "unknown"],
+    output: "number",
+    source: String.raw`export function f(s: string, search: unknown, position: unknown): number {
+  const r = __ykToString(search);
+  const num = __ykToNumber(position);
+  let pos = num !== num ? Infinity : Math.trunc(num);
+  if (pos < 0) pos = 0;
+  let start = pos > s.length ? s.length : pos;
+  if (start > s.length - r.length) start = s.length - r.length;
+  let i = start;
+  while (i >= 0) {
+    if (__ykStrEquals(__ykSub(s, i, i + r.length), r)) return i;
+    i = i - 1;
+  }
+  return -1;
+}`,
+  },
+  // String.prototype.trimStart / trimEnd (atStart).
+  __ykTrimSide: {
+    inputs: ["string", "boolean"],
+    output: "string",
+    source: `export function f(s: string, atStart: boolean): string {
+  let from = 0;
+  let to = s.length;
+  if (atStart) {
+    while (from < to && ${isSpace("__ykUnit(s, from)")}) from = from + 1;
+  } else {
+    while (to > from && ${isSpace("__ykUnit(s, to - 1)")}) to = to - 1;
+  }
+  return __ykSub(s, from, to);
+}`,
+  },
+  // String.prototype.at(index): a unit, or undefined.
+  __ykStrAt: {
+    inputs: ["string", "unknown"],
+    output: "unknown",
+    source: String.raw`export function f(s: string, index: unknown): unknown {
+  const rel = __ykToInteger(index);
+  const k = rel >= 0 ? rel : s.length + rel;
+  if (k < 0 || k >= s.length) return __ykUndef();
+  return __ykSub(s, k, k + 1);
+}`,
+  },
+  // GetSubstitution for a string pattern: $$, $&, $\`, $' (no captures: $n is itself).
+  __ykSubstitute: {
+    inputs: ["string", "string", "number", "string"],
+    output: "string",
+    source: String.raw`export function f(matched: string, s: string, position: number, rep: string): string {
+  let out = "";
+  let i = 0;
+  while (i < rep.length) {
+    const c = __ykUnit(rep, i);
+    if (c === 36 && i + 1 < rep.length) {
+      const d = __ykUnit(rep, i + 1);
+      if (d === 36) {
+        out = out + "$";
+        i = i + 2;
+        continue;
+      }
+      if (d === 38) {
+        out = out + matched;
+        i = i + 2;
+        continue;
+      }
+      if (d === 96) {
+        out = out + __ykSub(s, 0, position);
+        i = i + 2;
+        continue;
+      }
+      if (d === 39) {
+        out = out + __ykSub(s, position + matched.length, s.length);
+        i = i + 2;
+        continue;
+      }
+    }
+    out = out + __ykSub(rep, i, i + 1);
+    i = i + 1;
+  }
+  return out;
+}`,
+  },
+  // String.prototype.replace / replaceAll (all) with a string pattern: the replacement a string
+  // (GetSubstitution) or a function value (called with the match, its position and the string).
+  __ykReplace: {
+    inputs: ["string", "unknown", "unknown", "boolean"],
+    output: "string",
+    source: String.raw`export function f(s: string, pattern: unknown, replacement: unknown, all: boolean): string {
+  const search = __ykToString(pattern);
+  const fn = __ykTag(replacement) === 8;
+  const rep = fn ? "" : __ykToString(replacement);
+  const positions: number[] = [];
+  let p = __ykIndexOf(s, search, 0);
+  while (p !== -1) {
+    positions.push(p);
+    if (!all) break;
+    const next = p + (search.length === 0 ? 1 : search.length);
+    if (next > s.length) break;
+    p = __ykIndexOf(s, search, next);
+  }
+  let out = "";
+  let end = 0;
+  let i = 0;
+  while (i < positions.length) {
+    const at = positions[i];
+    const piece = fn ? __ykToString(__ykCallWith(replacement, [search, at, s])) : __ykSubstitute(search, s, at, rep);
+    out = out + __ykSub(s, end, at) + piece;
+    end = at + search.length;
+    i = i + 1;
+  }
+  return out + __ykSub(s, end, s.length);
 }`,
   },
 };

@@ -59,6 +59,9 @@ the format lacks, classified (a), (b) or (c) as in #1299, before the lock.
   - builtins as functions (`String`, `Number`, `Boolean`, Math's one-argument functions): each the closure of the call it means;
   - `JSON.stringify` (key order, `toJSON`, `space`, the cycle's TypeError) and `JSON.parse` (strictly, a SyntaxError otherwise), as runtime atoms;
   - `instanceof` for the builtin classes (the error classes, `Object`, `Array`, `Function`) and `Array.isArray`;
+  - bitwise operators (ToInt32 by exact double arithmetic, then 32-bit integer operations);
+  - `Map` and `Set` (SameValueZero, insertion order; `keys`/`values`/`entries` as snapshot arrays), and method calls of receivers of any kind through one dispatch atom (`__ykInvoke`);
+  - string methods `split`, `repeat`, `padStart`/`padEnd`, `lastIndexOf`, `trimStart`/`trimEnd`, `at`, and `replace`/`replaceAll` with a string pattern (GetSubstitution's `$$`, `$&`, `` $` ``, `$'`, or a callback); array methods `slice`, `at`, `lastIndexOf`, `concat` and `reverse`;
   - iteration: `for...in` (keys in ECMAScript's order: array indices ascending, then the others as made), `for...of` over arrays (read at each step, as the iterator does), strings (by code point) and values of any kind, and `Object.keys`, `values` and `entries`;
   - arrays of any values;
   - objects and errors;
