@@ -677,11 +677,10 @@ function lowerFunction(
     const got = push(v);
     if (got === want) return;
     if (got === "i32" && want === "f64") code.push(I.f64fromI32);
-    else {
-      const gotText = got === "str" ? "a string" : "not a string";
-      const wantText = want === "str" ? "string" : "number";
-      throw new WasmEmitError(`${what} is ${gotText}, and a ${wantText} is needed`);
-    }
+    else
+      throw new WasmEmitError(
+        `${what} is ${got === "str" ? "a string" : "not a string"}, and a ${want === "str" ? "string" : "number"} is needed`,
+      );
   };
   const pushNumber = (v: ValueId): void => pushAs(v, "f64", "an operand");
   /** Push a value's truthiness as an i32 (nonzero is true). */
