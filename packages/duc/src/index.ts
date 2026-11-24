@@ -144,7 +144,7 @@ export type { WasmModule, WasmSignature } from "./emit-wasm.js";
 export { WASM_HOST, WasmEmitError, emitWasm, instantiateWasm } from "./emit-wasm.js";
 export { emitWasmGc, instantiateWasmGc } from "./emit-wasm-gc.js";
 export type { WasmGcModule } from "./emit-wasm-gc.js";
-export { RUNTIME_ATOMS, RUNTIME_PRIMITIVES_JS } from "./wasm-runtime-atoms.js";
+export { BIGNUM_ATOMS, RUNTIME_ATOMS, RUNTIME_PRIMITIVES_JS } from "./wasm-runtime-atoms.js";
 export type { RuntimeAtom } from "./wasm-runtime-atoms.js";
 export type { LlvmModule, NativeSignature, NativeType } from "./emit-llvm.js";
 export { LlvmEmitError, emitLlvm } from "./emit-llvm.js";

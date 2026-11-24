@@ -25,6 +25,9 @@ const toInt = (x: string): string => `(${x} !== ${x} ? 0 : Math.trunc(${x}))`;
 const isSpace = (u: string): string =>
   `(${u} === 9 || ${u} === 10 || ${u} === 11 || ${u} === 12 || ${u} === 13 || ${u} === 32 || ${u} === 160 || ${u} === 5760 || (${u} >= 8192 && ${u} <= 8202) || ${u} === 8232 || ${u} === 8233 || ${u} === 8239 || ${u} === 8287 || ${u} === 12288 || ${u} === 65279)`;
 
+/** The limb base of the runtime's big integers: 2^24, so a limb times 2^24 plus a carry stays exact. */
+const BASE = "16777216";
+
 export const RUNTIME_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   // String.prototype.charCodeAt
   __ykCharCodeAt: {
@@ -166,11 +169,306 @@ export const RUNTIME_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
 };
 
 /**
+ * Big integers for Number::toString (ECMA-262 6.1.6.1.20), as atoms over `number[]`: limbs in base
+ * 2^24, least significant first, with no zero limb at the top (zero is the empty array). Every limb
+ * is an integer a double holds exactly, and so is every intermediate product.
+ */
+export const BIGNUM_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
+  // A non-negative integer below 2^53 as a big integer.
+  __ykBigFromInt: {
+    inputs: ["number"],
+    output: "number[]",
+    source: `export function f(x: number): number[] {
+  const out: number[] = [];
+  let v = x;
+  while (v > 0) {
+    const q = Math.floor(v / ${BASE});
+    out.push(v - q * ${BASE});
+    v = q;
+  }
+  return out;
+}`,
+  },
+  // a * m, in place, for an integer 1 <= m <= 2^24; returns a.
+  __ykBigMulSmall: {
+    inputs: ["number[]", "number"],
+    output: "number[]",
+    source: `export function f(a: number[], m: number): number[] {
+  let carry = 0;
+  let i = 0;
+  while (i < a.length) {
+    const t = a[i] * m + carry;
+    const q = Math.floor(t / ${BASE});
+    a[i] = t - q * ${BASE};
+    carry = q;
+    i = i + 1;
+  }
+  while (carry > 0) {
+    const q = Math.floor(carry / ${BASE});
+    a.push(carry - q * ${BASE});
+    carry = q;
+  }
+  return a;
+}`,
+  },
+  // a + b, as a new big integer.
+  __ykBigAdd: {
+    inputs: ["number[]", "number[]"],
+    output: "number[]",
+    source: `export function f(a: number[], b: number[]): number[] {
+  const out: number[] = [];
+  const n = Math.max(a.length, b.length);
+  let carry = 0;
+  let i = 0;
+  while (i < n) {
+    let t = carry;
+    if (i < a.length) t = t + a[i];
+    if (i < b.length) t = t + b[i];
+    if (t >= ${BASE}) {
+      out.push(t - ${BASE});
+      carry = 1;
+    } else {
+      out.push(t);
+      carry = 0;
+    }
+    i = i + 1;
+  }
+  if (carry > 0) out.push(carry);
+  return out;
+}`,
+  },
+  // a - b, in place, for a >= b; returns a.
+  __ykBigSub: {
+    inputs: ["number[]", "number[]"],
+    output: "number[]",
+    source: `export function f(a: number[], b: number[]): number[] {
+  let borrow = 0;
+  let i = 0;
+  while (i < a.length) {
+    let t = a[i] - borrow;
+    if (i < b.length) t = t - b[i];
+    if (t < 0) {
+      a[i] = t + ${BASE};
+      borrow = 1;
+    } else {
+      a[i] = t;
+      borrow = 0;
+    }
+    i = i + 1;
+  }
+  while (a.length > 0 && a[a.length - 1] === 0) a.pop();
+  return a;
+}`,
+  },
+  // The sign of a - b: -1, 0 or 1.
+  __ykBigCmp: {
+    inputs: ["number[]", "number[]"],
+    output: "number",
+    source: `export function f(a: number[], b: number[]): number {
+  if (a.length !== b.length) return a.length < b.length ? -1 : 1;
+  let i = a.length - 1;
+  while (i >= 0) {
+    if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+    i = i - 1;
+  }
+  return 0;
+}`,
+  },
+  // A copy of a.
+  __ykBigCopy: {
+    inputs: ["number[]"],
+    output: "number[]",
+    source: `export function f(a: number[]): number[] {
+  const out: number[] = [];
+  let i = 0;
+  while (i < a.length) {
+    out.push(a[i]);
+    i = i + 1;
+  }
+  return out;
+}`,
+  },
+  // a * 2^e, in place, for an integer e >= 0; returns a.
+  __ykBigShl: {
+    inputs: ["number[]", "number"],
+    output: "number[]",
+    source: `export function f(a: number[], e: number): number[] {
+  let k = e;
+  while (k >= 24) {
+    __ykBigMulSmall(a, ${BASE});
+    k = k - 24;
+  }
+  if (k > 0) __ykBigMulSmall(a, Math.pow(2, k));
+  return a;
+}`,
+  },
+  // a * 10^k, in place, for an integer k >= 0; returns a.
+  __ykBigMulPow10: {
+    inputs: ["number[]", "number"],
+    output: "number[]",
+    source: `export function f(a: number[], k: number): number[] {
+  let i = k;
+  while (i >= 7) {
+    __ykBigMulSmall(a, 10000000);
+    i = i - 7;
+  }
+  if (i > 0) __ykBigMulSmall(a, Math.pow(10, i));
+  return a;
+}`,
+  },
+  // Number::toString(x), radix 10 (ECMA-262 6.1.6.1.20): the shortest digits that round-trip,
+  // closest to x, ties to an even digit (as V8), by Burger and Dybvig's free-format algorithm on
+  // exact big integers; then ECMAScript's layout of those digits.
+  __ykNumberToString: {
+    inputs: ["number"],
+    output: "string",
+    source: `export function f(x: number): string {
+  if (x !== x) return "NaN";
+  if (x === 0) return "0";
+  if (x === Infinity) return "Infinity";
+  if (x < 0) return "-" + __ykNumberToString(-x);
+  const hi = __ykF64Hi(x);
+  const lo = __ykF64Lo(x);
+  const biased = Math.floor(hi / 1048576);
+  let mant = (hi - biased * 1048576) * 4294967296 + lo;
+  let e = -1074;
+  if (biased > 0) {
+    mant = mant + 4503599627370496;
+    e = biased - 1075;
+  }
+  const even = mant - Math.floor(mant / 2) * 2 === 0;
+  let r: number[] = __ykBigFromInt(mant);
+  let s: number[] = __ykBigFromInt(2);
+  let mp: number[] = __ykBigFromInt(1);
+  let mm: number[] = __ykBigFromInt(1);
+  if (e >= 0) {
+    if (mant !== 4503599627370496) {
+      __ykBigShl(r, e + 1);
+      __ykBigShl(mp, e);
+      __ykBigShl(mm, e);
+    } else {
+      __ykBigShl(r, e + 2);
+      s = __ykBigFromInt(4);
+      __ykBigShl(mp, e + 1);
+      __ykBigShl(mm, e);
+    }
+  } else {
+    if (e === -1074 || mant !== 4503599627370496) {
+      __ykBigShl(r, 1);
+      __ykBigShl(s, -e);
+    } else {
+      __ykBigShl(r, 2);
+      s = __ykBigFromInt(4);
+      __ykBigShl(s, -e);
+      mp = __ykBigFromInt(2);
+    }
+  }
+  // Scale: the smallest k with (r + m+) / s below 10^k (at or below when even), by an estimate
+  // from the logarithm and an exact correction.
+  let k = Math.ceil(Math.log10(x) - 1e-10);
+  if (k >= 0) __ykBigMulPow10(s, k);
+  else {
+    __ykBigMulPow10(r, -k);
+    __ykBigMulPow10(mp, -k);
+    __ykBigMulPow10(mm, -k);
+  }
+  let high = __ykBigCmp(__ykBigAdd(r, mp), s);
+  while (even ? high >= 0 : high > 0) {
+    __ykBigMulSmall(s, 10);
+    k = k + 1;
+    high = __ykBigCmp(__ykBigAdd(r, mp), s);
+  }
+  let low = __ykBigCmp(__ykBigMulSmall(__ykBigAdd(r, mp), 10), s);
+  while (even ? low < 0 : low <= 0) {
+    __ykBigMulSmall(r, 10);
+    __ykBigMulSmall(mp, 10);
+    __ykBigMulSmall(mm, 10);
+    k = k - 1;
+    low = __ykBigCmp(__ykBigMulSmall(__ykBigAdd(r, mp), 10), s);
+  }
+  // Generate digits until the remainder is within the rounding interval.
+  let digits = "";
+  let done = false;
+  while (!done) {
+    __ykBigMulSmall(r, 10);
+    __ykBigMulSmall(mp, 10);
+    __ykBigMulSmall(mm, 10);
+    let d = 0;
+    while (__ykBigCmp(r, s) >= 0) {
+      __ykBigSub(r, s);
+      d = d + 1;
+    }
+    const cl = __ykBigCmp(r, mm);
+    const ch = __ykBigCmp(__ykBigAdd(r, mp), s);
+    const tc1 = even ? cl <= 0 : cl < 0;
+    const tc2 = even ? ch >= 0 : ch > 0;
+    if (tc1 && tc2) {
+      const c = __ykBigCmp(__ykBigMulSmall(__ykBigCopy(r), 2), s);
+      if (c > 0 || (c === 0 && d - Math.floor(d / 2) * 2 === 1)) d = d + 1;
+      done = true;
+    } else if (tc2) {
+      d = d + 1;
+      done = true;
+    } else if (tc1) {
+      done = true;
+    }
+    digits = digits + __ykChar(48 + d);
+  }
+  // The layout (ECMA-262 6.1.6.1.20 steps 6-10): n is k, the digits' count is kd.
+  const n = k;
+  const kd = digits.length;
+  if (kd <= n && n <= 21) {
+    let out = digits;
+    let z = kd;
+    while (z < n) {
+      out = out + "0";
+      z = z + 1;
+    }
+    return out;
+  }
+  if (0 < n && n <= 21) return digits.slice(0, n) + "." + digits.slice(n, kd);
+  if (-6 < n && n <= 0) {
+    let out = "0.";
+    let z = n;
+    while (z < 0) {
+      out = out + "0";
+      z = z + 1;
+    }
+    return out + digits;
+  }
+  const ex = n - 1;
+  let v = ex < 0 ? -ex : ex;
+  let es = "";
+  let more = true;
+  while (more) {
+    const q = Math.floor(v / 10);
+    es = __ykChar(48 + v - q * 10) + es;
+    v = q;
+    more = v > 0;
+  }
+  const mantissa = kd === 1 ? digits : digits.slice(0, 1) + "." + digits.slice(1, kd);
+  return mantissa + "e" + (ex < 0 ? "-" : "+") + es;
+}`,
+  },
+};
+
+/**
  * The primitives as the reference engine has them, to run the atoms' sources in JavaScript and
  * compare them with the builtins they define.
  */
 export const RUNTIME_PRIMITIVES_JS = {
   __ykUnit: (s: string, i: number): number => s.charCodeAt(i),
+  __ykChar: (u: number): string => String.fromCharCode(u),
+  __ykF64Hi: (x: number): number => {
+    const v = new DataView(new ArrayBuffer(8));
+    v.setFloat64(0, x);
+    return v.getUint32(0);
+  },
+  __ykF64Lo: (x: number): number => {
+    const v = new DataView(new ArrayBuffer(8));
+    v.setFloat64(0, x);
+    return v.getUint32(4);
+  },
   __ykSub: (s: string, from: number, to: number): string => s.substring(from, to),
   __ykJoin: (a: string, b: string): string => a + b,
 } as const;

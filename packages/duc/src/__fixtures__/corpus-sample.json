@@ -2,7 +2,7 @@
   {
     "name": "add",
     "origin": "db5da00e23835324229e64e71eee44094770acedf73024b2dcae8a78e6bfe574",
-    "identity": "d7f08709b3d52ed1326c45d55263a68fb1c28ff78d701f54d709fe0fd4f7078a",
+    "identity": "1b64576cd351cf88cc647669933bb45e5e756a77967e783afef28cee87f13e83",
     "constructs": ["number"],
     "args": ["num", "num"],
     "source": "export function add(a: number, b: number): number {\n  return a + b;\n}\n"
@@ -10,7 +10,7 @@
   {
     "name": "isHex64",
     "origin": "67612218ea2b4b2bd1ff21599181723595c6a63557f0a5828e0db769a894e57f",
-    "identity": "3416b3563c87cf2f9cdc6d06b62b739640da636126585452cf311c53e2452416",
+    "identity": "2b59cbe75bd566e2887f67b7e30cd84612037d810fc7b8630728b6623c895b9a",
     "constructs": ["string", "regex"],
     "args": [
       {
@@ -23,7 +23,7 @@
   {
     "name": "truncate",
     "origin": "7c6b1dff6c399816b11f513304e2bacae617ec71a45a97214b1c9ae09478a125",
-    "identity": "cc893d7508d075a25b25efdf079eef8f0e81c66ed3454955e613866e4b4ef737",
+    "identity": "2ca7d25f330d6155e02d76bfcc72a178caad8b199b688a2267fb3501c01f6d07",
     "constructs": ["string", "number"],
     "args": ["str", "idx"],
     "source": "function truncate(s: string, max: number): string {\n  return s.length <= max ? s : `${s.slice(0, max - 3)}...`;\n}"
@@ -31,7 +31,7 @@
   {
     "name": "stemToCamelCase",
     "origin": "52639497e79240b419bceac4f50efe6a21fa4707ab0e5a3407f3620735b427fc",
-    "identity": "c1c12c77a15e4a4ac38fccdbc325c055950add38a9d4e723552452812ce1fded",
+    "identity": "05df9a4637886a28906900c469b0477703403cee8d6ecec4f1a2ce57b945cc46",
     "constructs": ["string", "regex", "closure"],
     "args": [
       {
@@ -44,7 +44,7 @@
   {
     "name": "emitEntry",
     "origin": "939775daa16dc85edb8ef788dcd969e963ca668dc28f9b19ba3452cb91989285",
-    "identity": "b65e08f33c0cfd114bd33eb70e9faac01552f4f77724f9a9bec80bdf5acd8392",
+    "identity": "9e5c753b1f196c0420b411550728a4f9cf7ac378d267ccf963344065d2dd7fed",
     "constructs": ["string", "object", "switch"],
     "args": [
       {
@@ -63,7 +63,7 @@
   {
     "name": "panicCodeToKind",
     "origin": "4fc4eb009a7ad17cb061752ea4bab1bb4b1757d9e9ad5bfe7ee86eb3f0deb704",
-    "identity": "48d2d902706c57e958ccc307d210df2bb7cd5952eb8adcea6422d4968e458b98",
+    "identity": "4b2445e40e6672f1de7f81bc7786d99e44771cf9539e9a6c5b7ac972ccdbdad0",
     "constructs": ["number"],
     "args": ["int"],
     "source": "function panicCodeToKind(code: number): WasmTrapKind {\n  if (code === 0x01) return \"oom\";\n  // 0x42 and all other codes map to \"unreachable\"\n  return \"unreachable\";\n}"
@@ -71,7 +71,7 @@
   {
     "name": "f64Bytes",
     "origin": "333e718ae4f14f58c0bead3ca16900f60f562d5f0e766ca50ee8472bdab18c50",
-    "identity": "56b1db29961674906d37096940dde409acb1f3dc169534a49972eab2a55a6e40",
+    "identity": "93098728d6f53f431315c1fce06b6076c4926497fb8a40474a1d62ad0336a963",
     "constructs": ["number", "array", "platform"],
     "args": ["num"],
     "source": "function f64Bytes(value: number): number[] {\n  const buf = new ArrayBuffer(8);\n  new DataView(buf).setFloat64(0, value, /* littleEndian */ true);\n  return Array.from(new Uint8Array(buf));\n}"
@@ -79,7 +79,7 @@
   {
     "name": "valtypeByte",
     "origin": "de5a2725548349c1577aeaf17f662bcdd5318b2fe9836582417d2b695ae4afe8",
-    "identity": "6c71157d1ce34309544b37ea1b186e096d457c3e5cff858dd01b9b7d0c14c9c5",
+    "identity": "316dc39035258676a04f7deec6c618ded44e6f5b2c94d5187673905fa667024f",
     "constructs": ["switch", "module"],
     "args": [
       {
@@ -91,7 +91,7 @@
   {
     "name": "bytesToHex",
     "origin": "bfa606249fbc78bd6a88f75d354559fbc0113b9ce46c4265b4de7ff1ef44927e",
-    "identity": "7c552b87c6a1a760770b4293769ee5f20e71c5941d6b4a7edfcae1a29a40ae71",
+    "identity": "f189d4bb81b00a3cdf6fe09964ee328f5417276b199d6e74d2d98512a27ed0b3",
     "constructs": ["array", "closure", "string"],
     "args": [
       {
@@ -104,7 +104,7 @@
   {
     "name": "isLocalTriplet",
     "origin": "49c462823a32d8a9e8670c22d759988a458a4611e070d6eedfa95527db4f8859",
-    "identity": "e823921c49ef4814a47ed84f37fa01cdb9990f58ed796b3e28a57867b7321f1f",
+    "identity": "2ecb7cc27810b0e908e47e1799999b638e45d756a3f4c6a06f4254aa39d970a1",
     "constructs": ["object"],
     "args": [
       {
@@ -120,7 +120,7 @@
   {
     "name": "normalizeBase",
     "origin": "aabb5f8610b9af6632a5705e5005d392d67cfa3a5c8f96ccdacd9dc0698fe9ff",
-    "identity": "2389fd15e123515f0f61c2e12e9446debb29eb4b13c4dba32f08a913fed76092",
+    "identity": "a47bfafd2ab249b842743bd0c86b1d497e4f8bff7238950256159e46af51a639",
     "constructs": ["string"],
     "args": [
       {
@@ -133,7 +133,7 @@
   {
     "name": "buildIntentCardQuery",
     "origin": "e3e4fe3152d5d939fa3f38032e1f8b12d50ea43b221a5cb011b854815ec58c92",
-    "identity": "f3db235172d097dbcfe1e4a35b34120b69bd762e6a18b8babaa39b23132848c2",
+    "identity": "b0634a3733fb2bc6249ff53fa5daddf21930b2767a53560e03eccdc6539f1fc0",
     "constructs": ["object", "truthiness"],
     "args": [
       {
@@ -151,7 +151,7 @@
   {
     "name": "buildSkeletonSpec",
     "origin": "672ef5373e4c1a0037e7e602b07342d5b9bdc6ac0780df6f35feeedc8e21d587",
-    "identity": "c3467d0826c647677dee5d0c615b5601354673e0eff9f8c1d5bee0ca53ac5a6c",
+    "identity": "f5c97c3bd7ba7187cf0990893c604f3923e0e9ae33f9dd9e9c939b34d4c2535e",
     "constructs": ["object", "array"],
     "args": ["str"],
     "source": "export function buildSkeletonSpec(intent: string): ContractSpec {\n  return {\n    inputs: [],\n    outputs: [],\n    behavior: intent,\n    guarantees: [],\n    errorConditions: [],\n    nonFunctional: {\n      purity: \"pure\",\n      threadSafety: \"safe\",\n    },\n    propertyTests: [],\n  };\n}"
@@ -159,7 +159,7 @@
   {
     "name": "refBytesToHex",
     "origin": "8dc97fc0c4bb3f7158cb8c7090a785fcd51d044a7444f876ed40f828ad31f8b4",
-    "identity": "42cd710094aa98a06230118370d55a845b47b3e15823b24bd01aac1ae5cc0173",
+    "identity": "78c5acdf4ff0aed2092a99ade6b21b3e4f302d764a9b2afe40de43f200602f9c",
     "constructs": ["loop", "array", "string"],
     "args": [
       {
@@ -172,7 +172,7 @@
   {
     "name": "isAsciiDigit",
     "origin": "d0897c9466dd66a24c3af8c28812def45b1fc92e0a5d165b9458d35d3ef46a0e",
-    "identity": "5c90eafa419b12e948705513f7c5ea213f0c6769f3384745a9f213e8254d57b3",
+    "identity": "4ab44e28079a5fdd923faafe4c07f824d321220ed4ca409828fbf2b5c16f6ce5",
     "constructs": ["string", "comparison"],
     "args": [
       {
@@ -185,7 +185,7 @@
   {
     "name": "isEnoent",
     "origin": "e02be7c904fac89679f0033ee8cf7518f2e96ed9665ae0104e6b251c7bef4ea4",
-    "identity": "8324b60efc14f01e68ee7bc65f7c929f88c7c3bca786369f8ffe60c4a0e7b51d",
+    "identity": "9130f809e8c90e25da5f9231acdedaf4b0b6fe13bdead874b4ec4527baa71fb1",
     "constructs": ["object", "in", "typeof"],
     "args": ["any"],
     "source": "function isEnoent(err: unknown): boolean {\n  return (\n    typeof err === \"object\" &&\n    err !== null &&\n    \"code\" in err &&\n    (err as { code: unknown }).code === \"ENOENT\"\n  );\n}"
@@ -193,7 +193,7 @@
   {
     "name": "normalizeSource",
     "origin": "d931405d023f5ad6a8a6273dac8f574d7489e138194154d6b3c1ca7e62ddf142",
-    "identity": "f4c79de6868f08134c9bdaf066dc20620420ac996c5a84cc607e95387daa814e",
+    "identity": "e7961e400966dbd8b390dd2dde9325f9e226e5cbc67f638e3ec03365f092a7dd",
     "constructs": ["string", "regex"],
     "args": [
       {
@@ -206,7 +206,7 @@
   {
     "name": "candidatesToCombinedScores",
     "origin": "985c697cc9353dd5b809d95b629c36e46606e698c25b20ff92903d9b46aa7313",
-    "identity": "981a621a3ec839e54522997bb550d5615d6638fa3d300366a4cb6673db4cd6d3",
+    "identity": "0aaa1ae8cf9590a1239b21d1aee80563947e56835bb266d2a1de97a6e0fc44a4",
     "constructs": ["array", "closure", "number"],
     "args": [
       {
@@ -223,7 +223,7 @@
   {
     "name": "propsArtifactPath",
     "origin": "85f2dc95ec6720cb25f782c3c980b954107722bc08d2dc1bdd9d10da8b7d6971",
-    "identity": "6654ab9cde570200078da0a1ae5607703960a52cc54e596242830bd1124b9453",
+    "identity": "2847981c74ce3c80cfad7cefee02c2c9923bca2df62ce24847ec6fe9347ceaca",
     "constructs": ["string"],
     "args": ["str"],
     "source": "function propsArtifactPath(atomName: string): string {\n  return `${atomName}.props.ts`;\n}"
@@ -231,7 +231,7 @@
   {
     "name": "collapseWhitespace",
     "origin": "dc29dd0af3022c96ffb31ce0a5c4b99b490d32148e2c0a3317e8669e1ad5486e",
-    "identity": "fb06b11fc3fd7dc84df653a0dd596c284e92c3bb90b5c87439bac4b4a3efbbc1",
+    "identity": "fcd08fdf6330eb3c3bfe0751b31f0d7733056f310634f7f3d95d7c027137b206",
     "constructs": ["string", "regex"],
     "args": [
       {
@@ -244,7 +244,7 @@
   {
     "name": "escapeRegex",
     "origin": "4aec71ca159c59215c709bb6e07a6d36af9b2a8948ba2455902f16edba348861",
-    "identity": "afbd03debfc116d88baaee4f3a905a825ee5adab01e7e9730383efe3025b3939",
+    "identity": "9dd3423d77d8a15567f8cbc2dac7b097d049303b73eb13c8346415cb8a14f8d9",
     "constructs": ["string", "regex"],
     "args": [
       {
@@ -257,7 +257,7 @@
   {
     "name": "normalizeId",
     "origin": "d63e7bcb4889a0ec56b83e44af4d643c6d776fd961cd9589f4f40669b3c2e8c9",
-    "identity": "07a5a3a57c8839bfde8cfb273379389682ad59341d7185be65a02cbf7fb27697",
+    "identity": "39c159c84b4a4a1e52a238081962ca1b8beb61f19c933059323da1b444e0d3c7",
     "constructs": ["string", "regex"],
     "args": [
       {
@@ -270,7 +270,7 @@
   {
     "name": "mapParam",
     "origin": "5c305103efed1272b003da82db0651002fd393f450a0a76848d8e0ba632df87e",
-    "identity": "5e8a6309c83a8023a7d9171a666a9b01f29d4031922dc766a0d5f8b6c39f60d6",
+    "identity": "b5c641dea91379ca4634b12837241b44e039415cad4d4c28e1b5c827b990b7b0",
     "constructs": ["object"],
     "args": [
       {
@@ -286,7 +286,7 @@
   {
     "name": "deriveSpecName",
     "origin": "ab986670f9ece7578a57491799e7f7e07beb2a47d92bc0236b3a54b3b1198607",
-    "identity": "151d66802aae855f9414f696604a1caffd15d078bece3e201ee9791c27f49e22",
+    "identity": "5c3251fae6c2cacab68df7817b6296b3684d69d4d1bb36765764bd9d7504f409",
     "constructs": ["string", "regex"],
     "args": [
       "str",
@@ -300,7 +300,7 @@
   {
     "name": "normalizeSentence",
     "origin": "ea87254f07e65668087b052870453de09cfe78ea9ae75e3a01bb0f07fb063c15",
-    "identity": "33cea0d4e6a7c8549a3f529257af7ec0f0fe64b5afcc7b7b3a66f5f19c16348a",
+    "identity": "be1d8a317eb024cf9d21f5b7f17f2b16130bfeee79e3d700a815619e345f9107",
     "constructs": ["string", "regex"],
     "args": [
       {
@@ -313,7 +313,7 @@
   {
     "name": "parseArgv",
     "origin": "6142909d11ac7b5d058975d0d9b1c0a4e9bac5859b4b7859e3d443b543124808",
-    "identity": "8ec1cce9b7e4c725b1e8ab69fea73e6881f9675bc79b8076aba3e7c5c7d11a9c",
+    "identity": "d9c27910e7b15ccc3f402299905bdad42a0a195dfd4c16d6c24f7f79b2ec5e41",
     "constructs": ["loop", "closure", "object", "array", "string"],
     "args": [
       {
@@ -357,7 +357,7 @@
   {
     "name": "insideSnapshot",
     "origin": "ec715635d0a34191bf7f2bab19d01e9271e3478bec333a2ee3ed70244eb15dfe",
-    "identity": "92671a6c5285a4d104e5f73292aa3cc9d930e46fcdbacce812b0fd258f8d3913",
+    "identity": "b22bfd4a1b965b9e74e2a619d11e39bea570c7355e9ee714ee4ecac11104b90e",
     "constructs": ["string"],
     "args": [
       {
@@ -370,7 +370,7 @@
   {
     "name": "validateProofManifestL0",
     "origin": "fb8b23598335710d2b820e99df7fd8192cbf13f167d2495dd31c658e4d1cc4fc",
-    "identity": "d44caee183e87996f9de1e0eb51a41080d40da22c3fdb4c6002f2dccca80db37",
+    "identity": "40da70c5cdd85f3da49718c818d50952d0c5dd1954c4e1df83d37e7cbcef2328",
     "constructs": ["exception", "loop", "object", "in", "typeof"],
     "args": [
       {
@@ -402,7 +402,7 @@
   {
     "name": "buildFragmentFallback",
     "origin": "355decb5236f33a04acc8daf64dbd68fa4d69dd72d7247ddf0f3832a8409dd8a",
-    "identity": "94f8f39e2b6eabf477ebed54c11a0b3c1d88be5e6bd6ed50943dcefc9023bee7",
+    "identity": "bc6fc20bc7d708f5713b3a052458fa355410112f9884a055a8a669a242b63a21",
     "constructs": ["string", "number"],
     "args": ["int", "int"],
     "source": "function buildFragmentFallback(stmtCount: number, byteCount: number): string {\n  return `source fragment (${stmtCount} statements, ${byteCount} bytes)`;\n}"
@@ -410,7 +410,7 @@
   {
     "name": "isTestEmission",
     "origin": "7c8f7e55c62bc7b05ee67ce18fc750c97e1c701f4c6a0310b15f9c0e428ae7c0",
-    "identity": "e383f893ab429d2c38cdb50d65b202f5185ab6b9e509e9a4eead1ccd0a616c30",
+    "identity": "4a3eeaed0aa3760163d2315e3ebb117a9ccf84f6fd7688c11bfbec1d60166b5f",
     "constructs": ["string", "regex"],
     "args": [
       {
@@ -428,7 +428,7 @@
   {
     "name": "extractFunctionName",
     "origin": "6653796f339d542c99f6c1d05111746d938330a3d56a2541ea92172ea15822b2",
-    "identity": "5cdc428351c009c7eac1f469c58a2ae908e70a1bdb99874beed67a75a38076bd",
+    "identity": "5a2895aaaf04fac52d713a2c0fac9565f65daa7640e2a0ccc1989a43a85ae4ed",
     "constructs": ["regex", "optional-chain"],
     "args": [
       {
@@ -440,7 +440,7 @@
   {
     "name": "renderAtomNewComment",
     "origin": "80502491912aa898ad8e42d121a3895303cd74901033c835041695c8c0eb1a06",
-    "identity": "a981d5cdffe2e1765501f07577e64913943e633f47523dd8b3cc9e83736d6863",
+    "identity": "b25d6c83a5577540d27a7c71d11d4ac3f5667d4b3cd93979f7c7ff7fd6328dd6",
     "constructs": ["string"],
     "args": ["str", "str"],
     "source": "export function renderAtomNewComment(blockMerkleRoot: string, atomName: string): string {\n  const shortBmr = blockMerkleRoot.slice(0, 8);\n  return `// @atom-new: ${shortBmr} — yakcc:${atomName}`;\n}"
@@ -448,7 +448,7 @@
   {
     "name": "outcomeFromResponse",
     "origin": "f3ad41d8d8a422fd4a340ed1f201bef190a8dd972c882ce0fb18167c3a4480fa",
-    "identity": "e46ba655b83d5ab5e60d71a6f4085125635e9ddfc35aca8722ed8c54f6197173",
+    "identity": "e16a828dfd3f100f333b4e6429432fe77d5d0d34a2c0c745a59d3700c65e4046",
     "constructs": ["object", "undefined"],
     "args": [
       {
@@ -469,7 +469,7 @@
   {
     "name": "cosineDistanceToCombinedScore",
     "origin": "549cfea79fd8165b45d934cfb32a85950b91e9185d0430be645deb00177d98e9",
-    "identity": "692ad688d88405c339b0c91b72195fdb58300831f72ac52bf5e920bd6760ef6a",
+    "identity": "2c56dd83ab0d35bd0f046401de7875ea1b63ef100f0642451c2453815098589b",
     "constructs": ["number", "math"],
     "args": ["num"],
     "source": "export function cosineDistanceToCombinedScore(cosineDistance: number): number {\n  return Math.max(0, Math.min(1, 1 - (cosineDistance * cosineDistance) / 4));\n}"
@@ -477,7 +477,7 @@
   {
     "name": "benchmarkQueryToIntentQuery",
     "origin": "7fcc130325292005726fc13f02cdeb8fbfa142a9439f16ae3aac7e3145f0f83a",
-    "identity": "8ebaaef22abcdfd6b78d285dac716aecda0a077ea0c65024ec10df5623b7720c",
+    "identity": "dfbc8a521dae9ea5abc70ebf0044aee01fb4328b70e44af37e81181e2d30d809",
     "constructs": ["object", "closure", "optional-chain"],
     "args": [
       {
@@ -527,7 +527,7 @@
   {
     "name": "worstHitRateEntries",
     "origin": "ae2a5ef79872d3cf2f6da71eada53115abace4283fda5244e49520926f860542",
-    "identity": "c66522decef714c90c2c6fd1ed7ebdf339954e58641b7ac6b60a6060641a5d00",
+    "identity": "d218c67758fba7ce5c4d65511599a4c9decbcf1993a6524b34d07af5c8cd0aa5",
     "constructs": ["array", "closure", "sort", "default-param"],
     "args": [
       {
@@ -567,7 +567,7 @@
   {
     "name": "computePrecisionAt1",
     "origin": "c70cd690c1c06aa87116fc24bf76b94f145e8a0a72ff7e52592d48580d44a88d",
-    "identity": "2aae254b04ecc3213d1ada7b63a8f9e0e610b456622fb4a416e5563c3b22eaa9",
+    "identity": "de12c52df93cda953fe78b2ebe008347158a8efa794030b3b5130e87d71ecd3b",
     "constructs": ["array", "closure", "number"],
     "args": [
       {
@@ -604,7 +604,7 @@
   {
     "name": "computeRecallAtK",
     "origin": "cffb9d270bcb4671d40633f985abc1509aa7a57877d1e146ac4b2509fce40e91",
-    "identity": "ffaa7ca5af84ea88a6d33a782c7ffa14973b940ea39aae498b51966dd6884926",
+    "identity": "6d04e834485aee9390022fcdf76e004ddbc09ed8a284acbf02281acdd3dd7a71",
     "constructs": ["array", "closure", "number"],
     "args": [
       {
@@ -641,7 +641,7 @@
   {
     "name": "computeAtomComplexity",
     "origin": "d0a5ca1c69f5afb07bb782eaf890d322491bcaa7a33bd96ddafd453c08657e8e",
-    "identity": "49a07c06e44007d9e09a0c2e711b6363c46d9f5b312e0a3b6545941d3cfae0c0",
+    "identity": "a3dfe664a1dd085963b59179ff5c69e68c79253a2a3fc362f1a83d656fed5a8d",
     "constructs": ["object", "number", "nullish"],
     "args": [
       {
@@ -673,7 +673,7 @@
   {
     "name": "computeNeedComplexity",
     "origin": "c8fe85d625ad8bd5cb6e56667d29d398e302e88c80a8bd13ec2f8fbc943beabc",
-    "identity": "d9151324dd50fb7329c08e1875ec4c9bcc91fb64237b30a954221dc961f1317e",
+    "identity": "7b5ca9278aee68e33e3dcd85f67f72062ab89c8d0f8f2253d4c1749b98960b0f",
     "constructs": ["number", "math"],
     "args": [
       {
@@ -688,7 +688,7 @@
   {
     "name": "buildSuggestion",
     "origin": "1c4451dab5df3375f20bdc530961bd5747176ee77e99515fd79199e9879679f5",
-    "identity": "cb8f2eb042fceab5356ba76de9581ad6deda3c4a152a5ca69a463930d16979a8",
+    "identity": "4b58adae33584e5b01942e28f9fd56e790661cdd097e9d5d5918e3df2544374f",
     "constructs": ["switch", "string", "number-format"],
     "args": [
       {
@@ -717,7 +717,7 @@
   {
     "name": "tokenize",
     "origin": "55829234954f35c0fc90f111726134b0014d2358c478e9a81691ae755a76a6e1",
-    "identity": "f9f9ffe65b868f11cf1e1a35f4d3efc99fdb7bcf78f4b32ce9fae9fac271203a",
+    "identity": "e32758ef7c68b80c0306837820785955726738a638a196a48493ccdbee28bef0",
     "constructs": ["string", "regex", "closure", "array"],
     "args": [
       {
@@ -730,7 +730,7 @@
   {
     "name": "withCompletion",
     "origin": "b37c8738c4582149b15001f6354c6be43e1fe5807fa2e35cad97980c3256bbda",
-    "identity": "6db691512354e38b5997e983a552dc599a3a847e8f14cf355940160657c33fe7",
+    "identity": "810a54231951a40ade6224f0daec909cfe5b8e84a3d24383cd9c55af69847dcf",
     "constructs": ["object", "spread", "array"],
     "args": [
       {
@@ -752,7 +752,7 @@
   {
     "name": "withHitIncrement",
     "origin": "f2efd15031e929b7c725eca95e9ea72bdc0aa2781e6b02e0ce92f8eaf105402f",
-    "identity": "a1d266ad46e59727bfdeed180213294288da3d1bb64cc423ec8d0c5de5fd827c",
+    "identity": "eb9abe2ea3f053dc4305defa1b8be5dc2080b4ed90dc916635e4c80449a341a1",
     "constructs": ["object", "spread", "computed-key"],
     "args": [
       {
@@ -776,7 +776,7 @@
   {
     "name": "makeBindingKey",
     "origin": "0f089e81fcc3364d0ac5cc935a6eb3596cb133e2f44cf36b51c18d766bbb1293",
-    "identity": "6742c94754b2fcb65580a28a5b4a56cf7bb4a8d3fdd2f6119e5f8bc467b2f400",
+    "identity": "a2196f0f001b0713b65bf9909debd6ac73070ed5dc297f581fc377cd119d9df2",
     "constructs": ["string"],
     "args": ["str", "str"],
     "source": "export function makeBindingKey(packageName: string, binding: string): string {\n  return `${packageName}::${binding}`;\n}"
@@ -784,7 +784,7 @@
   {
     "name": "makeLruNode",
     "origin": "c4417a5b79490d444ea5673ecbdb746a9c5085a0a12c83fa58ca610e15908675",
-    "identity": "eb22b85d5acd14d8785a4a71fdc72710be064a7a067f26de2dce6b4062641724",
+    "identity": "23e69ae8d103348c8e731c2ec3e261b33a51a3d798715f0400b465c0dc33a684",
     "constructs": ["object"],
     "args": ["str", "any"],
     "source": "// SPDX-License-Identifier: MIT\n//\n// @decision DEC-V0-B4-SEED-lru-node-001\n// @title lru-node: doubly-linked list node for O(1) LRU eviction\n// @status accepted\n// @rationale\n//   The lru-cache-with-ttl B4 task requires a doubly-linked list as the ordered\n//   eviction structure. O(1) insert-at-head, O(1) remove-any, and O(1)\n//   move-to-head all depend on prev/next pointer wiring. This atom is the\n//   fundamental allocation unit: create a node, wire its pointers externally.\n//\n//   Design decisions:\n//   (A) MUTABLE FIELDS: prev and next are mutable (not readonly) because the\n//       LRU algorithm must rewire pointers in-place on every cache hit. Readonly\n//       fields would require allocating a new node on every access -- O(n) space\n//       for an O(n) operation sequence, defeating the purpose.\n//\n//   (B) PLAIN OBJECT RETURN: Returns a plain JS object that satisfies the\n//       LruNode interface. No class needed; the interface provides the type\n//       contract and the plain-object implementation avoids prototype overhead.\n//\n//   (C) UNKNOWN VALUE TYPE: value is typed as unknown (not generic) to keep\n//       the atom strictly within the validated TypeScript subset. Callers cast\n//       to their concrete type after retrieval, which is idiomatic for a low-\n//       level building block.\n//\n//   Reference: Cormen et al., \"Introduction to Algorithms\" 4th ed., Section 10.2\n//   (doubly linked lists) and Section 20.1 (hash table + list for O(1) LRU).\n\n/** A node in a doubly-linked intrusive list used by the LRU eviction policy. */\nexport interface LruNode {\n  key: string;\n  value: unknown;\n  prev: LruNode | null;\n  next: LruNode | null;\n}\n\n/**\n * Allocate a new LRU list node for the given key-value pair.\n *\n * Both prev and next are initialised to null. The caller is responsible for\n * wiring pointers when inserting the node into the eviction list.\n *\n * @param key   - Cache key. Stored by reference (no copy).\n * @param value - Cached value. Stored by reference (no copy).\n * @returns A new LruNode with null prev/next pointers.\n */\nexport function makeLruNode(key: string, value: unknown): LruNode {\n  return { key, value, prev: null, next: null };\n}\n"
@@ -792,7 +792,7 @@
   {
     "name": "parseSemver",
     "origin": "4021ed3d573147275ae7a86c0cfd629265b0032b30f207f3526c707b0a4abc3e",
-    "identity": "27fda643b3d234b31c30df81dc5e3892396438bb14c574c11bab36676ffe486b",
+    "identity": "15fe3685096d17af4e47e0462af96eac71edfa9e128fd1fabacbf2bcb36ed842",
     "constructs": ["exception", "loop", "string", "object"],
     "args": [
       {
@@ -812,7 +812,7 @@
   {
     "name": "seed:ascii-char",
     "origin": "seed:ascii-char",
-    "identity": "2286d9d3145bfd764e57e7ff93704ce8abfc5a12e3e6e63a0a0baff4699b0bfa",
+    "identity": "56006f9f4f4a4ebd7b154ccfc02ac69024cfdd6ed67c8a1a75be2391cd831d3c",
     "constructs": ["string", "exception"],
     "args": [
       {
@@ -826,7 +826,7 @@
   {
     "name": "seed:bracket",
     "origin": "seed:bracket",
-    "identity": "742e8ec99ebd1ce67f44ae17c1e094a41b6c9f3c5c5369a5352809d1e7e1432d",
+    "identity": "6af69d89d9015317ebb6f950b08adab528379671ad7ad4ebbe1a8b41465dea5d",
     "constructs": ["string", "exception"],
     "args": [
       {
@@ -843,7 +843,7 @@
   {
     "name": "seed:char-code",
     "origin": "seed:char-code",
-    "identity": "f5b40eb13b40620033abe7921c0a3dee3499743f1e3715c2a61d3070aa4c443e",
+    "identity": "44f94f7417881db476a7421f72b05f92e6046c73f0e81a401dfe626c48f8fd56",
     "constructs": ["string", "exception"],
     "args": [
       {
@@ -857,7 +857,7 @@
   {
     "name": "seed:digit-or-throw",
     "origin": "seed:digit-or-throw",
-    "identity": "d8ed08ea6ecf0c34c7df6832f2b6c12f266cbc520bc50ae100df743da56b8d67",
+    "identity": "638ca994b3c1ab81932820965caac0d6b63564dbc71e611169053cd35597c7c5",
     "constructs": ["string", "exception", "tuple"],
     "args": [
       {
@@ -871,7 +871,7 @@
   {
     "name": "seed:eof-check",
     "origin": "seed:eof-check",
-    "identity": "5129f6399665bb673ba4ef54a3f9c05894d842f5e4ae7d51485da0d940097f7b",
+    "identity": "1b40f04119eb6a9fbe70381cd9a8ed0cc1686feae44f78517adf143f50ea3756",
     "constructs": ["exception"],
     "args": [
       {
@@ -885,7 +885,7 @@
   {
     "name": "seed:integer",
     "origin": "seed:integer",
-    "identity": "6b6aa2162aba630885b1d22faf460215e01f11906dbe8a9c88811940ba256a78",
+    "identity": "8c4e9f8e5d6fb19a34b2a243fa0eb99d0f907d2be65b1a2f438bfb67afc1bc3e",
     "constructs": ["loop", "exception", "number"],
     "args": [
       {
@@ -899,7 +899,7 @@
   {
     "name": "seed:signed-integer",
     "origin": "seed:signed-integer",
-    "identity": "6ceb40197e3a2074a2aea7cea18aee369f6c4a22d24d90af57ddaf95b244cc5b",
+    "identity": "02be508b1b45bf887925f5b19f247b99a2083930fe156d5970ec8e5745f9cfa9",
     "constructs": ["loop", "exception", "number"],
     "args": [
       {
@@ -913,7 +913,7 @@
   {
     "name": "seed:whitespace",
     "origin": "seed:whitespace",
-    "identity": "2db382f93c885b36bc387a1275d7013f5f66b6225aacdb32380552295d26f191",
+    "identity": "6749d5f39ccc86dc3bf7c84cb3683b960d7d992936896822cadfc2a9fa4d5cdf",
     "constructs": ["loop", "exception"],
     "args": [
       {
@@ -927,7 +927,7 @@
   {
     "name": "seed:string-from-position",
     "origin": "seed:string-from-position",
-    "identity": "ecd8e34e79b4dc1249632d1102727cf72271c81453b60f5305e07ecca6488fdd",
+    "identity": "740fec2ab911478baeb76047579d82f35ebf39c9d21d883d426fa1ecd0e31350",
     "constructs": ["string", "exception"],
     "args": [
       {
@@ -942,7 +942,7 @@
   {
     "name": "seed:position-step",
     "origin": "seed:position-step",
-    "identity": "61203f47e1481c210599a6e99e995d3001695a266696dc1efe6b9ad9b3abb05c",
+    "identity": "838627bd522509ded82c74b48431f216052c5231eea52e80e97d60cf5919666f",
     "constructs": ["number", "exception"],
     "args": ["idx", "idx", "idx"],
     "source": "// SPDX-License-Identifier: MIT\n// @decision DEC-SEEDS-POSSTEP-001: position advancement is an explicit operation, not implicit mutation.\n// Status: implemented (WI-006)\n// Rationale: Parser blocks work with immutable position values. positionStep returns\n// the new position rather than mutating any state, keeping all blocks pure.\n\nexport function positionStep(position: number, n: number, inputLength: number): number {\n  if (position < 0) {\n    throw new RangeError(`position ${position} is negative`);\n  }\n  if (n < 0) {\n    throw new RangeError(`step ${n} is negative`);\n  }\n  const next = position + n;\n  if (next > inputLength) {\n    throw new RangeError(\n      `position ${position} + step ${n} = ${next} exceeds input length ${inputLength}`,\n    );\n  }\n  return next;\n}\n"
@@ -950,7 +950,7 @@
   {
     "name": "seed:peek-char",
     "origin": "seed:peek-char",
-    "identity": "446e66a865810e911fd538eed02db7ec93ab72048954fd16f5af89609c8bdd58",
+    "identity": "aded96db488efc59001968318cf224d2435c02b49baf0a32c92e6044a67162b3",
     "constructs": ["string", "exception", "null"],
     "args": [
       {
@@ -964,7 +964,7 @@
   {
     "name": "seed:non-ascii-rejector",
     "origin": "seed:non-ascii-rejector",
-    "identity": "5d3a9684a02252416f05b3c78ed1f85348bc96fcc9b362dd3a2cdc1e2b564c21",
+    "identity": "daeba125cd17407fed9981dd0c8e1ce1306deb5a11e15d2585a0fa18554772d2",
     "constructs": ["loop", "exception", "string"],
     "args": [
       {
@@ -977,7 +977,7 @@
   {
     "name": "seed:comma-separated-integers",
     "origin": "seed:comma-separated-integers",
-    "identity": "74af7120fd4fa60ab1bf311631a5d283c53c6a68ad6d95a9525d0de8d01c63de",
+    "identity": "9518ec51b8d8b3fa057eb8d7ae97a07db385221d2fe644c5fbe455d6b5ebf04b",
     "constructs": ["loop", "exception", "array", "tuple"],
     "args": [
       {
@@ -991,7 +991,7 @@
   {
     "name": "seed:nonempty-list-content",
     "origin": "seed:nonempty-list-content",
-    "identity": "69421681e542c6421e32048d8e8d2194c06bce209b8ef070c8a66878023569b6",
+    "identity": "d23a8744026c2f2a13a2852a371118bbfb8e54251ea673d5dd70a19030f1825f",
     "constructs": ["loop", "exception", "array"],
     "args": [
       {

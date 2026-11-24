@@ -27,10 +27,13 @@ import { loweringView } from "./ordering.js";
 import { paramIndex } from "./params.js";
 import { type ScopeItem, scopePlanner } from "./scopes.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
-import { RUNTIME_ATOMS } from "./wasm-runtime-atoms.js";
+import { BIGNUM_ATOMS, RUNTIME_ATOMS, type RuntimeAtom } from "./wasm-runtime-atoms.js";
 
-/** A value's wasm type: a number, a boolean, a string. */
-type WT = "f64" | "i32" | "str";
+/** Every runtime atom the lowering can call, by name. */
+const ATOMS: Readonly<Record<string, RuntimeAtom>> = { ...RUNTIME_ATOMS, ...BIGNUM_ATOMS };
+
+/** A value's wasm type: a number, a boolean, a string, an array of numbers. */
+type WT = "f64" | "i32" | "str" | "nums";
 
 export interface WasmGcModule {
   readonly bytes: Uint8Array;
@@ -68,6 +71,19 @@ const s32 = (n: number): number[] => {
     out.push(byte | 0x80);
   }
 };
+const s64 = (n: number): number[] => {
+  const out: number[] = [];
+  let v = BigInt(n);
+  for (;;) {
+    const byte = Number(v & 0x7fn);
+    v >>= 7n;
+    if ((v === 0n && (byte & 0x40) === 0) || (v === -1n && (byte & 0x40) !== 0)) {
+      out.push(byte);
+      return out;
+    }
+    out.push(byte | 0x80);
+  }
+};
 const f64 = (x: number): number[] => {
   const b = new Uint8Array(8);
   new DataView(b.buffer).setFloat64(0, x, true);
@@ -80,9 +96,25 @@ const name = (s: string): number[] => {
 const vec = (items: number[][]): number[] => [...u32(items.length), ...items.flat()];
 const section = (id: number, body: number[]): number[] => [id, ...u32(body.length), ...body];
 
-/** The string type is type 0: an array of mutable i16. A string value is a `(ref null 0)`. */
+/**
+ * The types every module starts with. A string is type 0, an array of mutable i16 (UTF-16 units). An
+ * array of numbers is type 2, a struct of its length and its storage, type 1 (an array of mutable
+ * f64) with room to grow. A value of either is a `(ref null <type>)`.
+ */
 const STR = 0;
-const VAL: Record<WT, number[]> = { f64: [0x7c], i32: [0x7f], str: [0x63, STR] };
+const F64S = 1;
+const NUMS = 2;
+const BASE_TYPES: number[][] = [
+  [0x5e, 0x77, 0x01],
+  [0x5e, 0x7c, 0x01],
+  [0x5f, 0x02, 0x7f, 0x01, 0x63, F64S, 0x01],
+];
+const VAL: Record<WT, number[]> = {
+  f64: [0x7c],
+  i32: [0x7f],
+  str: [0x63, STR],
+  nums: [0x63, NUMS],
+};
 
 const I = {
   get: 0x20,
@@ -106,6 +138,7 @@ const I = {
   i32add: 0x6a,
   i32sub: 0x6b,
   i32and: 0x71,
+  i32or: 0x72,
   f64eq: 0x61,
   f64ne: 0x62,
   f64lt: 0x63,
@@ -132,6 +165,16 @@ const GC = {
   arrayLen: [0xfb, 0x0f],
   arrayCopy: [0xfb, 0x11, STR, STR],
   truncSat: [0xfc, 0x02],
+  f64sNewDefault: [0xfb, 0x07, F64S],
+  f64sNewFixed: (n: number) => [0xfb, 0x08, F64S, ...u32(n)],
+  f64sGet: [0xfb, 0x0b, F64S],
+  f64sSet: [0xfb, 0x0e, F64S],
+  f64sCopy: [0xfb, 0x11, F64S, F64S],
+  numsNew: [0xfb, 0x00, NUMS],
+  numsLen: [0xfb, 0x02, NUMS, 0x00],
+  numsData: [0xfb, 0x02, NUMS, 0x01],
+  numsSetLen: [0xfb, 0x05, NUMS, 0x00],
+  numsSetData: [0xfb, 0x05, NUMS, 0x01],
 };
 
 const NATIVE_MATH: Readonly<Record<string, number>> = {
@@ -177,6 +220,18 @@ const PRIMITIVES: Readonly<Record<string, { params: WT[]; result: WT }>> = {
   __ykUnit: { params: ["str", "f64"], result: "f64" },
   __ykSub: { params: ["str", "f64", "f64"], result: "str" },
   __ykJoin: { params: ["str", "str"], result: "str" },
+  // A one-unit string, and a double's high and low 32 bits (for Number::toString).
+  __ykChar: { params: ["f64"], result: "str" },
+  __ykF64Hi: { params: ["f64"], result: "f64" },
+  __ykF64Lo: { params: ["f64"], result: "f64" },
+};
+
+/** The array operations, written directly: what an array of numbers is made of. */
+const ARRAY_PRIMITIVES: Readonly<Record<string, { params: WT[]; result: WT }>> = {
+  numsPush: { params: ["nums", "f64"], result: "f64" },
+  numsPop: { params: ["nums"], result: "f64" },
+  numsGet: { params: ["nums", "f64"], result: "f64" },
+  numsSet: { params: ["nums", "f64", "f64"], result: "nums" },
 };
 
 /**
@@ -226,7 +281,7 @@ class Module {
 
   /** A runtime atom: lowered once, the first time a function calls it. */
   atom(key: string): { tok: Tok; params: readonly WT[]; result: WT } {
-    const a = RUNTIME_ATOMS[key];
+    const a = ATOMS[key];
     if (a === undefined) throw new WasmEmitError(`"${key}" is not a runtime atom`);
     const params = a.inputs.map((t) => wt(parseType(t), `${key}'s parameter`));
     const result = wt(parseType(a.output), `${key}'s result`);
@@ -235,7 +290,7 @@ class Module {
       const f: Func = { params, result, locals: [], code: [] };
       this.funcs.set(fkey, f);
       this.atoms.push(key);
-      const lowered = lowerFunction(atomGraph(key), params, result, this);
+      const lowered = lowerFunction(atomGraph(key), params, result, this, true);
       f.locals = lowered.locals;
       f.code = lowered.code;
     }
@@ -243,9 +298,13 @@ class Module {
   }
 
   primitive(key: string): { tok: Tok; params: readonly WT[]; result: WT } {
-    const p = PRIMITIVES[key] as { params: WT[]; result: WT };
+    const p = (PRIMITIVES[key] ?? ARRAY_PRIMITIVES[key]) as { params: WT[]; result: WT };
     const fkey = `prim:${key}`;
-    if (!this.funcs.has(fkey)) this.funcs.set(fkey, { ...p, ...primitiveBody(key) });
+    if (!this.funcs.has(fkey)) {
+      this.funcs.set(fkey, { ...p, ...primitiveBody(key) });
+      // A write at the end of an array is a push.
+      if (key === "numsSet") this.primitive("numsPush");
+    }
     return { tok: { fn: fkey }, params: p.params, result: p.result };
   }
 
@@ -254,7 +313,7 @@ class Module {
     const index = new Map<string, number>();
     this.imports.forEach((h, i) => index.set(`host:${h}`, i));
     order.forEach((k, i) => index.set(k, this.imports.length + i));
-    const types: number[][] = [[0x5e, 0x77, 0x01]]; // type 0: (array (mut i16))
+    const types: number[][] = [...BASE_TYPES];
     const typeIndex = new Map<string, number>();
     const fnType = (params: readonly number[][], result: readonly number[][]): number => {
       const bytes = [0x60, ...vec(params.map((p) => [...p])), ...vec(result.map((r) => [...r]))];
@@ -380,6 +439,182 @@ function primitiveBody(key: string): { locals: number[][]; code: Tok[] } {
           I.end,
         ],
       };
+    case "__ykChar":
+      return { locals: [], code: [...trunc(0), ...GC.arrayNewFixed(1), I.end] };
+    case "__ykF64Hi":
+      // i64.reinterpret_f64; shift right 32; f64.convert_i64_u
+      return { locals: [], code: [...get(0), 0xbd, 0x42, 32, 0x88, 0xba, I.end] };
+    case "__ykF64Lo":
+      // i64.reinterpret_f64; and 0xffffffff; f64.convert_i64_u
+      return { locals: [], code: [...get(0), 0xbd, 0x42, ...s64(0xffffffff), 0x83, 0xba, I.end] };
+    case "numsPush": {
+      // len = a.len; data = a.data; when full, grow to 2 len + 4; data[len] = x; a.len = len + 1.
+      const [a, x, len, data, grown] = [0, 1, 2, 3, 4];
+      return {
+        locals: [VAL.i32, [0x63, F64S], [0x63, F64S]],
+        code: [
+          ...get(a),
+          ...GC.numsLen,
+          I.set,
+          ...u32(len),
+          ...get(a),
+          ...GC.numsData,
+          I.set,
+          ...u32(data),
+          ...get(len),
+          ...get(data),
+          ...GC.arrayLen,
+          I.i32eq,
+          I.if,
+          0x40,
+          ...get(len),
+          I.i32const,
+          1,
+          0x74,
+          I.i32const,
+          4,
+          I.i32add,
+          ...GC.f64sNewDefault,
+          I.set,
+          ...u32(grown),
+          ...get(grown),
+          I.i32const,
+          0,
+          ...get(data),
+          I.i32const,
+          0,
+          ...get(len),
+          ...GC.f64sCopy,
+          ...get(a),
+          ...get(grown),
+          ...GC.numsSetData,
+          ...get(grown),
+          I.set,
+          ...u32(data),
+          I.end,
+          ...get(data),
+          ...get(len),
+          ...get(x),
+          ...GC.f64sSet,
+          ...get(a),
+          ...get(len),
+          I.i32const,
+          1,
+          I.i32add,
+          ...GC.numsSetLen,
+          ...get(len),
+          I.i32const,
+          1,
+          I.i32add,
+          I.f64fromI32,
+          I.end,
+        ],
+      };
+    }
+    case "numsPop": {
+      // An empty array pops undefined: NaN stands for it here, and is never observed.
+      const [a, len] = [0, 1];
+      return {
+        locals: [VAL.i32],
+        code: [
+          ...get(a),
+          ...GC.numsLen,
+          I.set,
+          ...u32(len),
+          ...get(len),
+          I.i32eqz,
+          I.if,
+          0x7c,
+          I.f64const,
+          ...f64(Number.NaN),
+          I.else,
+          ...get(a),
+          ...get(len),
+          I.i32const,
+          1,
+          I.i32sub,
+          ...GC.numsSetLen,
+          ...get(a),
+          ...GC.numsData,
+          ...get(len),
+          I.i32const,
+          1,
+          I.i32sub,
+          ...GC.f64sGet,
+          I.end,
+          I.end,
+        ],
+      };
+    }
+    case "numsGet": {
+      // An index out of range, or not an integer, reads undefined: NaN stands for it here.
+      const [a, i, k] = [0, 1, 2];
+      return {
+        locals: [VAL.i32],
+        code: [
+          ...trunc(i),
+          I.set,
+          ...u32(k),
+          ...get(k),
+          I.f64fromI32,
+          ...get(i),
+          I.f64ne,
+          ...get(k),
+          I.i32const,
+          0,
+          0x48,
+          I.i32or,
+          ...get(k),
+          ...get(a),
+          ...GC.numsLen,
+          0x4e,
+          I.i32or,
+          I.if,
+          0x7c,
+          I.f64const,
+          ...f64(Number.NaN),
+          I.else,
+          ...get(a),
+          ...GC.numsData,
+          ...get(k),
+          ...GC.f64sGet,
+          I.end,
+          I.end,
+        ],
+      };
+    }
+    case "numsSet": {
+      // a[i] = v for i within the array, or at its end (a push); anywhere else is not lowered.
+      const [a, i, v, k] = [0, 1, 2, 3];
+      return {
+        locals: [VAL.i32],
+        code: [
+          ...trunc(i),
+          I.set,
+          ...u32(k),
+          ...get(k),
+          ...get(a),
+          ...GC.numsLen,
+          I.i32eq,
+          I.if,
+          0x40,
+          ...get(a),
+          ...get(v),
+          I.call,
+          { fn: "prim:numsPush" },
+          0x1a,
+          I.else,
+          ...get(a),
+          ...GC.numsData,
+          ...get(k),
+          ...get(v),
+          ...GC.f64sSet,
+          I.end,
+          ...get(a),
+          I.end,
+        ],
+      };
+    }
     case "strNew":
       return { locals: [], code: [...get(0), ...GC.arrayNewDefault, I.end] };
     case "strSet":
@@ -397,6 +632,7 @@ function wt(t: DucType | undefined, what: string): WT {
   if (t.k === "num") return "f64";
   if (t.k === "boolean") return "i32";
   if (t.k === "string") return "str";
+  if (t.k === "array" && t.of?.k === "num") return "nums";
   if (t.k === "union") {
     const kinds = new Set(t.of.filter((x) => x.k !== "undefined").map((x) => wt(x, what)));
     if (kinds.size === 1) return [...kinds][0] as WT;
@@ -408,7 +644,7 @@ const atomGraphs = new Map<string, DucGraph>();
 function atomGraph(key: string): DucGraph {
   let g = atomGraphs.get(key);
   if (g === undefined) {
-    g = liftAtom((RUNTIME_ATOMS[key] as { source: string }).source);
+    g = liftAtom((ATOMS[key] as { source: string }).source);
     atomGraphs.set(key, g);
   }
   return g;
@@ -418,6 +654,7 @@ function atomGraph(key: string): DucGraph {
 type VT = WT | "undef" | { readonly call: Callee };
 type Callee =
   | { readonly k: "math"; readonly name: string }
+  | { readonly k: "string-of" }
   | { readonly k: "method"; readonly recv: ValueId; readonly name: string }
   | { readonly k: "prim"; readonly name: string }
   | { readonly k: "atom"; readonly name: string };
@@ -428,11 +665,17 @@ function lowerFunction(
   paramTypes: readonly WT[],
   declared: WT | undefined,
   mod: Module,
+  /**
+   * A runtime atom: its element reads and writes are lowered, with undefined (out of range) standing
+   * for a value it never observes. The atoms are tested against the builtins they define; a program
+   * is not, so in a program an element read or write is refused for now.
+   */
+  trusted = false,
 ): { result: WT; locals: number[][]; code: Tok[] } {
   if (source.mode !== undefined)
     throw new WasmEmitError(`an ${source.mode} function has no form here`);
   if (source.obs.length !== 1) throw new WasmEmitError("the subset has exactly one result");
-  const { graph: g } = loweringView(source);
+  const { graph: g, after } = loweringView(source);
   const owners = joinOwners(g);
   const producer = new Map<ValueId, DucNode>();
   for (const n of g.nodes) for (const v of n.outputs) producer.set(v, n);
@@ -471,6 +714,7 @@ function lowerFunction(
             f64: "a number",
             i32: "a boolean",
             str: "a string",
+            nums: "an array of numbers",
             undef: "undefined",
             "?": "nothing yet",
           } as const
@@ -510,8 +754,9 @@ function lowerFunction(
       if (sym === "undefined") return "undef";
       if (AMBIENT_NUMBERS[sym] !== undefined) return "f64";
       if (sym === "Math") return { call: { k: "math", name: "" } };
+      if (sym === "String") return { call: { k: "string-of" } };
       if (PRIMITIVES[sym] !== undefined) return { call: { k: "prim", name: sym } };
-      if (RUNTIME_ATOMS[sym] !== undefined) return { call: { k: "atom", name: sym } };
+      if (ATOMS[sym] !== undefined) return { call: { k: "atom", name: sym } };
       throw new WasmEmitError(`"${sym}" is not in the wasm base set`);
     }
     if (p.kind === "loop") return get((p.loop as DucLoop).carry[p.outputs.indexOf(v)] as ValueId);
@@ -532,6 +777,14 @@ function lowerFunction(
       if (t0 === "?") return "?";
       if (typeof t0 === "object" && t0.call.k === "math")
         return MATH_CONSTANTS[member] !== undefined ? "f64" : { call: { k: "math", name: member } };
+      if (t0 === "nums") {
+        if (member === "length") return "f64";
+        if (member === "push" || member === "pop")
+          return { call: { k: "method", recv: ins[0] as ValueId, name: `nums.${member}` } };
+        throw new WasmEmitError(`the array method ${member} is not in the subset yet`);
+      }
+      if ((t0 === "f64" || t0 === "i32") && member === "toString")
+        return { call: { k: "method", recv: ins[0] as ValueId, name: "toString" } };
       if (t0 === "str") {
         if (member === "length") return "f64";
         if (STRING_METHODS[member] !== undefined)
@@ -547,26 +800,62 @@ function lowerFunction(
         throw new WasmEmitError("a call of a value that is not a known function");
       const callee = t0.call;
       if (callee.k === "math") return "f64";
+      if (callee.k === "string-of") return "str";
       if (callee.k === "prim") return (PRIMITIVES[callee.name] as { result: WT }).result;
+      if (callee.k === "method" && callee.name === "nums.push") return "f64";
+      if (callee.k === "method" && callee.name === "nums.pop") return "f64";
+      if (callee.k === "method" && callee.name === "toString") return "str";
       if (callee.k === "atom")
-        return wt(
-          parseType((RUNTIME_ATOMS[callee.name] as { output: string }).output),
-          callee.name,
-        );
+        return wt(parseType((ATOMS[callee.name] as { output: string }).output), callee.name);
       const m = STRING_METHODS[callee.name] as { atom: string; notFound?: boolean };
       if (m.notFound === true) return "i32";
-      return wt(parseType((RUNTIME_ATOMS[m.atom] as { output: string }).output), m.atom);
+      return wt(parseType((ATOMS[m.atom] as { output: string }).output), m.atom);
     }
     if (ins.length === 2 && label === "+") {
       const known = [operand(0), operand(1)].filter((x) => x !== "?");
       if (known.some((x) => typeof x === "object")) throw new WasmEmitError("+ of a function");
       if (known.length === 0) return "?";
-      if (known.every((x) => x === "str")) return "str";
-      if (known.some((x) => x === "str"))
+      if (known.some((x) => x === "nums"))
+        throw new WasmEmitError("+ of an array (its join) is not in the subset yet");
+      if (known.some((x) => x === "str")) return "str";
+      return "f64";
+    }
+    if (label === "ArrayLiteral") {
+      for (let i = 0; i < ins.length; i++) {
+        const t = operand(i);
+        if (t !== "?" && t !== "f64")
+          throw new WasmEmitError("an array literal of other than numbers");
+      }
+      return "nums";
+    }
+    if (label === "ElementAccess" && ins.length === 2) {
+      const t0 = operand(0);
+      if (t0 === "?") return "?";
+      if (t0 !== "nums")
+        throw new WasmEmitError(`an element read of ${show(t0)} is not in the subset`);
+      if (!trusted)
         throw new WasmEmitError(
-          "+ of a string and a non-string (ToString of a number is a later runtime atom)",
+          "an element read (undefined out of range) is not in the subset of a program yet",
         );
       return "f64";
+    }
+    if (label === "[]=" && ins.length === 3) {
+      const t0 = operand(0);
+      if (t0 === "?") return "?";
+      if (t0 !== "nums")
+        throw new WasmEmitError(`an element write to ${show(t0)} is not in the subset`);
+      if (!trusted)
+        throw new WasmEmitError("an element write is not in the subset of a program yet");
+      return "nums";
+    }
+    if (label.startsWith("template:")) {
+      // The label holds the template's cooked text, its value (the literal normal form, #1303).
+      for (let i = 0; i < ins.length; i++) {
+        const t = operand(i);
+        if (t === "nums" || typeof t === "object")
+          throw new WasmEmitError("a template literal of an array or a function");
+      }
+      return "str";
     }
     for (let i = 0; i < ins.length; i++) operand(i);
     if (ins.length === 2 && (F64_BINARY[label] !== undefined || label === "%" || label === "**"))
@@ -624,7 +913,29 @@ function lowerFunction(
   const pushDefault = (t: WT): void => {
     if (t === "f64") code.push(I.f64const, ...f64(Number.NaN));
     else if (t === "i32") code.push(I.i32const, 0);
+    else if (t === "nums")
+      code.push(I.i32const, 0, I.i32const, 4, ...GC.f64sNewDefault, ...GC.numsNew);
     else code.push(...GC.arrayNewFixed(0));
+  };
+  /** Push a string constant: its UTF-16 units, as a new array. */
+  const pushText = (text: string): void => {
+    for (let i = 0; i < text.length; i++) code.push(I.i32const, ...s32(text.charCodeAt(i)));
+    code.push(...GC.arrayNewFixed(text.length));
+  };
+  /**
+   * Push a value as a string, as ECMAScript's ToString: a string is itself, a number is
+   * Number::toString (the runtime atom), a boolean is "true" or "false".
+   */
+  const pushString = (v: ValueId): void => {
+    const t = value(v, "a value made a string");
+    if (t === "str") push(v);
+    else if (t === "f64") call(mod.atom("__ykNumberToString"), [v], "ToString");
+    else if (t === "i32") {
+      pushText("true");
+      pushText("false");
+      push(v);
+      select("str");
+    } else throw new WasmEmitError("ToString of an array (its join) is not in the subset yet");
   };
   /** Push a value; `want` is the type it is used as (an undefined stands for that type's default). */
   /**
@@ -691,6 +1002,11 @@ function lowerFunction(
       code.push(...GC.arrayLen);
       return;
     }
+    if (t === "nums") {
+      // An array is an object: always truthy.
+      code.push(0x1a, I.i32const, 1);
+      return;
+    }
     code.push(I.f64const, ...f64(0), I.f64ne);
     push(v);
     push(v);
@@ -748,6 +1064,12 @@ function lowerFunction(
         set(out);
         return;
       }
+      if (t0 === "nums" && label === ".length") {
+        push(ins[0] as ValueId);
+        code.push(...GC.numsLen, I.f64fromI32);
+        set(out);
+        return;
+      }
     }
     if (label === "CallExpression") {
       const callee = (ty(ins[0] as ValueId) as { call: Callee }).call;
@@ -768,6 +1090,19 @@ function lowerFunction(
           for (const a of args) pushNumber(a);
           code.push(I.call, tok);
         }
+      } else if (callee.k === "string-of") {
+        if (args.length === 0) pushText("");
+        else pushString(args[0] as ValueId);
+      } else if (callee.k === "method" && callee.name === "toString") {
+        if (args.length > 0)
+          throw new WasmEmitError("toString with a radix is not in the subset yet");
+        pushString(callee.recv);
+      } else if (callee.k === "method" && callee.name === "nums.push") {
+        if (args.length !== 1)
+          throw new WasmEmitError("push of other than one value is not in the subset yet");
+        call(mod.primitive("numsPush"), [callee.recv, args[0] as ValueId], "push");
+      } else if (callee.k === "method" && callee.name === "nums.pop") {
+        call(mod.primitive("numsPop"), [callee.recv], "pop");
       } else if (callee.k === "prim") call(mod.primitive(callee.name), args, callee.name);
       else if (callee.k === "atom") call(mod.atom(callee.name), args, callee.name);
       else {
@@ -788,7 +1123,42 @@ function lowerFunction(
       return;
     }
     if (ins.length === 2 && label === "+" && t === "str") {
-      call(mod.primitive("__ykJoin"), ins, "+");
+      pushString(ins[0] as ValueId);
+      pushString(ins[1] as ValueId);
+      code.push(I.call, mod.primitive("__ykJoin").tok);
+      set(out);
+      return;
+    }
+    if (label === "ArrayLiteral") {
+      if (ins.length === 0) pushDefault("nums");
+      else {
+        code.push(I.i32const, ...s32(ins.length));
+        for (const v of ins) pushNumber(v);
+        code.push(...GC.f64sNewFixed(ins.length), ...GC.numsNew);
+      }
+      set(out);
+      return;
+    }
+    if (label === "ElementAccess") {
+      call(mod.primitive("numsGet"), ins, "an element read");
+      set(out);
+      return;
+    }
+    if (label === "[]=") {
+      call(mod.primitive("numsSet"), ins, "an element write");
+      set(out);
+      return;
+    }
+    if (label.startsWith("template:")) {
+      const texts = JSON.parse(label.slice("template:".length)) as string[];
+      const join = mod.primitive("__ykJoin").tok;
+      pushText(texts[0] ?? "");
+      ins.forEach((v, i) => {
+        pushString(v);
+        code.push(I.call, join);
+        pushText(texts[i + 1] ?? "");
+        code.push(I.call, join);
+      });
       set(out);
       return;
     }
@@ -882,6 +1252,7 @@ function lowerFunction(
     owners,
     resolve,
     (m) => new WasmEmitError(m),
+    after,
   );
   const emitItems = (items: readonly ScopeItem[]): void => {
     for (const it of items) {
