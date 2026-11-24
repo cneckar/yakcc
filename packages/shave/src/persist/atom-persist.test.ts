@@ -1,5 +1,17 @@
-import type { BlockMerkleRoot, CanonicalAstHash, EmbeddingProvider } from "@yakcc/contracts";
-import { emitTypeScript, graphIdentity, liftAtom, unpackGraph } from "@yakcc/duc";
+import {
+  type BlockMerkleRoot,
+  type CanonicalAstHash,
+  type EmbeddingProvider,
+  proofRoot,
+} from "@yakcc/contracts";
+import {
+  ducBlockRoot,
+  emitTypeScript,
+  graphIdentity,
+  graphRoot,
+  liftAtom,
+  unpackGraph,
+} from "@yakcc/duc";
 import type { BlockTripletRow } from "@yakcc/registry";
 import type { Registry } from "@yakcc/registry";
 import { openRegistry } from "@yakcc/registry";
@@ -664,11 +676,19 @@ describe("#1279: the graph is stored beside the block", () => {
       const merkleRoot = await persistNovelGlueAtom(entry, registry);
       // biome-ignore lint/style/noNonNullAssertion: persisted above
       const block = (await registry.getBlock(merkleRoot!))!;
-      const identities = await registry.listDucImplementations(block.specHash);
+      const roots = await registry.listDucImplementations(block.specHash);
       const expected = graphIdentity(liftAtom(entry.source));
-      expect(identities).toEqual([expected]);
-      const stored = await registry.getDucImplementation(block.specHash, expected);
+      expect(roots).toHaveLength(1);
+      const stored = await registry.getDucImplementation(block.specHash, roots[0] as string);
       expect(stored?.blockMerkleRoot).toBe(merkleRoot);
+      // Keyed by its root, which commits to the identity, the links and the format (#1291).
+      expect(stored?.graphIdentity).toBe(expected);
+      // biome-ignore lint/style/noNonNullAssertion: asserted above
+      expect(stored?.graphRoot).toBe(graphRoot(expected, stored!.links, stored!.formatVersion));
+      // The DUC block root commits to the contract, the graph root and the block's proof root.
+      const proof = proofRoot(JSON.parse(block.proofManifestJson), block.artifacts);
+      // biome-ignore lint/style/noNonNullAssertion: asserted above
+      expect(stored?.blockRoot).toBe(ducBlockRoot(block.specHash, stored!.graphRoot, proof));
       // biome-ignore lint/style/noNonNullAssertion: asserted above
       expect(graphIdentity(unpackGraph(stored!))).toBe(expected);
       // The TypeScript text is a cache of the graph: what the emitter generates from it.
@@ -714,8 +734,11 @@ describe("links at persist time (#1279)", () => {
     expect(row?.specHash).toBe("spec-twice");
     expect(row?.blockMerkleRoot).toBe("root-twice");
     expect(row?.links).toEqual([{ reason: "free-identifier", symbol: "inc", spec: "spec-inc" }]);
-    // Links are outside identity: the pair the implementation is keyed by does not change.
+    // Links are outside identity, inside the root (#1306).
     expect(row?.graphIdentity).toBe(graphIdentity(liftAtom(twice)));
+    // biome-ignore lint/style/noNonNullAssertion: stored above
+    expect(row?.graphRoot).toBe(graphRoot(row!.graphIdentity, row!.links, row!.formatVersion));
+    expect(row?.graphRoot).not.toBe(graphRoot(graphIdentity(liftAtom(twice)), []));
     expect(graphIdentity(unpackGraph(row as DucImplementationRow))).toBe(row?.graphIdentity);
   });
 

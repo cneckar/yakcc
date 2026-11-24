@@ -62,8 +62,8 @@ export async function graphSourceOf(
 ): Promise<string | undefined> {
   const name = exportedName(row.implSource);
   if (name === undefined) return undefined;
-  for (const identity of await registry.listDucImplementations(row.specHash)) {
-    const impl = await registry.getDucImplementation(row.specHash, identity);
+  for (const root of await registry.listDucImplementations(row.specHash)) {
+    const impl = await registry.getDucImplementation(row.specHash, root);
     if (impl === null || impl.blockMerkleRoot !== row.blockMerkleRoot) continue;
     let code: string;
     try {

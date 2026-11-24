@@ -75,6 +75,11 @@ export function graphRoot(
  *
  * The TypeScript text is a lowering of the graph, not part of the root.
  */
+/** The root of a record outside a graph (a module record), as BLAKE3 hex of its canonical text. */
+export function recordRoot(canonicalText: string): string {
+  return bytesToHex(blake3(new TextEncoder().encode(canonicalText)));
+}
+
 export function ducBlockRoot(specHash: string, root: string, proofRoot: string): string {
   return bytesToHex(
     blake3(concat([hexToBytes(specHash), hexToBytes(root), hexToBytes(proofRoot)])),

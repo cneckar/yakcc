@@ -56,9 +56,9 @@ export async function searchGraphs(
     score: number;
   }[] = [];
   for (const m of matches) {
-    const spec = m.specHashes[0];
-    if (spec === undefined) continue;
-    const impl = await registry.getDucImplementation(spec, m.graphIdentity);
+    const first = m.implementations[0];
+    if (first === undefined) continue;
+    const impl = await registry.getDucImplementation(first.specHash, first.graphRoot);
     if (impl === null) continue;
     let graph: DucGraph;
     try {

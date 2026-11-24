@@ -262,6 +262,16 @@ function makeRegistryMock(rows: Map<BlockMerkleRoot, MockRowMeta>): Registry {
     async listDucImplementations(): Promise<readonly string[]> {
       return [];
     },
+    async enumerateDucSpecs(): Promise<readonly string[]> {
+      return [];
+    },
+    async getDucContract(): Promise<null> {
+      return null;
+    },
+    async storeDucModule(): Promise<void> {},
+    async getDucModule(): Promise<null> {
+      return null;
+    },
     async findDucGraphsBySignature(): Promise<readonly never[]> {
       return [];
     },

@@ -46,7 +46,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createOfflineEmbeddingProvider } from "@yakcc/contracts";
-import { openRegistry } from "@yakcc/registry";
+import { openRegistry, openRegistrySnapshot } from "@yakcc/registry";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Logger } from "../index.js";
 import { CollectingLogger, runCli } from "../index.js";
@@ -602,7 +602,7 @@ describe("init — seed by default", () => {
         embed: async (_text: string): Promise<Float32Array> => new Float32Array(384),
       };
       try {
-        const probeReg = await openRegistry(corpusPath, { embeddings: zeroProvider });
+        const probeReg = await openRegistrySnapshot(corpusPath, { embeddings: zeroProvider });
         await probeReg.close();
       } catch {
         // Corpus was stored with a different embedding model (e.g. Xenova/bge-small-en-v1.5).

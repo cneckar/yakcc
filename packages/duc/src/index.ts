@@ -55,6 +55,7 @@ export {
   GRAPH_FORMAT_VERSION,
   LIFTER_VERSION,
   ducBlockRoot,
+  recordRoot,
   graphRoot,
   packGraph,
   unpackGraph,
