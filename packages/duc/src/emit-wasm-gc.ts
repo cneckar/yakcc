@@ -28,10 +28,19 @@ import { loweringView } from "./ordering.js";
 import { paramIndex } from "./params.js";
 import { type ScopeItem, scopePlanner } from "./scopes.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
-import { BIGNUM_ATOMS, RUNTIME_ATOMS, type RuntimeAtom } from "./wasm-runtime-atoms.js";
+import {
+  BIGNUM_ATOMS,
+  DYNAMIC_ATOMS,
+  RUNTIME_ATOMS,
+  type RuntimeAtom,
+} from "./wasm-runtime-atoms.js";
 
 /** Every runtime atom the lowering can call, by name. */
-const ATOMS: Readonly<Record<string, RuntimeAtom>> = { ...RUNTIME_ATOMS, ...BIGNUM_ATOMS };
+const ATOMS: Readonly<Record<string, RuntimeAtom>> = {
+  ...RUNTIME_ATOMS,
+  ...BIGNUM_ATOMS,
+  ...DYNAMIC_ATOMS,
+};
 
 /** A value's wasm type: a number, a boolean, a string, an array of numbers. */
 type WT = "f64" | "i32" | "str" | "nums";
@@ -154,6 +163,7 @@ const I = {
   f64min: 0xa4,
   f64max: 0xa5,
   f64fromI32: 0xb7,
+  refEq: 0xd3,
   f64fromU32: 0xb8,
   refAsNonNull: 0xd4,
 } as const;
@@ -225,6 +235,8 @@ const PRIMITIVES: Readonly<Record<string, { params: WT[]; result: WT }>> = {
   __ykChar: { params: ["f64"], result: "str" },
   __ykF64Hi: { params: ["f64"], result: "f64" },
   __ykF64Lo: { params: ["f64"], result: "f64" },
+  // 2^e, exact over the whole range of doubles (0 below the least subnormal, Infinity above).
+  __ykPow2: { params: ["f64"], result: "f64" },
 };
 
 /** The array operations, written directly: what an array of numbers is made of. */
@@ -379,7 +391,30 @@ function primitiveBody(key: string): { locals: number[][]; code: Tok[] } {
   const trunc = (i: number) => [...get(i), ...GC.truncSat];
   switch (key) {
     case "__ykUnit":
-      return { locals: [], code: [...get(0), ...trunc(1), ...GC.arrayGetU, I.f64fromU32, I.end] };
+      // As charCodeAt: the unit at the index, NaN out of range (a negative index is a large
+      // unsigned one).
+      return {
+        locals: [VAL.i32],
+        code: [
+          ...trunc(1),
+          I.tee,
+          ...u32(2),
+          ...get(0),
+          ...GC.arrayLen,
+          0x49, // i32.lt_u
+          I.if,
+          0x7c,
+          ...get(0),
+          ...get(2),
+          ...GC.arrayGetU,
+          I.f64fromU32,
+          0x05, // else
+          I.f64const,
+          ...f64(Number.NaN),
+          I.end,
+          I.end,
+        ],
+      };
     case "__ykSub":
       // n = to - from; out = new [n]; copy s[from..to) into out.
       return {
@@ -448,6 +483,59 @@ function primitiveBody(key: string): { locals: number[][]; code: Tok[] } {
     case "__ykF64Lo":
       // i64.reinterpret_f64; and 0xffffffff; f64.convert_i64_u
       return { locals: [], code: [...get(0), 0xbd, 0x42, ...s64(0xffffffff), 0x83, 0xba, I.end] };
+    case "__ykPow2": {
+      // k = i64.trunc_sat_f64_s(e); k > 1023: Infinity; k < -1074: 0; k >= -1022: the bits
+      // (k + 1023) << 52; otherwise the subnormal 1 << (k + 1074). Each a double's bits exactly.
+      const k = 1;
+      const i64 = (n: number) => [0x42, ...s64(n)];
+      return {
+        locals: [[0x7e]],
+        code: [
+          ...get(0),
+          0xfc,
+          0x06,
+          I.set,
+          ...u32(k),
+          ...get(k),
+          ...i64(1023),
+          0x55, // i64.gt_s
+          I.if,
+          0x7c,
+          I.f64const,
+          ...f64(Number.POSITIVE_INFINITY),
+          0x05, // else
+          ...get(k),
+          ...i64(-1074),
+          0x53, // i64.lt_s
+          I.if,
+          0x7c,
+          I.f64const,
+          ...f64(0),
+          0x05,
+          ...get(k),
+          ...i64(-1022),
+          0x59, // i64.ge_s
+          I.if,
+          0x7e,
+          ...get(k),
+          ...i64(1023),
+          0x7c, // i64.add
+          ...i64(52),
+          0x86, // i64.shl
+          0x05,
+          ...i64(1),
+          ...get(k),
+          ...i64(1074),
+          0x7c,
+          0x86,
+          I.end,
+          0xbf, // f64.reinterpret_i64
+          I.end,
+          I.end,
+          I.end,
+        ],
+      };
+    }
     case "numsPush": {
       // len = a.len; data = a.data; when full, grow to 2 len + 4; data[len] = x; a.len = len + 1.
       const [a, x, len, data, grown] = [0, 1, 2, 3, 4];
@@ -656,6 +744,7 @@ type VT = WT | "undef" | { readonly call: Callee };
 type Callee =
   | { readonly k: "math"; readonly name: string }
   | { readonly k: "string-of" }
+  | { readonly k: "number-of" }
   | { readonly k: "method"; readonly recv: ValueId; readonly name: string }
   | { readonly k: "prim"; readonly name: string }
   | { readonly k: "atom"; readonly name: string };
@@ -756,6 +845,7 @@ function lowerFunction(
       if (AMBIENT_NUMBERS[sym] !== undefined) return "f64";
       if (sym === "Math") return { call: { k: "math", name: "" } };
       if (sym === "String") return { call: { k: "string-of" } };
+      if (sym === "Number") return { call: { k: "number-of" } };
       if (PRIMITIVES[sym] !== undefined) return { call: { k: "prim", name: sym } };
       if (ATOMS[sym] !== undefined) return { call: { k: "atom", name: sym } };
       throw new WasmEmitError(`"${sym}" is not in the wasm base set`);
@@ -802,6 +892,7 @@ function lowerFunction(
       const callee = t0.call;
       if (callee.k === "math") return "f64";
       if (callee.k === "string-of") return "str";
+      if (callee.k === "number-of") return "f64";
       if (callee.k === "prim") return (PRIMITIVES[callee.name] as { result: WT }).result;
       if (callee.k === "method" && callee.name === "nums.push") return "f64";
       if (callee.k === "method" && callee.name === "nums.pop") return "f64";
@@ -816,9 +907,8 @@ function lowerFunction(
       const known = [operand(0), operand(1)].filter((x) => x !== "?");
       if (known.some((x) => typeof x === "object")) throw new WasmEmitError("+ of a function");
       if (known.length === 0) return "?";
-      if (known.some((x) => x === "nums"))
-        throw new WasmEmitError("+ of an array (its join) is not in the subset yet");
-      if (known.some((x) => x === "str")) return "str";
+      // An array's primitive is its join, a string: + of one concatenates.
+      if (known.some((x) => x === "str" || x === "nums")) return "str";
       return "f64";
     }
     if (label === "ArrayLiteral") {
@@ -853,8 +943,7 @@ function lowerFunction(
       // The label holds the template's cooked text, its value (the literal normal form, #1303).
       for (let i = 0; i < ins.length; i++) {
         const t = operand(i);
-        if (t === "nums" || typeof t === "object")
-          throw new WasmEmitError("a template literal of an array or a function");
+        if (typeof t === "object") throw new WasmEmitError("a template literal of a function");
       }
       return "str";
     }
@@ -936,7 +1025,7 @@ function lowerFunction(
       pushText("false");
       push(v);
       select("str");
-    } else throw new WasmEmitError("ToString of an array (its join) is not in the subset yet");
+    } else call(mod.atom("__ykJoinNums"), [v], "ToString");
   };
   /** Push a value; `want` is the type it is used as (an undefined stands for that type's default). */
   /**
@@ -994,7 +1083,18 @@ function lowerFunction(
         `${what} is ${got === "str" ? "a string" : "not a string"}, and a ${want === "str" ? "string" : "number"} is needed`,
       );
   };
-  const pushNumber = (v: ValueId): void => pushAs(v, "f64", "an operand");
+  /**
+   * Push a value as a number, as ECMAScript's ToNumber: a number is itself, a boolean is 0 or 1, a
+   * string is StringToNumber (the runtime atom), an array of numbers is its join made a number.
+   */
+  const pushNumber = (v: ValueId): void => {
+    const t = value(v, "a value made a number");
+    if (t === "str") call(mod.atom("__ykStringToNumber"), [v], "ToNumber");
+    else if (t === "nums") {
+      call(mod.atom("__ykJoinNums"), [v], "ToNumber");
+      code.push(I.call, mod.atom("__ykStringToNumber").tok);
+    } else pushAs(v, "f64", "an operand");
+  };
   /** Push a value's truthiness as an i32 (nonzero is true). */
   const truthy = (v: ValueId): void => {
     const t = push(v);
@@ -1091,6 +1191,9 @@ function lowerFunction(
           for (const a of args) pushNumber(a);
           code.push(I.call, tok);
         }
+      } else if (callee.k === "number-of") {
+        if (args.length === 0) code.push(I.f64const, ...f64(0));
+        else pushNumber(args[0] as ValueId);
       } else if (callee.k === "string-of") {
         if (args.length === 0) pushText("");
         else pushString(args[0] as ValueId);
@@ -1184,28 +1287,34 @@ function lowerFunction(
       const tb = value(b, "an operand");
       const equality = /^[!=]==?$/.test(label);
       const negated = label.startsWith("!");
-      if (ta === "str" && tb === "str") {
-        if (equality) {
-          call(mod.atom("__ykStrEquals"), [a, b], label);
-          if (negated) code.push(I.i32eqz);
-        } else {
-          // a < b; a > b is b < a; a <= b is !(b < a); a >= b is !(a < b).
-          const swap = label === ">" || label === "<=";
-          call(mod.atom("__ykStrLess"), swap ? [b, a] : [a, b], label);
-          if (label === "<=" || label === ">=") code.push(I.i32eqz);
+      // ECMAScript's IsStrictlyEqual, IsLooselyEqual and IsLessThan over these types. An array of
+      // numbers is an object: equal only to itself, and a primitive (its join) where one is needed.
+      const strictly = label === "===" || label === "!==";
+      const strLike = (t: WT) => t === "str" || t === "nums";
+      if (ta === tb && equality) {
+        if (ta === "str") call(mod.atom("__ykStrEquals"), [a, b], label);
+        else {
+          push(a);
+          push(b);
+          code.push(ta === "nums" ? I.refEq : ta === "i32" ? I.i32eq : I.f64eq);
         }
-      } else if (ta === "str" || tb === "str") {
-        if (label === "===" || label === "!==") code.push(I.i32const, negated ? 1 : 0);
-        else
-          throw new WasmEmitError(
-            `"${label}" of a string and a non-string (it converts the string)`,
-          );
-      } else if (ta === "i32" && tb === "i32" && equality) {
-        push(a);
-        push(b);
-        code.push(negated ? I.i32ne : I.i32eq);
-      } else if (ta !== tb && (label === "===" || label === "!==")) {
+        if (negated) code.push(I.i32eqz);
+      } else if (equality && strictly) {
         code.push(I.i32const, negated ? 1 : 0);
+      } else if (equality && strLike(ta) && strLike(tb)) {
+        // A string and an array: the array's join, compared as a string.
+        pushString(a);
+        pushString(b);
+        code.push(I.call, mod.atom("__ykStrEquals").tok);
+        if (negated) code.push(I.i32eqz);
+      } else if (!equality && strLike(ta) && strLike(tb)) {
+        // Both primitives are strings: compared by code units. a > b is b < a; a <= b is !(b < a);
+        // a >= b is !(a < b).
+        const swap = label === ">" || label === "<=";
+        pushString(swap ? b : a);
+        pushString(swap ? a : b);
+        code.push(I.call, mod.atom("__ykStrLess").tok);
+        if (label === "<=" || label === ">=") code.push(I.i32eqz);
       } else {
         pushNumber(a);
         pushNumber(b);

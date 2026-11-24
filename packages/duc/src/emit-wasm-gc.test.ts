@@ -15,7 +15,12 @@ import { emitTypeScript } from "./emit-ts.js";
 import { emitWasmGc, instantiateWasmGc } from "./emit-wasm-gc.js";
 import { WasmEmitError, emitWasm } from "./emit-wasm.js";
 import { liftAtom } from "./lift.js";
-import { BIGNUM_ATOMS, RUNTIME_ATOMS, RUNTIME_PRIMITIVES_JS } from "./wasm-runtime-atoms.js";
+import {
+  BIGNUM_ATOMS,
+  DYNAMIC_ATOMS,
+  RUNTIME_ATOMS,
+  RUNTIME_PRIMITIVES_JS,
+} from "./wasm-runtime-atoms.js";
 
 /** Strings with every kind of unit: ASCII, whitespace of every class, lone and paired surrogates. */
 const unit = fc.oneof(
@@ -61,7 +66,7 @@ const position = fc.oneof(
   fc.double(),
 );
 
-const ALL_ATOMS = { ...RUNTIME_ATOMS, ...BIGNUM_ATOMS } as Record<
+const ALL_ATOMS = { ...RUNTIME_ATOMS, ...BIGNUM_ATOMS, ...DYNAMIC_ATOMS } as Record<
   string,
   { source: string; inputs: readonly string[]; output: string }
 >;
@@ -262,7 +267,117 @@ describe("Number::toString as a runtime atom (#1300)", () => {
   }, 120_000);
 });
 
+/**
+ * Strings as ECMAScript's StringToNumber reads them: edge cases of the grammar, every double
+ * written three ways, and decimal digit strings with exponents across the whole range (subnormals,
+ * overflow, halfway cases).
+ */
+const NUMERIC_STRINGS: string[] = (() => {
+  const out = [
+    ...["", " ", "  12  ", " 12\n", "\u00a0 7 \ufeff", "0x1F", "0X1f", "0o17", "0b101", "0b2"],
+    ...["-0x1", "0x", "0x1fffffffffffff1", "1e3", "-0", "-.0", "Infinity", "-Infinity"],
+    ...["+Infinity", "infinity", "12px", ".5", "5.", "+.5e-3", ".", "e5", "1e", "1e+", "1_000"],
+    ...["2.4703282292062327e-324", "2.4703282292062328e-324", "4.9406564584124654e-324"],
+    ...["1.7976931348623157e308", "1.7976931348623158e308", "1.7976931348623159e308"],
+    ...["9007199254740993", "9007199254740995", "123456789012345678901234567890", "0.1"],
+    ...["1e-400", "1e400", "00012", "1.0000000000000002", "2.2250738585072011e-308"],
+    ...["2.2250738585072012e-308", "0.000000000000000000000000000001e30", "1e99999999999"],
+  ];
+  const dv = new DataView(new ArrayBuffer(8));
+  for (const [hi, lo] of fc.sample(fc.tuple(fc.nat(0xffffffff), fc.nat(0xffffffff)), {
+    numRuns: 700,
+    seed: 1300,
+  })) {
+    dv.setUint32(0, hi);
+    dv.setUint32(4, lo);
+    const x = dv.getFloat64(0);
+    out.push(String(x), x.toExponential(20), x.toPrecision(19));
+  }
+  for (const [d, e] of fc.sample(
+    fc.tuple(fc.stringMatching(/^[0-9]{1,30}$/), fc.integer({ min: -350, max: 320 })),
+    { numRuns: 500, seed: 1301 },
+  ))
+    out.push(`${d}e${e}`, `0.${d}e${e}`);
+  return out;
+})();
+
+describe("StringToNumber as a runtime atom (#1300)", () => {
+  it(`reads ${NUMERIC_STRINGS.length} strings as Number does, correctly rounded: as JavaScript and as WasmGC`, async () => {
+    const js = atomInJs("__ykStringToNumber");
+    const wasm = await atomInWasm("__ykStringToNumber");
+    const bad: string[] = [];
+    for (const s of NUMERIC_STRINGS) {
+      const want = Number(s);
+      for (const [how, got] of [
+        ["js", js(s)],
+        ["wasm", wasm(s)],
+      ] as const)
+        if (!Object.is(got, want)) bad.push(`${how} ${JSON.stringify(s)}: ${String(got)}`);
+    }
+    expect(bad.slice(0, 5)).toEqual([]);
+  }, 300_000);
+});
+
+describe("the dynamic-value atoms define ECMAScript's operators (#1300)", () => {
+  // Every kind of value the WasmGC lowering represents: numbers, strings, booleans, undefined,
+  // null and arrays of numbers.
+  const value = fc.oneof(
+    fc.double(),
+    fc.integer(),
+    fc.constantFrom(0, -0, Number.NaN, Number.POSITIVE_INFINITY, 1e21),
+    fc.string({ maxLength: 4 }),
+    fc.constantFrom("", " 1 ", "0x10", "1e3", "abc", "-0", "Infinity", "1,2"),
+    fc.boolean(),
+    fc.constantFrom(null, undefined),
+    fc.array(fc.oneof(fc.integer({ min: -5, max: 5 }), fc.double()), { maxLength: 3 }),
+  );
+  // biome-ignore lint/suspicious/noExplicitAny: the operators are ECMAScript's, over any values.
+  type Op = (a: any, b: any) => unknown;
+  const atom = (k: string) => atomInJs(k);
+  const OPS: [string, Op, Op][] = [
+    ["+", (a, b) => atom("__ykAdd")(a, b), (a, b) => a + b],
+    // biome-ignore lint/suspicious/noDoubleEquals: IsLooselyEqual is what is defined.
+    ["==", (a, b) => atom("__ykLooseEquals")(a, b), (a, b) => a == b],
+    ["===", (a, b) => atom("__ykStrictEquals")(a, b), (a, b) => a === b],
+    ["<", (a, b) => atom("__ykCompare")(a, b) === 0, (a, b) => a < b],
+    [">=", (a, b) => atom("__ykCompare")(a, b) === 1, (a, b) => a >= b],
+    ["typeof", (a) => atom("__ykTypeOf")(a), (a) => typeof a],
+    ["truthiness", (a) => atom("__ykTruthy")(a), (a) => !!a],
+    ["String", (a) => atom("__ykToString")(a), (a) => String(a)],
+    ["Number", (a) => atom("__ykToNumber")(a), (a) => Number(a)],
+  ];
+  for (const [name, mine, engine] of OPS)
+    it(`${name}, as JavaScript, agrees with the engine on every kind of value`, () => {
+      const bad: string[] = [];
+      for (const [a, b] of fc.sample(fc.tuple(value, value), { numRuns: 2000, seed: 1302 })) {
+        const want = engine(a, b);
+        const got = mine(a, b);
+        if (!Object.is(got, want))
+          bad.push(`${JSON.stringify([a, b])}: ${String(got)} vs ${String(want)}`);
+      }
+      expect(bad.slice(0, 5)).toEqual([]);
+    });
+});
+
+const numericText = fc.oneof(
+  text,
+  fc.double().map(String),
+  fc.integer().map(String),
+  fc.constantFrom("", " 1 ", "0x1f", "1e3", "true", "1,2.5", "2.5", "-0", "Infinity"),
+);
+
 const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
+  [
+    "values made numbers and compared across types: Number, unary +, ==, <, + of an array",
+    'export function f(s: string, n: number, b: boolean): string { const a = [n, 2.5]; const t = Number(s) + +s * 2 - Number(b); return t + "|" + (s == n) + (s != b) + (s < n) + (n >= s) + (a == s) + (a < s) + (a + s) + Number(a) + Number([n]) + (b == n) + (a == a) + (s + a > s) + `${a}` + String([n]) + ([n] == n) + Number(); }',
+    ["string", "number", "boolean"],
+    "string",
+    fc.tuple(
+      numericText,
+      fc.oneof(fc.double(), fc.integer(), fc.constantFrom(0, 1, 2.5)),
+      fc.boolean(),
+    ),
+  ],
   [
     "numbers and booleans made strings: +, String, toString, templates",
     'export function f(n: number, m: number, b: boolean): string { const s = "n=" + n; return s + "|" + String(m / 3) + "|" + (n * m).toString() + `<${n - m}:${b}>` + b + String(b) + (1 + n) + ""; }',
@@ -380,7 +495,7 @@ describe("what the WasmGC lowering refuses, with the reason (#1300)", () => {
     }
     return "lowered";
   };
-  it("== across types, a method not yet an atom, an undefined result, element access in a program", () => {
+  it("a method not yet an atom, an undefined result, element access in a program", () => {
     expect(
       refusal("export function f(a: number[]): number { return a[0]; }", ["number[]"], "number"),
     ).toMatch(/element read .* not in the subset of a program yet/);
@@ -390,7 +505,7 @@ describe("what the WasmGC lowering refuses, with the reason (#1300)", () => {
         ["string", "number"],
         "boolean",
       ),
-    ).toMatch(/converts the string/);
+    ).toBe("lowered");
     expect(
       refusal(
         "export function f(s: string): string { return s.toUpperCase(); }",

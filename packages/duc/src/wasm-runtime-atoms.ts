@@ -298,7 +298,7 @@ export const BIGNUM_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     __ykBigMulSmall(a, ${BASE});
     k = k - 24;
   }
-  if (k > 0) __ykBigMulSmall(a, Math.pow(2, k));
+  if (k > 0) __ykBigMulSmall(a, __ykPow2(k));
   return a;
 }`,
   },
@@ -312,8 +312,249 @@ export const BIGNUM_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     __ykBigMulSmall(a, 10000000);
     i = i - 7;
   }
-  if (i > 0) __ykBigMulSmall(a, Math.pow(10, i));
+  while (i > 0) {
+    __ykBigMulSmall(a, 10);
+    i = i - 1;
+  }
   return a;
+}`,
+  },
+  // a + d, in place, for an integer 0 <= d < 2^24; returns a.
+  __ykBigAddSmall: {
+    inputs: ["number[]", "number"],
+    output: "number[]",
+    source: `export function f(a: number[], d: number): number[] {
+  let carry = d;
+  let i = 0;
+  while (carry > 0 && i < a.length) {
+    const t = a[i] + carry;
+    if (t >= ${BASE}) {
+      a[i] = t - ${BASE};
+      carry = 1;
+    } else {
+      a[i] = t;
+      carry = 0;
+    }
+    i = i + 1;
+  }
+  if (carry > 0) a.push(carry);
+  return a;
+}`,
+  },
+  // The number of bits of a (0 for zero).
+  __ykBigBitLen: {
+    inputs: ["number[]"],
+    output: "number",
+    source: `export function f(a: number[]): number {
+  if (a.length === 0) return 0;
+  let top = a[a.length - 1];
+  let b = 0;
+  while (top >= 1) {
+    top = Math.floor(top / 2);
+    b = b + 1;
+  }
+  return (a.length - 1) * 24 + b;
+}`,
+  },
+  // Bit i of a (0 or 1).
+  __ykBigBit: {
+    inputs: ["number[]", "number"],
+    output: "number",
+    source: `export function f(a: number[], i: number): number {
+  const limb = Math.floor(i / 24);
+  if (limb >= a.length) return 0;
+  const v = Math.floor(a[limb] / __ykPow2(i - limb * 24));
+  return v - Math.floor(v / 2) * 2;
+}`,
+  },
+  // Whether any of the lowest s bits of a is 1.
+  __ykBigLowBits: {
+    inputs: ["number[]", "number"],
+    output: "boolean",
+    source: `export function f(a: number[], s: number): boolean {
+  const limb = Math.floor(s / 24);
+  let i = 0;
+  while (i < limb && i < a.length) {
+    if (a[i] !== 0) return true;
+    i = i + 1;
+  }
+  if (limb >= a.length) return false;
+  const p = __ykPow2(s - limb * 24);
+  return a[limb] - Math.floor(a[limb] / p) * p !== 0;
+}`,
+  },
+  // floor(a / 2^s), as a new big integer.
+  __ykBigShr: {
+    inputs: ["number[]", "number"],
+    output: "number[]",
+    source: `export function f(a: number[], s: number): number[] {
+  const drop = Math.floor(s / 24);
+  const r = s - drop * 24;
+  const lowP = __ykPow2(r);
+  const highP = __ykPow2(24 - r);
+  const out: number[] = [];
+  let i = drop;
+  while (i < a.length) {
+    let v = Math.floor(a[i] / lowP);
+    if (i + 1 < a.length) {
+      const next = a[i + 1];
+      v = v + (next - Math.floor(next / lowP) * lowP) * highP;
+    }
+    out.push(v);
+    i = i + 1;
+  }
+  while (out.length > 0 && out[out.length - 1] === 0) out.pop();
+  return out;
+}`,
+  },
+  // The value of a big integer below 2^53, exactly.
+  __ykBigValue: {
+    inputs: ["number[]"],
+    output: "number",
+    source: `export function f(a: number[]): number {
+  let v = 0;
+  let i = a.length - 1;
+  while (i >= 0) {
+    v = v * ${BASE} + a[i];
+    i = i - 1;
+  }
+  return v;
+}`,
+  },
+  // q * 2^e2, rounded to the nearest double, ties to even; sticky says there are 1 bits below q.
+  // q must carry at least two bits more than the result's precision whenever sticky is set.
+  __ykBigToDouble: {
+    inputs: ["number[]", "number", "boolean"],
+    output: "number",
+    source: `export function f(q: number[], e2: number, sticky: boolean): number {
+  const bl = __ykBigBitLen(q);
+  if (bl === 0) return 0;
+  const top = bl - 1 + e2;
+  if (top > 1023) return Infinity;
+  let p = 53;
+  if (top < -1022) p = 53 - (-1022 - top);
+  if (p < 0) return 0;
+  const shift = bl - p;
+  let m = 0;
+  if (shift <= 0) m = __ykBigValue(q) * __ykPow2(-shift);
+  else {
+    m = __ykBigValue(__ykBigShr(q, shift));
+    const half = __ykBigBit(q, shift - 1);
+    const rest = sticky || __ykBigLowBits(q, shift - 1);
+    if (half === 1 && (rest || m - Math.floor(m / 2) * 2 === 1)) m = m + 1;
+  }
+  return m * __ykPow2(top - p + 1);
+}`,
+  },
+  // m * 10^e10 for a big integer m, rounded to the nearest double, ties to even.
+  __ykDecimalToDouble: {
+    inputs: ["number[]", "number"],
+    output: "number",
+    source: `export function f(m: number[], e10: number): number {
+  if (m.length === 0) return 0;
+  const lm = __ykBigBitLen(m);
+  if (e10 > 0 && lm - 1 + e10 * 3.32 > 1030) return Infinity;
+  if (e10 < 0 && lm + e10 * 3.3219 < -1080) return 0;
+  if (e10 >= 0) return __ykBigToDouble(__ykBigMulPow10(__ykBigCopy(m), e10), 0, false);
+  const num = __ykBigCopy(m);
+  const den = __ykBigMulPow10(__ykBigFromInt(1), -e10);
+  const k = __ykBigBitLen(den) - lm + 56;
+  if (k >= 0) __ykBigShl(num, k);
+  else __ykBigShl(den, -k);
+  // q = floor(num / den), in [2^55, 2^57): long division, a bit at a time from bit 57.
+  let q: number[] = [];
+  let b = 57;
+  while (b >= 0) {
+    const t = __ykBigShl(__ykBigCopy(den), b);
+    if (__ykBigCmp(num, t) >= 0) {
+      __ykBigSub(num, t);
+      q = __ykBigAdd(q, __ykBigShl(__ykBigFromInt(1), b));
+    }
+    b = b - 1;
+  }
+  return __ykBigToDouble(q, -k, num.length > 0);
+}`,
+  },
+  // StringToNumber (ECMA-262 7.1.4.1.1): the StringNumericLiteral grammar, rounded exactly.
+  __ykStringToNumber: {
+    inputs: ["string"],
+    output: "number",
+    source: `export function f(input: string): number {
+  const s = __ykTrim(input);
+  const n = s.length;
+  if (n === 0) return 0;
+  if (__ykStrEquals(s, "Infinity") || __ykStrEquals(s, "+Infinity")) return Infinity;
+  if (__ykStrEquals(s, "-Infinity")) return -Infinity;
+  const c1 = __ykUnit(s, 1);
+  let radix = 0;
+  if (n > 2 && __ykUnit(s, 0) === 48) {
+    if (c1 === 120 || c1 === 88) radix = 16;
+    else if (c1 === 111 || c1 === 79) radix = 8;
+    else if (c1 === 98 || c1 === 66) radix = 2;
+  }
+  if (radix > 0) {
+    const big: number[] = [];
+    let i = 2;
+    while (i < n) {
+      const u = __ykUnit(s, i);
+      let d = 99;
+      if (u >= 48 && u <= 57) d = u - 48;
+      else if (u >= 97 && u <= 102) d = u - 87;
+      else if (u >= 65 && u <= 70) d = u - 55;
+      if (d >= radix) return NaN;
+      __ykBigMulSmall(big, radix);
+      __ykBigAddSmall(big, d);
+      i = i + 1;
+    }
+    return __ykBigToDouble(big, 0, false);
+  }
+  let i = 0;
+  let neg = false;
+  const c0 = __ykUnit(s, 0);
+  if (c0 === 43 || c0 === 45) {
+    neg = c0 === 45;
+    i = 1;
+  }
+  const m: number[] = [];
+  let digits = 0;
+  let e10 = 0;
+  while (i < n && __ykUnit(s, i) >= 48 && __ykUnit(s, i) <= 57) {
+    __ykBigMulSmall(m, 10);
+    __ykBigAddSmall(m, __ykUnit(s, i) - 48);
+    digits = digits + 1;
+    i = i + 1;
+  }
+  if (i < n && __ykUnit(s, i) === 46) {
+    i = i + 1;
+    while (i < n && __ykUnit(s, i) >= 48 && __ykUnit(s, i) <= 57) {
+      __ykBigMulSmall(m, 10);
+      __ykBigAddSmall(m, __ykUnit(s, i) - 48);
+      digits = digits + 1;
+      e10 = e10 - 1;
+      i = i + 1;
+    }
+  }
+  if (digits === 0) return NaN;
+  if (i < n && (__ykUnit(s, i) === 101 || __ykUnit(s, i) === 69)) {
+    i = i + 1;
+    let eneg = false;
+    if (i < n && (__ykUnit(s, i) === 43 || __ykUnit(s, i) === 45)) {
+      eneg = __ykUnit(s, i) === 45;
+      i = i + 1;
+    }
+    let ed = 0;
+    let ev = 0;
+    while (i < n && __ykUnit(s, i) >= 48 && __ykUnit(s, i) <= 57) {
+      if (ev < 100000) ev = ev * 10 + __ykUnit(s, i) - 48;
+      ed = ed + 1;
+      i = i + 1;
+    }
+    if (ed === 0) return NaN;
+    e10 = e10 + (eneg ? -ev : ev);
+  }
+  if (i !== n) return NaN;
+  const v = __ykDecimalToDouble(m, e10);
+  return neg ? -v : v;
 }`,
   },
   // Number::toString(x), radix 10 (ECMA-262 6.1.6.1.20): the shortest digits that round-trip,
@@ -453,11 +694,167 @@ export const BIGNUM_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
 };
 
 /**
+ * ECMAScript's conversions and generic operators as atoms over dynamic values (`unknown`). A
+ * dynamic value is inspected by primitives: `__ykTag` (0 undefined, 1 null, 2 boolean, 3 number,
+ * 4 string, 5 an array of numbers), and `__ykNum`, `__ykBool`, `__ykStr`, `__ykArr` read it as that
+ * kind; `__ykSame` is reference equality.
+ */
+export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
+  // Array.prototype.join(",") of an array of numbers (ToPrimitive of an array).
+  __ykJoinNums: {
+    inputs: ["number[]"],
+    output: "string",
+    source: `export function f(a: number[]): string {
+  let out = "";
+  let i = 0;
+  while (i < a.length) {
+    if (i > 0) out = out + ",";
+    out = out + __ykNumberToString(a[i]);
+    i = i + 1;
+  }
+  return out;
+}`,
+  },
+  // ToNumber (ECMA-262 7.1.4).
+  __ykToNumber: {
+    inputs: ["unknown"],
+    output: "number",
+    source: `export function f(x: unknown): number {
+  const t = __ykTag(x);
+  if (t === 3) return __ykNum(x);
+  if (t === 0) return NaN;
+  if (t === 1) return 0;
+  if (t === 2) return __ykBool(x) ? 1 : 0;
+  if (t === 4) return __ykStringToNumber(__ykStr(x));
+  return __ykStringToNumber(__ykJoinNums(__ykArr(x)));
+}`,
+  },
+  // ToString (ECMA-262 7.1.17).
+  __ykToString: {
+    inputs: ["unknown"],
+    output: "string",
+    source: `export function f(x: unknown): string {
+  const t = __ykTag(x);
+  if (t === 4) return __ykStr(x);
+  if (t === 3) return __ykNumberToString(__ykNum(x));
+  if (t === 0) return "undefined";
+  if (t === 1) return "null";
+  if (t === 2) return __ykBool(x) ? "true" : "false";
+  return __ykJoinNums(__ykArr(x));
+}`,
+  },
+  // The typeof operator.
+  __ykTypeOf: {
+    inputs: ["unknown"],
+    output: "string",
+    source: `export function f(x: unknown): string {
+  const t = __ykTag(x);
+  if (t === 0) return "undefined";
+  if (t === 2) return "boolean";
+  if (t === 3) return "number";
+  if (t === 4) return "string";
+  return "object";
+}`,
+  },
+  // ToBoolean (ECMA-262 7.1.2).
+  __ykTruthy: {
+    inputs: ["unknown"],
+    output: "boolean",
+    source: `export function f(x: unknown): boolean {
+  const t = __ykTag(x);
+  if (t === 0 || t === 1) return false;
+  if (t === 2) return __ykBool(x);
+  if (t === 3) {
+    const n = __ykNum(x);
+    return n !== 0 && n === n;
+  }
+  if (t === 4) return __ykStr(x).length > 0;
+  return true;
+}`,
+  },
+  // IsStrictlyEqual (ECMA-262 7.2.15).
+  __ykStrictEquals: {
+    inputs: ["unknown", "unknown"],
+    output: "boolean",
+    source: `export function f(a: unknown, b: unknown): boolean {
+  const t = __ykTag(a);
+  if (t !== __ykTag(b)) return false;
+  if (t === 0 || t === 1) return true;
+  if (t === 2) return __ykBool(a) === __ykBool(b);
+  if (t === 3) return __ykNum(a) === __ykNum(b);
+  if (t === 4) return __ykStrEquals(__ykStr(a), __ykStr(b));
+  return __ykSame(a, b);
+}`,
+  },
+  // IsLooselyEqual (ECMA-262 7.2.14); ToPrimitive of an array is its join.
+  __ykLooseEquals: {
+    inputs: ["unknown", "unknown"],
+    output: "boolean",
+    source: `export function f(a: unknown, b: unknown): boolean {
+  const ta = __ykTag(a);
+  const tb = __ykTag(b);
+  if (ta === tb) return __ykStrictEquals(a, b);
+  if ((ta === 0 || ta === 1) && (tb === 0 || tb === 1)) return true;
+  if (ta === 3 && tb === 4) return __ykNum(a) === __ykStringToNumber(__ykStr(b));
+  if (ta === 4 && tb === 3) return __ykStringToNumber(__ykStr(a)) === __ykNum(b);
+  if (ta === 2) return __ykLooseEquals(__ykBool(a) ? 1 : 0, b);
+  if (tb === 2) return __ykLooseEquals(a, __ykBool(b) ? 1 : 0);
+  if ((ta === 3 || ta === 4) && tb === 5) return __ykLooseEquals(a, __ykJoinNums(__ykArr(b)));
+  if (ta === 5 && (tb === 3 || tb === 4)) return __ykLooseEquals(__ykJoinNums(__ykArr(a)), b);
+  return false;
+}`,
+  },
+  // The + operator (ECMA-262 13.15.3): ToPrimitive, then a string if either is one, else numbers.
+  __ykAdd: {
+    inputs: ["unknown", "unknown"],
+    output: "unknown",
+    source: `export function f(a: unknown, b: unknown): unknown {
+  const pa = __ykTag(a) === 5 ? __ykJoinNums(__ykArr(a)) : a;
+  const pb = __ykTag(b) === 5 ? __ykJoinNums(__ykArr(b)) : b;
+  if (__ykTag(pa) === 4 || __ykTag(pb) === 4) return __ykToString(pa) + __ykToString(pb);
+  return __ykToNumber(pa) + __ykToNumber(pb);
+}`,
+  },
+  // IsLessThan (ECMA-262 7.2.13), after ToPrimitive: 0 when a < b, 1 when not, 2 when undefined (NaN).
+  __ykCompare: {
+    inputs: ["unknown", "unknown"],
+    output: "number",
+    source: `export function f(a: unknown, b: unknown): number {
+  const pa = __ykTag(a) === 5 ? __ykJoinNums(__ykArr(a)) : a;
+  const pb = __ykTag(b) === 5 ? __ykJoinNums(__ykArr(b)) : b;
+  if (__ykTag(pa) === 4 && __ykTag(pb) === 4) return __ykStrLess(__ykStr(pa), __ykStr(pb)) ? 0 : 1;
+  const x = __ykToNumber(pa);
+  const y = __ykToNumber(pb);
+  if (x !== x || y !== y) return 2;
+  return x < y ? 0 : 1;
+}`,
+  },
+};
+
+/**
  * The primitives as the reference engine has them, to run the atoms' sources in JavaScript and
  * compare them with the builtins they define.
  */
 export const RUNTIME_PRIMITIVES_JS = {
   __ykUnit: (s: string, i: number): number => s.charCodeAt(i),
+  __ykPow2: (e: number): number => 2 ** e,
+  __ykTag: (x: unknown): number =>
+    x === undefined
+      ? 0
+      : x === null
+        ? 1
+        : typeof x === "boolean"
+          ? 2
+          : typeof x === "number"
+            ? 3
+            : typeof x === "string"
+              ? 4
+              : 5,
+  __ykNum: (x: unknown): number => x as number,
+  __ykBool: (x: unknown): boolean => x as boolean,
+  __ykStr: (x: unknown): string => x as string,
+  __ykArr: (x: unknown): number[] => x as number[],
+  __ykSame: (a: unknown, b: unknown): boolean => a === b,
   __ykChar: (u: number): string => String.fromCharCode(u),
   __ykF64Hi: (x: number): number => {
     const v = new DataView(new ArrayBuffer(8));
