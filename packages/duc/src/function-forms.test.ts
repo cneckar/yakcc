@@ -1,0 +1,146 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Function forms Node's library uses (#1330): `arguments`, read in a function or captured by an
+ * arrow inside one. Each lifts with no opaque summary, its TypeScript lowering computes what the
+ * source computes, and the round trip holds.
+ */
+import { describe, expect, it } from "vitest";
+import { graphIdentity } from "./canonical.js";
+import { emitTypeScript } from "./emit-ts.js";
+import { liftAtom } from "./lift.js";
+import { packGraph, unpackGraph } from "./store.js";
+import type { DucGraph } from "./types.js";
+
+/** Opaque summaries, and loops with no body the graph expresses. */
+const opaque = (g: DucGraph): string[] =>
+  g.nodes.flatMap((n) => [
+    ...(/#[0-9a-f]{16}$/.test(n.label ?? "") ? [n.label as string] : []),
+    ...(n.kind === "loop" && n.loop === undefined ? [`loop ${n.id} with no body`] : []),
+    ...(n.closure !== undefined ? opaque(n.closure) : []),
+  ]);
+
+const run = (code: string): unknown =>
+  (new Function(`${code.replace(/^export /m, "")}; return f;`)() as (...a: unknown[]) => unknown)(
+    1,
+    2,
+    3,
+  );
+
+const CASES: [string, string][] = [
+  [
+    "the atom's own arguments",
+    "export function f(a) { return [arguments.length, arguments[2], a]; }",
+  ],
+  [
+    "a function expression's arguments, passed on",
+    "export function f() { const g = function () { return Array.prototype.slice.call(arguments).join('-'); }; return g(4, 5, 6); }",
+  ],
+  [
+    "an arrow reads the enclosing function's arguments",
+    "export function f(a, b) { const h = () => arguments.length + a; return h(); }",
+  ],
+  [
+    "a nested function has its own arguments",
+    "export function f() { function inner() { return arguments.length; } return [inner(1, 2), arguments.length]; }",
+  ],
+  [
+    "a method forwards its arguments with Reflect.apply, as Node's library does",
+    "export function f() { const o = { m() { return Reflect.apply(Math.max, this, arguments); } }; return o.m(3, 9, 4); }",
+  ],
+];
+
+describe("arguments (#1330)", () => {
+  for (const [name, source] of CASES) {
+    it(name, () => {
+      const g = liftAtom(source);
+      expect(opaque(g)).toEqual([]);
+      const code = emitTypeScript(g);
+      expect(run(code), code).toEqual(run(source));
+      expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    });
+  }
+
+  it("a local named arguments is a local", () => {
+    const g = liftAtom(
+      "export function f() { const arguments_ = 1; let x = 2; return x + arguments_; }",
+    );
+    expect(opaque(g)).toEqual([]);
+  });
+});
+
+describe("a return inside a switch inside a loop (#1330)", () => {
+  const LOOPS: [string, string, unknown][] = [
+    [
+      "for, as Node's extname is written",
+      "export function f(s) { for (let i = s.length - 1; i > 0; i--) { switch (s.charCodeAt(i)) { case 47: return ''; case 46: return s.slice(i); } } return ''; }",
+      "a/b.txt",
+    ],
+    [
+      "while",
+      "export function f(s) { let i = 0; while (i < s.length) { switch (s[i]) { case 'a': return i; } i++; } return -1; }",
+      "xxa",
+    ],
+    [
+      "for-of, with a break that leaves the switch",
+      "export function f(xs) { let n = 0; for (const x of xs) { switch (x) { case 1: n = n + 100; break; case 2: return n; } n = n + 1; } return n; }",
+      [1, 1, 3, 2, 9],
+    ],
+    [
+      "a return under an if inside a case, with statements after it in the case and after the switch",
+      "export function f(t) { const out = []; for (let i = 0; i < t; i++) { switch (i % 3) { case 0: out.push('a'); break; case 1: if (i > 3) return out; out.push('b'); break; default: out.push('c'); } out.push(i); } return out; }",
+      7,
+    ],
+  ];
+  for (const [name, source, input] of LOOPS) {
+    it(name, () => {
+      const g = liftAtom(source);
+      expect(opaque(g)).toEqual([]);
+      const code = emitTypeScript(g);
+      const go = (c: string): unknown =>
+        (new Function(`${c.replace(/^export /m, "")}; return f;`)() as (x: unknown) => unknown)(
+          input,
+        );
+      expect(go(code), code).toEqual(go(source));
+      expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    });
+  }
+});
+
+describe("for await (#1330)", () => {
+  const ASYNC: [string, string][] = [
+    [
+      "sums an async generator's values",
+      "export async function f() { async function* gen() { yield 1; yield 2; yield 3; } let n = 0; for await (const x of gen()) { n = n + x; } return n; }",
+    ],
+    [
+      "awaits each element of a sync iterable of promises, and returns from inside",
+      "export async function f() { const ps = [Promise.resolve(1), Promise.resolve(5), Promise.resolve(9)]; for await (const x of ps) { if (x > 2) return x; } return -1; }",
+    ],
+    [
+      "as Node's streams write it: the first element, or false",
+      "export async function f() { async function* gen() { yield 'a'; } for await (const unused of gen()) { return true; } return false; }",
+    ],
+  ];
+  for (const [name, source] of ASYNC) {
+    it(name, async () => {
+      const g = liftAtom(source);
+      expect(opaque(g)).toEqual([]);
+      const code = emitTypeScript(g);
+      const go = (c: string): Promise<unknown> =>
+        (new Function(`${c.replace(/^export /m, "")}; return f;`)() as () => Promise<unknown>)();
+      expect(await go(code), code).toEqual(await go(source));
+      expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    });
+  }
+});
+
+describe("an async iteration is stored and read back (#1330)", () => {
+  it("packs and unpacks to the same identity, and its line form names it", () => {
+    const g = liftAtom(
+      "export async function f(it) { let n = 0; for await (const x of it) { n = n + x; } return n; }",
+    );
+    const packed = packGraph(g);
+    expect(graphIdentity(unpackGraph(packed))).toBe(graphIdentity(g));
+    expect(g.nodes.find((n) => n.kind === "loop")?.loop?.iterate?.of).toBe("async values");
+  });
+});
