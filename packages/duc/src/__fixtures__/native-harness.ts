@@ -196,8 +196,9 @@ export function harness(
       "#include <stdint.h>",
       "typedef uint64_t yk;",
       `extern yk ${m.symbol}(${Array(n).fill("yk").join(", ") || "void"});`,
-      "yk yk_read(FILE *); void yk_write(FILE *, yk);",
-      `int main(void) { setvbuf(stdout, NULL, _IOFBF, 1 << 16); for (;;) { ${Array.from({ length: n }, (_, i) => `yk a${i} = yk_read(stdin);`).join(" ")} yk_write(stdout, ${m.symbol}(${Array.from({ length: n }, (_, i) => `a${i}`).join(", ")})); fputc('\\n', stdout); fflush(stdout); } }`,
+      "yk yk_read(FILE *); void yk_write(FILE *, yk); yk yk_settle(yk);",
+      // After each call its jobs run, and a promise is written as what it settles to (#1295).
+      `int main(void) { setvbuf(stdout, NULL, _IOFBF, 1 << 16); for (;;) { ${Array.from({ length: n }, (_, i) => `yk a${i} = yk_read(stdin);`).join(" ")} yk_write(stdout, yk_settle(${m.symbol}(${Array.from({ length: n }, (_, i) => `a${i}`).join(", ")}))); fputc('\\n', stdout); fflush(stdout); } }`,
     ].join("\n"),
   );
   const cc = spawnSync(t.cc, [...t.link, "-O0", "h.c", "f.o", "yk.o", "-lm", "-o", "run"], {

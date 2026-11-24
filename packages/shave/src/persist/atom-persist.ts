@@ -189,6 +189,13 @@ export interface PersistOptions {
    * `moduleBindingsOf(moduleSource)`. When omitted, no capture is recognised.
    */
   readonly moduleBindings?: ReadonlyMap<string, ModuleBindingInfo> | undefined;
+
+  /**
+   * The names bound in the scopes enclosing this fragment within its module (#1297), from
+   * `enclosingBindingsOf(moduleSource, entry.sourceRange)`. A fragment sliced from a function body
+   * reads its parameters and locals; each such read is recorded, not unexplained.
+   */
+  readonly enclosingBindings?: ReadonlySet<string> | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -271,6 +278,7 @@ export async function persistNovelGlueAtom(
     undefined, // warn — default console.warn
     options?.internalSymbols, // sibling/child atom names → composition edges (#1170)
     options?.moduleBindings, // pure module constants → recorded captures (#1171)
+    options?.enclosingBindings, // the enclosing function's parameters and locals (#1297)
   );
 
   const sc = options?.sourceContext;

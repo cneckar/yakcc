@@ -1149,7 +1149,13 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
     const result: Node[] = [];
     for (const arg of ne.getArguments()) {
       const ak = arg.getKind();
-      if (ak === SyntaxKind.ArrowFunction || ak === SyntaxKind.FunctionExpression) {
+      // An object literal argument too, as a call's (DEC-SLICER-CALLEE-OBJ-LITERAL-001): its
+      // methods decompose, as in `new Proxy(target, { get(t, p) { … } })` (#1297).
+      if (
+        ak === SyntaxKind.ArrowFunction ||
+        ak === SyntaxKind.FunctionExpression ||
+        ak === SyntaxKind.ObjectLiteralExpression
+      ) {
         result.push(arg);
       }
     }

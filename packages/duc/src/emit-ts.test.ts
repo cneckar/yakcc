@@ -36,10 +36,15 @@ describe("emitting TypeScript from the graph (5A)", () => {
     });
   }
 
-  it("refuses an opaque node: a member that reads super.x has no structure to emit", () => {
-    const g = liftAtom(
-      "export function f(m: string) { class E extends Error { d() { return super.toString(); } } return new E(m); }",
-    );
+  it("refuses an opaque node: a class with a field has no structure to emit", () => {
+    const g = liftAtom("export function f(m: string) { class E { y = 1; } return new E(); }");
     expect(() => emitTypeScript(g)).toThrow(EmitError);
+  });
+
+  it("a derived class's super calls and super reads round-trip (#1294)", () => {
+    const g = liftAtom(
+      "export function f(m: string) { class A { constructor(v: string) { this.v = v; } d() { return this.v; } static s() { return 1; } } class E extends A { constructor(v: string) { super(v + '!'); } d() { const up = () => super.d(); return up() + super.d; } static s() { return super.s() + 1; } } return new E(m).d(); }",
+    );
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
   });
 });

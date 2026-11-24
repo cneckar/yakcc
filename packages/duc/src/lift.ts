@@ -159,10 +159,26 @@ export function parseAtomSource(source: string): { project: Project; file: Sourc
       useInMemoryFileSystem: true,
       compilerOptions: { allowJs: false, noEmit: true, noLib: true, skipLibCheck: true },
     });
-    const sf = attempt.createSourceFile("atom.ts", candidate, { scriptKind: ScriptKind.TS });
-    const diagnostics = attempt.getProgram().getSyntacticDiagnostics(sf);
+    let sf = attempt.createSourceFile("atom.ts", candidate, { scriptKind: ScriptKind.TS });
+    // A fragment of an async function's body awaits at its top level: as a script, `await x` is a
+    // call of a name `await`; as a module it is the await it means (#1297).
+    if (
+      /\bawait\b/.test(candidate) &&
+      sf.getDescendantsOfKind(SyntaxKind.Identifier).some((id) => id.getText() === "await")
+    ) {
+      // An empty export list makes the file a module, and lifts to nothing.
+      const asModule = new Project({
+        useInMemoryFileSystem: true,
+        compilerOptions: { allowJs: false, noEmit: true, noLib: true, skipLibCheck: true },
+      });
+      const moduleFile = asModule.createSourceFile("atom.ts", `${candidate}\nexport {};`, {
+        scriptKind: ScriptKind.TS,
+      });
+      if (asModule.getProgram().getSyntacticDiagnostics(moduleFile).length === 0) sf = moduleFile;
+    }
+    const diagnostics = sf.getProject().getProgram().getSyntacticDiagnostics(sf);
     if (diagnostics.length === 0) {
-      project = attempt;
+      project = sf.getProject();
       file = sf;
       break;
     }
@@ -340,6 +356,8 @@ function wrapForms(source: string): string[] {
   }
   forms.push(`function __atom__() {\n${source}\n}`);
   forms.push(`(${source}\n)`);
+  // A class member sliced out of its class (a method, an accessor, a constructor), #1297.
+  forms.push(`class __atom__ {\n${source}\n}`);
   return forms;
 }
 
@@ -556,6 +574,17 @@ class Lifter {
         init !== undefined ? this.withDefault(value as ValueId, init) : (value as ValueId),
       );
     }
+    // A constructor's parameter property (`constructor(private readonly x: T)`) is the write
+    // `this.x = x` before its body runs (#1297).
+    if (Node.isConstructorDeclaration(fn))
+      for (const param of fn.getParameters()) {
+        if (param.getScope() === undefined && !param.isReadonly()) continue;
+        const name = param.getName();
+        this.emit("op", [this.thisValue(), this.resolveIdentifier(name)], 1, {
+          origin: { kind: "Write" },
+          label: `.${name}=`,
+        });
+      }
     const body = fn.getBody();
     if (body === undefined) return;
     if (Node.isBlock(body)) {
@@ -656,19 +685,24 @@ class Lifter {
     // or in the `var`'s own initializer (`var m = function () { return m.cache }`), reads the binding
     // when it runs, not the value when it is made: the name is a cell from here.
     for (const [j, stmt] of stmts.entries()) {
-      if (
-        !Node.isVariableStatement(stmt) ||
-        stmt.getDeclarationKind() !== VariableDeclarationKind.Var
-      )
-        continue;
+      if (!Node.isVariableStatement(stmt)) continue;
+      const isVar = stmt.getDeclarationKind() === VariableDeclarationKind.Var;
       for (const decl of stmt.getDeclarations())
         for (const name of patternNames(decl.getNameNode())) {
           const readEarlier = stmts
-            .slice(0, j + 1)
+            .slice(0, isVar ? j + 1 : j)
             .some((earlier) =>
               functionsWithin(earlier).some((fn) => this.readNamesOf(fn).includes(name)),
             );
-          if (readEarlier) this.hoistCell(name);
+          // A `let` or `const` too, read by a closure made before it, which runs after it is
+          // initialized (#1297); or assigned by a closure in its own initializer (`let id =
+          // setTimeout(() => { id = null })`). A const arrow calling itself is `function-self`.
+          const writtenByOwn =
+            !isVar &&
+            functionsWithin(stmt).some((fn) =>
+              assignmentTargets(fn).some((t) => Node.isIdentifier(t) && t.getText() === name),
+            );
+          if (readEarlier || writtenByOwn) this.hoistCell(name);
         }
     }
     for (const [i, written] of stmts.entries()) {
@@ -1235,16 +1269,51 @@ class Lifter {
         statement?.getParent()?.getParent() === fn
       );
     };
-    if (supers.length > 0 && !(derived && supers.every(superStatement))) return undefined;
+    // `super.name` (read or called) in a member of a derived class, or an arrow inside one: the
+    // parent's member, with this function's receiver (#1294). A write through `super` is not.
+    const superMember = (k: Node): boolean => {
+      const access = k.getParent();
+      if (!Node.isPropertyAccessExpression(access) || access.getExpression() !== k) return false;
+      const up = access.getParent();
+      if (
+        Node.isBinaryExpression(up) &&
+        up.getLeft() === access &&
+        /^(=|[-+*/%&|^]=|\*\*=|<<=|>>>?=|&&=|\|\|=|\?\?=)$/.test(up.getOperatorToken().getText())
+      )
+        return false;
+      if (Node.isPrefixUnaryExpression(up) || Node.isPostfixUnaryExpression(up)) {
+        const op = up.getOperatorToken();
+        if (op === SyntaxKind.PlusPlusToken || op === SyntaxKind.MinusMinusToken) return false;
+      }
+      const owner = receiverOwner(k);
+      if (
+        !(
+          Node.isMethodDeclaration(owner) ||
+          Node.isGetAccessorDeclaration(owner) ||
+          Node.isSetAccessorDeclaration(owner) ||
+          Node.isConstructorDeclaration(owner)
+        )
+      )
+        return false;
+      const cls = owner.getParent();
+      return (
+        (Node.isClassDeclaration(cls) || Node.isClassExpression(cls)) &&
+        cls.getHeritageClauses().some((h) => h.getToken() === SyntaxKind.ExtendsKeyword)
+      );
+    };
+    if (supers.length > 0 && !supers.every((k) => (derived && superStatement(k)) || superMember(k)))
+      return undefined;
     // `this` in an arrow is the enclosing receiver, captured like a name; in a function it is the
     // caller's receiver, so the closure is a `function` (#1276).
-    const thisUses = fn
-      .getDescendantsOfKind(SyntaxKind.ThisKeyword)
-      .filter(
-        (t) =>
-          receiverOwner(t) === fn ||
-          (Node.isArrowFunction(fn) && receiverOwner(t) === receiverOwner(fn)),
-      );
+    const thisUses = [
+      ...fn.getDescendantsOfKind(SyntaxKind.ThisKeyword),
+      // `super.name` reads with the receiver: it uses `this` as much as `this.name` does.
+      ...supers.filter(superMember),
+    ].filter(
+      (t) =>
+        receiverOwner(t) === fn ||
+        (Node.isArrowFunction(fn) && receiverOwner(t) === receiverOwner(fn)),
+    );
     const lexicalThis = Node.isArrowFunction(fn) && thisUses.length > 0;
     // A derived constructor has its own receiver, made by its `super(..)`, used or not.
     const dynamicThis = !Node.isArrowFunction(fn) && (thisUses.length > 0 || derived);
@@ -1576,7 +1645,21 @@ class Lifter {
       return;
     }
     // A local export list computes nothing: the names it exports are observed (exportedBindingNames).
-    if (Node.isExportDeclaration(node) && node.getModuleSpecifier() === undefined) return;
+    // A re-export (`export { a } from "m"`) computes nothing here either: its values are m's.
+    if (Node.isExportDeclaration(node)) return;
+    // TypeScript's types compute nothing: a type alias, an interface, an ambient `declare`, an
+    // overload signature (#1297). Their names are types, never values the graph reads.
+    if (
+      Node.isTypeAliasDeclaration(node) ||
+      Node.isInterfaceDeclaration(node) ||
+      (Node.isFunctionDeclaration(node) && !node.hasBody()) ||
+      ((Node.isVariableStatement(node) ||
+        Node.isClassDeclaration(node) ||
+        Node.isModuleDeclaration(node) ||
+        Node.isEnumDeclaration(node)) &&
+        node.hasDeclareKeyword())
+    )
+      return;
     if (Node.isThrowStatement(node)) {
       // The thrown value is structure: it is lifted like any expression.
       this.emit("op", [this.liftExpr(node.getExpression())], 0, {
@@ -2692,11 +2775,15 @@ class Lifter {
       if (callee !== undefined && Node.isPropertyAccessExpression(callee)) {
         // A method's lookup is ordered just before its call, after the arguments (#1285): a
         // lowering writes `o.f(args)`, the lookup inside the call, so that is the order it keeps.
-        const base = this.liftExpr(callee.getExpression());
+        // `super.f(args)` is the parent's f, called with this function's receiver (#1294).
+        const viaSuper = Node.isSuperExpression(callee.getExpression());
+        const base = viaSuper ? this.thisValue() : this.liftExpr(callee.getExpression());
         const args = this.liftElements(node.getArguments() as Node[]);
         const [method] = this.emit("op", [base], 1, {
           origin: { kind: "PropertyAccess", text: truncate(callee.getText()) },
-          label: `${callee.hasQuestionDotToken() ? "?." : "."}${callee.getName()}`,
+          label: viaSuper
+            ? `super.${callee.getName()}`
+            : `${callee.hasQuestionDotToken() ? "?." : "."}${callee.getName()}`,
         });
         inputs.push(method as ValueId, ...args);
       } else if (callee !== undefined && Node.isElementAccessExpression(callee)) {
@@ -2735,6 +2822,13 @@ class Lifter {
       return this.emit("op", inputs, 1, {
         origin: { kind: node.getKindName(), text: truncate(node.getText()) },
         ...(optional ? { label: `${node.getKindName()}?.` } : {}),
+      })[0] as ValueId;
+    }
+    if (Node.isPropertyAccessExpression(node) && Node.isSuperExpression(node.getExpression())) {
+      // `super.a`: the parent's member a, read with this function's receiver (#1294).
+      return this.emit("op", [this.thisValue()], 1, {
+        origin: { kind: "PropertyAccess", text: truncate(node.getText()) },
+        label: `super.${node.getName()}`,
       })[0] as ValueId;
     }
     if (Node.isPropertyAccessExpression(node)) {
@@ -3682,6 +3776,16 @@ function isValueRead(id: import("ts-morph").Identifier): boolean {
   if (id.getFirstAncestor((n) => n.getKindName().startsWith("JSDoc")) !== undefined) return false;
   const parent = id.getParent();
   if (parent === undefined) return false;
+  // A name in a type (an annotation, a cast's type, a type argument, `implements`) is a type, never
+  // a value the graph reads (#1297). An `extends` clause's expression is a value.
+  for (let a: Node | undefined = parent; a !== undefined; a = a.getParent()) {
+    if (Node.isTypeNode(a) && !Node.isExpressionWithTypeArguments(a)) return false;
+    if (Node.isHeritageClause(a)) {
+      if (a.getToken() === SyntaxKind.ImplementsKeyword) return false;
+      break;
+    }
+    if (Node.isStatement(a) || Node.isSourceFile(a)) break;
+  }
   // `new.target` and `import.meta` are one name, read as a whole (#1173): `target` is not a variable.
   if (Node.isMetaProperty(parent)) return false;
   // Statement labels (`outer:` and `break outer` / `continue outer`) name a statement,
@@ -3698,6 +3802,10 @@ function isValueRead(id: import("ts-morph").Identifier): boolean {
   if (Node.isPropertyAccessExpression(parent) && parent.getNameNode() === id) return false;
   // Property assignment key (`{ KEY: v }`) is not a read.
   if (Node.isPropertyAssignment(parent) && parent.getNameNode() === id) return false;
+  // A destructuring pattern's key (`{ key: local }`) names the property, not a binding (#1297).
+  if (Node.isBindingElement(parent) && parent.getPropertyNameNode() === id) return false;
+  // An import attribute's key (`with { type: "json" }`) names the attribute.
+  if (Node.isImportAttribute(parent) && parent.getNameNode() === id) return false;
   // A binding/declaration name is not a read.
   if (
     (Node.isVariableDeclaration(parent) ||
@@ -3706,7 +3814,17 @@ function isValueRead(id: import("ts-morph").Identifier): boolean {
       Node.isFunctionDeclaration(parent) ||
       Node.isFunctionExpression(parent) ||
       Node.isClassDeclaration(parent) ||
-      Node.isMethodDeclaration(parent)) &&
+      Node.isClassExpression(parent) ||
+      Node.isMethodDeclaration(parent) ||
+      // A class member's own name (a field, an accessor) names it (#1294).
+      Node.isPropertyDeclaration(parent) ||
+      // An enum's name and its members' names are declared, not read (#1297).
+      Node.isEnumDeclaration(parent) ||
+      Node.isEnumMember(parent) ||
+      Node.isPropertySignature(parent) ||
+      Node.isMethodSignature(parent) ||
+      Node.isGetAccessorDeclaration(parent) ||
+      Node.isSetAccessorDeclaration(parent)) &&
     (parent as { getNameNode?: () => Node | undefined }).getNameNode?.() === id
   ) {
     return false;
@@ -3809,6 +3927,21 @@ function patternNames(nameNode: Node): string[] {
  */
 function findPrimaryFunction(file: Node): FunctionLike | undefined {
   const sourceFile = file as import("ts-morph").SourceFile;
+  // A class member sliced out of its class, parsed in the `class __atom__` form (#1297): the atom is
+  // that member's function, its receiver the instance it is called on.
+  const [only0, ...more] = sourceFile.getStatements();
+  if (more.length === 0 && Node.isClassDeclaration(only0) && only0.getName() === "__atom__") {
+    const [member, ...others] = only0.getMembers();
+    if (
+      others.length === 0 &&
+      (Node.isMethodDeclaration(member) ||
+        Node.isConstructorDeclaration(member) ||
+        Node.isGetAccessorDeclaration(member) ||
+        Node.isSetAccessorDeclaration(member)) &&
+      member.getBody() !== undefined
+    )
+      return member;
+  }
   const exported: FunctionLike[] = [];
   const all: FunctionLike[] = [];
 
