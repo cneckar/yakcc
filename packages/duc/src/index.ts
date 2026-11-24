@@ -31,7 +31,15 @@ export { isWellFormed } from "./wellformed.js";
 
 export type { LiftOptions } from "./lift.js";
 export type { AtomShape } from "./lift.js";
-export { DECLARES, DucLiftError, atomShape, declaredNamesOf, liftAtom } from "./lift.js";
+export {
+  COMPLETES,
+  DECLARES,
+  DucLiftError,
+  atomShape,
+  completionOf,
+  declaredNamesOf,
+  liftAtom,
+} from "./lift.js";
 export type { LiftFidelity } from "./fidelity.js";
 export {
   graphFreeNames,
@@ -43,7 +51,14 @@ export {
 export type { EmitSignature } from "./emit-ts.js";
 export { EmitError, emitTypeScript } from "./emit-ts.js";
 export type { PackedGraph, StoredLink } from "./store.js";
-export { GRAPH_FORMAT_VERSION, LIFTER_VERSION, packGraph, unpackGraph } from "./store.js";
+export {
+  GRAPH_FORMAT_VERSION,
+  LIFTER_VERSION,
+  ducBlockRoot,
+  graphRoot,
+  packGraph,
+  unpackGraph,
+} from "./store.js";
 export { canonicalizeGraph, graphIdentity } from "./canonical.js";
 
 export type { DiamondSupport, InfluenceIndex, NodeSummary, WitnessTerm } from "./influence.js";
@@ -127,6 +142,10 @@ export type { Ambiguity, DucType, Signature, TypeReport } from "./infer-types.js
 export { assignable, inferTypes, parseType, typeToText } from "./infer-types.js";
 export type { WasmModule, WasmSignature } from "./emit-wasm.js";
 export { WASM_HOST, WasmEmitError, emitWasm, instantiateWasm } from "./emit-wasm.js";
+export { emitWasmGc, instantiateWasmGc } from "./emit-wasm-gc.js";
+export type { WasmGcModule } from "./emit-wasm-gc.js";
+export { RUNTIME_ATOMS, RUNTIME_PRIMITIVES_JS } from "./wasm-runtime-atoms.js";
+export type { RuntimeAtom } from "./wasm-runtime-atoms.js";
 export type { LlvmModule, NativeSignature, NativeType } from "./emit-llvm.js";
 export { LlvmEmitError, emitLlvm } from "./emit-llvm.js";
 export type { ObjectOptions } from "./native.js";

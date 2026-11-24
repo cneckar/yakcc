@@ -72,6 +72,7 @@ export async function checkAuthoredGraph(
         formatVersion: packed.formatVersion,
         structure: packed.structure,
         identity: packed.identity,
+        root: packed.root,
         links: packed.links,
         evidence: vectors,
         baseSet: options.baseSet ?? { target: "ecmascript", version: 1 },

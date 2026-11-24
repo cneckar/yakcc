@@ -56,9 +56,27 @@ give a JavaScript engine's last bit, so these are refused with that reason. They
 - **Mach-O (x86-64, arm64) and COFF (x64, ARM64).** Each object has the right header, and its stock
   linker takes it: `ld64.lld` makes a dylib, `lld-link` makes a DLL. They are not run: there is no host here.
 
+- **The boxed lowering, every pair (#1296, `native-objects.test.ts`).** A boxed program (an array, a
+  closure, `map`, `join`) is lowered for all eight (architecture, format) pairs. For each pair:
+  - two lowerings give byte-identical objects;
+  - `llvm-objdump` names the target's format, and the object defines the exported symbol (`f`, or
+    `_f` on Mach-O);
+  - that format's stock linker takes the object: `ld.lld` for a shared object, lld's Mach-O flavour
+    (`lld -flavor darwin`, what `ld64.lld` names) for a dylib, and `lld-link` for a DLL that exports
+    `f`.
+
+  On the four Linux targets, the runtime object is checked the same way: built twice,
+  byte-identical, and linked into the shared object with the program.
+
 ## Open
 
-- **Beyond the typed subset.** Strings, arrays, objects and closures need a value representation and
-  a runtime, shipped as object files of their own. What the graph must carry for that is part of the
-  format lock (#1292).
+- **The runtime on macOS and Windows.** clang builds the runtime from C, so it needs the target's
+  system headers. Here only the Linux targets have them, so the Mach-O and COFF runtime objects are
+  not built. A Mach-O or COFF program links with its runtime's symbols left to resolve when an
+  executable links the runtime in.
+  - **Windows needs more than headers.** The coroutines that async functions and generators run on
+    use `ucontext` (DEC-DUC-NATIVE-RUNTIME-001), which Windows does not have. A Windows runtime needs
+    its fibers (`CreateFiber` / `SwitchToFiber`) in their place.
+  - **macOS** has `ucontext`, deprecated.
+  - Both need a host or an SDK to run on, as the Linux targets have QEMU.
 - **"ia64".** Itanium is not a current LLVM target. Whether it was meant is asked on #1292.

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
+import { graphIdentity } from "./canonical.js";
 import { mayInfluence, usupp } from "./influence.js";
 import { DucLiftError, declaredNamesOf, liftAtom } from "./lift.js";
 import type { DiamondReason, DucGraph } from "./types.js";
@@ -623,5 +624,30 @@ describe("TypeScript sources as the self-shave slices them (#1297)", () => {
         "export function f(d, cb) { let id = setTimeout(() => { id = null; cb(); }, d); return () => id; }",
       ),
     ).toEqual([]);
+  });
+});
+
+describe("literal labels in normal form (#1303)", () => {
+  const id = (src: string): string => graphIdentity(liftAtom(src));
+  it("a template's parts are values: escapes and source line breaks that cook alike are one identity", () => {
+    expect(id("export function f(a) { return `a${a}`; }")).toBe(
+      id("export function f(a) { return `\\x61${a}`; }"),
+    );
+    expect(id("export function f(a) { return `\\n${a}`; }")).toBe(
+      id("export function f(a) { return `\n${a}`; }"),
+    );
+  });
+  it("a tagged template keeps its raw text, which the tag sees", () => {
+    expect(id("export function f(a) { return String.raw`a\\n${a}`; }")).not.toBe(
+      id("export function f(a) { return String.raw`a\n${a}`; }"),
+    );
+  });
+  it("a regular expression's flags are in one order; its pattern is as written", () => {
+    expect(id("export function f(a) { return /a/gi.test(a); }")).toBe(
+      id("export function f(a) { return /a/ig.test(a); }"),
+    );
+    expect(id("export function f(a) { return /\\x41/.test(a); }")).not.toBe(
+      id("export function f(a) { return /A/.test(a); }"),
+    );
   });
 });

@@ -28,6 +28,7 @@ import {
   declaredNamesOf,
   emitTypeScript,
   graphIdentity,
+  graphRoot,
   inferTypes,
   isWellFormed,
   nondeterministicObservations,
@@ -57,6 +58,11 @@ export interface SharedImplementation {
   readonly structure: Uint8Array;
   /** The graph identity, as the submitter computed it. */
   readonly identity: string;
+  /**
+   * The graph's root, as the submitter computed it (#1306): the identity, the links and the format
+   * version, committed to. A block's root is computed from it, so the graph cannot be swapped.
+   */
+  readonly root: string;
   readonly lifterVersion?: number;
   readonly links: readonly StoredLink[];
   readonly evidence: readonly ConformanceVector[];
@@ -280,6 +286,12 @@ function decodeAndInspect(impl: SharedImplementation, maxBytes: number): DucGrap
   if (identity !== impl.identity) {
     throw new Refusal("integrity", `the graph's identity is ${identity}, not ${impl.identity}`);
   }
+  // The root commits to the links and the format version too (#1306): a link swapped under the same
+  // structure, or a structure claimed in another format, does not hash to the root it came with.
+  const root = graphRoot(identity, impl.links, impl.formatVersion);
+  if (root !== impl.root) {
+    throw new Refusal("integrity", `the graph's root is ${root}, not ${impl.root}`);
+  }
   const spec = specHash(impl.spec);
   if (spec !== impl.specHash) {
     throw new Refusal("integrity", `the contract's hash is ${spec}, not ${impl.specHash}`);
@@ -365,8 +377,7 @@ function scriptOf(graph: DucGraph, name: string): string {
   const code = emitTypeScript(graph, undefined, { name });
   const lines = code.split("\n").filter((line) => !/^import\s/.test(line));
   const outs = moduleOutputs(graph, lines);
-  if (outs === undefined)
-    return stripTypeScriptTypes(lines.join("\n").replace(/^export\s+/m, ""));
+  if (outs === undefined) return stripTypeScriptTypes(lines.join("\n").replace(/^export\s+/m, ""));
   // A module statement is a function here too: lowering it must not run it (#1292). It returns
   // its one declared value, or the list of them.
   const body = lines.filter((line) => !/^export\b/.test(line)).join("\n");

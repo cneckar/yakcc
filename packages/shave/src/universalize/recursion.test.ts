@@ -1461,3 +1461,93 @@ function buildSliceOpen(): string {
     expect(tree.leafCount).toBeGreaterThan(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ThrowStatement, and call / new arguments that are not function-like
+// (DEC-SLICER-THROW-AND-ARGUMENTS-001)
+// ---------------------------------------------------------------------------
+
+describe("decompose — throw statements and non-function arguments (DEC-SLICER-THROW-AND-ARGUMENTS-001)", () => {
+  function hasSourceContaining(
+    node: { source: string; kind: string; children?: readonly unknown[] },
+    text: string,
+  ): boolean {
+    if (node.source.includes(text)) return true;
+    if (node.kind === "branch")
+      return (
+        node.children as { source: string; kind: string; children?: readonly unknown[] }[]
+      ).some((c) => hasSourceContaining(c, text));
+    return false;
+  }
+
+  /**
+   * The self-shave bootstrap failed on this shape in @yakcc/duc/emit-wasm-gc.ts: a throw whose
+   * error is built from a template literal with two inline ternaries. ThrowStatement had no
+   * branch, and NewExpression descended only into function-like arguments, so the non-atomic
+   * throw had no children and recurse() threw DidNotReachAtomError.
+   */
+  it("throw new E(`…${a ? b : c}…${d ? e : f}…`) decomposes (was DidNotReachAtomError)", async () => {
+    const src = `
+declare class WasmEmitError extends Error {}
+declare const what: string;
+declare const got: string;
+declare const want: string;
+
+function check(): void {
+  throw new WasmEmitError(
+    \`\${what} is \${got === "str" ? "a string" : "not a string"}, and a \${want === "str" ? "string" : "number"} is needed\`,
+  );
+}
+`.trim();
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.leafCount).toBeGreaterThan(0);
+    expect(hasSourceContaining(tree.root, 'got === "str" ? "a string" : "not a string"')).toBe(
+      true,
+    );
+    expect(hasSourceContaining(tree.root, 'want === "str" ? "string" : "number"')).toBe(true);
+  });
+
+  it("the same template as a plain call's argument decomposes", async () => {
+    const src = `
+declare function report(s: string): void;
+declare const a: boolean;
+declare const b: boolean;
+
+function run(): void {
+  report(\`\${a ? "x" : "y"} and \${b ? "p" : "q"}\`);
+}
+`.trim();
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.leafCount).toBeGreaterThan(0);
+    expect(hasSourceContaining(tree.root, 'a ? "x" : "y"')).toBe(true);
+  });
+
+  it("new with conditional arguments decomposes", async () => {
+    const src = `
+declare class Pair { constructor(a: number, b: number); }
+declare const p: boolean;
+declare const q: boolean;
+declare const r: boolean;
+
+function make(): Pair {
+  return new Pair(p ? (q ? 1 : 2) : 3, r ? 4 : 5);
+}
+`.trim();
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+
+  it("a bare throw of a conditional decomposes", async () => {
+    const src = `
+declare const a: boolean;
+declare const b: boolean;
+declare const c: boolean;
+
+function fail(): never {
+  throw a ? (b ? new Error("ab") : new Error("a")) : c ? new Error("c") : new Error("none");
+}
+`.trim();
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+});

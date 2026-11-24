@@ -100,7 +100,8 @@ export function compileRuntime(
     ...(options.cflags ?? []),
     "-std=c11",
     "-O2",
-    "-fPIC",
+    // Position-independent code is an ELF and Mach-O notion; a COFF target has no -fPIC (#1296).
+    ...(triple.includes("windows") ? [] : ["-fPIC"]),
     "-c",
     RUNTIME_SOURCE,
     "-o",
