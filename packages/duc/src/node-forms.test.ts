@@ -260,3 +260,32 @@ describe("a function declaration reading a class declared in its scope (#1330)",
     );
   });
 });
+
+describe("an object rest (#1330)", () => {
+  it("lowers to the runtime's call and lifts back to the same operation", () => {
+    agrees(
+      `export function f(o: any) {
+  const { prototype, a, ...rest } = o;
+  return [Object.keys(rest), rest.b, prototype === undefined, a];
+}`,
+      [[{ prototype: 1, a: 2, b: 3, c: 4 }], [{ b: 9 }], [null]],
+    );
+  });
+});
+
+describe("a join of two equal arms, one on a side of a branch (#1330)", () => {
+  it("emits, runs and round-trips", () => {
+    agrees(
+      `export function f(p: any, a: number) {
+  if (p) { if (!(p.s > 0)) { throw new RangeError('s'); } }
+  if (p) { return [a, p.s]; }
+  return [a];
+}`,
+      [
+        [null, 1],
+        [{ s: 2 }, 3],
+        [{ s: -1 }, 4],
+      ],
+    );
+  });
+});

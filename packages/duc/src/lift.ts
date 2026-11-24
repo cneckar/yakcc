@@ -3364,6 +3364,29 @@ class Lifter {
       return made as ValueId;
     }
     if (Node.isCallExpression(node) && !this.optional(node)) {
+      // `__yakccObjectRest(o, ["a", ..])`, the runtime's, as the TypeScript lowering writes an
+      // object rest: the `ObjectRest` operation it stands for (#1330).
+      const callee = node.getExpression();
+      const [restOf, takenList] = node.getArguments();
+      if (
+        Node.isIdentifier(callee) &&
+        callee.getText() === OBJECT_REST_PRIMITIVE &&
+        this.isPlatformName(OBJECT_REST_PRIMITIVE) &&
+        node.getArguments().length === 2 &&
+        restOf !== undefined &&
+        Node.isArrayLiteralExpression(takenList) &&
+        takenList.getElements().every((e) => Node.isStringLiteral(e))
+      ) {
+        const taken = takenList
+          .getElements()
+          .map((e) => (e as import("ts-morph").StringLiteral).getLiteralValue());
+        return this.emit("op", [this.liftExpr(restOf)], 1, {
+          origin: { kind: "Destructure", text: truncate(node.getText()) },
+          label: `ObjectRest:${JSON.stringify(taken)}`,
+        })[0] as ValueId;
+      }
+    }
+    if (Node.isCallExpression(node) && !this.optional(node)) {
       // `Math.sin(x)`, with `Math` the platform's: the operation `Math.sin`, a reference to the atom
       // that implements it (DEC-DUC-OPERATIONS-AS-ATOMS-001, #1362). Pure, as `+` is.
       const op = this.operationCall(node);
@@ -5497,7 +5520,9 @@ const TRY_PRIMITIVE = "__yakccTry";
 const ASYNC_TRY_PRIMITIVE = "__yakccTryAsync";
 const GEN_TRY_PRIMITIVE = "__yakccTryGen";
 const ASYNC_GEN_TRY_PRIMITIVE = "__yakccTryAsyncGen";
+const OBJECT_REST_PRIMITIVE = "__yakccObjectRest";
 const RUNTIME_PRIMITIVES = new Set([
+  OBJECT_REST_PRIMITIVE,
   TRY_PRIMITIVE,
   ASYNC_TRY_PRIMITIVE,
   GEN_TRY_PRIMITIVE,

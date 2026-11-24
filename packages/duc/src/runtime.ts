@@ -104,3 +104,24 @@ export async function __yakccTryAsync<T>(
     }
   }
 }
+
+/**
+ * `const { a, b, ...rest } = o`'s rest (#1330): o's own enumerable properties, string and symbol
+ * keyed, except the keys taken. The TypeScript lowering writes the `ObjectRest` operation as this
+ * call, and the lifter reads the call back as the operation.
+ */
+export function __yakccObjectRest(
+  o: unknown,
+  taken: readonly string[],
+): Record<PropertyKey, unknown> {
+  if (o === null || o === undefined) throw new TypeError(`Cannot destructure '${o}'`);
+  const from = Object(o) as Record<PropertyKey, unknown>;
+  const out: Record<PropertyKey, unknown> = {};
+  for (const k of Reflect.ownKeys(from))
+    if (
+      !(typeof k === "string" && taken.includes(k)) &&
+      Object.prototype.propertyIsEnumerable.call(from, k)
+    )
+      out[k] = from[k];
+  return out;
+}
