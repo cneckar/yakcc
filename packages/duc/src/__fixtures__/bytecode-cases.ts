@@ -12,6 +12,7 @@ import {
   BIGNUM_ATOMS,
   COLLECTION_ATOMS,
   DYNAMIC_ATOMS,
+  METHOD_ATOMS,
   RUNTIME_ATOMS,
   RUNTIME_PRIMITIVES_JS,
 } from "../wasm-runtime-atoms.js";
@@ -66,6 +67,7 @@ export const ALL_ATOMS = {
   ...BIGNUM_ATOMS,
   ...DYNAMIC_ATOMS,
   ...COLLECTION_ATOMS,
+  ...METHOD_ATOMS,
 } as Record<string, { source: string; inputs: readonly string[]; output: string }>;
 
 /**
@@ -330,6 +332,20 @@ export const numericText = fc.oneof(
 );
 
 export const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
+  [
+    "string methods (split, repeat, padStart/End, lastIndexOf, trimStart/End, at, replace/replaceAll with $-patterns and a callback) and array methods (slice, at, lastIndexOf, concat, reverse)",
+    "export function f(s: string, t: string, n: number, xs: unknown[]): unknown { let rep = ''; try { rep = s.repeat(n); } catch (e) { rep = (e as Error).name; } const a: any = xs; const r = [1, 2, 3]; r.reverse(); return [s.split(t), s.split(''), s.split(t, 2), s.split(), rep, s.padStart(n, t), s.padEnd(6, t), s.padStart(5), s.lastIndexOf(t), s.lastIndexOf(t, n), s.trimStart(), s.trimEnd(), s.at(n), s.at(-1), s.replace(t, '[$&]'), s.replaceAll(t, '<$$>'), s.replace(t, (m: string, p: number) => m.length + ':' + p), s.replaceAll('', '-'), a.slice(1), a.slice(-2, n), a.at(-1), a.lastIndexOf(t), a.concat([1, 2], s), r]; }",
+    ["string", "string", "number", "unknown[]"],
+    "unknown",
+    fc.tuple(
+      text,
+      fc.oneof(text, fc.constantFrom("", "a", " ")),
+      fc.oneof(fc.integer({ min: -2, max: 6 }), fc.constantFrom(Number.NaN, 1.5)),
+      fc.array(fc.oneof(fc.integer({ min: -2, max: 2 }), fc.constantFrom("a", "", null)), {
+        maxLength: 4,
+      }),
+    ),
+  ],
   [
     "Map and Set (SameValueZero keys, -0, NaN, iteration, forEach, delete, size), and methods of receivers of any kind (arrays, strings)",
     "export function f(xs: unknown[], k: unknown, s: string): unknown { const m = new Map(); m.set('a', 1); m.set(k, s); m.set(NaN, 'nan'); m.set(-0, 'zero'); const st = new Set([1, 2, 2, s, NaN, NaN]); const out: unknown[] = []; m.forEach((v: unknown, key: unknown) => out.push([key, v])); const entries: unknown[] = []; for (const e of m) entries.push(e); const vals: unknown[] = []; for (const v of st) vals.push(v); const ks: unknown[] = []; for (const q of m.keys()) ks.push(q); const anyArr: any = xs; anyArr.push(s); const popped = anyArr.pop(); const sAny: any = s; return [m.get('a'), m.get(k), m.get(NaN), m.get(0), m.has(k), m.size, m.delete('a'), m.delete('zz'), m.size, st.size, st.has(NaN), st.has('x'), out, entries, vals, ks, String(m), JSON.stringify(m), Object.keys(st), m instanceof Map, st instanceof Set, m instanceof Error, popped, anyArr.length, anyArr.indexOf(s), anyArr.includes(NaN), anyArr.join('-'), anyArr.map((x: unknown) => typeof x), sAny.slice(1), sAny.indexOf('a'), sAny.trim(), sAny.charCodeAt(0)]; }",
