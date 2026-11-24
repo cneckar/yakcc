@@ -642,6 +642,9 @@ importers:
       '@yakcc/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@yakcc/discovery-search':
+        specifier: workspace:*
+        version: link:../discovery-search
       '@yakcc/hooks-base':
         specifier: workspace:*
         version: link:../hooks-base

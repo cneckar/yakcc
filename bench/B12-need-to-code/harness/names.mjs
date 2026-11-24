@@ -446,6 +446,8 @@ export function buildNames(defs) {
         .map((c) => c.slice(c.lastIndexOf("#") + 1))
         .sort(),
       closureSize: closure.size,
+      // The closure as "file#name" keys of top-level definitions, sorted (for module indexes).
+      closureKeys: [...closure].sort(),
       closureNodes: all.reduce((n, x) => n + x.nodes, 0),
       // Source characters of the definition and its closure: what writing it would take.
       closureChars: all.reduce((n, x) => n + x.chars, 0),
