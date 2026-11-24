@@ -31,10 +31,13 @@ export function link(
   lowered: boolean,
   memory: CMemory = createCMemory(),
   units: readonly Pick<ShavedUnit, "statics">[] = [],
+  /** More leaves (the system call and the thread pointer: createCSystem). */
+  extra: Readonly<Record<string, Fn>> = {},
 ): Record<string, Fn> {
   const leaves = {
     ...(C_LEAVES_JS as unknown as Record<string, Fn>),
     ...(memory.leaves as unknown as Record<string, Fn>),
+    ...extra,
   };
   const env: Record<string, Fn> = { ...leaves };
   const names = [...Object.keys(leaves), ...atoms.keys()];

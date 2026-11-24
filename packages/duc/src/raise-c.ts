@@ -361,10 +361,12 @@ function convert(e: string, from: CType, to: CType): string {
     if (to.k === "ptr") throw new RaiseCError("a conversion of a double to a pointer");
     return to.k === "i64" ? `__ykF64ToI64(${e})` : `__ykU64(__ykF64ToI64(${e}))`;
   }
-  // A pointer is an address (an integer below 2^53); to and from integers, its value.
-  if (to.k === "ptr") return wide(from) ? `__ykBigToF64(__ykU64(${e}))` : e;
+  // A pointer is an address (an integer below 2^53); to and from integers, its value. The high
+  // addresses (MAP_FAILED, (void *)-1) are negative, whatever integer type they came from.
+  if (to.k === "ptr") return wide(from) ? `__ykBigToF64(__ykI64(${e}))` : e;
   if (from.k === "ptr") {
-    if (to.k === "i64" || to.k === "u64") return `__ykNumToBig(${e})`;
+    if (to.k === "i64") return `__ykNumToBig(${e})`;
+    if (to.k === "u64") return `__ykU64(__ykNumToBig(${e}))`;
     if (to.k === "i32") return `(${e} | 0)`;
     if (to.k === "u32") return `(${e} >>> 0)`;
     if (narrow(to)) return toNarrow(`(${e} | 0)`, to);
@@ -677,7 +679,7 @@ function loadAt(a: string, t: CType): string {
     case "bool":
       return `(__ykLoad8(${a}) !== 0)`;
     case "ptr":
-      return `__ykBigToF64(__ykLoad64(${a}))`;
+      return `__ykBigToF64(__ykI64(__ykLoad64(${a})))`;
     default:
       throw new RaiseCError(`a load of ${t.k} (a ${t.k === "rec" ? "struct by value" : t.k})`);
   }
@@ -705,7 +707,7 @@ function storeAt(a: string, t: CType, v: string): string {
     case "bool":
       return `(__ykStore8(${a}, (${v}) ? 1 : 0) !== 0)`;
     case "ptr":
-      return `__ykBigToF64(__ykStore64(${a}, __ykNumToBig(${v})))`;
+      return `__ykBigToF64(__ykI64(__ykStore64(${a}, __ykNumToBig(${v}))))`;
     default:
       throw new RaiseCError(`a store of ${t.k}`);
   }
@@ -1384,7 +1386,7 @@ function raiseBody(
         const t = typeOf(e);
         const list = temp({ k: "f64" });
         const at = temp({ k: "f64" });
-        return `((${list} = ${expr(k0)}), (${at} = __ykBigToF64(__ykLoad64(${list}))), __ykStore64(${list}, __ykNumToBig(${at} + 8)), ${loadAt(at, t)})`;
+        return `((${list} = ${expr(k0)}), (${at} = __ykBigToF64(__ykI64(__ykLoad64(${list})))), __ykStore64(${list}, __ykNumToBig(${at} + 8)), ${loadAt(at, t)})`;
       }
       case "InitListExpr": {
         const t = typeOf(e);
@@ -1411,18 +1413,30 @@ function raiseBody(
     if (s0.kind === "CompoundLiteralExpr") {
       const init = (s0.inner ?? [])[0];
       steps.push(...initialize(d, t, init).map((x) => `(${x.replace(/;$/, "")})`));
-    } else {
-      const sp = place(s0);
-      if (sp.k !== "mem") throw new RaiseCError("a record copied from one not in memory");
-      const from = temp({ k: "f64" });
-      steps.push(`(${from} = ${sp.addr})`);
-      const size = sizeOf(t);
-      for (let o = 0; o + 8 <= size; o += 8)
-        steps.push(`__ykStore64((${d} + ${o}), __ykLoad64((${from} + ${o})))`);
-      for (let o = size - (size % 8); o < size; o++)
-        steps.push(`__ykStore8((${d} + ${o}), __ykLoad8((${from} + ${o})))`);
-    }
+    } else steps.push(...copyFrom(d, t, s0));
     return `(${steps.join(", ")}, undefined)`;
+  };
+  /** Bytes of `size` copied from `from` to `to` (8 at a time, then 1): expression steps. */
+  const copyBytes = (to: string, from: string, size: number): string[] => {
+    const steps: string[] = [];
+    for (let o = 0; o + 8 <= size; o += 8)
+      steps.push(`__ykStore64((${to} + ${o}), __ykLoad64((${from} + ${o})))`);
+    for (let o = size - (size % 8); o < size; o++)
+      steps.push(`__ykStore8((${to} + ${o}), __ykLoad8((${from} + ${o})))`);
+    return steps;
+  };
+  /**
+   * A record value (an lvalue, or a call that returns one: the address of a fresh copy, freed once
+   * copied) copied to `to`: expression steps.
+   */
+  const copyFrom = (to: string, t: CType, src: ClangNode): string[] => {
+    const s0 = stripCasts(src);
+    const from = temp({ k: "f64" });
+    if (s0.kind === "CallExpr")
+      return [`(${from} = ${expr(s0)})`, ...copyBytes(to, from, sizeOf(t)), `__ykFree(${from})`];
+    const sp = place(s0);
+    if (sp.k !== "mem") throw new RaiseCError("a record copied from one not in memory");
+    return [`(${from} = ${sp.addr})`, ...copyBytes(to, from, sizeOf(t))];
   };
   /** Stores that initialize an object in memory at `addr` from an initializer (zero-filled). */
   const initialize = (addr: string, t: CType, given: ClangNode | undefined): string[] => {
@@ -1451,8 +1465,9 @@ function raiseBody(
     if (t.k === "rec") {
       const l = layoutOf(t);
       const s = init === undefined ? undefined : stripParens(init);
+      // A record initialized from another (a copy, or a call returning one): its bytes.
       if (s !== undefined && s.kind !== "InitListExpr")
-        throw new RaiseCError(`a record initialized by ${s.kind}`);
+        return [`(${copyFrom(addr, t, s).join(", ")});`];
       const items = s === undefined ? [] : initItems(s);
       const out: string[] = [];
       let i = 0;
@@ -1669,9 +1684,25 @@ function raiseBody(
           push(`let ${declName(d)} = ${init !== undefined ? expr(init) : zeroOf(t)};`);
         }
         return;
-      case "ReturnStmt":
-        returnLine(kids.length > 0 ? expr(kids[0] as ClangNode) : undefined);
+      case "ReturnStmt": {
+        const v = kids[0];
+        if (v !== undefined && result.k === "rec") {
+          // A record returned: a fresh copy's address (the caller copies it and frees it).
+          const out = temp({ k: "f64" });
+          const s0 = stripCasts(v);
+          const lit = s0.kind === "CompoundLiteralExpr" ? (s0.inner ?? [])[0] : s0;
+          const fill =
+            s0.kind === "InitListExpr" || s0.kind === "CompoundLiteralExpr"
+              ? initialize(out, result, lit).map((x) => `(${x.replace(/;$/, "")})`)
+              : copyFrom(out, result, s0);
+          returnLine(
+            `((${out} = __ykAlloc(${sizeOf(result)}, ${alignOf(result)})), ${fill.join(", ")}, ${out})`,
+          );
+          return;
+        }
+        returnLine(v !== undefined ? expr(v) : undefined);
         return;
+      }
       case "IfStmt": {
         const [c, then, otherwise] = kids as [ClangNode, ClangNode, ClangNode?];
         // A goto from the else branch into the start of the then branch (`if (a) { L: .. } else
@@ -1813,7 +1844,13 @@ function raiseBody(
 }
 
 const tsType = (t: CType): string =>
-  t.k === "f64" || t.k === "f32" || t.k === "i32" || t.k === "u32" || narrow(t) || t.k === "ptr"
+  t.k === "f64" ||
+  t.k === "f32" ||
+  t.k === "i32" ||
+  t.k === "u32" ||
+  narrow(t) ||
+  t.k === "ptr" ||
+  t.k === "rec"
     ? "number"
     : wide(t)
       ? "bigint"
@@ -1929,6 +1966,10 @@ export interface ShavedUnit {
    * as `unit:function.name`. Only the unit that defines one has its definition.
    */
   readonly statics: ReadonlyMap<string, StaticDef>;
+  /** Every static key the atoms reference (defined here or in another unit). */
+  readonly staticRefs: ReadonlySet<string>;
+  /** The unit's source file. */
+  readonly file: string;
 }
 
 /**
@@ -1943,6 +1984,8 @@ export function shaveCUnit(
   clang = "clang++",
   /** The unit's name in the keys of its internal statics (by default, its file's base name). */
   unit: string = file.split("/").pop() ?? file,
+  /** Globals to define as statics even if no function here uses them (another unit's state). */
+  defineStatics: readonly string[] = [],
 ): ShavedUnit {
   const roots = clangFunctions(file, filters, args, clang);
   const dumps = new Map<string, ClangNode[]>();
@@ -2149,7 +2192,26 @@ export function shaveCUnit(
       }
     }
   }
-  return { atoms, refused, statics };
+  // Statics another unit uses and this one defines.
+  if (defineStatics.length > 0) {
+    const saved = [unitTypedef, unitLayout, unitLongDouble64] as const;
+    unitTypedef = typedef;
+    unitLayout = layout;
+    unitLongDouble64 = args.includes("-mlong-double-64");
+    try {
+      for (const name of defineStatics)
+        staticHook({ kind: "VarDecl", name, type: { qualType: "" } } as ClangNode);
+    } finally {
+      [unitTypedef, unitLayout, unitLongDouble64] = saved;
+    }
+  }
+  return {
+    file,
+    atoms,
+    refused,
+    statics,
+    staticRefs: new Set([...staticKeys.values()].filter((k): k is string => k !== undefined)),
+  };
 }
 
 /**
@@ -2461,8 +2523,17 @@ export function createCMemory() {
         return r;
       }
     }
+    // Say which region is nearest below, and why the access is outside it.
+    let near = "";
+    for (let i = regions.length - 1; i >= 0; i--) {
+      const r = regions[i] as Region;
+      if (r.base <= a) {
+        near = ` (nearest region 0x${r.base.toString(16)}+${r.bytes.length}${r.live ? "" : ", freed"}${r.constant ? ", constant" : ""})`;
+        break;
+      }
+    }
     throw new CMemoryTrap(
-      `memory trap: ${write ? "store" : "load"} of ${n} at 0x${a.toString(16)}`,
+      `memory trap: ${write ? "store" : "load"} of ${n} at 0x${a.toString(16)}${near}`,
     );
   };
   const alloc = (size: number, align: number, constant = false): number => {
@@ -2640,3 +2711,105 @@ export function createCMemory() {
 
 /** The names of the memory leaves (DEC-DUC-OPERATIONS-AS-ATOMS-001, #1363). */
 export const C_MEMORY_LEAVES = Object.keys(createCMemory().leaves);
+
+/** A program's exit through the system-call leaf (exit, exit_group): its status. */
+export class CExit extends Error {
+  constructor(readonly status: number) {
+    super(`exit ${status}`);
+  }
+}
+
+/**
+ * The system-call leaf and the thread pointer as JavaScript (#1365, layer 0), over a memory from
+ * createCMemory: x86-64 Linux's numbers, for the calls musl makes on behalf of malloc, stdio,
+ * time and exit. Anonymous mmap/munmap are regions of the memory (brk always fails, as musl
+ * allows, so malloc maps); write and writev go to `io.write`; anything else is -ENOSYS. A target
+ * implements the same leaf with its system-call instruction.
+ */
+export function createCSystem(
+  memory: ReturnType<typeof createCMemory>,
+  io: {
+    readonly write?: (fd: number, bytes: Uint8Array) => void;
+    /** The clock, in nanoseconds since the epoch (default: the host's). */
+    readonly now?: () => bigint;
+  } = {},
+) {
+  const { leaves } = memory;
+  const ENOSYS = -38n;
+  let tp: number | undefined;
+  const write = (fd: number, a: number, n: number): bigint => {
+    if (n > 0) io.write?.(fd, memory.get(a, n));
+    return BigInt(n);
+  };
+  const call = (nr: bigint, a: bigint, b: bigint, c: bigint, _d: bigint, e: bigint): bigint => {
+    const n = (x: bigint): number => Number(BigInt.asIntN(64, x));
+    switch (n(nr)) {
+      case 1: // write(fd, buf, count)
+        return write(n(a), n(b), n(c));
+      case 20: {
+        // writev(fd, iov, iovcnt): each iovec is { base, len }
+        let total = 0n;
+        for (let i = 0; i < n(c); i++) {
+          const base = Number(leaves.__ykLoad64(n(b) + 16 * i));
+          const len = Number(leaves.__ykLoad64(n(b) + 16 * i + 8));
+          total += write(n(a), base, len);
+        }
+        return total;
+      }
+      case 9: // mmap(addr, length, prot, flags, fd, offset): anonymous only
+        if (n(e) !== -1) return ENOSYS;
+        // Whole pages, as the kernel maps them: mallocng uses a mapping's last page to its end.
+        return BigInt(leaves.__ykAlloc(Math.ceil(n(b) / 4096) * 4096, 4096));
+      case 11: // munmap: a whole region is freed; a part of one stays (nothing reads it again)
+        return 0n;
+      case 12: // brk: no break; malloc then maps
+        return 0n;
+      case 25: // mremap: not offered; realloc copies instead
+        return -12n;
+      case 28: // madvise
+      case 3: // close
+      case 14: // rt_sigprocmask
+        return 0n;
+      case 16: // ioctl: no terminal
+        return -25n;
+      case 8: // lseek: not seekable
+        return -29n;
+      case 39: // getpid
+      case 186: // gettid
+        return 1n;
+      case 228: {
+        // clock_gettime(clock, timespec)
+        const t = io.now?.() ?? BigInt(Date.now()) * 1000000n;
+        leaves.__ykStore64(n(b), t / 1000000000n);
+        leaves.__ykStore64(n(b) + 8, t % 1000000000n);
+        return 0n;
+      }
+      case 60: // exit
+      case 231: // exit_group
+        throw new CExit(n(a));
+      default:
+        return ENOSYS;
+    }
+  };
+  return {
+    leaves: {
+      __yk_syscall: (
+        nr: bigint,
+        a: bigint,
+        b: bigint,
+        c: bigint,
+        d: bigint,
+        e: bigint,
+        _f: bigint,
+      ) => call(nr, a, b, c, d, e),
+      /** The thread's control block: zeroed, its first word its own address. */
+      __yk_tp: (): bigint => {
+        if (tp === undefined) {
+          tp = leaves.__ykAlloc(4096, 64);
+          leaves.__ykStore64(tp, BigInt(tp));
+        }
+        return BigInt(tp);
+      },
+    },
+  };
+}
