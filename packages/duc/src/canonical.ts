@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { blake3 } from "@noble/hashes/blake3.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Canonical forms for DUC graphs (P1, #1275).
@@ -810,5 +812,6 @@ function computeIdentity(g: DucGraph): string {
     ...(canon.branches !== undefined ? { branches: canon.branches } : {}),
     ...(g.mode !== undefined ? { mode: g.mode } : {}),
   };
-  return createHash("sha256").update(canonicalJson(structure)).digest("hex");
+  // BLAKE3, as every other content address in yakcc (#1306).
+  return bytesToHex(blake3(new TextEncoder().encode(canonicalJson(structure))));
 }

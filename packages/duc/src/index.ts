@@ -31,7 +31,15 @@ export { isWellFormed } from "./wellformed.js";
 
 export type { LiftOptions } from "./lift.js";
 export type { AtomShape } from "./lift.js";
-export { DECLARES, DucLiftError, atomShape, declaredNamesOf, liftAtom } from "./lift.js";
+export {
+  COMPLETES,
+  DECLARES,
+  DucLiftError,
+  atomShape,
+  completionOf,
+  declaredNamesOf,
+  liftAtom,
+} from "./lift.js";
 export type { LiftFidelity } from "./fidelity.js";
 export {
   graphFreeNames,
@@ -43,7 +51,14 @@ export {
 export type { EmitSignature } from "./emit-ts.js";
 export { EmitError, emitTypeScript } from "./emit-ts.js";
 export type { PackedGraph, StoredLink } from "./store.js";
-export { GRAPH_FORMAT_VERSION, LIFTER_VERSION, packGraph, unpackGraph } from "./store.js";
+export {
+  GRAPH_FORMAT_VERSION,
+  LIFTER_VERSION,
+  ducBlockRoot,
+  graphRoot,
+  packGraph,
+  unpackGraph,
+} from "./store.js";
 export { canonicalizeGraph, graphIdentity } from "./canonical.js";
 
 export type { DiamondSupport, InfluenceIndex, NodeSummary, WitnessTerm } from "./influence.js";

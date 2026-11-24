@@ -133,6 +133,30 @@ function functionsWithin(node: Node): Node[] {
 export const DECLARES = "declares:";
 
 /** The names a module statement's graph declares, in order, when it is one (#1290, #1292). */
+/**
+ * The label prefix of a fragment's one result when the fragment can return (#1297): its completion
+ * record. The inputs are whether it returned, the value it returned, then its declared values, in
+ * the order the label names them.
+ */
+export const COMPLETES = "completes:";
+
+/** The two module names a completion's TypeScript form gives the returned flag and the value. */
+export const RETURNED_NAME = "__yakccReturned";
+export const RETURN_VALUE_NAME = "__yakccReturnValue";
+
+/** A fragment's completion, when its one result is a completion record: the names it declares. */
+export function completionOf(graph: {
+  readonly nodes: readonly { readonly outputs: readonly string[]; readonly label?: string }[];
+  readonly obs: readonly string[];
+}): string[] | undefined {
+  if (graph.obs.length !== 1) return undefined;
+  const node = graph.nodes.find((n) => n.outputs.includes(graph.obs[0] as string));
+  const label = node?.label;
+  return label?.startsWith(COMPLETES) === true
+    ? (JSON.parse(label.slice(COMPLETES.length)) as string[])
+    : undefined;
+}
+
 export function declaredNamesOf(graph: {
   readonly nodes: readonly { readonly outputs: readonly string[]; readonly label?: string }[];
   readonly obs: readonly string[];
@@ -417,6 +441,8 @@ class Lifter {
   private bindings = new Set<string>();
   /** This graph is a derived class's constructor: `this` is what its `super(..)` call makes. */
   private derived = false;
+  /** The atom is a fragment that can return (#1297): its declared names are joined over its exits. */
+  private completing = false;
 
   private readonly obs: ValueId[] = [];
   /** The atom's function is async or a generator (#1276). */
@@ -536,6 +562,16 @@ class Lifter {
       // No single exported function: lift the top-level statements in one scope,
       // and treat every exported binding's final value as an observation.
       for (const name of cellNames(file)) this.cells.add(name);
+      // A fragment that returns at its top level was sliced from a function body (#1297): it runs in
+      // the function's exit mode, under the return state, and its result is its completion record.
+      const returns = (file as SourceFile)
+        .getDescendantsOfKind(SyntaxKind.ReturnStatement)
+        .some((r) => !r.getAncestors().some(isFunctionLikeNode));
+      if (returns) {
+        this.exitMode = "function";
+        this.completing = true;
+        this.ensureReturnState();
+      }
       // Import declarations are the file's imports (recorded above), not statements it runs.
       this.hoistVars(file);
       // Statements, not syntax-list children: those can include comment trivia.
@@ -550,7 +586,22 @@ class Lifter {
         if (!observed.includes(name)) observed.push(name);
       // One result, naming each declared value (#1292): two names with one value stay two, and a
       // name that is undefined stays one, as a list of results would not keep them.
-      const values = observed.map((name) => this.resolveIdentifier(name));
+      // A completion's TypeScript form names the returned flag and value (emit-ts): read back, they
+      // are the record's first two inputs, as lifting the fragment itself gives them.
+      const emittedCompletion = observed[0] === RETURNED_NAME && observed[1] === RETURN_VALUE_NAME;
+      const named = emittedCompletion ? observed.slice(2) : observed;
+      const values = named.map((name) => this.resolveIdentifier(name));
+      if (returns || emittedCompletion) {
+        const record = returns
+          ? [this.env.get(RETURN_DONE) as ValueId, this.env.get(RETURN_VALUE) as ValueId]
+          : [this.resolveIdentifier(RETURNED_NAME), this.resolveIdentifier(RETURN_VALUE_NAME)];
+        const [completion] = this.emit("op", [...record, ...values], 1, {
+          origin: { kind: "Completes" },
+          label: `${COMPLETES}${JSON.stringify(named)}`,
+        });
+        this.obs.push(completion as ValueId);
+        return;
+      }
       const [declared] = this.emit("op", values, 1, {
         origin: { kind: "Declares" },
         label: `${DECLARES}${JSON.stringify(observed)}`,
@@ -1191,6 +1242,16 @@ class Lifter {
         this.env.set(name, joined as ValueId);
       }
     }
+    // A fragment's names are its results (#1297): one first declared under the guard is its value
+    // where the fragment did not return, and undefined where it did.
+    if (this.completing)
+      for (const [name, elseValue] of elseEnv) {
+        if (before.has(name) || name.startsWith("%")) continue;
+        const [joined] = this.emit("sel", [flag, this.undefinedValue(), elseValue], 1, {
+          origin: { kind: "ExitGuard", text: name },
+        });
+        this.env.set(name, joined as ValueId);
+      }
   }
 
   /** Binds a function declaration to a closure value over the names it reads. */
@@ -2862,10 +2923,11 @@ class Lifter {
       return this.liftObjectLiteral(node);
     }
     if (Node.isTemplateExpression(node)) {
-      // The literal parts are structure; the expressions between them are the inputs.
+      // The literal parts are structure; the expressions between them are the inputs. A part is its
+      // value (cooked), as a string literal's label is: `\x61` and `a` are one part (#1303).
       const parts = [
-        rawTextOf(node.getHead()),
-        ...node.getTemplateSpans().map((span) => rawTextOf(span.getLiteral())),
+        cookedTextOf(node.getHead()),
+        ...node.getTemplateSpans().map((span) => cookedTextOf(span.getLiteral())),
       ];
       const inputs = node.getTemplateSpans().map((span) => this.liftExpr(span.getExpression()));
       return this.emit("op", inputs, 1, {
@@ -2876,16 +2938,22 @@ class Lifter {
     if (Node.isTaggedTemplateExpression(node)) {
       const template = node.getTemplate();
       const inputs = [this.liftExpr(node.getTag())];
-      let parts: string[];
+      // A tag sees each part's value and its raw text (`strings.raw`): the label carries both, the
+      // value null where an escape has none (#1303).
+      const both = (part: Node): [string | null, string] => [
+        hasInvalidEscape(part) ? null : cookedTextOf(part),
+        rawTextOf(part),
+      ];
+      let parts: [string | null, string][];
       if (Node.isTemplateExpression(template)) {
         parts = [
-          rawTextOf(template.getHead()),
-          ...template.getTemplateSpans().map((span) => rawTextOf(span.getLiteral())),
+          both(template.getHead()),
+          ...template.getTemplateSpans().map((span) => both(span.getLiteral())),
         ];
         for (const span of template.getTemplateSpans())
           inputs.push(this.liftExpr(span.getExpression()));
       } else {
-        parts = [rawTextOf(template)];
+        parts = [both(template)];
       }
       return this.emit("op", inputs, 1, {
         origin: { kind: "TaggedTemplate" },
@@ -4101,6 +4169,18 @@ function labelJson(value: unknown): string {
     /\s/g,
     (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
   );
+}
+
+/** A template part's value: its escapes applied, a line break in the source as LF (#1303). */
+function cookedTextOf(part: Node): string {
+  return (part.compilerNode as unknown as { text: string }).text;
+}
+
+/** Whether a tagged template's part has an escape with no value (`\unicode` in a tag). */
+function hasInvalidEscape(part: Node): boolean {
+  // TokenFlags.ContainsInvalidEscape, which TypeScript does not export.
+  const flags = (part.compilerNode as { templateFlags?: number }).templateFlags ?? 0;
+  return (flags & 2048) !== 0;
 }
 
 /** The raw text of a template part, exactly as written (escapes kept). */
