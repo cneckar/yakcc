@@ -918,8 +918,11 @@ class Lifter {
    *   value: an input before the member's closure, evaluated when the class is defined, in member
    *   order. Its entry's name is null.
    *
-   * Undefined when it is not that: a private name, a parameter property, a decorator, or a member
-   * that is not one of these.
+   * - A private name (`#x`) is the member's name: reads and writes of it (`o.#x`) are labelled with
+   *   it, and resolve to the nearest enclosing class that declares it.
+   *
+   * Undefined when it is not that: a parameter property, a decorator, or a member that is not one
+   * of these.
    */
   private liftClass(
     node: import("ts-morph").ClassDeclaration | import("ts-morph").ClassExpression,
@@ -942,7 +945,6 @@ class Lifter {
         )
       )
         return undefined;
-      if (Node.isPrivateIdentifier(m.getNameNode())) return undefined;
       if (!Node.isPropertyDeclaration(m) && m.getBody() === undefined) return undefined;
     }
     // Fields and static blocks are lifted as the methods they mean, and a computed name as an
@@ -977,7 +979,10 @@ class Lifter {
       const nameNode = m.getNameNode();
       // A computed or literal name: the key's value, now, in member order.
       let name: string | null = null;
-      if (Node.isIdentifier(nameNode)) name = nameNode.getText();
+      // A private name (`#x`) is a name, not a key: it is its class's own, resolved where it is
+      // written to the nearest class that declares it.
+      if (Node.isIdentifier(nameNode) || Node.isPrivateIdentifier(nameNode))
+        name = nameNode.getText();
       else
         values.push(
           this.liftExpr(
@@ -1031,7 +1036,7 @@ class Lifter {
       ((Node.isMethodDeclaration(m) ||
         Node.isGetAccessorDeclaration(m) ||
         Node.isSetAccessorDeclaration(m)) &&
-        Node.isIdentifier(m.getNameNode()));
+        (Node.isIdentifier(m.getNameNode()) || Node.isPrivateIdentifier(m.getNameNode())));
     if (members.every(plain)) return members.map((m) => m as FunctionLike);
     const file = node.getSourceFile();
     let text = file.getFullText();
@@ -2914,9 +2919,15 @@ class Lifter {
         origin: { kind: node.getKindName() },
         label: Node.isPrefixUnaryExpression(node) ? token : `post${token}`,
       });
-      // ++/-- on a bound identifier reassigns it. No other unary operator does: `-x` leaves x as it is.
+      // ++/-- writes its operand: a binding is reassigned, a member written (`o.x++`, `o[k]--`,
+      // `this.#n++`), as `x += 1` would. No other unary operator does: `-x` leaves x as it is.
       const steps = token === "++" || token === "--";
-      if (steps && Node.isIdentifier(operand) && this.isBinding(operand.getText()))
+      if (
+        steps &&
+        (Node.isPropertyAccessExpression(operand) || Node.isElementAccessExpression(operand))
+      )
+        this.assignTo(operand, out as ValueId);
+      else if (steps && Node.isIdentifier(operand) && this.isBinding(operand.getText()))
         this.writeBinding(operand.getText(), out as ValueId);
       else if (steps && Node.isIdentifier(operand) && this.env.has(operand.getText())) {
         if (this.cells.has(operand.getText())) this.writeCell(operand.getText(), out as ValueId);
@@ -3240,6 +3251,13 @@ class Lifter {
   private liftBinary(node: import("ts-morph").BinaryExpression): ValueId {
     const op = node.getOperatorToken().getKind();
     const left = node.getLeft();
+    // `#x in o`: whether o has the private name of the nearest class that declares it (#1330).
+    if (op === SyntaxKind.InKeyword && Node.isPrivateIdentifier(left))
+      return this.emit("op", [this.liftExpr(node.getRight())], 1, {
+        origin: { kind: "Binary", text: truncate(node.getText()) },
+        label: `in:${left.getText()}`,
+        heap: true,
+      })[0] as ValueId;
     if (op === SyntaxKind.EqualsToken) {
       const value = this.liftExpr(node.getRight());
       this.assignTo(left, value);

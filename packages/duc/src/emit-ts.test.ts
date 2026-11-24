@@ -36,8 +36,10 @@ describe("emitting TypeScript from the graph (5A)", () => {
     });
   }
 
-  it("refuses an opaque node: a class with a private name has no structure to emit yet", () => {
-    const g = liftAtom("export function f(m: string) { class E { #y = 1; } return new E(); }");
+  it("refuses an opaque node: a class with a parameter property has no structure to emit yet", () => {
+    const g = liftAtom(
+      "export function f(m: string) { class E { constructor(public y: string) {} } return new E(m); }",
+    );
     expect(() => emitTypeScript(g)).toThrow(EmitError);
   });
 
