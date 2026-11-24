@@ -207,6 +207,28 @@ export function parseAtomSource(source: string): { project: Project; file: Sourc
     if (diagnostics.length === 0) {
       project = sf.getProject();
       file = sf;
+      // A fragment of a generator's body yields: outside a generator, `yield* g()` is a name
+      // `yield` times g(), and `yield` is never a name in a module. It is the body of the
+      // generator it was sliced from (#1330), async when it awaits too.
+      const asName = sf
+        .getDescendantsOfKind(SyntaxKind.Identifier)
+        .some((id) => id.getText() === "yield" && isValueRead(id));
+      if (asName) {
+        const generator = new Project({
+          useInMemoryFileSystem: true,
+          compilerOptions: { allowJs: false, noEmit: true, noLib: true, skipLibCheck: true },
+        });
+        const awaits = /\bawait\b/.test(source) ? "async " : "";
+        const body = generator.createSourceFile(
+          "atom.ts",
+          `${awaits}function* __atom__() {\n${source}\n}`,
+          { scriptKind: ScriptKind.TS },
+        );
+        if (generator.getProgram().getSyntacticDiagnostics(body).length === 0) {
+          project = generator;
+          file = body;
+        }
+      }
       break;
     }
     if (index === 0) {
