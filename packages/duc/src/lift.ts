@@ -484,6 +484,11 @@ class Lifter {
   /** The heap token at the start: an operation after it alone needs no ordering edge. */
   private readonly heapStart: ValueId;
 
+  /** Optional links whose chain has been tested, read plainly (#1360). */
+  private readonly plainLinks = new Set<ts.Node>();
+  /** The bases of the chains being lifted, already evaluated (#1360). */
+  private readonly chainBases = new Map<ts.Node, ValueId>();
+
   constructor(private readonly ambient: ReadonlySet<string>) {
     this.heapStart = this.undefinedValue();
     this.env.set(HEAP, this.heapStart);
@@ -766,6 +771,44 @@ class Lifter {
         this.hoisted.add(stmt.compilerNode);
         hoistedNames.add(name);
         progress = true;
+      }
+    }
+    // Function declarations that call one another (#1349): each is a cell from here, and each
+    // declaration writes its cell, before any statement runs, as JavaScript hoists them. A function
+    // that reads a later `let`, `const` or class is still bound where it stands.
+    const waiting = new Map<string, import("ts-morph").FunctionDeclaration>();
+    for (const stmt of stmts) {
+      const name = Node.isFunctionDeclaration(stmt) ? stmt.getName() : undefined;
+      if (name !== undefined && !hoistedNames.has(name) && !this.hoisted.has(stmt.compilerNode))
+        waiting.set(name, stmt as import("ts-morph").FunctionDeclaration);
+    }
+    const blockers = new Map(
+      [...waiting].map(([name, stmt]) => [
+        name,
+        this.readNamesOf(stmt).filter(
+          (read) => read !== name && declared.has(read) && !hoistedNames.has(read),
+        ),
+      ]),
+    );
+    let pruned = true;
+    while (pruned) {
+      pruned = false;
+      for (const [name, reads] of blockers)
+        if (reads.some((read) => !declaredValues.has(read) && !blockers.has(read))) {
+          blockers.delete(name);
+          pruned = true;
+        }
+    }
+    if (blockers.size > 0) {
+      for (const [name, reads] of blockers) {
+        this.hoistCell(name);
+        for (const read of reads) if (!blockers.has(read)) this.hoistCell(read);
+      }
+      for (const [name] of blockers) {
+        const stmt = waiting.get(name) as import("ts-morph").FunctionDeclaration;
+        this.bindFunctionDeclaration(stmt, name);
+        this.hoisted.add(stmt.compilerNode);
+        hoistedNames.add(name);
       }
     }
     // A closure made before a later `var` it reads (`o.f = function () { return K }; … var K = 10`),
@@ -1454,7 +1497,10 @@ class Lifter {
         origin: { kind: "Closure", text: truncate(name) },
         label: this.opaqueLabel("Closure", stmt, new Set([name])),
       })[0] as ValueId);
-    this.env.set(name, value);
+    // A declaration hoisted ahead of the functions it calls, which call it (#1349), writes its cell.
+    if (this.hoistedCells.has(name) && this.cells.has(name) && this.env.has(name))
+      this.writeCell(name, value);
+    else this.env.set(name, value);
   }
 
   /**
@@ -3036,6 +3082,11 @@ class Lifter {
 
   // --- expressions ---
   private liftExpr(node: Node): ValueId {
+    const overridden = this.chainBases.get(node.compilerNode);
+    if (overridden !== undefined) return overridden;
+    // `a?.b.c`: the whole chain short-circuits on its first optional link (#1360).
+    const optionalLink = this.innermostOptionalLink(node);
+    if (optionalLink !== undefined) return this.liftOptionalChain(node, optionalLink);
     if (node.getKind() === SyntaxKind.ThisKeyword) return this.thisValue();
     // `new.target` and `import.meta` are what the platform gives the call or the module, read like
     // a platform primitive by their text (#1173).
@@ -3137,7 +3188,7 @@ class Lifter {
       this.env.set(THIS, made as ValueId);
       return made as ValueId;
     }
-    if (Node.isCallExpression(node) && !node.hasQuestionDotToken()) {
+    if (Node.isCallExpression(node) && !this.optional(node)) {
       // `Math.sin(x)`, with `Math` the platform's: the operation `Math.sin`, a reference to the atom
       // that implements it (DEC-DUC-OPERATIONS-AS-ATOMS-001, #1362). Pure, as `+` is.
       const op = this.operationCall(node);
@@ -3161,7 +3212,7 @@ class Lifter {
           origin: { kind: "PropertyAccess", text: truncate(callee.getText()) },
           label: viaSuper
             ? `super.${callee.getName()}`
-            : `${callee.hasQuestionDotToken() ? "?." : "."}${callee.getName()}`,
+            : `${this.optional(callee) ? "?." : "."}${callee.getName()}`,
         });
         inputs.push(method as ValueId, ...args);
       } else if (callee !== undefined && Node.isElementAccessExpression(callee)) {
@@ -3176,7 +3227,7 @@ class Lifter {
           origin: { kind: "ElementAccess" },
           ...(viaSuper
             ? { label: "super[]" }
-            : callee.hasQuestionDotToken()
+            : this.optional(callee)
               ? { label: "ElementAccess?." }
               : {}),
         });
@@ -3202,7 +3253,7 @@ class Lifter {
         if (callee !== undefined) inputs.push(this.liftExpr(callee));
         inputs.push(...this.liftElements(node.getArguments() as Node[]));
       }
-      const optional = Node.isCallExpression(node) && node.hasQuestionDotToken();
+      const optional = Node.isCallExpression(node) && this.optional(node);
       return this.emit("op", inputs, 1, {
         origin: { kind: node.getKindName(), text: truncate(node.getText()) },
         ...(optional ? { label: `${node.getKindName()}?.` } : {}),
@@ -3228,7 +3279,7 @@ class Lifter {
       // The member name is structure: `o.a` and `o.b` are different reads.
       return this.emit("op", [this.liftExpr(node.getExpression())], 1, {
         origin: { kind: "PropertyAccess", text: truncate(node.getText()) },
-        label: `${node.hasQuestionDotToken() ? "?." : "."}${node.getName()}`,
+        label: `${this.optional(node) ? "?." : "."}${node.getName()}`,
       })[0] as ValueId;
     }
     if (Node.isElementAccessExpression(node)) {
@@ -3238,7 +3289,7 @@ class Lifter {
       ];
       return this.emit("op", inputs, 1, {
         origin: { kind: "ElementAccess" },
-        ...(node.hasQuestionDotToken() ? { label: "ElementAccess?." } : {}),
+        ...(this.optional(node) ? { label: "ElementAccess?." } : {}),
       })[0] as ValueId;
     }
     if (Node.isSpreadElement(node)) {
@@ -3743,7 +3794,7 @@ class Lifter {
    */
   private operationCall(call: CallExpression): string | undefined {
     const callee = call.getExpression();
-    if (!Node.isPropertyAccessExpression(callee) || callee.hasQuestionDotToken()) return undefined;
+    if (!Node.isPropertyAccessExpression(callee) || this.optional(callee)) return undefined;
     const object = callee.getExpression();
     if (!Node.isIdentifier(object) || object.getText() !== "Math") return undefined;
     const args = call.getArguments();
@@ -3762,6 +3813,74 @@ class Lifter {
       name !== this.functionSelf &&
       name !== this.classSelf &&
       (this.ambient.has(name) || RUNTIME_PRIMITIVES.has(name))
+    );
+  }
+
+  /**
+   * Whether a link of a chain is written optional (`?.`) and is still one: a link whose chain has
+   * already been tested by `liftOptionalChain` reads plainly.
+   */
+  private optional(n: Node): boolean {
+    return (
+      (Node.isPropertyAccessExpression(n) ||
+        Node.isElementAccessExpression(n) ||
+        Node.isCallExpression(n)) &&
+      n.hasQuestionDotToken() &&
+      !this.plainLinks.has(n.compilerNode)
+    );
+  }
+
+  /**
+   * For the outermost expression of an optional chain, its optional link nearest the base, when that
+   * link is not the expression itself (`a?.b.c`, `a?.m(1)`, `a?.b?.c`); undefined otherwise. A chain
+   * of one optional link (`a?.b`, `a?.[k]`, `f?.()`) is an operation of its own.
+   */
+  private innermostOptionalLink(node: Node): Node | undefined {
+    const inChain = (n: Node): n is Node & { getExpression(): Node } =>
+      (Node.isPropertyAccessExpression(n) ||
+        Node.isElementAccessExpression(n) ||
+        Node.isCallExpression(n) ||
+        Node.isNonNullExpression(n)) &&
+      (n.compilerNode.flags & ts.NodeFlags.OptionalChain) !== 0;
+    if (!inChain(node)) return undefined;
+    const parent = node.getParent();
+    if (parent !== undefined && inChain(parent) && parent.getExpression() === node)
+      return undefined;
+    let innermost: Node | undefined;
+    for (let at: Node = node; inChain(at); at = at.getExpression())
+      if (this.optional(at)) innermost = at;
+    return innermost === node ? undefined : innermost;
+  }
+
+  /**
+   * An optional chain, as ECMAScript evaluates it (#1360): the base of its first optional link, then
+   * a branch. When the base is null or undefined the chain is undefined and nothing after the base
+   * runs; otherwise the rest of the chain reads the base plainly.
+   */
+  private liftOptionalChain(node: Node, link: Node): ValueId {
+    const baseNode = (link as Node & { getExpression(): Node }).getExpression();
+    const base = this.liftExpr(baseNode);
+    const [nullValue] = this.emit("literal-source", [], 1, {
+      origin: { kind: "NullKeyword", text: "null" },
+      label: "null",
+    });
+    const [isNullish] = this.emit("op", [base, nullValue as ValueId], 1, {
+      origin: { kind: "Binary", text: "==" },
+      label: "==",
+    });
+    return this.liftLazy(
+      isNullish as ValueId,
+      () => this.undefinedValue(),
+      () => {
+        this.plainLinks.add(link.compilerNode);
+        this.chainBases.set(baseNode.compilerNode, base);
+        try {
+          return this.liftExpr(node);
+        } finally {
+          this.plainLinks.delete(link.compilerNode);
+          this.chainBases.delete(baseNode.compilerNode);
+        }
+      },
     );
   }
 

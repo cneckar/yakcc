@@ -67,7 +67,6 @@ describe("lifting Math's functions as operations that reference atoms", () => {
       "export function f(x: number): number { const Math = { sin: (y: number) => y }; return Math.sin(x); }",
       "export function f(xs: number[]): number { return Math.sin(...xs); }",
       "export function f(x: number): number { return Math.sin(x, x); }",
-      "export function f(x: number): number { return Math?.sin(x); }",
       "export function f(x: number): number { return Math.max(x, 1); }",
     ])
       expect(
