@@ -1,0 +1,111 @@
+{
+  "id": "uuid-normalize",
+  "entry": "normalizeUuid",
+  "difficulty": "compose-3+",
+  "atoms": [
+    "uuid-11.1.1:dist/esm/validate.js#validate",
+    "uuid-11.1.1:dist/esm/parse.js#parse",
+    "uuid-11.1.1:dist/esm/stringify.js#unsafeStringify"
+  ],
+  "spec": "Write `export function normalizeUuid(value: string): string` that accepts a UUID written as 32 hexadecimal digits in any letter case, either grouped 8-4-4-4-12 with hyphens or with no hyphens at all, optionally wrapped in braces (`{...}`) or prefixed with `urn:uuid:` (the prefix in any letter case), and returns it as lowercase 8-4-4-4-12 with hyphens. The result must be a valid UUID: version digit (first digit of the third group) 1 to 8 and variant digit (first digit of the fourth group) 8, 9, a or b, or else the nil UUID (all zeros) or the max UUID (all f). Throw a TypeError for anything else, including partial hyphenation, both a brace and a prefix, or surrounding spaces.",
+  "reference": "const VALID = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/;\nexport function normalizeUuid(value: string): string {\n  let s = value;\n  if (/^urn:uuid:/i.test(s)) s = s.slice(9);\n  else if (s.startsWith('{') && s.endsWith('}')) s = s.slice(1, -1);\n  let hex: string;\n  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) hex = s.replace(/-/g, '');\n  else if (/^[0-9a-f]{32}$/i.test(s)) hex = s;\n  else throw new TypeError('invalid UUID: ' + value);\n  hex = hex.toLowerCase();\n  const out = hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);\n  if (!VALID.test(out)) throw new TypeError('invalid UUID: ' + value);\n  return out;\n}",
+  "slice": [
+    {
+      "id": "uuid-parse",
+      "score": 0.86,
+      "ref": {
+        "file": "uuid-11.1.1/dist/esm/parse.js",
+        "name": "parse"
+      },
+      "sourcePkg": "uuid-11.1.1",
+      "text": "function parse(uuid) {\n    if (!validate(uuid)) {\n        throw TypeError('Invalid UUID');\n    }\n    let v;\n    return Uint8Array.of((v = parseInt(uuid.slice(0, 8), 16)) >>> 24, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff, (v = parseInt(uuid.slice(9, 13), 16)) >>> 8, v & 0xff, (v = parseInt(uuid.slice(14, 18), 16)) >>> 8, v & 0xff, (v = parseInt(uuid.slice(19, 23), 16)) >>> 8, v & 0xff, ((v = parseInt(uuid.slice(24, 36), 16)) / 0x10000000000) & 0xff, (v / 0x100000000) & 0xff, (v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff);\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-0bbde2d3c2ddafbd",
+        "sourceFile": "uuid-11.1.1/dist/esm/parse.js",
+        "lineStart": 2,
+        "lineEnd": 8
+      }
+    },
+    {
+      "id": "uuid-unsafe-stringify",
+      "score": 0.85,
+      "ref": {
+        "file": "uuid-11.1.1/dist/esm/stringify.js",
+        "name": "unsafeStringify"
+      },
+      "sourcePkg": "uuid-11.1.1",
+      "text": "export function unsafeStringify(arr, offset = 0) {\n    return (byteToHex[arr[offset + 0]] +\n        byteToHex[arr[offset + 1]] +\n        byteToHex[arr[offset + 2]] +\n        byteToHex[arr[offset + 3]] +\n        '-' +\n        byteToHex[arr[offset + 4]] +\n        byteToHex[arr[offset + 5]] +\n        '-' +\n        byteToHex[arr[offset + 6]] +\n        byteToHex[arr[offset + 7]] +\n        '-' +\n        byteToHex[arr[offset + 8]] +\n        byteToHex[arr[offset + 9]] +\n        '-' +\n        byteToHex[arr[offset + 10]] +\n        byteToHex[arr[offset + 11]] +\n        byteToHex[arr[offset + 12]] +\n        byteToHex[arr[offset + 13]] +\n        byteToHex[arr[offset + 14]] +\n        byteToHex[arr[offset + 15]]).toLowerCase();\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-5c5e56dc309917ff",
+        "sourceFile": "uuid-11.1.1/dist/esm/stringify.js",
+        "lineStart": 6,
+        "lineEnd": 27
+      }
+    },
+    {
+      "id": "uuid-validate",
+      "score": 0.84,
+      "ref": {
+        "file": "uuid-11.1.1/dist/esm/validate.js",
+        "name": "validate"
+      },
+      "sourcePkg": "uuid-11.1.1",
+      "text": "function validate(uuid) {\n    return typeof uuid === 'string' && REGEX.test(uuid);\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-36c8a48f8810eb96",
+        "sourceFile": "uuid-11.1.1/dist/esm/validate.js",
+        "lineStart": 2,
+        "lineEnd": 4
+      }
+    },
+    {
+      "id": "uuid-stringify",
+      "score": 0.82,
+      "ref": {
+        "file": "uuid-11.1.1/dist/esm/stringify.js",
+        "name": "stringify"
+      },
+      "sourcePkg": "uuid-11.1.1",
+      "text": "function stringify(arr, offset = 0) {\n    const uuid = unsafeStringify(arr, offset);\n    if (!validate(uuid)) {\n        throw TypeError('Stringified UUID is invalid');\n    }\n    return uuid;\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-ba74c8e49e9c499e",
+        "sourceFile": "uuid-11.1.1/dist/esm/stringify.js",
+        "lineStart": 28,
+        "lineEnd": 34
+      }
+    },
+    {
+      "id": "uuid-version-fn",
+      "score": 0.74,
+      "ref": {
+        "file": "uuid-11.1.1/dist/esm/version.js",
+        "name": "version"
+      },
+      "sourcePkg": "uuid-11.1.1",
+      "text": "function version(uuid) {\n    if (!validate(uuid)) {\n        throw TypeError('Invalid UUID');\n    }\n    return parseInt(uuid.slice(14, 15), 16);\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-53a7f35bf6f18119",
+        "sourceFile": "uuid-11.1.1/dist/esm/version.js",
+        "lineStart": 2,
+        "lineEnd": 7
+      }
+    },
+    {
+      "id": "b64-to-byte-array",
+      "score": 0.35,
+      "ref": {
+        "file": "base64-js-1.5.1/index.js",
+        "name": "toByteArray"
+      },
+      "sourcePkg": "base64-js-1.5.1",
+      "text": "function toByteArray (b64) {\n  var tmp\n  var lens = getLens(b64)\n  var validLen = lens[0]\n  var placeHoldersLen = lens[1]\n\n  var arr = new Arr(_byteLength(b64, validLen, placeHoldersLen))\n\n  var curByte = 0\n\n  // if there are placeholders, only get up to the last complete 4 chars\n  var len = placeHoldersLen > 0\n    ? validLen - 4\n    : validLen\n\n  var i\n  for (i = 0; i < len; i += 4) {\n    tmp =\n      (revLookup[b64.charCodeAt(i)] << 18) |\n      (revLookup[b64.charCodeAt(i + 1)] << 12) |\n      (revLookup[b64.charCodeAt(i + 2)] << 6) |\n      revLookup[b64.charCodeAt(i + 3)]\n    arr[curByte++] = (tmp >> 16) & 0xFF\n    arr[curByte++] = (tmp >> 8) & 0xFF\n    arr[curByte++] = tmp & 0xFF\n  }\n\n  if (placeHoldersLen === 2) {\n    tmp =\n      (revLookup[b64.charCodeAt(i)] << 2) |\n      (revLookup[b64.charCodeAt(i + 1)] >> 4)\n    arr[curByte++] = tmp & 0xFF\n  }\n\n  if (placeHoldersLen === 1) {\n    tmp =\n      (revLookup[b64.charCodeAt(i)] << 10) |\n      (revLookup[b64.charCodeAt(i + 1)] << 4) |\n      (revLookup[b64.charCodeAt(i + 2)] >> 2)\n    arr[curByte++] = (tmp >> 8) & 0xFF\n    arr[curByte++] = tmp & 0xFF\n  }\n\n  return arr\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-0b4a9bc3a94b112f",
+        "sourceFile": "base64-js-1.5.1/index.js",
+        "lineStart": 53,
+        "lineEnd": 97
+      }
+    }
+  ],
+  "heldOut": "const want = '109156be-c4fb-41ea-b1b4-efe1671c5836';\nfor (const input of [want, want.toUpperCase(), want.replace(/-/g, ''), '{' + want + '}', 'urn:uuid:' + want, 'URN:UUID:' + want.toUpperCase(), '{' + want.replace(/-/g, '') + '}']) {\n  const got = fn(input); if (got !== want) throw new Error('normalizeUuid(' + input + ') = ' + got);\n}\nif (fn('00000000000000000000000000000000') !== '00000000-0000-0000-0000-000000000000') throw new Error('nil');\nif (fn('{FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF}') !== 'ffffffff-ffff-ffff-ffff-ffffffffffff') throw new Error('max');\nfor (const bad of ['', '109156be-c4fb41ea-b1b4-efe1671c5836', '109156bec4fb01eab1b4efe1671c5836', '109156be-c4fb-41ea-71b4-efe1671c5836', ' ' + want, '{urn:uuid:' + want + '}', 'urn:uuid:{' + want + '}', '{' + want, want + '0', 'urn:uuid:']) {\n  let threw = false; try { fn(bad); } catch (e) { threw = e instanceof TypeError; }\n  if (!threw) throw new Error('must throw TypeError for ' + JSON.stringify(bad));\n}"
+}

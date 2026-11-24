@@ -1,5 +1,6 @@
 {
   "id": "safe-filename",
+  "difficulty": "single",
   "spec": "Write `export function sanitizeFilename(name: string): string` that removes every character other than ASCII letters, digits, dot, dash, and underscore, and returns 'untitled' when nothing remains.",
   "reference": "export function sanitizeFilename(name: string): string {\n  const kept = name.replace(/[^A-Za-z0-9._-]/g, '');\n  return kept.length > 0 ? kept : 'untitled';\n}",
   "slice": [

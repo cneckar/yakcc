@@ -1,0 +1,127 @@
+{
+  "id": "sort-versions",
+  "entry": "sortVersions",
+  "difficulty": "compose-3+",
+  "atoms": [
+    "semver-7.8.0:classes/semver.js#compareMain",
+    "semver-7.8.0:classes/semver.js#comparePre",
+    "semver-7.8.0:internal/identifiers.js#compareIdentifiers"
+  ],
+  "spec": "Write `export function sortVersions(versions: readonly string[]): string[]` that returns a new array of semantic versions sorted ascending by SemVer 2.0.0 precedence, without changing the input. A version is MAJOR.MINOR.PATCH (non-negative integers with no leading zeros), then optionally `-` and a pre-release of dot-separated identifiers (each non-empty, of [0-9A-Za-z-], numeric identifiers have no leading zeros), then optionally `+` and build metadata of dot-separated non-empty [0-9A-Za-z-] identifiers. Precedence compares major, minor and patch numerically; a version with a pre-release is lower than the same version without one; pre-releases compare identifier by identifier, numeric identifiers numerically and lower than alphanumeric ones, alphanumeric ones in ASCII order, and a shorter list is lower when all shared identifiers are equal. Build metadata does not affect precedence, and versions of equal precedence keep their input order. Throw a RangeError if any version is invalid (for example `1.0`, `01.0.0` or `v1.0.0`).",
+  "reference": "const RE = /^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$/;\ninterface Parsed { main: number[]; pre: string[]; }\nfunction parse(v: string): Parsed {\n  const m = RE.exec(v);\n  if (!m) throw new RangeError('invalid version: ' + v);\n  return { main: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] ? m[4].split('.') : [] };\n}\nfunction compareIdentifiers(a: string, b: string): number {\n  const an = /^\\d+$/.test(a), bn = /^\\d+$/.test(b);\n  if (an && bn) { const x = Number(a), y = Number(b); return x === y ? 0 : x < y ? -1 : 1; }\n  if (an) return -1;\n  if (bn) return 1;\n  return a === b ? 0 : a < b ? -1 : 1;\n}\nfunction compare(a: Parsed, b: Parsed): number {\n  for (let i = 0; i < 3; i++) if (a.main[i] !== b.main[i]) return a.main[i] < b.main[i] ? -1 : 1;\n  if (a.pre.length === 0 || b.pre.length === 0) return b.pre.length - a.pre.length === 0 ? 0 : a.pre.length === 0 ? 1 : -1;\n  for (let i = 0; ; i++) {\n    if (i >= a.pre.length && i >= b.pre.length) return 0;\n    if (i >= a.pre.length) return -1;\n    if (i >= b.pre.length) return 1;\n    const c = compareIdentifiers(a.pre[i], b.pre[i]);\n    if (c !== 0) return c;\n  }\n}\nexport function sortVersions(versions: readonly string[]): string[] {\n  const parsed = versions.map((v, i) => ({ v, i, p: parse(v) }));\n  parsed.sort((x, y) => compare(x.p, y.p) || x.i - y.i);\n  return parsed.map((x) => x.v);\n}",
+  "slice": [
+    {
+      "id": "semver-compare-pre",
+      "score": 0.88,
+      "ref": {
+        "file": "semver-7.8.0/classes/semver.js",
+        "name": "comparePre"
+      },
+      "sourcePkg": "semver-7.8.0",
+      "text": "  comparePre (other) {\n    if (!(other instanceof SemVer)) {\n      other = new SemVer(other, this.options)\n    }\n\n    // NOT having a prerelease is > having one\n    if (this.prerelease.length && !other.prerelease.length) {\n      return -1\n    } else if (!this.prerelease.length && other.prerelease.length) {\n      return 1\n    } else if (!this.prerelease.length && !other.prerelease.length) {\n      return 0\n    }\n\n    let i = 0\n    do {\n      const a = this.prerelease[i]\n      const b = other.prerelease[i]\n      debug('prerelease compare', i, a, b)\n      if (a === undefined && b === undefined) {\n        return 0\n      } else if (b === undefined) {\n        return 1\n      } else if (a === undefined) {\n        return -1\n      } else if (a === b) {\n        continue\n      } else {\n        return compareIdentifiers(a, b)\n      }\n    } while (++i)\n  }",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-7aa8e11e1135fcf7",
+        "sourceFile": "semver-7.8.0/classes/semver.js",
+        "lineStart": 135,
+        "lineEnd": 166
+      }
+    },
+    {
+      "id": "semver-compare-main",
+      "score": 0.87,
+      "ref": {
+        "file": "semver-7.8.0/classes/semver.js",
+        "name": "compareMain"
+      },
+      "sourcePkg": "semver-7.8.0",
+      "text": "  compareMain (other) {\n    if (!(other instanceof SemVer)) {\n      other = new SemVer(other, this.options)\n    }\n\n    if (this.major < other.major) {\n      return -1\n    }\n    if (this.major > other.major) {\n      return 1\n    }\n    if (this.minor < other.minor) {\n      return -1\n    }\n    if (this.minor > other.minor) {\n      return 1\n    }\n    if (this.patch < other.patch) {\n      return -1\n    }\n    if (this.patch > other.patch) {\n      return 1\n    }\n    return 0\n  }",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-2db874d3d57fa850",
+        "sourceFile": "semver-7.8.0/classes/semver.js",
+        "lineStart": 109,
+        "lineEnd": 133
+      }
+    },
+    {
+      "id": "semver-compare-identifiers",
+      "score": 0.85,
+      "ref": {
+        "file": "semver-7.8.0/internal/identifiers.js",
+        "name": "compareIdentifiers"
+      },
+      "sourcePkg": "semver-7.8.0",
+      "text": "const compareIdentifiers = (a, b) => {\n  if (typeof a === 'number' && typeof b === 'number') {\n    return a === b ? 0 : a < b ? -1 : 1\n  }\n\n  const anum = numeric.test(a)\n  const bnum = numeric.test(b)\n\n  if (anum && bnum) {\n    a = +a\n    b = +b\n  }\n\n  return a === b ? 0\n    : (anum && !bnum) ? -1\n    : (bnum && !anum) ? 1\n    : a < b ? -1\n    : 1\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-f5225623bb7c25fb",
+        "sourceFile": "semver-7.8.0/internal/identifiers.js",
+        "lineStart": 4,
+        "lineEnd": 22
+      }
+    },
+    {
+      "id": "semver-compare",
+      "score": 0.83,
+      "ref": {
+        "file": "semver-7.8.0/classes/semver.js",
+        "name": "compare"
+      },
+      "sourcePkg": "semver-7.8.0",
+      "text": "  compare (other) {\n    debug('SemVer.compare', this.version, this.options, other)\n    if (!(other instanceof SemVer)) {\n      if (typeof other === 'string' && other === this.version) {\n        return 0\n      }\n      other = new SemVer(other, this.options)\n    }\n\n    if (other.version === this.version) {\n      return 0\n    }\n\n    return this.compareMain(other) || this.comparePre(other)\n  }",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-0fc66d8fa117dce2",
+        "sourceFile": "semver-7.8.0/classes/semver.js",
+        "lineStart": 93,
+        "lineEnd": 107
+      }
+    },
+    {
+      "id": "semver-sort",
+      "score": 0.8,
+      "ref": {
+        "file": "semver-7.8.0/functions/sort.js",
+        "name": "sort"
+      },
+      "sourcePkg": "semver-7.8.0",
+      "text": "const sort = (list, loose) => list.sort((a, b) => compareBuild(a, b, loose))",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-aa6a0dac07d25eb0",
+        "sourceFile": "semver-7.8.0/functions/sort.js",
+        "lineStart": 4,
+        "lineEnd": 4
+      }
+    },
+    {
+      "id": "semver-compare-fn",
+      "score": 0.79,
+      "ref": {
+        "file": "semver-7.8.0/functions/compare.js",
+        "name": "compare"
+      },
+      "sourcePkg": "semver-7.8.0",
+      "text": "const compare = (a, b, loose) =>\n  new SemVer(a, loose).compare(new SemVer(b, loose))",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-6511d475a066ab73",
+        "sourceFile": "semver-7.8.0/functions/compare.js",
+        "lineStart": 4,
+        "lineEnd": 5
+      }
+    },
+    {
+      "id": "levenshtein-closest",
+      "score": 0.34,
+      "ref": {
+        "file": "fastest-levenshtein-1.0.16/esm/mod.js",
+        "name": "closest"
+      },
+      "sourcePkg": "fastest-levenshtein-1.0.16",
+      "text": "const closest = (str, arr) => {\n    let min_distance = Infinity;\n    let min_index = 0;\n    for (let i = 0; i < arr.length; i++) {\n        const dist = distance(str, arr[i]);\n        if (dist < min_distance) {\n            min_distance = dist;\n            min_index = i;\n        }\n    }\n    return arr[min_index];\n};",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-7e67e7b5607c95e0",
+        "sourceFile": "fastest-levenshtein-1.0.16/esm/mod.js",
+        "lineStart": 155,
+        "lineEnd": 166
+      }
+    }
+  ],
+  "heldOut": "const input = ['1.0.0', '1.0.0-rc.1', '1.0.0-beta.11', '1.0.0-beta.2', '1.0.0-beta', '1.0.0-alpha.beta', '1.0.0-alpha.1', '1.0.0-alpha', '10.0.0', '2.0.0', '0.9.9', '1.10.0', '1.2.0'];\nconst frozen = input.slice();\nconst got = fn(input);\nconst want = ['0.9.9', '1.0.0-alpha', '1.0.0-alpha.1', '1.0.0-alpha.beta', '1.0.0-beta', '1.0.0-beta.2', '1.0.0-beta.11', '1.0.0-rc.1', '1.0.0', '1.2.0', '1.10.0', '2.0.0', '10.0.0'];\nif (JSON.stringify(got) !== JSON.stringify(want)) throw new Error('sortVersions = ' + JSON.stringify(got));\nif (JSON.stringify(input) !== JSON.stringify(frozen)) throw new Error('the input was changed');\nconst ties = fn(['1.0.0+b', '1.0.0+a', '0.1.0']);\nif (JSON.stringify(ties) !== JSON.stringify(['0.1.0', '1.0.0+b', '1.0.0+a'])) throw new Error('build metadata must not reorder: ' + JSON.stringify(ties));\nconst mixed = fn(['1.0.0-a-1', '1.0.0-9', '1.0.0-10', '1.0.0-A']);\nif (JSON.stringify(mixed) !== JSON.stringify(['1.0.0-9', '1.0.0-10', '1.0.0-A', '1.0.0-a-1'])) throw new Error('identifier order: ' + JSON.stringify(mixed));\nif (fn([]).length !== 0) throw new Error('empty input');\nfor (const bad of ['1.0', '01.0.0', 'v1.0.0', '1.0.0-', '1.0.0-01', '1.0.0+', '1.0.0-a..b']) {\n  let threw = false; try { fn(['1.0.0', bad]); } catch (e) { threw = e instanceof RangeError; }\n  if (!threw) throw new Error('must throw RangeError for ' + bad);\n}"
+}

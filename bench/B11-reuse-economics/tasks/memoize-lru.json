@@ -1,0 +1,78 @@
+{
+  "id": "memoize-lru",
+  "entry": "memoizeLru",
+  "difficulty": "compose-2",
+  "atoms": [
+    "lodash-4.17.21:memoize.js#memoize",
+    "semver-7.8.0:internal/lrucache.js#LRUCache"
+  ],
+  "spec": "Write `export function memoizeLru<A, R>(fn: (arg: A) => R, max: number): ((arg: A) => R) & { size(): number }` that returns a memoized version of the one-argument function `fn`. Results are cached by argument, compared as a Map compares keys. The cache holds at most `max` entries and, when full, evicts the least recently used entry, where both a hit and a store count as a use. A result of `undefined` is cached like any other. `size()` returns the number of cached entries. If `fn` throws, nothing is cached and the error propagates. Throw a RangeError if `max` is not a positive integer.",
+  "reference": "export function memoizeLru<A, R>(fn: (arg: A) => R, max: number): ((arg: A) => R) & { size(): number } {\n  if (!Number.isInteger(max) || max < 1) throw new RangeError('max must be a positive integer');\n  const cache = new Map<A, R>();\n  const memo = ((arg: A): R => {\n    if (cache.has(arg)) {\n      const v = cache.get(arg) as R;\n      cache.delete(arg);\n      cache.set(arg, v);\n      return v;\n    }\n    const v = fn(arg);\n    if (cache.size >= max) cache.delete(cache.keys().next().value as A);\n    cache.set(arg, v);\n    return v;\n  }) as ((arg: A) => R) & { size(): number };\n  memo.size = () => cache.size;\n  return memo;\n}",
+  "slice": [
+    {
+      "id": "lodash-memoize",
+      "score": 0.87,
+      "ref": {
+        "file": "lodash-4.17.21/memoize.js",
+        "name": "memoize"
+      },
+      "sourcePkg": "lodash-4.17.21",
+      "text": "function memoize(func, resolver) {\n  if (typeof func != 'function' || (resolver != null && typeof resolver != 'function')) {\n    throw new TypeError(FUNC_ERROR_TEXT);\n  }\n  var memoized = function() {\n    var args = arguments,\n        key = resolver ? resolver.apply(this, args) : args[0],\n        cache = memoized.cache;\n\n    if (cache.has(key)) {\n      return cache.get(key);\n    }\n    var result = func.apply(this, args);\n    memoized.cache = cache.set(key, result) || cache;\n    return result;\n  };\n  memoized.cache = new (memoize.Cache || MapCache);\n  return memoized;\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-bc1fb2b58f3e1c45",
+        "sourceFile": "lodash-4.17.21/memoize.js",
+        "lineStart": 50,
+        "lineEnd": 68
+      }
+    },
+    {
+      "id": "semver-lru",
+      "score": 0.85,
+      "ref": {
+        "file": "semver-7.8.0/internal/lrucache.js",
+        "name": "LRUCache"
+      },
+      "sourcePkg": "semver-7.8.0",
+      "text": "class LRUCache {\n  constructor () {\n    this.max = 1000\n    this.map = new Map()\n  }\n\n  get (key) {\n    const value = this.map.get(key)\n    if (value === undefined) {\n      return undefined\n    } else {\n      // Remove the key from the map and add it to the end\n      this.map.delete(key)\n      this.map.set(key, value)\n      return value\n    }\n  }\n\n  delete (key) {\n    return this.map.delete(key)\n  }\n\n  set (key, value) {\n    const deleted = this.delete(key)\n\n    if (!deleted && value !== undefined) {\n      // If cache is full, delete the least recently used item\n      if (this.map.size >= this.max) {\n        const firstKey = this.map.keys().next().value\n        this.delete(firstKey)\n      }\n\n      this.map.set(key, value)\n    }\n\n    return this\n  }\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-a86d2e0ef6e80560",
+        "sourceFile": "semver-7.8.0/internal/lrucache.js",
+        "lineStart": 3,
+        "lineEnd": 40
+      }
+    },
+    {
+      "id": "lodash-memoize-capped",
+      "score": 0.72,
+      "ref": {
+        "file": "lodash-4.17.21/_memoizeCapped.js",
+        "name": "memoizeCapped"
+      },
+      "sourcePkg": "lodash-4.17.21",
+      "text": "function memoizeCapped(func) {\n  var result = memoize(func, function(key) {\n    if (cache.size === MAX_MEMOIZE_SIZE) {\n      cache.clear();\n    }\n    return key;\n  });\n\n  var cache = result.cache;\n  return result;\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-80626bd912f980ac",
+        "sourceFile": "lodash-4.17.21/_memoizeCapped.js",
+        "lineStart": 14,
+        "lineEnd": 24
+      }
+    },
+    {
+      "id": "topo-nodes-hash",
+      "score": 0.31,
+      "ref": {
+        "file": "toposort-2.0.2/index.js",
+        "name": "makeNodesHash"
+      },
+      "sourcePkg": "toposort-2.0.2",
+      "text": "function makeNodesHash(arr){\n  var res = new Map()\n  for (var i = 0, len = arr.length; i < len; i++) {\n    res.set(arr[i], i)\n  }\n  return res\n}",
+      "citation": {
+        "merkleRoot": "unregistered-sha256-a07d79f92b5673a5",
+        "sourceFile": "toposort-2.0.2/index.js",
+        "lineStart": 114,
+        "lineEnd": 120
+      }
+    }
+  ],
+  "heldOut": "let calls = [];\nconst f = fn((x) => { calls.push(x); return x === 'u' ? undefined : String(x) + '!'; }, 2);\nconst expect = (got, want, label) => { if (got !== want) throw new Error(label + ': got ' + JSON.stringify(got) + ', want ' + JSON.stringify(want)); };\nexpect(f('a'), 'a!', 'a'); expect(f('a'), 'a!', 'a again'); expect(calls.join(','), 'a', 'a is cached');\nexpect(f('b'), 'b!', 'b'); expect(f('a'), 'a!', 'a hit'); expect(f('c'), 'c!', 'c evicts b');\nexpect(f('a'), 'a!', 'a stays'); expect(f('b'), 'b!', 'b recomputed'); expect(calls.join(','), 'a,b,c,b', 'eviction order');\nexpect(f.size(), 2, 'size');\ncalls = [];\nexpect(f('u'), undefined, 'u'); expect(f('u'), undefined, 'u again'); expect(calls.join(','), 'u', 'undefined is cached');\nconst g = fn((x) => { calls.push(x); return 1; }, 3); calls = [];\ng(NaN); g(NaN); g(0); g(-0); expect(calls.length, 2, 'SameValueZero keys');\nconst key = {}; g(key); g({}); expect(calls.length, 4, 'object identity');\nlet n = 0; const h = fn((x) => { n++; if (x === 'boom') throw new Error('boom'); return x; }, 1);\nfor (let i = 0; i < 2; i++) { try { h('boom'); } catch (e) { if (e.message !== 'boom') throw e; } }\nexpect(n, 2, 'errors are not cached'); expect(h.size(), 0, 'nothing cached after a throw');\nfor (const bad of [0, -1, 1.5, NaN]) { let threw = false; try { fn((x) => x, bad); } catch (e) { threw = e instanceof RangeError; } if (!threw) throw new Error('must throw RangeError for ' + bad); }"
+}

@@ -1,5 +1,6 @@
 {
   "id": "clamp",
+  "difficulty": "single",
   "spec": "Write `export function clamp(value: number, lo: number, hi: number): number` returning value limited to the closed interval [lo, hi]. Throw a RangeError when lo > hi.",
   "reference": "export function clamp(value: number, lo: number, hi: number): number {\n  if (lo > hi) throw new RangeError('lo must be <= hi');\n  return Math.min(hi, Math.max(lo, value));\n}",
   "slice": [

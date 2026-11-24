@@ -1,5 +1,6 @@
 {
   "id": "slugify",
+  "difficulty": "single",
   "entry": "slugify",
   "spec": "Write `export function slugify(s: string): string` that lowercases the string, replaces each run of characters other than ASCII letters and digits with a single dash, and trims leading and trailing dashes.",
   "reference": "export function slugify(s: string): string {\n  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');\n}",

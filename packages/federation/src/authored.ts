@@ -116,11 +116,30 @@ export interface NeededAtom {
   readonly vectors: readonly ConformanceVector[];
 }
 
+/**
+ * A retrieved candidate shown to the model as kept work, with its citation (#1271). The
+ * caller chooses these, for example with @yakcc/shave's selectCompositionContext, which
+ * applies the budgeted source-spread fill when it is turned on.
+ */
+export interface ComposeContextItem {
+  readonly id: string;
+  readonly sourcePkg: string;
+  readonly text: string;
+  readonly citation: {
+    readonly merkleRoot: string;
+    readonly sourceFile: string;
+    readonly lineStart: number;
+    readonly lineEnd: number;
+  };
+}
+
 /** What the model is given: the contract, and on a retry its previous reply and the findings. */
 export interface AuthoringRequest {
   readonly contract: SpecYak;
   readonly previous?: string;
   readonly findings?: readonly AuthoredFinding[];
+  /** Retrieved candidates for this contract, when the caller supplies a context. */
+  readonly context?: readonly ComposeContextItem[];
 }
 
 export interface AuthoringModel {
@@ -143,6 +162,8 @@ export interface ComposeOutcome {
   readonly attempts: number;
   /** The last attempt's findings, when it failed. */
   readonly findings: readonly AuthoredFinding[];
+  /** Ids of the context candidates the model was shown, when it was asked and given any. */
+  readonly contextIds?: readonly string[];
 }
 
 export interface ComposeDependencies {
@@ -152,6 +173,12 @@ export interface ComposeDependencies {
   ): Promise<{ readonly identity: string; readonly lineForm: string } | undefined>;
   readonly model: AuthoringModel;
   readonly store?: ReceiverStore;
+  /**
+   * The retrieved candidates to show the model for a contract it is asked to author
+   * (#1271). Absent: the model gets the contract alone, as before. Called only on a gap,
+   * so a found atom costs no retrieval.
+   */
+  context?(contract: SpecYak): Promise<readonly ComposeContextItem[]>;
 }
 
 /**
@@ -195,11 +222,17 @@ export async function composeMissing(
       previous = hit.lineForm;
       findings = checked.findings;
     }
+    const context = deps.context !== undefined ? await deps.context(need.contract) : undefined;
+    const shown =
+      context !== undefined && context.length > 0
+        ? { context, contextIds: context.map((c) => c.id) }
+        : undefined;
     let done: ComposeOutcome | undefined;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const reply = await deps.model.author({
         contract: need.contract,
         ...(previous !== undefined ? { previous, findings } : {}),
+        ...(shown !== undefined ? { context: shown.context } : {}),
       });
       const result = await checkAuthoredGraph(reply, need.contract, need.vectors, deps.store);
       if (result.ok) {
@@ -211,6 +244,7 @@ export async function composeMissing(
           ...(result.identity !== undefined ? { identity: result.identity } : {}),
           attempts: attempt,
           findings: [],
+          ...(shown !== undefined ? { contextIds: shown.contextIds } : {}),
         };
         break;
       }
@@ -227,6 +261,7 @@ export async function composeMissing(
         trigger,
         attempts: maxAttempts,
         findings,
+        ...(shown !== undefined ? { contextIds: shown.contextIds } : {}),
       },
     );
   }

@@ -1,5 +1,6 @@
 {
   "id": "title-case",
+  "difficulty": "single",
   "entry": "titleCase",
   "spec": "Write `export function titleCase(s: string): string` that uppercases the first letter of each whitespace-separated word and lowercases the rest, keeping the spacing as it was.",
   "reference": "export function titleCase(s: string): string {\n  return s.replace(/[^\\s]+/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());\n}",

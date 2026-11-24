@@ -1,393 +1,4525 @@
 {
   "client": "offline",
-  "tasks": 10,
+  "model": "offline-reference",
+  "tasks": 21,
+  "options": {
+    "strongThreshold": 0.8,
+    "tokenBudget": 1200,
+    "maxPackageShare": 0.5,
+    "seeds": 3,
+    "arms": [
+      "scratch",
+      "slice",
+      "slice-fill",
+      "fallback"
+    ]
+  },
   "rows": [
     {
       "arm": "scratch",
+      "task": "add-days-iso",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 134,
+      "outputTokens": 242,
+      "turns": 1,
+      "ms": 0,
+      "seed": 0
+    },
+    {
+      "arm": "slice",
+      "task": "add-days-iso",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1230,
+      "outputTokens": 242,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "add-days-iso",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1230,
+      "outputTokens": 242,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "add-days-iso",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1230,
+      "outputTokens": 242,
+      "turns": 1,
+      "ms": 129,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "add-days-iso",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 134,
+      "outputTokens": 242,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "add-days-iso",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1230,
+      "outputTokens": 242,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "add-days-iso",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1230,
+      "outputTokens": 242,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "add-days-iso",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1230,
+      "outputTokens": 242,
+      "turns": 1,
+      "ms": 72,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "add-days-iso",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 134,
+      "outputTokens": 242,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "add-days-iso",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1230,
+      "outputTokens": 242,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "add-days-iso",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1230,
+      "outputTokens": 242,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "add-days-iso",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1230,
+      "outputTokens": 242,
+      "turns": 1,
+      "ms": 51,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "scratch",
+      "task": "add-durations",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 215,
+      "outputTokens": 299,
+      "turns": 1,
+      "ms": 0,
+      "seed": 0
+    },
+    {
+      "arm": "slice",
+      "task": "add-durations",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 742,
+      "outputTokens": 299,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "add-durations",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 742,
+      "outputTokens": 299,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "add-durations",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 742,
+      "outputTokens": 299,
+      "turns": 1,
+      "ms": 55,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "add-durations",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 215,
+      "outputTokens": 299,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "add-durations",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 742,
+      "outputTokens": 299,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "add-durations",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 742,
+      "outputTokens": 299,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "add-durations",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 742,
+      "outputTokens": 299,
+      "turns": 1,
+      "ms": 46,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "add-durations",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 215,
+      "outputTokens": 299,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "add-durations",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 742,
+      "outputTokens": 299,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "add-durations",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 742,
+      "outputTokens": 299,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "add-durations",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 742,
+      "outputTokens": 299,
+      "turns": 1,
+      "ms": 45,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "scratch",
+      "task": "base64url-from-string",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 108,
+      "outputTokens": 298,
+      "turns": 1,
+      "ms": 0,
+      "seed": 0
+    },
+    {
+      "arm": "slice",
+      "task": "base64url-from-string",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 987,
+      "outputTokens": 298,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "base64url-from-string",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 987,
+      "outputTokens": 298,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "base64url-from-string",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 987,
+      "outputTokens": 298,
+      "turns": 1,
+      "ms": 53,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "base64url-from-string",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 108,
+      "outputTokens": 298,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "base64url-from-string",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 987,
+      "outputTokens": 298,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "base64url-from-string",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 987,
+      "outputTokens": 298,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "base64url-from-string",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 987,
+      "outputTokens": 298,
+      "turns": 1,
+      "ms": 43,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "base64url-from-string",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 108,
+      "outputTokens": 298,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "base64url-from-string",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 987,
+      "outputTokens": 298,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "base64url-from-string",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 987,
+      "outputTokens": 298,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "base64url-from-string",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 987,
+      "outputTokens": 298,
+      "turns": 1,
+      "ms": 44,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "scratch",
+      "task": "build-order",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 145,
+      "outputTokens": 272,
+      "turns": 1,
+      "ms": 0,
+      "seed": 0
+    },
+    {
+      "arm": "slice",
+      "task": "build-order",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 921,
+      "outputTokens": 272,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "build-order",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 921,
+      "outputTokens": 272,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "build-order",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 921,
+      "outputTokens": 272,
+      "turns": 1,
+      "ms": 52,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "build-order",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 145,
+      "outputTokens": 272,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "build-order",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 921,
+      "outputTokens": 272,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "build-order",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 921,
+      "outputTokens": 272,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "build-order",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 921,
+      "outputTokens": 272,
+      "turns": 1,
+      "ms": 46,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "build-order",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 145,
+      "outputTokens": 272,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "build-order",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 921,
+      "outputTokens": 272,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "build-order",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 921,
+      "outputTokens": 272,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "build-order",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 921,
+      "outputTokens": 272,
+      "turns": 1,
+      "ms": 47,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "scratch",
       "task": "chunk",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 62,
       "outputTokens": 76,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "seed": 0
     },
     {
       "arm": "slice",
       "task": "chunk",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 116,
       "outputTokens": 76,
       "turns": 1,
-      "ms": 0
+      "ms": 4,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "chunk",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 116,
+      "outputTokens": 76,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
     },
     {
       "arm": "fallback",
       "task": "chunk",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 116,
       "outputTokens": 76,
       "turns": 1,
-      "ms": 0
+      "ms": 36,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "chunk",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 62,
+      "outputTokens": 76,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "chunk",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 116,
+      "outputTokens": 76,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "chunk",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 116,
+      "outputTokens": 76,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "chunk",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 116,
+      "outputTokens": 76,
+      "turns": 1,
+      "ms": 35,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "chunk",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 62,
+      "outputTokens": 76,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "chunk",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 116,
+      "outputTokens": 76,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "chunk",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 116,
+      "outputTokens": 76,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "chunk",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 116,
+      "outputTokens": 76,
+      "turns": 1,
+      "ms": 34,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 2
     },
     {
       "arm": "scratch",
       "task": "clamp",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 57,
       "outputTokens": 46,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "seed": 0
     },
     {
       "arm": "slice",
       "task": "clamp",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 93,
       "outputTokens": 46,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "clamp",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 93,
+      "outputTokens": 46,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
     },
     {
       "arm": "fallback",
       "task": "clamp",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 57,
+      "outputTokens": 46,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.4
+      },
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "clamp",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 57,
+      "outputTokens": 46,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "clamp",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 93,
       "outputTokens": 46,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "clamp",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 93,
+      "outputTokens": 46,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "clamp",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 57,
+      "outputTokens": 46,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.4
+      },
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "clamp",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 57,
+      "outputTokens": 46,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "clamp",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 93,
+      "outputTokens": 46,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "clamp",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 93,
+      "outputTokens": 46,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "clamp",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 57,
+      "outputTokens": 46,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.4
+      },
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "scratch",
+      "task": "days-between",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 139,
+      "outputTokens": 184,
+      "turns": 1,
+      "ms": 0,
+      "seed": 0
+    },
+    {
+      "arm": "slice",
+      "task": "days-between",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1150,
+      "outputTokens": 184,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "days-between",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1150,
+      "outputTokens": 184,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "days-between",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1150,
+      "outputTokens": 184,
+      "turns": 1,
+      "ms": 36,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "days-between",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 139,
+      "outputTokens": 184,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "days-between",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1150,
+      "outputTokens": 184,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "days-between",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1150,
+      "outputTokens": 184,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "days-between",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1150,
+      "outputTokens": 184,
+      "turns": 1,
+      "ms": 35,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "days-between",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 139,
+      "outputTokens": 184,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "days-between",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1150,
+      "outputTokens": 184,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "days-between",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1150,
+      "outputTokens": 184,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "days-between",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1150,
+      "outputTokens": 184,
+      "turns": 1,
+      "ms": 34,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 2
     },
     {
       "arm": "scratch",
       "task": "group-by",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 65,
       "outputTokens": 61,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "seed": 0
     },
     {
       "arm": "slice",
       "task": "group-by",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 116,
       "outputTokens": 61,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "group-by",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 116,
+      "outputTokens": 61,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
     },
     {
       "arm": "fallback",
       "task": "group-by",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 65,
+      "outputTokens": 61,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.79
+      },
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "group-by",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 65,
+      "outputTokens": 61,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "group-by",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 116,
       "outputTokens": 61,
       "turns": 1,
-      "ms": 1
+      "ms": 1,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "group-by",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 116,
+      "outputTokens": 61,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "group-by",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 65,
+      "outputTokens": 61,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.79
+      },
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "group-by",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 65,
+      "outputTokens": 61,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "group-by",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 116,
+      "outputTokens": 61,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "group-by",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 116,
+      "outputTokens": 61,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "group-by",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 65,
+      "outputTokens": 61,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.79
+      },
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "scratch",
+      "task": "memoize-lru",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 163,
+      "outputTokens": 160,
+      "turns": 1,
+      "ms": 0,
+      "seed": 0
+    },
+    {
+      "arm": "slice",
+      "task": "memoize-lru",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 649,
+      "outputTokens": 160,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "memoize-lru",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 649,
+      "outputTokens": 160,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "memoize-lru",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 649,
+      "outputTokens": 160,
+      "turns": 1,
+      "ms": 44,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "memoize-lru",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 163,
+      "outputTokens": 160,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "memoize-lru",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 649,
+      "outputTokens": 160,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "memoize-lru",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 649,
+      "outputTokens": 160,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "memoize-lru",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 649,
+      "outputTokens": 160,
+      "turns": 1,
+      "ms": 42,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "memoize-lru",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 163,
+      "outputTokens": 160,
+      "turns": 1,
+      "ms": 1,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "memoize-lru",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 649,
+      "outputTokens": 160,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "memoize-lru",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 649,
+      "outputTokens": 160,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "memoize-lru",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 649,
+      "outputTokens": 160,
+      "turns": 1,
+      "ms": 38,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 2
     },
     {
       "arm": "scratch",
       "task": "parse-int-strict",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 71,
       "outputTokens": 40,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "seed": 0
     },
     {
       "arm": "slice",
       "task": "parse-int-strict",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 121,
       "outputTokens": 40,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
     },
     {
-      "arm": "fallback",
+      "arm": "slice-fill",
       "task": "parse-int-strict",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 121,
       "outputTokens": 40,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "parse-int-strict",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 71,
+      "outputTokens": 40,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.66
+      },
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "parse-int-strict",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 71,
+      "outputTokens": 40,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "parse-int-strict",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 121,
+      "outputTokens": 40,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "parse-int-strict",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 121,
+      "outputTokens": 40,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "parse-int-strict",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 71,
+      "outputTokens": 40,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.66
+      },
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "parse-int-strict",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 71,
+      "outputTokens": 40,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "parse-int-strict",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 121,
+      "outputTokens": 40,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "parse-int-strict",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 121,
+      "outputTokens": 40,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "parse-int-strict",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 71,
+      "outputTokens": 40,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.66
+      },
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "scratch",
+      "task": "pointer-get",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 184,
+      "outputTokens": 236,
+      "turns": 1,
+      "ms": 0,
+      "seed": 0
+    },
+    {
+      "arm": "slice",
+      "task": "pointer-get",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1000,
+      "outputTokens": 236,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "pointer-get",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1000,
+      "outputTokens": 236,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "pointer-get",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1000,
+      "outputTokens": 236,
+      "turns": 1,
+      "ms": 43,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "pointer-get",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 184,
+      "outputTokens": 236,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "pointer-get",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1000,
+      "outputTokens": 236,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "pointer-get",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1000,
+      "outputTokens": 236,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "pointer-get",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1000,
+      "outputTokens": 236,
+      "turns": 1,
+      "ms": 38,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "pointer-get",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 184,
+      "outputTokens": 236,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "pointer-get",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1000,
+      "outputTokens": 236,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "pointer-get",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1000,
+      "outputTokens": 236,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "pointer-get",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1000,
+      "outputTokens": 236,
+      "turns": 1,
+      "ms": 43,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 2
     },
     {
       "arm": "scratch",
       "task": "range",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 64,
       "outputTokens": 83,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "seed": 0
     },
     {
       "arm": "slice",
       "task": "range",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 113,
       "outputTokens": 83,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "range",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 113,
+      "outputTokens": 83,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
     },
     {
       "arm": "fallback",
       "task": "range",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 64,
+      "outputTokens": 83,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.5
+      },
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "range",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 64,
+      "outputTokens": 83,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "range",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 113,
       "outputTokens": 83,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "range",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 113,
+      "outputTokens": 83,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "range",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 64,
+      "outputTokens": 83,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.5
+      },
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "range",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 64,
+      "outputTokens": 83,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "range",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 113,
+      "outputTokens": 83,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "range",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 113,
+      "outputTokens": 83,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "range",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 64,
+      "outputTokens": 83,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.5
+      },
+      "selection": "rank",
+      "seed": 2
     },
     {
       "arm": "scratch",
       "task": "safe-filename",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 64,
       "outputTokens": 42,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "seed": 0
     },
     {
       "arm": "slice",
       "task": "safe-filename",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 103,
       "outputTokens": 42,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "safe-filename",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 103,
+      "outputTokens": 42,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
     },
     {
       "arm": "fallback",
       "task": "safe-filename",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 64,
+      "outputTokens": 42,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.7
+      },
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "safe-filename",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 64,
+      "outputTokens": 42,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "safe-filename",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 103,
       "outputTokens": 42,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "safe-filename",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 103,
+      "outputTokens": 42,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "safe-filename",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 64,
+      "outputTokens": 42,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.7
+      },
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "safe-filename",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 64,
+      "outputTokens": 42,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "safe-filename",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 103,
+      "outputTokens": 42,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "safe-filename",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 103,
+      "outputTokens": 42,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "safe-filename",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 64,
+      "outputTokens": 42,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.7
+      },
+      "selection": "rank",
+      "seed": 2
     },
     {
       "arm": "scratch",
       "task": "shallow-equal",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 69,
       "outputTokens": 75,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "seed": 0
     },
     {
       "arm": "slice",
       "task": "shallow-equal",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 118,
       "outputTokens": 75,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "shallow-equal",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 118,
+      "outputTokens": 75,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
     },
     {
       "arm": "fallback",
       "task": "shallow-equal",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 69,
+      "outputTokens": 75,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.77
+      },
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "shallow-equal",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 69,
+      "outputTokens": 75,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "shallow-equal",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 118,
       "outputTokens": 75,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "shallow-equal",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 118,
+      "outputTokens": 75,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "shallow-equal",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 69,
+      "outputTokens": 75,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.77
+      },
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "shallow-equal",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 69,
+      "outputTokens": 75,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "shallow-equal",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 118,
+      "outputTokens": 75,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "shallow-equal",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 118,
+      "outputTokens": 75,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "shallow-equal",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 69,
+      "outputTokens": 75,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.77
+      },
+      "selection": "rank",
+      "seed": 2
     },
     {
       "arm": "scratch",
       "task": "slugify",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 66,
       "outputTokens": 34,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "seed": 0
     },
     {
       "arm": "slice",
       "task": "slugify",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 118,
       "outputTokens": 34,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "slugify",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 118,
+      "outputTokens": 34,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
     },
     {
       "arm": "fallback",
       "task": "slugify",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 66,
+      "outputTokens": 34,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.73
+      },
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "slugify",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 66,
+      "outputTokens": 34,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "slugify",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 118,
       "outputTokens": 34,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "slugify",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 118,
+      "outputTokens": 34,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "slugify",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 66,
+      "outputTokens": 34,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.73
+      },
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "slugify",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 66,
+      "outputTokens": 34,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "slugify",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 118,
+      "outputTokens": 34,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "slugify",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 118,
+      "outputTokens": 34,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "slugify",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 66,
+      "outputTokens": 34,
+      "turns": 1,
+      "ms": 0,
+      "decision": "synthesize",
+      "trigger": {
+        "reason": "near-miss-only",
+        "bestScore": 0.73
+      },
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "scratch",
+      "task": "sort-versions",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 275,
+      "outputTokens": 376,
+      "turns": 1,
+      "ms": 0,
+      "seed": 0
+    },
+    {
+      "arm": "slice",
+      "task": "sort-versions",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1017,
+      "outputTokens": 376,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "sort-versions",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1017,
+      "outputTokens": 376,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "sort-versions",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1017,
+      "outputTokens": 376,
+      "turns": 1,
+      "ms": 45,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "sort-versions",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 275,
+      "outputTokens": 376,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "sort-versions",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1017,
+      "outputTokens": 376,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "sort-versions",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1017,
+      "outputTokens": 376,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "sort-versions",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1017,
+      "outputTokens": 376,
+      "turns": 1,
+      "ms": 44,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "sort-versions",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 275,
+      "outputTokens": 376,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "sort-versions",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1017,
+      "outputTokens": 376,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "sort-versions",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1017,
+      "outputTokens": 376,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "sort-versions",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 1017,
+      "outputTokens": 376,
+      "turns": 1,
+      "ms": 47,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "scratch",
+      "task": "suggest-words",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 136,
+      "outputTokens": 235,
+      "turns": 1,
+      "ms": 0,
+      "seed": 0
+    },
+    {
+      "arm": "slice",
+      "task": "suggest-words",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 542,
+      "outputTokens": 235,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "suggest-words",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 542,
+      "outputTokens": 235,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "suggest-words",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 542,
+      "outputTokens": 235,
+      "turns": 1,
+      "ms": 47,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "suggest-words",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 136,
+      "outputTokens": 235,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "suggest-words",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 542,
+      "outputTokens": 235,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "suggest-words",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 542,
+      "outputTokens": 235,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "suggest-words",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 542,
+      "outputTokens": 235,
+      "turns": 1,
+      "ms": 59,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "suggest-words",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 136,
+      "outputTokens": 235,
+      "turns": 1,
+      "ms": 1,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "suggest-words",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 542,
+      "outputTokens": 235,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "suggest-words",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 542,
+      "outputTokens": 235,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "suggest-words",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 542,
+      "outputTokens": 235,
+      "turns": 1,
+      "ms": 50,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 2
     },
     {
       "arm": "scratch",
       "task": "title-case",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 59,
       "outputTokens": 38,
       "turns": 1,
-      "ms": 0
+      "ms": 1,
+      "seed": 0
     },
     {
       "arm": "slice",
       "task": "title-case",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 109,
       "outputTokens": 38,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "title-case",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 109,
+      "outputTokens": 38,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
     },
     {
       "arm": "fallback",
       "task": "title-case",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 109,
       "outputTokens": 38,
       "turns": 1,
-      "ms": 0
+      "ms": 33,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "title-case",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 59,
+      "outputTokens": 38,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "title-case",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 109,
+      "outputTokens": 38,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "title-case",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 109,
+      "outputTokens": 38,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "title-case",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 109,
+      "outputTokens": 38,
+      "turns": 1,
+      "ms": 33,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "title-case",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 59,
+      "outputTokens": 38,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "title-case",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 109,
+      "outputTokens": 38,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "title-case",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 109,
+      "outputTokens": 38,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "title-case",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 109,
+      "outputTokens": 38,
+      "turns": 1,
+      "ms": 32,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 2
     },
     {
       "arm": "scratch",
       "task": "unique",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 60,
       "outputTokens": 52,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "seed": 0
     },
     {
       "arm": "slice",
       "task": "unique",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 111,
       "outputTokens": 52,
       "turns": 1,
-      "ms": 0
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "unique",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 111,
+      "outputTokens": 52,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
     },
     {
       "arm": "fallback",
       "task": "unique",
+      "model": "offline-reference",
       "pass": true,
       "error": null,
       "inputTokens": 111,
       "outputTokens": 52,
       "turns": 1,
-      "ms": 0
+      "ms": 32,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "unique",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 60,
+      "outputTokens": 52,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "unique",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 111,
+      "outputTokens": 52,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "unique",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 111,
+      "outputTokens": 52,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "unique",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 111,
+      "outputTokens": 52,
+      "turns": 1,
+      "ms": 33,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "unique",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 60,
+      "outputTokens": 52,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "unique",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 111,
+      "outputTokens": 52,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "unique",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 111,
+      "outputTokens": 52,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "unique",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 111,
+      "outputTokens": 52,
+      "turns": 1,
+      "ms": 34,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "scratch",
+      "task": "uuid-normalize",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 186,
+      "outputTokens": 209,
+      "turns": 1,
+      "ms": 0,
+      "seed": 0
+    },
+    {
+      "arm": "slice",
+      "task": "uuid-normalize",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 982,
+      "outputTokens": 209,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "uuid-normalize",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 982,
+      "outputTokens": 209,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "uuid-normalize",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 982,
+      "outputTokens": 209,
+      "turns": 1,
+      "ms": 39,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "uuid-normalize",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 186,
+      "outputTokens": 209,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "uuid-normalize",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 982,
+      "outputTokens": 209,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "uuid-normalize",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 982,
+      "outputTokens": 209,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "uuid-normalize",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 982,
+      "outputTokens": 209,
+      "turns": 1,
+      "ms": 35,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "uuid-normalize",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 186,
+      "outputTokens": 209,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "uuid-normalize",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 982,
+      "outputTokens": 209,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "uuid-normalize",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 982,
+      "outputTokens": 209,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "uuid-normalize",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 982,
+      "outputTokens": 209,
+      "turns": 1,
+      "ms": 32,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "scratch",
+      "task": "uuid-version",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 159,
+      "outputTokens": 91,
+      "turns": 1,
+      "ms": 0,
+      "seed": 0
+    },
+    {
+      "arm": "slice",
+      "task": "uuid-version",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 507,
+      "outputTokens": 91,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "slice-fill",
+      "task": "uuid-version",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 507,
+      "outputTokens": 91,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 0
+    },
+    {
+      "arm": "fallback",
+      "task": "uuid-version",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 507,
+      "outputTokens": 91,
+      "turns": 1,
+      "ms": 32,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 0
+    },
+    {
+      "arm": "scratch",
+      "task": "uuid-version",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 159,
+      "outputTokens": 91,
+      "turns": 1,
+      "ms": 0,
+      "seed": 1
+    },
+    {
+      "arm": "slice",
+      "task": "uuid-version",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 507,
+      "outputTokens": 91,
+      "turns": 1,
+      "ms": 0,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "slice-fill",
+      "task": "uuid-version",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 507,
+      "outputTokens": 91,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 1
+    },
+    {
+      "arm": "fallback",
+      "task": "uuid-version",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 507,
+      "outputTokens": 91,
+      "turns": 1,
+      "ms": 28,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 1
+    },
+    {
+      "arm": "scratch",
+      "task": "uuid-version",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 159,
+      "outputTokens": 91,
+      "turns": 1,
+      "ms": 0,
+      "seed": 2
+    },
+    {
+      "arm": "slice",
+      "task": "uuid-version",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 507,
+      "outputTokens": 91,
+      "turns": 1,
+      "ms": 1,
+      "selection": "rank",
+      "seed": 2
+    },
+    {
+      "arm": "slice-fill",
+      "task": "uuid-version",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 507,
+      "outputTokens": 91,
+      "turns": 1,
+      "ms": 0,
+      "selection": "fill",
+      "seed": 2
+    },
+    {
+      "arm": "fallback",
+      "task": "uuid-version",
+      "model": "offline-reference",
+      "pass": true,
+      "error": null,
+      "inputTokens": 507,
+      "outputTokens": 91,
+      "turns": 1,
+      "ms": 29,
+      "decision": "compose",
+      "trigger": null,
+      "selection": "rank",
+      "seed": 2
     }
   ],
-  "decisions": [
+  "selections": [
+    {
+      "task": "add-days-iso",
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "dfns-add-days",
+          "dfns-parse-date",
+          "dfns-validate-date",
+          "dfns-leading-zeros",
+          "dfns-format-iso",
+          "ms-fmt-short"
+        ],
+        "dropped": [],
+        "tokens": 1012,
+        "byPackage": {
+          "date-fns-4.1.0": 932,
+          "ms-2.1.3": 80
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "dfns-add-days",
+          "dfns-parse-date",
+          "dfns-validate-date",
+          "dfns-leading-zeros",
+          "dfns-format-iso",
+          "ms-fmt-short"
+        ],
+        "dropped": [],
+        "tokens": 1012,
+        "byPackage": {
+          "date-fns-4.1.0": 932,
+          "ms-2.1.3": 80
+        }
+      },
+      "differs": false
+    },
+    {
+      "task": "add-durations",
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "ms-parse",
+          "ms-fmt-short",
+          "ms-fmt-long",
+          "date-fns-diff-ms"
+        ],
+        "dropped": [],
+        "tokens": 470,
+        "byPackage": {
+          "ms-2.1.3": 435,
+          "date-fns-4.1.0": 35
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "ms-parse",
+          "ms-fmt-short",
+          "ms-fmt-long",
+          "date-fns-diff-ms"
+        ],
+        "dropped": [],
+        "tokens": 470,
+        "byPackage": {
+          "ms-2.1.3": 435,
+          "date-fns-4.1.0": 35
+        }
+      },
+      "differs": false
+    },
+    {
+      "task": "base64url-from-string",
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "b64-from-byte-array",
+          "b64-encode-chunk",
+          "b64-triplet",
+          "b64-to-byte-array",
+          "uuid-unsafe-stringify"
+        ],
+        "dropped": [],
+        "tokens": 808,
+        "byPackage": {
+          "base64-js-1.5.1": 627,
+          "uuid-11.1.1": 181
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "b64-from-byte-array",
+          "b64-encode-chunk",
+          "b64-triplet",
+          "b64-to-byte-array",
+          "uuid-unsafe-stringify"
+        ],
+        "dropped": [],
+        "tokens": 808,
+        "byPackage": {
+          "base64-js-1.5.1": 627,
+          "uuid-11.1.1": 181
+        }
+      },
+      "differs": false
+    },
+    {
+      "task": "build-order",
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "topo-toposort",
+          "topo-unique-nodes",
+          "topo-outgoing",
+          "topo-nodes-hash",
+          "semver-lru"
+        ],
+        "dropped": [],
+        "tokens": 706,
+        "byPackage": {
+          "toposort-2.0.2": 516,
+          "semver-7.8.0": 190
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "topo-toposort",
+          "topo-unique-nodes",
+          "topo-outgoing",
+          "topo-nodes-hash",
+          "semver-lru"
+        ],
+        "dropped": [],
+        "tokens": 706,
+        "byPackage": {
+          "toposort-2.0.2": 516,
+          "semver-7.8.0": 190
+        }
+      },
+      "differs": false
+    },
     {
       "task": "chunk",
-      "action": "reuse",
-      "reason": "strong-match",
-      "candidateIndex": 0
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "arr-window",
+          "unrelated-date"
+        ],
+        "dropped": [],
+        "tokens": 25,
+        "byPackage": {
+          "shadow-utils": 16,
+          "shadow-dates": 9
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "arr-window",
+          "unrelated-date"
+        ],
+        "dropped": [],
+        "tokens": 25,
+        "byPackage": {
+          "shadow-utils": 16,
+          "shadow-dates": 9
+        }
+      },
+      "differs": false
     },
     {
       "task": "clamp",
-      "action": "synthesize",
-      "reason": "near-miss-only"
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "bound-check"
+        ],
+        "dropped": [],
+        "tokens": 15,
+        "byPackage": {
+          "shadow-utils": 15
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "bound-check"
+        ],
+        "dropped": [],
+        "tokens": 15,
+        "byPackage": {
+          "shadow-utils": 15
+        }
+      },
+      "differs": false
+    },
+    {
+      "task": "days-between",
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "dfns-parse-date",
+          "dfns-validate-date",
+          "dfns-leap",
+          "dfns-diff-ms",
+          "dfns-parse-iso",
+          "ms-parse"
+        ],
+        "dropped": [],
+        "tokens": 925,
+        "byPackage": {
+          "date-fns-4.1.0": 654,
+          "ms-2.1.3": 271
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "dfns-parse-date",
+          "dfns-validate-date",
+          "dfns-leap",
+          "dfns-diff-ms",
+          "dfns-parse-iso",
+          "ms-parse"
+        ],
+        "dropped": [],
+        "tokens": 925,
+        "byPackage": {
+          "date-fns-4.1.0": 654,
+          "ms-2.1.3": 271
+        }
+      },
+      "differs": false
     },
     {
       "task": "group-by",
-      "action": "synthesize",
-      "reason": "near-miss-only"
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "bucket-by",
+          "unrelated"
+        ],
+        "dropped": [],
+        "tokens": 23,
+        "byPackage": {
+          "shadow-utils": 13,
+          "shadow-misc": 10
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "bucket-by",
+          "unrelated"
+        ],
+        "dropped": [],
+        "tokens": 23,
+        "byPackage": {
+          "shadow-utils": 13,
+          "shadow-misc": 10
+        }
+      },
+      "differs": false
+    },
+    {
+      "task": "memoize-lru",
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "lodash-memoize",
+          "semver-lru",
+          "lodash-memoize-capped",
+          "topo-nodes-hash"
+        ],
+        "dropped": [],
+        "tokens": 424,
+        "byPackage": {
+          "lodash-4.17.21": 198,
+          "semver-7.8.0": 190,
+          "toposort-2.0.2": 36
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "lodash-memoize",
+          "semver-lru",
+          "lodash-memoize-capped",
+          "topo-nodes-hash"
+        ],
+        "dropped": [],
+        "tokens": 424,
+        "byPackage": {
+          "lodash-4.17.21": 198,
+          "semver-7.8.0": 190,
+          "toposort-2.0.2": 36
+        }
+      },
+      "differs": false
     },
     {
       "task": "parse-int-strict",
-      "action": "synthesize",
-      "reason": "near-miss-only"
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "parse-number",
+          "unrelated"
+        ],
+        "dropped": [],
+        "tokens": 22,
+        "byPackage": {
+          "shadow-utils": 13,
+          "shadow-misc": 9
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "parse-number",
+          "unrelated"
+        ],
+        "dropped": [],
+        "tokens": 22,
+        "byPackage": {
+          "shadow-utils": 13,
+          "shadow-misc": 9
+        }
+      },
+      "differs": false
+    },
+    {
+      "task": "pointer-get",
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "jp-get",
+          "jp-compile-pointer",
+          "jp-untilde",
+          "jp-escape-replacer",
+          "jp-setter",
+          "date-fns-parse-date"
+        ],
+        "dropped": [],
+        "tokens": 727,
+        "byPackage": {
+          "jsonpointer-5.0.1": 494,
+          "date-fns-4.1.0": 233
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "jp-get",
+          "jp-compile-pointer",
+          "jp-untilde",
+          "jp-escape-replacer",
+          "jp-setter",
+          "date-fns-parse-date"
+        ],
+        "dropped": [],
+        "tokens": 727,
+        "byPackage": {
+          "jsonpointer-5.0.1": 494,
+          "date-fns-4.1.0": 233
+        }
+      },
+      "differs": false
     },
     {
       "task": "range",
-      "action": "synthesize",
-      "reason": "near-miss-only"
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "counted-loop",
+          "unrelated"
+        ],
+        "dropped": [],
+        "tokens": 21,
+        "byPackage": {
+          "shadow-utils": 12,
+          "shadow-misc": 9
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "counted-loop",
+          "unrelated"
+        ],
+        "dropped": [],
+        "tokens": 21,
+        "byPackage": {
+          "shadow-utils": 12,
+          "shadow-misc": 9
+        }
+      },
+      "differs": false
     },
     {
       "task": "safe-filename",
-      "action": "synthesize",
-      "reason": "near-miss-only"
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "path-join"
+        ],
+        "dropped": [],
+        "tokens": 18,
+        "byPackage": {
+          "shadow-fs": 18
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "path-join"
+        ],
+        "dropped": [],
+        "tokens": 18,
+        "byPackage": {
+          "shadow-fs": 18
+        }
+      },
+      "differs": false
     },
     {
       "task": "shallow-equal",
-      "action": "synthesize",
-      "reason": "near-miss-only"
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "key-compare",
+          "unrelated"
+        ],
+        "dropped": [],
+        "tokens": 22,
+        "byPackage": {
+          "shadow-utils": 13,
+          "shadow-misc": 9
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "key-compare",
+          "unrelated"
+        ],
+        "dropped": [],
+        "tokens": 22,
+        "byPackage": {
+          "shadow-utils": 13,
+          "shadow-misc": 9
+        }
+      },
+      "differs": false
     },
     {
       "task": "slugify",
-      "action": "synthesize",
-      "reason": "near-miss-only"
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "normalize-text",
+          "unrelated"
+        ],
+        "dropped": [],
+        "tokens": 24,
+        "byPackage": {
+          "shadow-utils": 15,
+          "shadow-misc": 9
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "normalize-text",
+          "unrelated"
+        ],
+        "dropped": [],
+        "tokens": 24,
+        "byPackage": {
+          "shadow-utils": 15,
+          "shadow-misc": 9
+        }
+      },
+      "differs": false
+    },
+    {
+      "task": "sort-versions",
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "semver-compare-pre",
+          "semver-compare-main",
+          "semver-compare-identifiers",
+          "semver-compare",
+          "semver-sort",
+          "semver-compare-fn",
+          "levenshtein-closest"
+        ],
+        "dropped": [],
+        "tokens": 639,
+        "byPackage": {
+          "semver-7.8.0": 560,
+          "fastest-levenshtein-1.0.16": 79
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "semver-compare-pre",
+          "semver-compare-main",
+          "semver-compare-identifiers",
+          "semver-compare",
+          "semver-sort",
+          "semver-compare-fn",
+          "levenshtein-closest"
+        ],
+        "dropped": [],
+        "tokens": 639,
+        "byPackage": {
+          "semver-7.8.0": 560,
+          "fastest-levenshtein-1.0.16": 79
+        }
+      },
+      "differs": false
+    },
+    {
+      "task": "suggest-words",
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "lev-distance",
+          "lev-closest",
+          "lev-myers-32",
+          "semver-sort"
+        ],
+        "dropped": [],
+        "tokens": 339,
+        "byPackage": {
+          "fastest-levenshtein-1.0.16": 320,
+          "semver-7.8.0": 19
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "lev-distance",
+          "lev-closest",
+          "lev-myers-32",
+          "semver-sort"
+        ],
+        "dropped": [],
+        "tokens": 339,
+        "byPackage": {
+          "fastest-levenshtein-1.0.16": 320,
+          "semver-7.8.0": 19
+        }
+      },
+      "differs": false
     },
     {
       "task": "title-case",
-      "action": "reuse",
-      "reason": "strong-match",
-      "candidateIndex": 0
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "word-split",
+          "unrelated"
+        ],
+        "dropped": [],
+        "tokens": 22,
+        "byPackage": {
+          "shadow-utils": 13,
+          "shadow-misc": 9
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "word-split",
+          "unrelated"
+        ],
+        "dropped": [],
+        "tokens": 22,
+        "byPackage": {
+          "shadow-utils": 13,
+          "shadow-misc": 9
+        }
+      },
+      "differs": false
     },
     {
       "task": "unique",
-      "action": "reuse",
-      "reason": "strong-match",
-      "candidateIndex": 0
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "dedupe-by",
+          "unrelated"
+        ],
+        "dropped": [],
+        "tokens": 24,
+        "byPackage": {
+          "shadow-utils": 14,
+          "shadow-misc": 10
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "dedupe-by",
+          "unrelated"
+        ],
+        "dropped": [],
+        "tokens": 24,
+        "byPackage": {
+          "shadow-utils": 14,
+          "shadow-misc": 10
+        }
+      },
+      "differs": false
+    },
+    {
+      "task": "uuid-normalize",
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "uuid-parse",
+          "uuid-unsafe-stringify",
+          "uuid-validate",
+          "uuid-stringify",
+          "uuid-version-fn",
+          "b64-to-byte-array"
+        ],
+        "dropped": [],
+        "tokens": 709,
+        "byPackage": {
+          "uuid-11.1.1": 425,
+          "base64-js-1.5.1": 284
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "uuid-parse",
+          "uuid-unsafe-stringify",
+          "uuid-validate",
+          "uuid-stringify",
+          "uuid-version-fn",
+          "b64-to-byte-array"
+        ],
+        "dropped": [],
+        "tokens": 709,
+        "byPackage": {
+          "uuid-11.1.1": 425,
+          "base64-js-1.5.1": 284
+        }
+      },
+      "differs": false
+    },
+    {
+      "task": "uuid-version",
+      "rank": {
+        "mode": "rank",
+        "maxPackageShare": 1,
+        "selected": [
+          "uuid-version-fn",
+          "uuid-validate",
+          "uuid-parse",
+          "semver-compare-identifiers"
+        ],
+        "dropped": [],
+        "tokens": 284,
+        "byPackage": {
+          "uuid-11.1.1": 196,
+          "semver-7.8.0": 88
+        }
+      },
+      "fill": {
+        "mode": "fill",
+        "maxPackageShare": 0.5,
+        "selected": [
+          "uuid-version-fn",
+          "uuid-validate",
+          "uuid-parse",
+          "semver-compare-identifiers"
+        ],
+        "dropped": [],
+        "tokens": 284,
+        "byPackage": {
+          "uuid-11.1.1": 196,
+          "semver-7.8.0": 88
+        }
+      },
+      "differs": false
     }
   ],
+  "triggers": [
+    {
+      "task": "clamp",
+      "seed": 0,
+      "reason": "near-miss-only",
+      "bestScore": 0.4
+    },
+    {
+      "task": "clamp",
+      "seed": 1,
+      "reason": "near-miss-only",
+      "bestScore": 0.4
+    },
+    {
+      "task": "clamp",
+      "seed": 2,
+      "reason": "near-miss-only",
+      "bestScore": 0.4
+    },
+    {
+      "task": "group-by",
+      "seed": 0,
+      "reason": "near-miss-only",
+      "bestScore": 0.79
+    },
+    {
+      "task": "group-by",
+      "seed": 1,
+      "reason": "near-miss-only",
+      "bestScore": 0.79
+    },
+    {
+      "task": "group-by",
+      "seed": 2,
+      "reason": "near-miss-only",
+      "bestScore": 0.79
+    },
+    {
+      "task": "parse-int-strict",
+      "seed": 0,
+      "reason": "near-miss-only",
+      "bestScore": 0.66
+    },
+    {
+      "task": "parse-int-strict",
+      "seed": 1,
+      "reason": "near-miss-only",
+      "bestScore": 0.66
+    },
+    {
+      "task": "parse-int-strict",
+      "seed": 2,
+      "reason": "near-miss-only",
+      "bestScore": 0.66
+    },
+    {
+      "task": "range",
+      "seed": 0,
+      "reason": "near-miss-only",
+      "bestScore": 0.5
+    },
+    {
+      "task": "range",
+      "seed": 1,
+      "reason": "near-miss-only",
+      "bestScore": 0.5
+    },
+    {
+      "task": "range",
+      "seed": 2,
+      "reason": "near-miss-only",
+      "bestScore": 0.5
+    },
+    {
+      "task": "safe-filename",
+      "seed": 0,
+      "reason": "near-miss-only",
+      "bestScore": 0.7
+    },
+    {
+      "task": "safe-filename",
+      "seed": 1,
+      "reason": "near-miss-only",
+      "bestScore": 0.7
+    },
+    {
+      "task": "safe-filename",
+      "seed": 2,
+      "reason": "near-miss-only",
+      "bestScore": 0.7
+    },
+    {
+      "task": "shallow-equal",
+      "seed": 0,
+      "reason": "near-miss-only",
+      "bestScore": 0.77
+    },
+    {
+      "task": "shallow-equal",
+      "seed": 1,
+      "reason": "near-miss-only",
+      "bestScore": 0.77
+    },
+    {
+      "task": "shallow-equal",
+      "seed": 2,
+      "reason": "near-miss-only",
+      "bestScore": 0.77
+    },
+    {
+      "task": "slugify",
+      "seed": 0,
+      "reason": "near-miss-only",
+      "bestScore": 0.73
+    },
+    {
+      "task": "slugify",
+      "seed": 1,
+      "reason": "near-miss-only",
+      "bestScore": 0.73
+    },
+    {
+      "task": "slugify",
+      "seed": 2,
+      "reason": "near-miss-only",
+      "bestScore": 0.73
+    }
+  ],
+  "triggerCounts": {
+    "rows": 63,
+    "byReason": {
+      "none": 42,
+      "near-miss-only": 21
+    },
+    "synthesisRate": 0.3333333333333333
+  },
   "summary": {
     "scratch": {
-      "n": 10,
-      "passes": 10,
-      "inputTokens": 637,
-      "outputTokens": 547,
-      "ms": 0,
+      "n": 63,
+      "passes": 63,
+      "inputTokens": 7443,
+      "outputTokens": 9447,
+      "ms": 3,
       "passRate": 1,
-      "meanTokens": 118.4,
-      "meanMs": 0
+      "meanTokens": 268.0952380952381,
+      "meanMs": 0.047619047619047616
     },
     "slice": {
-      "n": 10,
-      "passes": 10,
-      "inputTokens": 1118,
-      "outputTokens": 547,
+      "n": 63,
+      "passes": 63,
+      "inputTokens": 32535,
+      "outputTokens": 9447,
+      "ms": 6,
+      "passRate": 1,
+      "meanTokens": 666.3809523809524,
+      "meanMs": 0.09523809523809523
+    },
+    "slice-fill": {
+      "n": 63,
+      "passes": 63,
+      "inputTokens": 32535,
+      "outputTokens": 9447,
       "ms": 0,
       "passRate": 1,
-      "meanTokens": 166.5,
+      "meanTokens": 666.3809523809524,
       "meanMs": 0
     },
     "fallback": {
-      "n": 10,
-      "passes": 10,
-      "inputTokens": 1118,
-      "outputTokens": 547,
-      "ms": 1,
+      "n": 63,
+      "passes": 63,
+      "inputTokens": 31557,
+      "outputTokens": 9447,
+      "ms": 1825,
       "passRate": 1,
-      "meanTokens": 166.5,
-      "meanMs": 0.1
+      "meanTokens": 650.8571428571429,
+      "meanMs": 28.96825396825397
+    }
+  },
+  "byDifficulty": {
+    "compose-3+": {
+      "scratch": {
+        "n": 21,
+        "passes": 21,
+        "inputTokens": 3513,
+        "outputTokens": 5451,
+        "ms": 0,
+        "passRate": 1,
+        "meanTokens": 426.85714285714283,
+        "meanMs": 0
+      },
+      "slice": {
+        "n": 21,
+        "passes": 21,
+        "inputTokens": 21861,
+        "outputTokens": 5451,
+        "ms": 0,
+        "passRate": 1,
+        "meanTokens": 1300.5714285714287,
+        "meanMs": 0
+      },
+      "slice-fill": {
+        "n": 21,
+        "passes": 21,
+        "inputTokens": 21861,
+        "outputTokens": 5451,
+        "ms": 0,
+        "passRate": 1,
+        "meanTokens": 1300.5714285714287,
+        "meanMs": 0
+      },
+      "fallback": {
+        "n": 21,
+        "passes": 21,
+        "inputTokens": 21861,
+        "outputTokens": 5451,
+        "ms": 1008,
+        "passRate": 1,
+        "meanTokens": 1300.5714285714287,
+        "meanMs": 48
+      }
+    },
+    "compose-2": {
+      "scratch": {
+        "n": 12,
+        "passes": 12,
+        "inputTokens": 2019,
+        "outputTokens": 2355,
+        "ms": 2,
+        "passRate": 1,
+        "meanTokens": 364.5,
+        "meanMs": 0.16666666666666666
+      },
+      "slice": {
+        "n": 12,
+        "passes": 12,
+        "inputTokens": 7320,
+        "outputTokens": 2355,
+        "ms": 1,
+        "passRate": 1,
+        "meanTokens": 806.25,
+        "meanMs": 0.08333333333333333
+      },
+      "slice-fill": {
+        "n": 12,
+        "passes": 12,
+        "inputTokens": 7320,
+        "outputTokens": 2355,
+        "ms": 0,
+        "passRate": 1,
+        "meanTokens": 806.25,
+        "meanMs": 0
+      },
+      "fallback": {
+        "n": 12,
+        "passes": 12,
+        "inputTokens": 7320,
+        "outputTokens": 2355,
+        "ms": 515,
+        "passRate": 1,
+        "meanTokens": 806.25,
+        "meanMs": 42.916666666666664
+      }
+    },
+    "single": {
+      "scratch": {
+        "n": 30,
+        "passes": 30,
+        "inputTokens": 1911,
+        "outputTokens": 1641,
+        "ms": 1,
+        "passRate": 1,
+        "meanTokens": 118.4,
+        "meanMs": 0.03333333333333333
+      },
+      "slice": {
+        "n": 30,
+        "passes": 30,
+        "inputTokens": 3354,
+        "outputTokens": 1641,
+        "ms": 5,
+        "passRate": 1,
+        "meanTokens": 166.5,
+        "meanMs": 0.16666666666666666
+      },
+      "slice-fill": {
+        "n": 30,
+        "passes": 30,
+        "inputTokens": 3354,
+        "outputTokens": 1641,
+        "ms": 0,
+        "passRate": 1,
+        "meanTokens": 166.5,
+        "meanMs": 0
+      },
+      "fallback": {
+        "n": 30,
+        "passes": 30,
+        "inputTokens": 2376,
+        "outputTokens": 1641,
+        "ms": 302,
+        "passRate": 1,
+        "meanTokens": 133.9,
+        "meanMs": 10.066666666666666
+      }
+    }
+  },
+  "tokensByModel": {
+    "offline-reference": {
+      "inputTokens": 104070,
+      "outputTokens": 37788,
+      "calls": 252
+    }
+  },
+  "breakEven": {
+    "slice": {
+      "savingPerTask": -398.28571428571433,
+      "savingPerPass": -398.28571428571433,
+      "passRateDelta": 0,
+      "nStarByTask": {
+        "0": null,
+        "1000": null,
+        "10000": null,
+        "100000": null
+      },
+      "nStarByPass": {
+        "0": null,
+        "1000": null,
+        "10000": null,
+        "100000": null
+      }
+    },
+    "slice-fill": {
+      "savingPerTask": -398.28571428571433,
+      "savingPerPass": -398.28571428571433,
+      "passRateDelta": 0,
+      "nStarByTask": {
+        "0": null,
+        "1000": null,
+        "10000": null,
+        "100000": null
+      },
+      "nStarByPass": {
+        "0": null,
+        "1000": null,
+        "10000": null,
+        "100000": null
+      }
+    },
+    "fallback": {
+      "savingPerTask": -382.7619047619048,
+      "savingPerPass": -382.7619047619048,
+      "passRateDelta": 0,
+      "nStarByTask": {
+        "0": null,
+        "1000": null,
+        "10000": null,
+        "100000": null
+      },
+      "nStarByPass": {
+        "0": null,
+        "1000": null,
+        "10000": null,
+        "100000": null
+      }
     }
   }
 }

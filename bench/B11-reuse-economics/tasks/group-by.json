@@ -1,5 +1,6 @@
 {
   "id": "group-by",
+  "difficulty": "single",
   "entry": "groupBy",
   "spec": "Write `export function groupBy<T>(items: readonly T[], key: (item: T) => string): Record<string, T[]>` that groups items by the string returned from key, keeping the original order within each group.",
   "reference": "export function groupBy<T>(items: readonly T[], key: (item: T) => string): Record<string, T[]> {\n  const out: Record<string, T[]> = {};\n  for (const item of items) { const k = key(item); (out[k] ??= []).push(item); }\n  return out;\n}",
