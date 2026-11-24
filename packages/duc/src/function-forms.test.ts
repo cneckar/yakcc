@@ -292,6 +292,59 @@ describe("a try that yields, in a generator (#1330)", () => {
   });
 });
 
+describe("a block's own names end with the block (#1330)", () => {
+  // Before, a name a block declared leaked out of it: the rest of the scope read the block's binding,
+  // and an if joined a side's shadowing declaration as if it assigned the outer name.
+  const CASES: [string, string, unknown][] = [
+    [
+      "after a block",
+      "export function f(p) { const point = p; { const point = 2; } return point; }",
+      7,
+    ],
+    [
+      "after an if whose side declares the name again",
+      "export function f(p) { const point = p; if (p > 0) { const point = 2; p = point; } return [p, point]; }",
+      7,
+    ],
+    [
+      "the rest of the function, taken by a block that returns on some paths",
+      "export function f(p) { const point = p; if (p > 1) { const point = 2; if (p > 5) return point; } return point * 10; }",
+      3,
+    ],
+    [
+      "the same, the return taken",
+      "export function f(p) { const point = p; if (p > 1) { const point = 2; if (p > 5) return point; } return point * 10; }",
+      7,
+    ],
+    [
+      "the rest of a loop's body, taken by a block that continues, as Node's strEscape writes it",
+      "export function f(xs) { let n = 0; for (let i = 0; i < xs.length; i++) { const point = xs[i]; if (point > 5) { const point = xs[i + 1]; if (point === 0) { i++; continue; } } n += point; } return n; }",
+      [1, 9, 0, 3, 9, 2],
+    ],
+    [
+      "a class and a function declared in a block",
+      "export function f(p) { const K = 'outer'; function g() { return 'g'; } { class K {} function g() { return 'inner'; } p = [typeof K, g()]; } return [p, K, g()]; }",
+      0,
+    ],
+  ];
+  for (const [name, source, input] of CASES) {
+    it(name, () => {
+      const g = liftAtom(source);
+      expect(opaque(g)).toEqual([]);
+      const code = emitTypeScript(g);
+      const go = (c: string): unknown =>
+        // Strict, as a module is: a function declared in a block is the block's alone.
+        (
+          new Function(`"use strict"; ${c.replace(/^export /m, "")}; return f;`)() as (
+            x: unknown,
+          ) => unknown
+        )(input);
+      expect(go(code), code).toEqual(go(source));
+      expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    });
+  }
+});
+
 describe("array holes (#1330)", () => {
   it("a hole is no element: its position, the length and the keys are kept", () => {
     for (const [source, input] of [
