@@ -58,4 +58,19 @@ describe("lift fidelity (#1173)", () => {
       "function factory () { var o = {}; o.salt = function (r) { return r || ROUNDS }; var ROUNDS = 10; return o }";
     expect(holds(source)).toEqual({ holds: true, missing: [], extra: [] });
   });
+
+  it("a fragment of a generator's body yields: `yield` is not a name it reads (#1330)", () => {
+    // As the shaver slices the runtime's generator primitives: before, `yield* body()` was read
+    // as a name `yield` times body(), and the gate refused `yield` as unresolved.
+    for (const [fragment, free] of [
+      ["return yield* body();", ["body"]],
+      ["const done = yield* finalizer();", ["finalizer"]],
+      ["return yield* handler(thrown);", ["handler", "thrown"]],
+      ["const x = await a(); yield x;", ["a"]],
+    ] as [string, string[]][]) {
+      const g = liftAtom(fragment);
+      expect([...graphFreeNames(g)].sort(), fragment).toEqual(free);
+      expect(holds(fragment), fragment).toEqual({ holds: true, missing: [], extra: [] });
+    }
+  });
 });
