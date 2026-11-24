@@ -126,6 +126,94 @@ describe("operations chosen by meaning (#1310)", () => {
   });
 });
 
+describe("closures are chosen under the types they are made and called with (#1310)", () => {
+  /** The operations of every closure of a graph, nested ones included. */
+  const inner = (g: DucGraph): string[] =>
+    g.nodes
+      .flatMap((n) => (n.closure !== undefined ? [...ops(n.closure), ...inner(n.closure)] : []))
+      .sort();
+  const num2 = sig(["number", "number"], "number");
+
+  it("a closure called directly: its parameters take the arguments' types", () => {
+    const g = byMeaning(
+      liftAtom(
+        "export function f(a: number, b: number) { const twice = (x) => x * 2; return twice(a) + twice(b); }",
+      ),
+      num2,
+    );
+    expect(inner(g)).toEqual(["f64.mul"]);
+    expect(ops(g)).toContain("f64.add");
+  });
+
+  it("an array method's callback: element, index, array", () => {
+    const g = byMeaning(
+      liftAtom(
+        "export function f(xs: number[], k: number) { return xs.map((x, i) => x + k * i); }",
+      ),
+      sig(["number[]", "number"]),
+    );
+    expect(inner(g)).toEqual(["f64.add", "f64.mul"]);
+  });
+
+  it("a closure used in a loop is reached through the loop's invariants", () => {
+    const g = byMeaning(
+      liftAtom(
+        "export function f(n: number) { const step = (x) => x - 1; let i = n; while (i > 0) { i = step(i); } return i; }",
+      ),
+      sig(["number"]),
+    );
+    expect(inner(g)).toEqual(["f64.sub"]);
+  });
+
+  it("calls that disagree, a closure that escapes, or one that calls itself: its own parameters are not known", () => {
+    const disagree = byMeaning(
+      liftAtom(
+        "export function f(a: number, s: string) { const g = (x) => x + x; return [g(a), g(s)]; }",
+      ),
+      sig(["number", "string"]),
+    );
+    expect(inner(disagree)).toEqual(["js.add"]);
+    const escapes = byMeaning(
+      liftAtom("export function f(a: number) { const g = (x) => x + a; g(a); return g; }"),
+      sig(["number"]),
+    );
+    expect(inner(escapes)).toEqual(["js.add"]);
+    const recursive = byMeaning(
+      liftAtom(
+        "export function f(n: number) { const g = function h(x) { return x > 0 ? h(x - 1) : x; }; return g(n); }",
+      ),
+      sig(["number"]),
+    );
+    expect(inner(recursive).filter((l) => l.startsWith("f64."))).toEqual([]);
+  });
+
+  it("a capture's type is known wherever the closure goes", () => {
+    const g = byMeaning(
+      liftAtom("export function f(a: number) { return () => a * a; }"),
+      sig(["number"]),
+    );
+    expect(inner(g)).toEqual(["f64.mul"]);
+  });
+
+  it("closures round-trip through TypeScript, chosen again under the same contract", () => {
+    for (const [src, s] of [
+      [
+        "export function f(a: number, b: number) { const twice = (x) => x * 2; return twice(a) + twice(b); }",
+        num2,
+      ],
+      [
+        "export function f(xs: number[], k: number) { return xs.map((x, i) => x + k * i); }",
+        sig(["number[]", "number"]),
+      ],
+      ["export function f(a: number) { return () => a * a; }", sig(["number"])],
+    ] as const) {
+      const g = byMeaning(liftAtom(src), s);
+      expect(graphIdentity(byMeaning(liftAtom(emitTypeScript(g)), s)), src).toBe(graphIdentity(g));
+      expect(graphIdentity(byMeaning(g, s)), src).toBe(graphIdentity(g));
+    }
+  });
+});
+
 describe("round trip with the contract (#1310)", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const sample = JSON.parse(

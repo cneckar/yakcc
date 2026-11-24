@@ -165,7 +165,7 @@ named by **meaning**, and each language's symbol is raised to the meaning it has
   - unknown or mixed operand types;
   - string ordering (UTF-16 code units, not code points);
   - bigint, integer arithmetic, `**`;
-  - closures, whose types are inferred at each call.
+  - a closure's own parameters, unless every use of the closure is a call whose argument types are known: a direct call, or an array method's callback on an array of known element type. Its captures always take the outer graph's types.
 - **Choosing is a function of the graph and the contract,** whichever names the graph came in. It is idempotent. A graph in generic names, chosen under a contract that does not give the types, goes back to `js.*`.
 - **Canonical order:** `f64.add` and `f64.mul` commute in it, as `===` already did. `js.add` does not, because concatenation does not commute.
 
