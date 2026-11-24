@@ -1597,6 +1597,19 @@ export const COLLECTION_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
  */
 export const METHOD_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   // Each element an iterable gives (__ykIterSource), pushed onto out.
+  __ykRestFrom: {
+    inputs: ["unknown[]", "number"],
+    output: "unknown[]",
+    source: String.raw`export function f(a: unknown[], from: number): unknown[] {
+  const out: unknown[] = [];
+  let i = from;
+  while (i < a.length) {
+    out.push(a[i]);
+    i = i + 1;
+  }
+  return out;
+}`,
+  },
   __ykAppendAll: {
     inputs: ["unknown[]", "unknown"],
     output: "unknown",

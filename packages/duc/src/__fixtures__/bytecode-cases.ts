@@ -333,6 +333,18 @@ export const numericText = fc.oneof(
 
 export const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
   [
+    "rest parameters: called with arguments, with a spread, as a function value, and as an array method's callback",
+    "export function f(xs: unknown[], n: number): unknown { const g = (a: unknown, ...r: unknown[]) => [a, r.length, r]; const h = (...r: unknown[]) => r.length + n; const v: any = n > 1 ? g : h; const p = (a: unknown, b: unknown) => [b, a, n]; return [g(1), g(1, 2, 3), g(n, ...xs), h(...xs, ...xs), h(), v(xs, n), v(...xs), xs.map(g), xs.map((x: unknown, ...more: unknown[]) => more.length), g(...xs), g(...xs, n), p(...xs), p(n, ...xs)]; }",
+    ["unknown[]", "number"],
+    "unknown",
+    fc.tuple(
+      fc.array(fc.oneof(fc.integer({ min: -2, max: 9 }), fc.constantFrom("a", null)), {
+        maxLength: 4,
+      }),
+      fc.integer({ min: 0, max: 3 }),
+    ),
+  ],
+  [
     "sort (by default, as strings, and with a comparator), spread in array literals, calls and object literals, Array.from, Math.max/min of a spread",
     "export function f(xs: number[], ys: unknown[], s: string, o: any): unknown { const a = [...xs.filter((x: number) => x === x)]; a.sort((p: number, q: number) => p - q); const b: any = [...ys, 1, ...s]; b.sort(); const g = (...r: unknown[]) => r.length; const c: any = ys; const cs = c.slice(); cs.sort((p: any, q: any) => (String(p) < String(q) ? 1 : String(p) > String(q) ? -1 : 0)); return [a, b, cs, Math.max(...xs), Math.min(...xs, 3), Array.from(s), Array.from(ys), Array.from(new Set(xs)), { ...o, z: 1 }, { y: 2, ...o }, [...new Map([[1, s]])], c.concat(...[[1], 2])]; }",
     ["number[]", "unknown[]", "string", "unknown"],
