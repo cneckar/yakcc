@@ -53,7 +53,10 @@ the format lacks, classified (a), (b) or (c) as in #1299, before the lock.
 **What the format lacks for the JVM, classified as in #1299:**
 - **(a) lowered now:**
   - numbers, booleans, strings, arrays of numbers, values of any kind, loops with early exits, and every runtime atom;
-  - closures, when they are called where they are made (one function per signature);
+  - closures: called where they are made, passed as arguments, or captured, each lowered once per signature (a function passed as it is is part of it); and as function values (stored, returned, chosen, called through a value of any kind), through trampolines and one dispatch;
+  - the array methods that take a function: `map`, `filter`, `forEach`, `reduce`, `some`, `every`, `find` and `findIndex`, as runtime atoms;
+  - recursive closures (a closure that refers to itself returns a value of any kind, so a call of itself knows its result type while it is lowered);
+  - iteration: `for...in` (keys in ECMAScript's order: array indices ascending, then the others as made), `for...of` over arrays (read at each step, as the iterator does), strings (by code point) and values of any kind, and `Object.keys`, `values` and `entries`;
   - arrays of any values;
   - objects and errors;
   - exceptions (`throw`, and `try` with `catch` and `finally`), with runtime TypeErrors catchable.
@@ -67,8 +70,9 @@ the format lacks, classified (a), (b) or (c) as in #1299, before the lock.
 
     They become runtime atoms ported from V8's algorithms, which every target then shares; WasmGC still takes them from the host engine.
   - The other host functions are checked against V8 on 1000 generated arguments each, and agree exactly: `%`, `**`, `round`, `sign` and `fround`, and the `StrictMath` functions `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sinh`, `tanh`, `expm1`, `log`, `log1p`, `log10` and `pow`.
-  - Function values: a closure passed, returned or stored, or one that captures a function or calls itself. They are refused with the reason.
-  - Property enumeration (`Object.keys`, `for...in`, `JSON`): an object keeps insertion order, while ECMAScript puts integer keys first.
+  - Builtins (`String`, `Math.max`, ...) used as function values, and closures that call each other (each captures the other). They are refused with the reason.
+  - A function value's source text (`String(f)`), which a lowering does not keep.
+  - `JSON.stringify` and `JSON.parse`, and iteration over maps, sets and other iterables.
   - The engines' exact TypeError messages.
   - `instanceof`.
 - **(c) format gaps:** none found. The graph carried everything both lowerings need: the contract's types, the dataflow, and the heap order.

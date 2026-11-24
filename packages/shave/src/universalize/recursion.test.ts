@@ -161,6 +161,29 @@ describe("decompose — leafCount and maxDepth with 3-statement source", () => {
 // RecursionDepthExceededError
 // ---------------------------------------------------------------------------
 
+describe("decompose — the depth is bounded by the source's own AST (DEC-RECURSION-DEPTH-STRUCTURAL-001)", () => {
+  // Arrow functions nested 16 deep, each body with two ifs (so none is an atom): the recursion
+  // descends well past the old fixed ceiling of 24.
+  const deep = (levels: number): string => {
+    let body = "if (a) { console.log(0); } if (b) { console.log(1); }";
+    for (let i = 0; i < levels; i++)
+      body = `const f${i} = () => { if (a) { console.log(${i}); } ${body} };`;
+    return ["declare const a: boolean;", "declare const b: boolean;", body].join("\n");
+  };
+
+  it("decomposes legitimately deep code by default", async () => {
+    const tree = await decompose(deep(16), emptyRegistry);
+    expect(tree.maxDepth).toBeGreaterThan(24);
+    expect(tree.leafCount).toBeGreaterThan(1);
+  });
+
+  it("an explicit maxDepth is still the caller's ceiling", async () => {
+    await expect(decompose(deep(16), emptyRegistry, { maxDepth: 24 })).rejects.toThrow(
+      RecursionDepthExceededError,
+    );
+  });
+});
+
 describe("decompose — RecursionDepthExceededError", () => {
   it("throws when maxDepth=0 and the root is not atomic", async () => {
     // Source with 2 if-statements: SourceFile has 2 CF → not atomic.

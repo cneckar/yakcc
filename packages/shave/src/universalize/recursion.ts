@@ -212,6 +212,34 @@ import type {
  */
 const DEFAULT_MAX_DEPTH = 24;
 
+/**
+ * @decision DEC-RECURSION-DEPTH-STRUCTURAL-001
+ * title: by default, the recursion is bounded by the source's own AST height
+ * status: decided
+ * rationale:
+ *   Each recursion step goes from a node to one of its descendants, so a correct decomposition can
+ *   never be deeper than the parsed source's AST. A fixed ceiling (8, then 24) rejects legitimate
+ *   deep code: real files keep exceeding it (zod's v3/types.cjs at depth 25, DEC-FIX-619-TYPES-CJS-
+ *   POST-FIX-001; yakcc's own lowering, whose closures nest past 24). The default is therefore the
+ *   source's AST height (never below DEFAULT_MAX_DEPTH): a deeper recursion can only be a bug, and
+ *   still throws. An explicit options.maxDepth is a caller's ceiling and applies as given.
+ * consequences:
+ *   - Deep legitimate code decomposes instead of failing with RecursionDepthExceededError.
+ *   - Runaway recursion is still caught, at the source's height.
+ */
+function astHeight(root: Node): number {
+  let height = 0;
+  const stack: [import("ts-morph").ts.Node, number][] = [[root.compilerNode, 0]];
+  while (stack.length > 0) {
+    const [n, d] = stack.pop() as [import("ts-morph").ts.Node, number];
+    if (d > height) height = d;
+    n.forEachChild((c) => {
+      stack.push([c, d + 1]);
+    });
+  }
+  return height;
+}
+
 // ---------------------------------------------------------------------------
 // Error classes
 // ---------------------------------------------------------------------------
@@ -1457,7 +1485,7 @@ export async function decompose(
     scriptKind: ScriptKind.TS,
   });
 
-  const maxDepth = options?.maxDepth ?? DEFAULT_MAX_DEPTH;
+  const maxDepth = options?.maxDepth ?? Math.max(DEFAULT_MAX_DEPTH, astHeight(file));
 
   // P0 #549 STEF fast-path: when the SourceFile IS a single typed exported
   // function with JSDoc (and only permitted noise: imports/type aliases/

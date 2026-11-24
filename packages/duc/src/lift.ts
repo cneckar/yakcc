@@ -207,6 +207,28 @@ export function parseAtomSource(source: string): { project: Project; file: Sourc
     if (diagnostics.length === 0) {
       project = sf.getProject();
       file = sf;
+      // A fragment of a generator's body yields: outside a generator, `yield* g()` is a name
+      // `yield` times g(), and `yield` is never a name in a module. It is the body of the
+      // generator it was sliced from (#1330), async when it awaits too.
+      const asName = sf
+        .getDescendantsOfKind(SyntaxKind.Identifier)
+        .some((id) => id.getText() === "yield" && isValueRead(id));
+      if (asName) {
+        const generator = new Project({
+          useInMemoryFileSystem: true,
+          compilerOptions: { allowJs: false, noEmit: true, noLib: true, skipLibCheck: true },
+        });
+        const awaits = /\bawait\b/.test(source) ? "async " : "";
+        const body = generator.createSourceFile(
+          "atom.ts",
+          `${awaits}function* __atom__() {\n${source}\n}`,
+          { scriptKind: ScriptKind.TS },
+        );
+        if (generator.getProgram().getSyntacticDiagnostics(body).length === 0) {
+          project = generator;
+          file = body;
+        }
+      }
       break;
     }
     if (index === 0) {
@@ -562,6 +584,11 @@ class Lifter {
   run(file: Node): void {
     for (const name of writtenFreeNames(file)) if (!this.imports.has(name)) this.bindings.add(name);
     const primary = findPrimaryFunction(file);
+    // The atom is the function: a name the file declares outside it, and the function writes, is a
+    // binding outside the atom too (#1330): `let d = function () { .. d = g; .. }`.
+    if (primary !== undefined)
+      for (const name of writtenFreeNames(primary))
+        if (!this.imports.has(name)) this.bindings.add(name);
     if (primary !== undefined) {
       this.mode = functionModeOf(primary);
       this.liftFunction(primary);
@@ -764,6 +791,9 @@ class Lifter {
         }
     }
     for (const [i, written] of stmts.entries()) {
+      // The rest of a scope a block took: the block's names are the scope's again (#1330).
+      const scope = this.tailScopes.get(written.compilerNode);
+      if (scope !== undefined) this.restoreScope(scope);
       // A switch whose clauses each end in an exit is the if chain it means (#1276).
       const stmt = Node.isSwitchStatement(written)
         ? (this.lowerSwitch(written) ?? this.lowerSwitchAsPass(written) ?? written)
@@ -1219,6 +1249,23 @@ class Lifter {
     return lowered;
   }
 
+  /**
+   * Where the rest of a scope starts that a block took (see the Block case of liftStatementInner):
+   * the block's own names, with the values they had outside it.
+   */
+  private readonly tailScopes = new Map<
+    import("ts-morph").ts.Node,
+    ReadonlyMap<string, ValueId | undefined>
+  >();
+
+  /** Puts names back to the values they had outside a block (absent: not bound outside it). */
+  private restoreScope(outer: ReadonlyMap<string, ValueId | undefined>): void {
+    for (const [name, value] of outer) {
+      if (value === undefined) this.env.delete(name);
+      else this.env.set(name, value);
+    }
+  }
+
   /** The returns of lowered statements (see noteExits). */
   private readonly loweredExits = new Set<import("ts-morph").ts.Node>();
 
@@ -1304,25 +1351,13 @@ class Lifter {
     return !(both && this.returnFrames.length === 0 && size > 4000);
   }
 
-  /** Whether a block's statements can run with `tail` after them in the block's scope. */
-  private blockMayTake(block: import("ts-morph").Block, tail: readonly Node[]): boolean {
-    if (!containsExitOrLoopReturn(block)) return false;
-    const lexical = new Set<string>();
-    for (const st of block.getStatements()) {
-      if (Node.isVariableStatement(st))
-        for (const d of st.getDeclarations())
-          for (const n of patternNames(d.getNameNode())) lexical.add(n);
-      if (
-        (Node.isFunctionDeclaration(st) || Node.isClassDeclaration(st)) &&
-        st.getName() !== undefined
-      )
-        lexical.add(st.getName() as string);
-    }
-    // A name the tail declares at its own top level is, everywhere in the tail, the tail's binding
-    // (its scope is the scope the tail is in), never the block's: reading it is not reading the
-    // block's name (DEC-LIFT-BLOCK-TAIL-SHADOW-001).
-    for (const t of tail) for (const n of topLevelDeclaredNames(t)) lexical.delete(n);
-    return !tail.some((t) => this.readNamesOf(t).some((n) => lexical.has(n)));
+  /**
+   * Whether a block's statements can run with `tail` after them. The tail reads the names outside
+   * the block, as written: the block's own are put back where the tail starts (#1330), so a name
+   * the block declares does not refuse it (before, it did: DEC-LIFT-BLOCK-TAIL-SHADOW-001).
+   */
+  private blockMayTake(block: import("ts-morph").Block, _tail: readonly Node[]): boolean {
+    return containsExitOrLoopReturn(block);
   }
 
   /**
@@ -1719,6 +1754,12 @@ class Lifter {
       inner.derived = derived;
       inner.ownsArguments = !Node.isArrowFunction(fn);
       for (const name of captures) if (this.bindings.has(name)) inner.bindings.add(name);
+      // A binding outside the atom the closure only writes is still that binding inside it, for a
+      // closure within it that writes it too (#1330): `let d = function () { try { .. } catch {
+      // d = g; } }` at a module's top level.
+      for (const t of assignmentTargets(fn))
+        for (const name of assignedNames(t))
+          if (this.bindings.has(name) && !closureLocals(fn).has(name)) inner.bindings.add(name);
       graph = inner.liftClosureBody(
         fn,
         captures,
@@ -1913,7 +1954,16 @@ class Lifter {
       return;
     }
     if (Node.isBlock(node)) {
+      // A block's own names (let, const, class, function) are its scope's: after it, and in the
+      // rest of the scope when the block takes that rest (`cont`), a name it declares is the
+      // binding outside it again (#1330). Nothing inside the block can change that binding: the
+      // block's own shadows it everywhere in the block.
+      const own = blockLexicalNames(node);
+      const outer = new Map(own.map((n) => [n, this.env.get(n)] as const));
+      const first = cont?.[0];
+      if (first !== undefined && own.length > 0) this.tailScopes.set(first.compilerNode, outer);
       this.lastBlockExited = this.liftStatements(node.getStatements(), cont);
+      this.restoreScope(outer);
       return;
     }
     if (Node.isSwitchStatement(node) || Node.isTryStatement(node)) {
@@ -3886,9 +3936,10 @@ function closureLocals(fn: Node): Set<string> {
 
 /**
  * The names a scope declares that a closure inside it rebinds (#1276): they are held in cells. A name
- * bound by a loop's header, or a `var` inside a loop, is left out: JavaScript gives the first a binding
- * per iteration and the second one binding for all of them, and a cell made at the declaration is
- * neither.
+ * bound by a `for` header, or a `var` inside a loop, is left out: JavaScript copies the first from one
+ * pass's binding to the next and gives the second one binding for all passes, and a cell made at the
+ * declaration is neither. A `for-of` or `for-in` header's `let` is in: its binding is new each pass,
+ * and so is its cell, made where the element is bound (#1330).
  */
 function cellNames(scope: Node): Set<string> {
   // A try statement's blocks are closures once it is lowered (Lifter.lowerTry): they count as nested.
@@ -3923,11 +3974,14 @@ function cellNames(scope: Node): Set<string> {
     if (insideNested(decl)) continue;
     const list = decl.getParent();
     const header = list?.getParent();
+    // A for-of or for-in header's let is bound anew each pass, where bindPattern makes its cell
+    // (#1330); a for header's is copied from pass to pass, and a var header's is one for all passes.
+    if (header !== undefined && Node.isForStatement(header)) continue;
     if (
       header !== undefined &&
-      (Node.isForStatement(header) ||
-        Node.isForOfStatement(header) ||
-        Node.isForInStatement(header))
+      (Node.isForOfStatement(header) || Node.isForInStatement(header)) &&
+      Node.isVariableDeclarationList(list) &&
+      list.getDeclarationKind() === "var"
     )
       continue;
     if (Node.isVariableDeclarationList(list) && list.getDeclarationKind() === "var" && inLoop(decl))
@@ -4251,6 +4305,19 @@ function baseIdentifierOfTarget(target: Node | undefined): string | undefined {
  * The names a statement declares in the scope it is in: those of a variable statement and of a
  * named function or class declaration.
  */
+/** The names a block declares for its own scope: let, const, class and function, not var. */
+function blockLexicalNames(block: import("ts-morph").Block): string[] {
+  return block.getStatements().flatMap((st) => {
+    if (Node.isVariableStatement(st))
+      return st.getDeclarationKind() === "var"
+        ? []
+        : st.getDeclarations().flatMap((d) => patternNames(d.getNameNode()));
+    if ((Node.isFunctionDeclaration(st) || Node.isClassDeclaration(st)) && st.getName())
+      return [st.getName() as string];
+    return [];
+  });
+}
+
 function topLevelDeclaredNames(stmt: Node): string[] {
   if (Node.isVariableStatement(stmt))
     return stmt.getDeclarations().flatMap((d) => patternNames(d.getNameNode()));
@@ -4952,22 +5019,6 @@ function jumpsSupported(loop: Node): boolean {
         Node.isLabeledStatement(p)
       )
         return false;
-      if (Node.isBlock(p)) {
-        const lexical = p
-          .getStatements()
-          .flatMap((st) =>
-            Node.isVariableStatement(st)
-              ? st.getDeclarations().flatMap((d) => patternNames(d.getNameNode()))
-              : [],
-          );
-        // A read outside the block of a name some scope inside the body declares (a sibling
-        // block's own declaration) is not the name moved into the block.
-        const outside = body
-          .getDescendantsOfKind(SyntaxKind.Identifier)
-          .filter((id) => !id.getAncestors().some((a) => a.compilerNode === p?.compilerNode))
-          .filter((id) => isValueRead(id) && !declaredBelow(id, body));
-        if (lexical.some((n) => outside.some((id) => id.getText() === n))) return false;
-      }
     }
   }
   return true;
