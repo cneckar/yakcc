@@ -222,6 +222,15 @@ export const NUMERIC_STRINGS: string[] = (() => {
   return out;
 })();
 
+/** Numbers for the bitwise operators: ToInt32's edges, fractions, and every range. */
+export const bitArg = fc.oneof(
+  fc.integer(),
+  fc.integer({ min: -40, max: 40 }),
+  fc.double(),
+  fc.constantFrom(2 ** 31, -(2 ** 31), 2 ** 31 - 1, 2 ** 32, 2 ** 32 + 5, -(2 ** 32) - 3, 2 ** 53),
+  fc.constantFrom(1e20, -1e20, -1.5, 4294967295.7, -0, Number.NaN, Number.POSITIVE_INFINITY, 0.5),
+);
+
 /** Every kind of value the WasmGC lowering represents. */
 export const anyValue = fc.oneof(
   fc.double(),
@@ -318,6 +327,13 @@ export const numericText = fc.oneof(
 );
 
 export const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
+  [
+    "bitwise operators: &, |, ^, <<, >>, >>>, ~ on every kind of number (ToInt32's modulo, a shift's count mod 32)",
+    "export function f(a: number, b: number): unknown { return [a & b, a | b, a ^ b, a << b, a >> b, a >>> b, ~a, ~~a, a | 0, a >>> 0, -1 >>> 0, 1 << 31, (a & 0xff) << 8, b >>> 32, a << -1]; }",
+    ["number", "number"],
+    "unknown",
+    fc.tuple(bitArg, bitArg),
+  ],
   [
     "builtins as functions: filter(Boolean), map(String), map(Number), Math's one-argument functions, stored and called",
     "export function f(xs: unknown[], n: number): unknown { const nums = [n, -n, 2.5, -0.5]; const fs: unknown[] = [String, Math.abs]; return [xs.filter(Boolean), xs.map(String), xs.map(Number), nums.map(Math.abs), nums.map(Math.floor), nums.map(Math.sqrt), nums.map(Math.round), Boolean(n), Boolean(), (fs[0] as any)(n), (fs[1] as any)(-3), typeof fs[0]]; }",

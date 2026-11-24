@@ -1339,6 +1339,19 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   throw __ykMakeError("TypeError", "Cannot read properties of undefined or null");
 }`,
   },
+  // ToInt32 (ECMA-262 7.1.6) of a number: modulo 2^32, as a signed 32-bit integer; NaN and the
+  // infinities are 0. Each step is exact: a power of two divides exactly, and the difference of
+  // two integers that is below 2^32 is a double.
+  __ykToInt32: {
+    inputs: ["number"],
+    output: "number",
+    source: `export function f(x: number): number {
+  const n = Math.trunc(x);
+  const m = n - Math.floor(n / 4294967296) * 4294967296;
+  if (m !== m) return 0;
+  return m >= 2147483648 ? m - 4294967296 : m;
+}`,
+  },
   // A property key that is an array index (a canonical numeric string below 2^32 - 1): its
   // number, else -1.
   __ykArrayIndex: {

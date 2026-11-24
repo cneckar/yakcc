@@ -156,7 +156,13 @@ export type Ins =
   | { readonly op: "set"; readonly i: number }
   | { readonly op: "call"; readonly fn: string }
   | { readonly op: "f64"; readonly name: F64Op }
-  | { readonly op: "i32"; readonly name: "eqz" | "and" | "eq" }
+  | {
+      readonly op: "i32";
+      readonly name: "eqz" | "and" | "eq" | "or" | "xor" | "shl" | "shr_s" | "shr_u";
+    }
+  /** A number that is a 32-bit integer, as one; and a 32-bit integer read as unsigned. */
+  | { readonly op: "i32.of.f64" }
+  | { readonly op: "f64.of.u32" }
   | { readonly op: "f64.of.i32" }
   | { readonly op: "str.len" }
   | { readonly op: "nums.len" }
@@ -270,6 +276,15 @@ export const MATH_CONSTANTS: Readonly<Record<string, number>> = {
   LOG10E: Math.LOG10E,
   SQRT2: Math.SQRT2,
   SQRT1_2: Math.SQRT1_2,
+};
+/** The bitwise operators: their operands are ToInt32's (a shift's count ToUint32's, mod 32). */
+const BITWISE: Readonly<Record<string, "and" | "or" | "xor" | "shl" | "shr_s" | "shr_u">> = {
+  "&": "and",
+  "|": "or",
+  "^": "xor",
+  "<<": "shl",
+  ">>": "shr_s",
+  ">>>": "shr_u",
 };
 const F64_BINARY: Readonly<Record<string, F64Op>> = {
   "+": "add",
@@ -1307,6 +1322,8 @@ function lowerFunction(
       return "f64";
     if (ins.length === 2 && F64_COMPARE[label] !== undefined) return "i32";
     if (ins.length === 1 && (label === "-" || label === "+")) return "f64";
+    if ((ins.length === 2 && BITWISE[label] !== undefined) || (ins.length === 1 && label === "~"))
+      return "f64";
     if (ins.length === 1 && label === "!") return "i32";
     if (ins.length === 2 && (label === "&&" || label === "||"))
       return unify(get(ins[0] as ValueId), get(ins[1] as ValueId), `"${label}"`);
@@ -2011,6 +2028,26 @@ function lowerFunction(
         pushNumber(b);
         emit({ op: "f64", name: F64_COMPARE[label] as F64Op });
       }
+      set(out);
+      return;
+    }
+    if ((ins.length === 2 && BITWISE[label] !== undefined) || (ins.length === 1 && label === "~")) {
+      // Each operand ToInt32 (exact in a double), then a 32-bit integer.
+      const int32 = (v: ValueId): void => {
+        pushNumber(v);
+        emit({ op: "call", fn: mod.atom("__ykToInt32").fn }, { op: "i32.of.f64" });
+      };
+      int32(ins[0] as ValueId);
+      if (label === "~") emit({ op: "const.i32", x: -1 }, { op: "i32", name: "xor" });
+      else {
+        int32(ins[1] as ValueId);
+        const name = BITWISE[label] as "and" | "or" | "xor" | "shl" | "shr_s" | "shr_u";
+        // A shift's count is its low five bits.
+        if (name === "shl" || name === "shr_s" || name === "shr_u")
+          emit({ op: "const.i32", x: 31 }, { op: "i32", name: "and" });
+        emit({ op: "i32", name });
+      }
+      emit({ op: label === ">>>" ? "f64.of.u32" : "f64.of.i32" });
       set(out);
       return;
     }
