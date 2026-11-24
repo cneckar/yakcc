@@ -1,6 +1,6 @@
-# DEC-DUC-WASM-MEMORY-001: wasm beyond numbers — linear memory and the native runtime, or WasmGC
+# DEC-DUC-WASM-MEMORY-001: wasm beyond numbers is lowered to WasmGC, with the runtime written as atoms
 
-**Status:** **Proposed.** This is for the user to decide. The linear-memory option is built as a first slice, so the choice rests on evidence.
+**Status:** **Decided** (by the user, 2026-11-24): WasmGC, with the runtime's operations written as atoms. The linear-memory build below (option B) stays only until the WasmGC lowering passes the same tests, and is then removed.
 **Date:** 2026-11-23
 **Issues:**
 - https://github.com/cneckar/yakcc/issues/1300
@@ -57,20 +57,27 @@ Values are GC references: strings as `(array i16)` of UTF-16 units, arrays and o
 - **Toolchain:** at build time, clang, `llc` and `wasm-ld` (LLVM 18 here), plus a pinned WASI sysroot. wasi-sdk 24 and 22 were both checked. `emitLlvmBoxed`, the lowering itself, needs nothing.
   LLVM 18's setjmp lowering calls the Emscripten-era names (`saveSetjmp`, `testSetjmp`, `getTempRet0`), and wasi-libc has the later ones. A 30-line shim (`WASM_SJLJ_SHIM`) supplies the earlier names. A toolchain with the later names links none of it.
 
-## Proposal
+## Decision
 
-**B now, with A as the later direction for memory.**
-- #1300's first requirement is to reuse the settled value semantics. B reuses them *exactly*: the same C file and the same lowering.
-- A would start a second implementation of ECMAScript's conversions, which is where the native tests found their bugs.
-- B runs in every WASI engine today.
-- A's advantage, a collector the engine provides, matters when atoms run long enough to fill memory. When it does, the heap can move to WasmGC behind the same lowering (`emitLlvmBoxed` → runtime calls). Only the runtime's representation changes, not the graph.
+**A, WasmGC.** The objection to A was that it needs a second runtime, to be kept in agreement with
+`yk.c`. That objection goes away when the runtime is not hand-written for a target: **its
+operations are atoms**, graphs like any other, lowered to each target. The same atoms define
+ToNumber, ToString, the relational and equality algorithms, property order and the string and array
+methods, for wasm, for the JVM (DEC-DUC-BYTECODE-TARGETS-001), and in time for native code. Each
+atom is checked by the same differential tests against the TypeScript reference.
 
-**This differs from the stated preference for WasmGC.** The user decides:
-1. **B now, A later** (proposed), or A now.
-2. Whether the runtime should be **imported** (one shared runtime module, small per-atom modules) rather than linked into every module. Imported is the issue's wording; linked is what is built.
-3. Which WASI sysroot to pin. CI needs it to run these tests: `YAKCC_WASI_SYSROOT` and `YAKCC_WASM_BUILTINS`. Without them the suite is skipped.
+**What this needs:**
+- **A value representation in WasmGC.** A value is an `anyref`:
+  - a number is a boxed `f64` (or an `i31ref` where the types prove a small integer);
+  - a string is an `(array i16)` of UTF-16 units;
+  - an array is a struct over a growable `(array (mut anyref))`;
+  - an object is a struct of keys and values in insertion order;
+  - a closure is a struct of a `funcref` and its captures.
+- **Runtime atoms:** the operations above, written once in TypeScript and lifted like any atom. The typed parts lower through `emitWasm`'s direct path, extended with GC types.
+- **Exceptions** become wasm exception handling.
+- **Async functions and generators** need stack switching (the stack-switching proposal, or JSPI in JavaScript hosts) or a transform; until then they are refused with the reason.
 
-**The second bytecode:** none was started. #1292's open question (JVM, CIL, Python bytecode, or wasm only) is still open.
+**What stays from B:** its tests. Every program the linear-memory build passes, the WasmGC build must pass on the same inputs. After that, B is removed.
 
 ## Evidence
 
