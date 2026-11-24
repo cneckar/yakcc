@@ -170,6 +170,11 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "regular expressions: test, replace, match, split (the matcher read as ECMAScript, #1310)",
+    "export function f(a, b) { const s = typeof a === 'string' ? a : String(a); const t = typeof b === 'string' ? b : 'x, y,z'; return [/^[0-9a-f]+$/.test(s), s.replace(/\\s+/g, ' ').trim(), s.replace(/[^A-Za-z0-9_]/g, '_'), (s.match(/[a-z]+/g) || []).length, t.split(/,\\s*/), -s.length]; }",
+    2,
+  ],
+  [
     "an Error subclass: thrown, caught, its name, message and instanceof (#1294)",
     "export function f(a, b) { class Bad extends Error { constructor(m, code) { super(m); this.name = 'Bad'; this.code = code; } } class Worse extends Bad {} try { if (typeof a === 'number' && a > 0) throw new Worse('too big: ' + a, b); throw new Bad(String(a), 1); } catch (e) { return [e.message, e.name, e.code, e instanceof Bad, e instanceof Worse, e instanceof Error, e instanceof TypeError, String(e)]; } }",
     2,
