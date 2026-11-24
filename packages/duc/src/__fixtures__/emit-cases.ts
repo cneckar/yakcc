@@ -266,4 +266,23 @@ export const EMIT_CASES: Case[] = [
       'export function f(o: Record<string, number>): number { let n = 0; for (const key in o) { if (key === "stop") break; n = n + o[key]; } return n; }',
     args: [[{ a: 1, b: 2 }], [{ a: 1, stop: 5, b: 2 }]],
   },
+  // A block that declares a name the rest of the function declares again takes that rest: the
+  // rest's reads are of its own binding (DEC-LIFT-BLOCK-TAIL-SHADOW-001).
+  {
+    name: "a loop that returns, in a block whose name the rest declares again",
+    source:
+      "export function f(n: number, radix: number) { if (radix > 0) { let i = 2; while (i < n) { if (i >= radix) return -1; i = i + 1; } return i; } let i = 0; while (i < n) i = i + 3; return i; }",
+    args: [
+      [5, 0],
+      [5, 9],
+      [9, 4],
+      [1, 2],
+    ],
+  },
+  {
+    name: "an if that exits on some paths, in a block whose names the rest declares again",
+    source:
+      "export function f(a: number): number { { const x = a * 2; let y = x; if (y > 10) return y; } const x = a + 1; const y = x * 3; return x + y; }",
+    args: [[1], [6], [-4]],
+  },
 ];

@@ -1177,6 +1177,10 @@ class Lifter {
       )
         lexical.add(st.getName() as string);
     }
+    // A name the tail declares at its own top level is, everywhere in the tail, the tail's binding
+    // (its scope is the scope the tail is in), never the block's: reading it is not reading the
+    // block's name (DEC-LIFT-BLOCK-TAIL-SHADOW-001).
+    for (const t of tail) for (const n of topLevelDeclaredNames(t)) lexical.delete(n);
     return !tail.some((t) => this.readNamesOf(t).some((n) => lexical.has(n)));
   }
 
@@ -3965,6 +3969,18 @@ function baseIdentifierOfTarget(target: Node | undefined): string | undefined {
 }
 
 /** All identifier names bound by a (possibly destructuring) binding-name node. */
+/**
+ * The names a statement declares in the scope it is in: those of a variable statement and of a
+ * named function or class declaration.
+ */
+function topLevelDeclaredNames(stmt: Node): string[] {
+  if (Node.isVariableStatement(stmt))
+    return stmt.getDeclarations().flatMap((d) => patternNames(d.getNameNode()));
+  if ((Node.isFunctionDeclaration(stmt) || Node.isClassDeclaration(stmt)) && stmt.getName())
+    return [stmt.getName() as string];
+  return [];
+}
+
 function patternNames(nameNode: Node): string[] {
   if (Node.isIdentifier(nameNode)) return [nameNode.getText()];
   const names: string[] = [];

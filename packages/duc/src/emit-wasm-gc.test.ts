@@ -15,7 +15,12 @@ import { emitTypeScript } from "./emit-ts.js";
 import { emitWasmGc, instantiateWasmGc } from "./emit-wasm-gc.js";
 import { WasmEmitError, emitWasm } from "./emit-wasm.js";
 import { liftAtom } from "./lift.js";
-import { BIGNUM_ATOMS, RUNTIME_ATOMS, RUNTIME_PRIMITIVES_JS } from "./wasm-runtime-atoms.js";
+import {
+  BIGNUM_ATOMS,
+  DYNAMIC_ATOMS,
+  RUNTIME_ATOMS,
+  RUNTIME_PRIMITIVES_JS,
+} from "./wasm-runtime-atoms.js";
 
 /** Strings with every kind of unit: ASCII, whitespace of every class, lone and paired surrogates. */
 const unit = fc.oneof(
@@ -61,7 +66,7 @@ const position = fc.oneof(
   fc.double(),
 );
 
-const ALL_ATOMS = { ...RUNTIME_ATOMS, ...BIGNUM_ATOMS } as Record<
+const ALL_ATOMS = { ...RUNTIME_ATOMS, ...BIGNUM_ATOMS, ...DYNAMIC_ATOMS } as Record<
   string,
   { source: string; inputs: readonly string[]; output: string }
 >;
@@ -262,7 +267,162 @@ describe("Number::toString as a runtime atom (#1300)", () => {
   }, 120_000);
 });
 
+/**
+ * Strings as ECMAScript's StringToNumber reads them: edge cases of the grammar, every double
+ * written three ways, and decimal digit strings with exponents across the whole range (subnormals,
+ * overflow, halfway cases).
+ */
+const NUMERIC_STRINGS: string[] = (() => {
+  const out = [
+    ...["", " ", "  12  ", " 12\n", "\u00a0 7 \ufeff", "0x1F", "0X1f", "0o17", "0b101", "0b2"],
+    ...["-0x1", "0x", "0x1fffffffffffff1", "1e3", "-0", "-.0", "Infinity", "-Infinity"],
+    ...["+Infinity", "infinity", "12px", ".5", "5.", "+.5e-3", ".", "e5", "1e", "1e+", "1_000"],
+    ...["2.4703282292062327e-324", "2.4703282292062328e-324", "4.9406564584124654e-324"],
+    ...["1.7976931348623157e308", "1.7976931348623158e308", "1.7976931348623159e308"],
+    ...["9007199254740993", "9007199254740995", "123456789012345678901234567890", "0.1"],
+    ...["1e-400", "1e400", "00012", "1.0000000000000002", "2.2250738585072011e-308"],
+    ...["2.2250738585072012e-308", "0.000000000000000000000000000001e30", "1e99999999999"],
+  ];
+  const dv = new DataView(new ArrayBuffer(8));
+  for (const [hi, lo] of fc.sample(fc.tuple(fc.nat(0xffffffff), fc.nat(0xffffffff)), {
+    numRuns: 700,
+    seed: 1300,
+  })) {
+    dv.setUint32(0, hi);
+    dv.setUint32(4, lo);
+    const x = dv.getFloat64(0);
+    out.push(String(x), x.toExponential(20), x.toPrecision(19));
+  }
+  for (const [d, e] of fc.sample(
+    fc.tuple(fc.stringMatching(/^[0-9]{1,30}$/), fc.integer({ min: -350, max: 320 })),
+    { numRuns: 500, seed: 1301 },
+  ))
+    out.push(`${d}e${e}`, `0.${d}e${e}`);
+  return out;
+})();
+
+describe("StringToNumber as a runtime atom (#1300)", () => {
+  it(`reads ${NUMERIC_STRINGS.length} strings as Number does, correctly rounded: as JavaScript and as WasmGC`, async () => {
+    const js = atomInJs("__ykStringToNumber");
+    const wasm = await atomInWasm("__ykStringToNumber");
+    const bad: string[] = [];
+    for (const s of NUMERIC_STRINGS) {
+      const want = Number(s);
+      for (const [how, got] of [
+        ["js", js(s)],
+        ["wasm", wasm(s)],
+      ] as const)
+        if (!Object.is(got, want)) bad.push(`${how} ${JSON.stringify(s)}: ${String(got)}`);
+    }
+    expect(bad.slice(0, 5)).toEqual([]);
+  }, 300_000);
+});
+
+/** Every kind of value the WasmGC lowering represents. */
+const anyValue = fc.oneof(
+  fc.double(),
+  fc.integer({ min: -3, max: 3 }),
+  fc.constantFrom(0, -0, Number.NaN, Number.POSITIVE_INFINITY, 1e21),
+  fc.string({ maxLength: 4 }),
+  fc.constantFrom("", " 1 ", "0x10", "1e3", "abc", "-0", "Infinity", "1,2", "number"),
+  fc.boolean(),
+  fc.constantFrom(null, undefined),
+  fc.array(fc.oneof(fc.integer({ min: -5, max: 5 }), fc.double()), { maxLength: 3 }),
+);
+
+describe("the dynamic-value atoms define ECMAScript's operators (#1300)", () => {
+  // biome-ignore lint/suspicious/noExplicitAny: the operators are ECMAScript's, over any values.
+  type Op = (a: any, b: any) => unknown;
+  // Each operator: the atom, what its result means, and the engine's operator.
+  const OPS: [string, string, (r: unknown) => unknown, Op][] = [
+    ["+", "__ykAdd", (r) => r, (a, b) => a + b],
+    // biome-ignore lint/suspicious/noDoubleEquals: IsLooselyEqual is what is defined.
+    ["==", "__ykLooseEquals", (r) => r, (a, b) => a == b],
+    ["===", "__ykStrictEquals", (r) => r, (a, b) => a === b],
+    ["<", "__ykCompare", (r) => r === 0, (a, b) => a < b],
+    [">=", "__ykCompare", (r) => r === 1, (a, b) => a >= b],
+    ["typeof", "__ykTypeOf", (r) => r, (a) => typeof a],
+    ["truthiness", "__ykTruthy", (r) => r, (a) => !!a],
+    ["String", "__ykToString", (r) => r, (a) => String(a)],
+    ["Number", "__ykToNumber", (r) => r, (a) => Number(a)],
+  ];
+  for (const [name, key, meaning, engine] of OPS)
+    it(`${name} agrees with the engine on every kind of value: as JavaScript and as WasmGC`, async () => {
+      const arity = (ALL_ATOMS[key] as { inputs: readonly string[] }).inputs.length;
+      const js = atomInJs(key);
+      const wasm = await atomInWasm(key);
+      const bad: string[] = [];
+      for (const [a, b] of fc.sample(fc.tuple(anyValue, anyValue), { numRuns: 1000, seed: 1302 })) {
+        const args = arity === 1 ? [a] : [a, b];
+        const want = engine(a, b);
+        for (const [how, got] of [
+          ["js", meaning(js(...args))],
+          ["wasm", meaning(wasm(...args))],
+        ] as const)
+          if (!Object.is(got, want))
+            bad.push(`${how} ${JSON.stringify(args)}: ${String(got)} vs ${String(want)}`);
+      }
+      expect(bad.slice(0, 5)).toEqual([]);
+    }, 120_000);
+});
+
+/** The same value: by Object.is, an array element by element. */
+const same = (a: unknown, b: unknown): boolean =>
+  Array.isArray(a) && Array.isArray(b)
+    ? a.length === b.length && a.every((x, i) => Object.is(x, b[i]))
+    : Object.is(a, b);
+
+const numericText = fc.oneof(
+  text,
+  fc.double().map(String),
+  fc.integer().map(String),
+  fc.constantFrom("", " 1 ", "0x1f", "1e3", "true", "1,2.5", "2.5", "-0", "Infinity"),
+);
+
 const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
+  [
+    "values of any kind: +, ==, ===, relational, typeof, truthiness, arithmetic, templates, ??, ||, &&",
+    "export function f(a: any, b: any): string { return String(a + b) + '|' + (a == b) + (a === b) + (a < b) + (a >= b) + (a > b) + (a <= b) + (a != b) + (a !== b) + typeof a + typeof b + (!a) + (a ? 1 : 2) + (a - b) + a * 2 + -b + `<${a}>` + (a ?? 'n') + (a || b) + (b && a) + (a == null) + (b === undefined); }",
+    ["unknown", "unknown"],
+    "string",
+    fc.tuple(anyValue, anyValue),
+  ],
+  [
+    "undefined and null as values: an optional result, element reads in and out of range, ??",
+    "export function f(xs: number[], i: number, k: boolean): number | null | undefined { let r; if (k) r = xs[i]; const y = xs[i + 1] ?? -1; if (r === undefined) return y > 0 ? undefined : y < -1 ? null : y; return r * 2 + y; }",
+    ["number[]", "number", "boolean"],
+    "number | null | undefined",
+    fc.tuple(
+      fc.array(fc.oneof(fc.integer({ min: -3, max: 3 }), fc.double()), { maxLength: 4 }),
+      fc.oneof(fc.integer({ min: -1, max: 5 }), fc.constantFrom(0.5, -0, Number.NaN)),
+      fc.boolean(),
+    ),
+  ],
+  [
+    "a loop whose carried value changes kind, and a result of any kind",
+    "export function f(n: number, s: string, x: unknown): unknown { let v: any = n; let i = 0; while (i < 4) { v = i % 2 === 0 ? v + s : v * 1; if (v === x) return i; i = i + 1; } return v; }",
+    ["number", "string", "unknown"],
+    "unknown",
+    fc.tuple(fc.oneof(fc.integer({ min: -3, max: 3 }), fc.double()), numericText, anyValue),
+  ],
+  [
+    "arrays across the boundary, as values of any kind",
+    "export function f(a: number[], x: unknown): unknown { if (x === null) return a; if (typeof x === 'object') return x; return a[0] === x ? a : x; }",
+    ["number[]", "unknown"],
+    "unknown",
+    fc.tuple(fc.array(fc.integer({ min: -2, max: 2 }), { maxLength: 3 }), anyValue),
+  ],
+  [
+    "values made numbers and compared across types: Number, unary +, ==, <, + of an array",
+    'export function f(s: string, n: number, b: boolean): string { const a = [n, 2.5]; const t = Number(s) + +s * 2 - Number(b); return t + "|" + (s == n) + (s != b) + (s < n) + (n >= s) + (a == s) + (a < s) + (a + s) + Number(a) + Number([n]) + (b == n) + (a == a) + (s + a > s) + `${a}` + String([n]) + ([n] == n) + Number(); }',
+    ["string", "number", "boolean"],
+    "string",
+    fc.tuple(
+      numericText,
+      fc.oneof(fc.double(), fc.integer(), fc.constantFrom(0, 1, 2.5)),
+      fc.boolean(),
+    ),
+  ],
   [
     "numbers and booleans made strings: +, String, toString, templates",
     'export function f(n: number, m: number, b: boolean): string { const s = "n=" + n; return s + "|" + String(m / 3) + "|" + (n * m).toString() + `<${n - m}:${b}>` + b + String(b) + (1 + n) + ""; }',
@@ -323,7 +483,7 @@ describe("programs over strings, lowered to WasmGC (#1300)", () => {
       for (const a of fc.sample(args, { numRuns: 400, seed: 13001 })) {
         const want = ref(...a);
         const got = wasm(...a);
-        if (!Object.is(got, want))
+        if (!same(got, want))
           bad.push(`${JSON.stringify(a)}: ${JSON.stringify(got)} vs ${JSON.stringify(want)}`);
       }
       expect(bad.slice(0, 5)).toEqual([]);
@@ -380,17 +540,7 @@ describe("what the WasmGC lowering refuses, with the reason (#1300)", () => {
     }
     return "lowered";
   };
-  it("== across types, a method not yet an atom, an undefined result, element access in a program", () => {
-    expect(
-      refusal("export function f(a: number[]): number { return a[0]; }", ["number[]"], "number"),
-    ).toMatch(/element read .* not in the subset of a program yet/);
-    expect(
-      refusal(
-        "export function f(s: string, n: number): boolean { return s == n; }",
-        ["string", "number"],
-        "boolean",
-      ),
-    ).toMatch(/converts the string/);
+  it("a method not yet an atom, a member of a value of any kind, an element write in a program", () => {
     expect(
       refusal(
         "export function f(s: string): string { return s.toUpperCase(); }",
@@ -400,25 +550,36 @@ describe("what the WasmGC lowering refuses, with the reason (#1300)", () => {
     ).toMatch(/toUpperCase is not in the subset yet/);
     expect(
       refusal(
-        "export function f(s: string): string { return s; }",
+        "export function f(x: unknown): unknown { return x.length; }",
+        ["unknown"],
+        "unknown",
+      ),
+    ).toMatch(/member length of a value of any kind/);
+    expect(
+      refusal(
+        "export function f(a: number[]): number[] { a[5] = 1; return a; }",
+        ["number[]"],
+        "number[]",
+      ),
+    ).toMatch(/element write is not in the subset of a program yet/);
+  });
+
+  it("what was refused before values of any kind is lowered: ==, undefined, null, element reads", () => {
+    for (const [source, inputs, output] of [
+      [
+        "export function f(s: string, n: number): boolean { return s == n; }",
+        ["string", "number"],
+        "boolean",
+      ],
+      [
+        "export function f(s: string): string | undefined { return s; }",
         ["string"],
         "string | undefined",
-      ),
-    ).toMatch(/may be undefined/);
-    // undefined may stand for a default only where a value is chosen, never as an operand.
-    expect(
-      refusal(
-        "export function f(s: string): string { let t; return t + s; }",
-        ["string"],
-        "string",
-      ),
-    ).toMatch(/undefined is an operand/);
-    expect(
-      refusal(
-        "export function f(s: string): boolean { return s === null; }",
-        ["string"],
-        "boolean",
-      ),
-    ).toMatch(/literal null is not in the subset/);
+      ],
+      ["export function f(s: string): string { let t; return t + s; }", ["string"], "string"],
+      ["export function f(s: string): boolean { return s === null; }", ["string"], "boolean"],
+      ["export function f(a: number[]): number { return a[0]; }", ["number[]"], "number"],
+    ] as const)
+      expect(refusal(source, [...inputs], output)).toBe("lowered");
   });
 });
