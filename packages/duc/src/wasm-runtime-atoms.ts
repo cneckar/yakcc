@@ -2843,6 +2843,8 @@ export const RUNTIME_PRIMITIVES_JS = {
   __ykArr: (x: unknown): number[] => x as number[],
   __ykArrAny: (x: unknown): unknown[] => x as unknown[],
   __ykUndef: (): unknown => undefined,
+  // The call of a function value with an array of arguments (the lowerings' dyn:call).
+  __ykCallWith: (f: unknown, args: unknown[]): unknown => (f as (...a: unknown[]) => unknown)(...args),
   // An object as the atoms see it (read only, in JavaScript): its own keys but an error's stack,
   // its values, and the class an error inherits its name from.
   __ykObj: (x: unknown): object => x as object,
@@ -2870,3 +2872,451 @@ export const RUNTIME_PRIMITIVES_JS = {
   __ykSub: (s: string, from: number, to: number): string => s.substring(from, to),
   __ykJoin: (a: string, b: string): string => a + b,
 } as const;
+
+/**
+ * Regular expressions (#1311): the backtracking matcher a compiled pattern's program runs on
+ * (`regex-compile.ts`), and the methods that use it, as ECMA-262 22.2 and 22.1.3 define them for a
+ * regular expression literal (a fresh object, so lastIndex starts at 0). A program's header is the
+ * count of groups, of registers, and the i, g and y flags; its code starts at 5.
+ */
+export const REGEX_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
+  // The program from pc0 at pos0, with captures caps0: the captures of the first match it finds
+  // (slot 1 its end), or [] when there is none. Alternatives are a stack of states.
+  __ykReRun: {
+    inputs: ["number[]", "string", "number", "number", "number[]"],
+    output: "number[]",
+    source: String.raw`export function f(prog: number[], s: string, pc0: number, pos0: number, caps0: number[]): number[] {
+  const nregs = prog[1];
+  const icase = prog[2] === 1;
+  const nc = caps0.length;
+  const caps: number[] = [];
+  let k = 0;
+  while (k < nc) {
+    caps.push(caps0[k]);
+    k = k + 1;
+  }
+  const regs: number[] = [];
+  k = 0;
+  while (k < nregs) {
+    regs.push(-1);
+    k = k + 1;
+  }
+  const stack: number[] = [];
+  const len = s.length;
+  let pc = pc0;
+  let pos = pos0;
+  while (true) {
+    const op = prog[pc];
+    let ok = true;
+    if (op === 0) {
+      if (pos < len) {
+        let c = __ykUnit(s, pos);
+        if (icase && c >= 97 && c <= 122) c = c - 32;
+        if (c === prog[pc + 1]) {
+          pos = pos + 1;
+          pc = pc + 2;
+        } else ok = false;
+      } else ok = false;
+    } else if (op === 1 || op === 2) {
+      const n = prog[pc + 1];
+      if (pos < len) {
+        let c = __ykUnit(s, pos);
+        if (icase && c >= 97 && c <= 122) c = c - 32;
+        let inside = false;
+        k = 0;
+        while (k < n && !inside) {
+          if (c >= prog[pc + 2 + 2 * k] && c <= prog[pc + 3 + 2 * k]) inside = true;
+          k = k + 1;
+        }
+        if (inside === (op === 1)) {
+          pos = pos + 1;
+          pc = pc + 2 + 2 * n;
+        } else ok = false;
+      } else ok = false;
+    } else if (op === 3) {
+      if (pos < len) {
+        const c = __ykUnit(s, pos);
+        if (c === 10 || c === 13 || c === 8232 || c === 8233) ok = false;
+        else {
+          pos = pos + 1;
+          pc = pc + 1;
+        }
+      } else ok = false;
+    } else if (op === 4) {
+      if (pos < len) {
+        pos = pos + 1;
+        pc = pc + 1;
+      } else ok = false;
+    } else if (op === 5) {
+      stack.push(prog[pc + 2]);
+      stack.push(pos);
+      k = 0;
+      while (k < nc) {
+        stack.push(caps[k]);
+        k = k + 1;
+      }
+      k = 0;
+      while (k < nregs) {
+        stack.push(regs[k]);
+        k = k + 1;
+      }
+      pc = prog[pc + 1];
+    } else if (op === 6) pc = prog[pc + 1];
+    else if (op === 7) {
+      caps[prog[pc + 1]] = pos;
+      pc = pc + 2;
+    } else if (op === 8) {
+      k = prog[pc + 1];
+      while (k < prog[pc + 2]) {
+        caps[k] = -1;
+        k = k + 1;
+      }
+      pc = pc + 3;
+    } else if (op === 9) {
+      regs[prog[pc + 1]] = pos;
+      pc = pc + 2;
+    } else if (op === 10) {
+      if (regs[prog[pc + 1]] === pos) ok = false;
+      else pc = pc + 2;
+    } else if (op >= 11 && op <= 14) {
+      let at = false;
+      if (op === 11) at = pos === 0;
+      else if (op === 12) at = pos === len;
+      else if (op === 13) {
+        if (pos === 0) at = true;
+        else {
+          const c = __ykUnit(s, pos - 1);
+          at = c === 10 || c === 13 || c === 8232 || c === 8233;
+        }
+      } else {
+        if (pos === len) at = true;
+        else {
+          const c = __ykUnit(s, pos);
+          at = c === 10 || c === 13 || c === 8232 || c === 8233;
+        }
+      }
+      if (at) pc = pc + 1;
+      else ok = false;
+    } else if (op === 15 || op === 16) {
+      let a = false;
+      if (pos > 0) {
+        const c = __ykUnit(s, pos - 1);
+        a = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || c === 95 || (c >= 97 && c <= 122);
+      }
+      let b = false;
+      if (pos < len) {
+        const c = __ykUnit(s, pos);
+        b = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || c === 95 || (c >= 97 && c <= 122);
+      }
+      if ((a !== b) === (op === 15)) pc = pc + 1;
+      else ok = false;
+    } else if (op === 17) {
+      const g = prog[pc + 1];
+      const st = caps[2 * g];
+      const en = caps[2 * g + 1];
+      if (st < 0 || en < 0) pc = pc + 2;
+      else {
+        const n = en - st;
+        if (pos + n > len) ok = false;
+        else {
+          k = 0;
+          while (k < n && ok) {
+            if (__ykUnit(s, st + k) !== __ykUnit(s, pos + k)) ok = false;
+            k = k + 1;
+          }
+          if (ok) {
+            pos = pos + n;
+            pc = pc + 2;
+          }
+        }
+      }
+    } else if (op === 18) return caps;
+    else if (op === 19) {
+      const sub = __ykReRun(prog, s, pc + 3, pos, caps);
+      if (prog[pc + 1] === 1) {
+        if (sub.length > 0) ok = false;
+        else pc = pc + 3 + prog[pc + 2];
+      } else if (sub.length === 0) ok = false;
+      else {
+        k = 0;
+        while (k < nc) {
+          caps[k] = sub[k];
+          k = k + 1;
+        }
+        pc = pc + 3 + prog[pc + 2];
+      }
+    }
+    if (!ok) {
+      if (stack.length === 0) return [];
+      k = nregs - 1;
+      while (k >= 0) {
+        regs[k] = stack.pop();
+        k = k - 1;
+      }
+      k = nc - 1;
+      while (k >= 0) {
+        caps[k] = stack.pop();
+        k = k - 1;
+      }
+      pos = stack.pop();
+      pc = stack.pop();
+    }
+  }
+}`,
+  },
+  // RegExpBuiltinExec from lastIndex start: the captures of the first match at start or after
+  // (only at start when sticky), or [].
+  __ykReExec: {
+    inputs: ["number[]", "string", "number", "boolean"],
+    output: "number[]",
+    source: String.raw`export function f(prog: number[], s: string, start: number, sticky: boolean): number[] {
+  const len = s.length;
+  const slots = 2 * (prog[0] + 1);
+  let i = start;
+  while (i <= len) {
+    const caps: number[] = [];
+    let k = 0;
+    while (k < slots) {
+      caps.push(-1);
+      k = k + 1;
+    }
+    caps[0] = i;
+    const r = __ykReRun(prog, s, 5, i, caps);
+    if (r.length > 0) return r;
+    if (sticky) return [];
+    i = i + 1;
+  }
+  return [];
+}`,
+  },
+  // RegExp.prototype.test.
+  __ykReTest: {
+    inputs: ["number[]", "string"],
+    output: "boolean",
+    source: String.raw`export function f(prog: number[], s: string): boolean {
+  return __ykReExec(prog, s, 0, prog[4] === 1).length > 0;
+}`,
+  },
+  // String.prototype.search: the first match's index, or -1.
+  __ykReSearch: {
+    inputs: ["number[]", "string"],
+    output: "number",
+    source: String.raw`export function f(prog: number[], s: string): number {
+  const r = __ykReExec(prog, s, 0, prog[4] === 1);
+  return r.length > 0 ? r[0] : -1;
+}`,
+  },
+  // A match as exec's array: the matched string, then each group's (undefined if it did not
+  // participate); null for no match. (Its index, input and groups are not kept.)
+  __ykReExecArr: {
+    inputs: ["number[]", "string"],
+    output: "unknown",
+    source: String.raw`export function f(prog: number[], s: string): unknown {
+  const r = __ykReExec(prog, s, 0, prog[4] === 1);
+  if (r.length === 0) return null;
+  const out: unknown[] = [];
+  let g = 0;
+  while (g <= prog[0]) {
+    if (r[2 * g] < 0 || r[2 * g + 1] < 0) out.push(__ykUndef());
+    else out.push(__ykSub(s, r[2 * g], r[2 * g + 1]));
+    g = g + 1;
+  }
+  return out;
+}`,
+  },
+  // String.prototype.match: with g, every match's string (null for none); else exec's array.
+  __ykReMatch: {
+    inputs: ["number[]", "string"],
+    output: "unknown",
+    source: String.raw`export function f(prog: number[], s: string): unknown {
+  if (prog[3] !== 1) return __ykReExecArr(prog, s);
+  const out: unknown[] = [];
+  let last = 0;
+  while (true) {
+    const r = __ykReExec(prog, s, last, prog[4] === 1);
+    if (r.length === 0) break;
+    out.push(__ykSub(s, r[0], r[1]));
+    last = r[1] === r[0] ? r[1] + 1 : r[1];
+  }
+  if (out.length === 0) return null;
+  return out;
+}`,
+  },
+  // GetSubstitution (ECMA-262 22.1.3.19.1) with captures (strings, or undefined): $$, $&, $\`,
+  // $', $n and $nn (a two-digit index past the captures read as one digit and a digit), and $<
+  // as it is (no named groups).
+  __ykReSubst: {
+    inputs: ["string", "string", "number", "unknown[]", "string"],
+    output: "string",
+    source: String.raw`export function f(matched: string, str: string, position: number, captures: unknown[], template: string): string {
+  let out = "";
+  let i = 0;
+  const m = captures.length;
+  while (i < template.length) {
+    const c = __ykUnit(template, i);
+    if (c !== 36 || i + 1 >= template.length) {
+      out = out + __ykSub(template, i, i + 1);
+      i = i + 1;
+    } else {
+      const d = __ykUnit(template, i + 1);
+      if (d === 36) {
+        out = out + "$";
+        i = i + 2;
+      } else if (d === 38) {
+        out = out + matched;
+        i = i + 2;
+      } else if (d === 96) {
+        out = out + __ykSub(str, 0, position);
+        i = i + 2;
+      } else if (d === 39) {
+        const tail = Math.min(position + matched.length, str.length);
+        out = out + __ykSub(str, tail, str.length);
+        i = i + 2;
+      } else if (d >= 48 && d <= 57) {
+        let digits = 1;
+        let index = d - 48;
+        if (i + 2 < template.length) {
+          const e = __ykUnit(template, i + 2);
+          if (e >= 48 && e <= 57) {
+            digits = 2;
+            index = index * 10 + (e - 48);
+          }
+        }
+        if (digits === 2 && index > m) {
+          digits = 1;
+          index = d - 48;
+        }
+        if (index >= 1 && index <= m) {
+          const cap = captures[index - 1];
+          if (__ykTag(cap) !== 0) out = out + __ykStr(cap);
+        } else out = out + __ykSub(template, i, i + 1 + digits);
+        i = i + 1 + digits;
+      } else {
+        out = out + "$";
+        i = i + 1;
+      }
+    }
+  }
+  return out;
+}`,
+  },
+  // String.prototype.replace (and replaceAll, with g) by a regular expression: every match found
+  // first (with g; an empty one advancing by one), then each replaced by the callback's result
+  // (called with the match, the groups, the position and the string) or the template's.
+  __ykReReplace: {
+    inputs: ["number[]", "string", "unknown"],
+    output: "string",
+    source: String.raw`export function f(prog: number[], s: string, repl: unknown): string {
+  const fn = __ykTag(repl) === 8;
+  const template = fn ? "" : __ykToString(repl);
+  const ncap = prog[0];
+  const w = 2 * (ncap + 1);
+  const found: number[] = [];
+  const sticky = prog[4] === 1;
+  if (prog[3] !== 1) {
+    const r = __ykReExec(prog, s, 0, sticky);
+    let k = 0;
+    while (k < r.length) {
+      found.push(r[k]);
+      k = k + 1;
+    }
+  } else {
+    let last = 0;
+    while (true) {
+      const r = __ykReExec(prog, s, last, sticky);
+      if (r.length === 0) break;
+      let k = 0;
+      while (k < r.length) {
+        found.push(r[k]);
+        k = k + 1;
+      }
+      last = r[1] === r[0] ? r[1] + 1 : r[1];
+    }
+  }
+  let acc = "";
+  let next = 0;
+  let j = 0;
+  while (j < found.length) {
+    const st = found[j];
+    const en = found[j + 1];
+    const matched = __ykSub(s, st, en);
+    const captures: unknown[] = [];
+    let g = 1;
+    while (g <= ncap) {
+      const a = found[j + 2 * g];
+      const b = found[j + 2 * g + 1];
+      if (a < 0 || b < 0) captures.push(__ykUndef());
+      else captures.push(__ykSub(s, a, b));
+      g = g + 1;
+    }
+    let replacement = "";
+    if (fn) {
+      const args: unknown[] = [];
+      args.push(matched);
+      g = 0;
+      while (g < captures.length) {
+        args.push(captures[g]);
+        g = g + 1;
+      }
+      args.push(st);
+      args.push(s);
+      replacement = __ykToString(__ykCallWith(repl, args));
+    } else replacement = __ykReSubst(matched, s, st, captures, template);
+    if (st >= next) {
+      acc = acc + __ykSub(s, next, st) + replacement;
+      next = st + matched.length;
+    }
+    j = j + w;
+  }
+  if (next >= s.length) return acc;
+  return acc + __ykSub(s, next, s.length);
+}`,
+  },
+  // String.prototype.split by a regular expression (RegExp.prototype[@@split]): a sticky match
+  // tried at each position; an empty one at the last split's end skipped; each piece, then the
+  // match's groups, up to the limit (ToUint32).
+  __ykReSplit: {
+    inputs: ["number[]", "string", "unknown"],
+    output: "unknown[]",
+    source: String.raw`export function f(prog: number[], s: string, limit: unknown): unknown[] {
+  const out: unknown[] = [];
+  let lim = 4294967295;
+  if (__ykTag(limit) !== 0) {
+    lim = __ykToInt32(limit);
+    if (lim < 0) lim = lim + 4294967296;
+  }
+  if (lim === 0) return out;
+  const size = s.length;
+  if (size === 0) {
+    if (__ykReExec(prog, s, 0, true).length > 0) return out;
+    out.push(s);
+    return out;
+  }
+  let p = 0;
+  let q = 0;
+  while (q < size) {
+    const r = __ykReExec(prog, s, q, true);
+    if (r.length === 0) q = q + 1;
+    else {
+      const e = Math.min(r[1], size);
+      if (e === p) q = q + 1;
+      else {
+        out.push(__ykSub(s, p, q));
+        if (out.length === lim) return out;
+        p = e;
+        let g = 1;
+        while (g <= prog[0]) {
+          if (r[2 * g] < 0 || r[2 * g + 1] < 0) out.push(__ykUndef());
+          else out.push(__ykSub(s, r[2 * g], r[2 * g + 1]));
+          if (out.length === lim) return out;
+          g = g + 1;
+        }
+        q = p;
+      }
+    }
+  }
+  out.push(__ykSub(s, p, size));
+  return out;
+}`,
+  },
+};

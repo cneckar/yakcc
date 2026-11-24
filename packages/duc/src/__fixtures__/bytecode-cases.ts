@@ -13,6 +13,7 @@ import {
   COLLECTION_ATOMS,
   DYNAMIC_ATOMS,
   METHOD_ATOMS,
+  REGEX_ATOMS,
   RUNTIME_ATOMS,
   RUNTIME_PRIMITIVES_JS,
 } from "../wasm-runtime-atoms.js";
@@ -68,6 +69,7 @@ export const ALL_ATOMS = {
   ...DYNAMIC_ATOMS,
   ...COLLECTION_ATOMS,
   ...METHOD_ATOMS,
+  ...REGEX_ATOMS,
 } as Record<string, { source: string; inputs: readonly string[]; output: string }>;
 
 /**

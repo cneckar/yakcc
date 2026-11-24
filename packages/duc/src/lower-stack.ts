@@ -33,6 +33,7 @@ import {
   DYNAMIC_ATOMS,
   JSON_ATOMS,
   METHOD_ATOMS,
+  REGEX_ATOMS,
   RUNTIME_ATOMS,
   type RuntimeAtom,
 } from "./wasm-runtime-atoms.js";
@@ -99,6 +100,7 @@ export const ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   ...JSON_ATOMS,
   ...COLLECTION_ATOMS,
   ...METHOD_ATOMS,
+  ...REGEX_ATOMS,
 };
 
 /**
