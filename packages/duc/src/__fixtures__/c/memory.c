@@ -175,3 +175,25 @@ static int yk_count(const char *fmt, ...) {
 int yk_varargs(int a, int b) {
   return (int)yk_sum_va(5, a, (long)b * 1000000000L, 2.5, b, (long)a) + yk_count("dsd", a, "hey", b);
 }
+
+/* Bit-fields: unsigned, signed (sign-extended), 40 bits wide, one bit; set, compound-assigned,
+ * incremented, read back, and an assignment's value. */
+struct flags {
+  unsigned a : 3;
+  int b : 5;
+  unsigned long long c : 40;
+  unsigned char d : 1;
+  short e : 7;
+};
+int yk_bits(int x, int y) {
+  struct flags f = {1};
+  f.b = y;
+  f.c = (unsigned long long)x * 1000003u;
+  f.d = y;
+  f.e = x - y;
+  f.a += x;
+  f.b++;
+  f.e -= 3;
+  int last = (f.b = x);
+  return f.a + f.b * 10 + (int)(f.c % 100000) + f.d * 7 + f.e * 1000 + last * 3;
+}

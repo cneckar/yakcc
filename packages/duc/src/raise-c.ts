@@ -111,6 +111,10 @@ function readJsonValue(text: string, at: number): [unknown, number] {
 const initItems = (n: ClangNode): readonly ClangNode[] =>
   n.array_filler !== undefined ? n.array_filler.slice(1) : (n.inner ?? []);
 
+/** A variable declaration's initializer: its child that is not an attribute (`__attribute__((visibility))` comes first). */
+const initOf = (d: ClangNode): ClangNode | undefined =>
+  (d.inner ?? []).find((c) => !c.kind.endsWith("Attr") && c.kind !== "FullComment");
+
 const body = (fn: ClangNode): ClangNode | undefined =>
   fn.inner?.find((c) => c.kind === "CompoundStmt");
 
@@ -147,7 +151,15 @@ const F64: CType = { k: "f64" };
 export interface RecordLayout {
   readonly size: number;
   readonly align: number;
-  readonly fields: ReadonlyMap<string, { readonly offset: number; readonly type: string }>;
+  /** Each field's byte offset and type; a bit-field also its first bit (from the record's start) and width. */
+  readonly fields: ReadonlyMap<
+    string,
+    {
+      readonly offset: number;
+      readonly type: string;
+      readonly bit?: { readonly start: number; readonly width: number };
+    }
+  >;
 }
 /** The type a typedef names, as clang spells it, when the unit has the typedef. */
 export type TypedefResolver = (name: string) => string | undefined;
@@ -566,7 +578,78 @@ export interface UnitTypes {
  */
 type Place =
   | { readonly k: "reg"; readonly e: string; readonly t: CType }
-  | { readonly k: "mem"; readonly addr: string; readonly t: CType };
+  | { readonly k: "mem"; readonly addr: string; readonly t: CType }
+  /** A bit-field: `width` bits from bit `shift` of the storage unit (an unsigned `unit`) at `addr`. */
+  | {
+      readonly k: "bits";
+      readonly addr: string;
+      readonly t: CType;
+      readonly unit: CType;
+      readonly shift: number;
+      readonly width: number;
+    };
+
+const SIGNED = new Set(["i8", "i16", "i32", "i64"]);
+
+/**
+ * A bit-field of a record at `addr`: in a storage unit the size of its type, aligned, holding all
+ * its bits (else a 64-bit unit from its first byte).
+ */
+function bitsPlace(
+  addr: string,
+  bit: { readonly start: number; readonly width: number },
+  t: CType,
+): Place & { k: "bits" } {
+  const size = sizeOf(t);
+  const unitBits = size * 8;
+  let unitOff = Math.floor(bit.start / unitBits) * size;
+  let unit: CType = { k: size === 1 ? "u8" : size === 2 ? "u16" : size === 4 ? "u32" : "u64" };
+  if (bit.start - unitOff * 8 + bit.width > unitBits) {
+    unitOff = Math.floor(bit.start / 8);
+    unit = { k: "u64" };
+    if (bit.start - unitOff * 8 + bit.width > 64)
+      throw new RaiseCError("a bit-field straddles its storage");
+  }
+  return {
+    k: "bits",
+    addr: unitOff === 0 ? addr : `(${addr} + ${unitOff})`,
+    t,
+    unit,
+    shift: bit.start - unitOff * 8,
+    width: bit.width,
+  };
+}
+
+/** A bit-field's value, from its storage unit's address `a`. */
+function bitsRead(a: string, p: Place & { k: "bits" }): string {
+  const { unit, shift, width, t } = p;
+  if (unit.k === "u64") {
+    const raw = `((__ykLoad64(${a}) >> ${shift}n) & ${(1n << BigInt(width)) - 1n}n)`;
+    const v =
+      SIGNED.has(t.k) && width < 64 ? `(__ykI64(${raw} << ${64 - width}n) >> ${64 - width}n)` : raw;
+    return convert(v, { k: SIGNED.has(t.k) ? "i64" : "u64" }, t);
+  }
+  const raw = `((${loadAt(a, unit)} >>> ${shift}) & ${width === 32 ? 0xffffffff : 2 ** width - 1})`;
+  const v =
+    SIGNED.has(t.k) && width < 32
+      ? `((${raw} << ${32 - width}) >> ${32 - width})`
+      : `(${raw} >>> 0)`;
+  return convert(v, { k: SIGNED.has(t.k) ? "i32" : "u32" }, t);
+}
+
+/** The storage unit's new value with the bit-field set to `v` (of the field's type), at `a`. */
+function bitsMerge(a: string, p: Place & { k: "bits" }, v: string): string {
+  const { unit, shift, width, t } = p;
+  if (unit.k === "u64") {
+    const mask = ((1n << BigInt(width)) - 1n) << BigInt(shift);
+    const bits = wide(t) ? `__ykU64(${v})` : convert(v, t, { k: "u64" });
+    return `((__ykLoad64(${a}) & ${~mask & ((1n << 64n) - 1n)}n) | ((${bits} << ${shift}n) & ${mask}n))`;
+  }
+  const mask = (width === 32 ? 0xffffffff : 2 ** width - 1) * 2 ** shift;
+  const keep = (~mask >>> 0) & (unit.k === "u8" ? 0xff : unit.k === "u16" ? 0xffff : 0xffffffff);
+  const bits = convert(v, t, { k: "u32" });
+  return `(((${loadAt(a, unit)} & ${keep}) | ((${bits} << ${shift}) & ${mask >>> 0})) >>> 0)`;
+}
 
 /** A value of type `t` loaded from memory at `a` (DEC-DUC-OPERATIONS-AS-ATOMS-001's memory leaves). */
 function loadAt(a: string, t: CType): string {
@@ -801,7 +884,7 @@ function raiseBody(
     let decl = globalDecls.get(id);
     if (decl === undefined) {
       decl = resolveGlobal(d.name ?? "", normType(d.type?.qualType ?? ""));
-      if (decl === undefined || decl.inner?.[0] === undefined)
+      if (decl === undefined || initOf(decl) === undefined)
         throw new RaiseCError(
           `the variable "${d.name}" outside the function, with no initializer clang has`,
         );
@@ -821,10 +904,13 @@ function raiseBody(
     const known = globalNames.get(id);
     if (known !== undefined) return known;
     const decl = globalDecl(d);
+    // A constant with external linkage is also defined as a static: another unit that declares it
+    // without its initializer reads it from static memory.
+    if (decl.storageClass !== "static") unitStatic?.(d);
     const name = `${ident(d.name ?? "g")}_g`;
     globalNames.set(id, name);
     vars.set(id, ctype(decl.type));
-    globals.set(id, `const ${name} = ${expr(decl.inner?.[0] as ClangNode)};`);
+    globals.set(id, `const ${name} = ${expr(initOf(decl) as ClangNode)};`);
     return name;
   };
   // A constant array used as a pointer: its elements laid out in constant memory, once.
@@ -851,10 +937,16 @@ function raiseBody(
     if (inMemory.has(d.id ?? "")) return false;
     const decl = resolveGlobal(d.name ?? "", normType(d.type?.qualType ?? ""));
     return (
-      decl?.inner?.[0] !== undefined &&
+      decl !== undefined &&
+      initOf(decl) !== undefined &&
       (/\bconst\b/.test(decl.type?.qualType ?? "") ||
         /\bconstexpr\b/.test(decl.type?.qualType ?? ""))
     );
+  };
+  /** Whether this unit has a global's initializer. */
+  const hasInit = (d: ClangNode): boolean => {
+    const decl = resolveGlobal(d.name ?? "", normType(d.type?.qualType ?? ""));
+    return decl !== undefined && initOf(decl) !== undefined;
   };
   /** A global that is module state: its static memory. */
   const staticPlace = (d: ClangNode, t: CType): (Place & { k: "mem" }) | undefined => {
@@ -951,6 +1043,7 @@ function raiseBody(
           if (p.k !== "mem") throw new RaiseCError("a member of a record that is not in memory");
           addr = p.addr;
         }
+        if (field.bit !== undefined) return bitsPlace(addr, field.bit, t);
         return { k: "mem", addr: field.offset === 0 ? addr : `(${addr} + ${field.offset})`, t };
       }
       case "StringLiteral":
@@ -967,17 +1060,36 @@ function raiseBody(
     const n = stripParens(decay);
     if (n.kind !== "ImplicitCastExpr" || n.castKind !== "ArrayToPointerDecay") return undefined;
     const target = stripParens((n.inner ?? [])[0] as ClangNode);
+    // A row of a JavaScript array of arrays (`tab[i][j]` of a constant table): its element.
+    if (target.kind === "ArraySubscriptExpr") {
+      const row = place(target);
+      return row.k === "reg" && row.t.k === "arr" ? row.e : undefined;
+    }
     if (target.kind !== "DeclRefExpr") return undefined;
     const d = target.referencedDecl as ClangNode;
     if (mems.has(d.id ?? "") || inMemory.has(d.id ?? "")) return undefined;
     if (isGlobal(d)) return constGlobal(d) ? globalRef(d) : undefined;
     return declName(d);
   };
-  const read = (p: Place): string => (p.k === "reg" ? p.e : loadAt(p.addr, p.t));
-  const write = (p: Place, v: string): string =>
-    p.k === "reg" ? `(${p.e} = ${v})` : storeAt(p.addr, p.t, v);
+  const read = (p: Place): string =>
+    p.k === "reg" ? p.e : p.k === "bits" ? bitsRead(p.addr, p) : loadAt(p.addr, p.t);
+  const write = (p: Place, v: string): string => {
+    if (p.k === "reg") return `(${p.e} = ${v})`;
+    if (p.k === "mem") return storeAt(p.addr, p.t, v);
+    // A bit-field: the unit read, merged and written (once for the address); its value, the field's.
+    const a = temp({ k: "f64" });
+    const at = { ...p, addr: a };
+    return `((${a} = ${p.addr}), ${storeAt(a, p.unit, bitsMerge(a, at, v))}, ${bitsRead(a, at)})`;
+  };
   /** Read, compute, write back (once for the address): `x op= v`, `++x`, `x++`. */
   const modify = (p: Place, next: (old: string) => string, postfix: boolean): string => {
+    if (p.k === "bits") {
+      const a = temp({ k: "f64" });
+      const at = { ...p, addr: a };
+      const old = temp(p.t);
+      const set = `${storeAt(a, p.unit, bitsMerge(a, at, next(old)))}`;
+      return `((${a} = ${p.addr}), (${old} = ${bitsRead(a, at)}), ${set}, ${postfix ? old : bitsRead(a, at)})`;
+    }
     if (p.k === "reg") {
       if (!postfix) return `(${p.e} = ${next(p.e)})`;
       const old = temp(p.t);
@@ -1059,7 +1171,9 @@ function raiseBody(
             const mem = mems.get(d.id ?? "");
             if (mem !== undefined) return mem.addr;
             const global = isGlobal(d);
-            if (global && !/\bconst\b/.test(d.type?.qualType ?? "")) {
+            // A global that is state, or a constant whose initializer this unit lacks (an extern
+            // declaration): static memory.
+            if (global && (!/\bconst\b/.test(d.type?.qualType ?? "") || !hasInit(d))) {
               const sp = staticPlace(d, typeOf(target));
               if (sp !== undefined) return sp.addr;
             }
@@ -1148,6 +1262,7 @@ function raiseBody(
                   : v;
             return `(${pun.word} = ${bits})`;
           }
+          if (typeOf(a).k === "rec") return assignRecord(place(a), b);
           return write(place(a), expr(b));
         }
         // A comparison or logical operator is a bool in C++ and an int (1 or 0) in C.
@@ -1283,6 +1398,32 @@ function raiseBody(
     }
   };
 
+  /**
+   * A record assigned: from a compound literal (`(struct meta){0}`), initialized in place; from
+   * another record, its bytes copied (8 at a time, then 1).
+   */
+  const assignRecord = (dst: Place, src: ClangNode): string => {
+    if (dst.k !== "mem") throw new RaiseCError("a record assigned that is not in memory");
+    const t = dst.t;
+    const s0 = stripCasts(src);
+    const d = temp({ k: "f64" });
+    const steps = [`(${d} = ${dst.addr})`];
+    if (s0.kind === "CompoundLiteralExpr") {
+      const init = (s0.inner ?? [])[0];
+      steps.push(...initialize(d, t, init).map((x) => `(${x.replace(/;$/, "")})`));
+    } else {
+      const sp = place(s0);
+      if (sp.k !== "mem") throw new RaiseCError("a record copied from one not in memory");
+      const from = temp({ k: "f64" });
+      steps.push(`(${from} = ${sp.addr})`);
+      const size = sizeOf(t);
+      for (let o = 0; o + 8 <= size; o += 8)
+        steps.push(`__ykStore64((${d} + ${o}), __ykLoad64((${from} + ${o})))`);
+      for (let o = size - (size % 8); o < size; o++)
+        steps.push(`__ykStore8((${d} + ${o}), __ykLoad8((${from} + ${o})))`);
+    }
+    return `(${steps.join(", ")}, undefined)`;
+  };
   /** Stores that initialize an object in memory at `addr` from an initializer (zero-filled). */
   const initialize = (addr: string, t: CType, given: ClangNode | undefined): string[] => {
     // A member an initializer leaves out (clang's ImplicitValueInitExpr) is zero.
@@ -1316,13 +1457,14 @@ function raiseBody(
       const out: string[] = [];
       let i = 0;
       for (const [, f] of l.fields) {
-        out.push(
-          ...initialize(
-            f.offset === 0 ? addr : `(${addr} + ${f.offset})`,
-            parseType(f.type),
-            items[i],
-          ),
-        );
+        const ft = parseType(f.type);
+        if (f.bit !== undefined) {
+          const item = items[i];
+          const v =
+            item === undefined || item.kind === "ImplicitValueInitExpr" ? zeroOf(ft) : expr(item);
+          out.push(`${write(bitsPlace(addr, f.bit, ft), v)};`);
+        } else
+          out.push(...initialize(f.offset === 0 ? addr : `(${addr} + ${f.offset})`, ft, items[i]));
         i++;
         if (/^union /.test(t.name)) break; // a union's initializer is its first member's
       }
@@ -1507,7 +1649,7 @@ function raiseBody(
             continue;
           }
           vars.set(d.id ?? "", t);
-          const init = d.inner?.[0];
+          const init = initOf(d);
           if (
             t.k === "rec" &&
             lastUnion !== undefined &&
@@ -1880,7 +2022,7 @@ export function shaveCUnit(
         !inFunction &&
         n.name === name &&
         normType(n.type?.qualType ?? "") === type &&
-        n.inner?.[0] !== undefined
+        initOf(n) !== undefined
       ) {
         hit = n;
         return;
@@ -1907,11 +2049,15 @@ export function shaveCUnit(
   let layouts: Map<string, RecordLayout> | undefined;
   const layout: LayoutResolver = (name) => {
     layouts ??= recordLayouts(
-      execFileSync(clang, [...args, "-fsyntax-only", "-Xclang", "-fdump-record-layouts", file], {
-        encoding: "utf8",
-        maxBuffer: 1 << 30,
-        stdio: ["ignore", "pipe", "ignore"],
-      }),
+      execFileSync(
+        clang,
+        [...args, "-fsyntax-only", "-Xclang", "-fdump-record-layouts-complete", file],
+        {
+          encoding: "utf8",
+          maxBuffer: 1 << 30,
+          stdio: ["ignore", "pipe", "ignore"],
+        },
+      ),
     );
     return layouts.get(recordKey(name));
   };
@@ -1931,7 +2077,7 @@ export function shaveCUnit(
             type.replace(/\[\d*\]/g, "[]")) &&
         n.storageClass !== "extern"
       ) {
-        if (n.inner?.[0] !== undefined) decl ??= n;
+        if (initOf(n) !== undefined) decl ??= n;
         else tentative ??= n;
       }
       const fn = n.kind === "FunctionDecl" || n.kind === "CXXMethodDecl";
@@ -2152,8 +2298,15 @@ function staticDefinition(
       const l = layoutOf(ty);
       const items = n === undefined ? [] : initItems(n);
       let i = 0;
-      for (const [, f] of l.fields) {
-        put(items[i], parseType(f.type), offset + f.offset);
+      for (const [name, f] of l.fields) {
+        const item = items[i];
+        if (f.bit !== undefined) {
+          if (item !== undefined && item.kind !== "ImplicitValueInitExpr") {
+            const c = scalar(item);
+            if (c.k !== "v" || (c.v !== 0n && c.v !== 0))
+              throw new RaiseCError(`an initializer of the bit-field "${name}"`);
+          }
+        } else put(item, parseType(f.type), offset + f.offset);
         i++;
         if (/^union /.test(ty.name)) break;
       }
@@ -2175,7 +2328,7 @@ function staticDefinition(
     else if (c.k === "fn") init.push({ offset, fn: c.key });
     else init.push({ offset, data: { kind: c.kind, values: c.values } });
   };
-  put(decl.inner?.[0], t, 0);
+  put(initOf(decl), t, 0);
   return { size: sizeOf(t), align: alignOf(t), init };
 }
 
@@ -2194,14 +2347,26 @@ export function recordLayouts(dump: string): Map<string, RecordLayout> {
     const head = /^\s*\d+ \| (.*)$/.exec(lines[0] ?? "");
     const tail = /\[sizeof=(\d+),.*?align=(\d+)/.exec(block);
     if (head === null || tail === null) continue;
-    const fields = new Map<string, { offset: number; type: string }>();
+    const fields = new Map<
+      string,
+      { offset: number; type: string; bit?: { start: number; width: number } }
+    >();
     for (const l of lines.slice(1)) {
-      const m = /^\s*(\d+) \| {3}(\S.*)$/.exec(l);
-      if (m === null) continue; // nested deeper, a bit-field (`0:0-3 |`), or the size line
-      const text = (m[2] as string).trim();
+      // `8 |   int x`, or a bit-field `32:0-4 |   uintptr_t last_idx` (byte, then its first and
+      // last bit counted from that byte).
+      const m = /^\s*(\d+)(?::(\d+)-(\d+))? \| {3}(\S.*)$/.exec(l);
+      if (m === null) continue; // nested deeper, or the size line
+      const text = (m[4] as string).trim();
       const name = /([A-Za-z_]\w*)$/.exec(text)?.[1];
       if (name === undefined) continue;
-      fields.set(name, { offset: Number(m[1]), type: text.slice(0, -name.length).trim() });
+      const offset = Number(m[1]);
+      const type = text.slice(0, -name.length).trim();
+      if (m[2] === undefined) fields.set(name, { offset, type });
+      else {
+        const first = Number(m[2]);
+        const width = Number(m[3]) - first + 1;
+        fields.set(name, { offset, type, bit: { start: offset * 8 + first, width } });
+      }
     }
     out.set(recordKey((head[1] as string).trim()), {
       size: Number(tail[1]),

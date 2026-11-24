@@ -95,10 +95,14 @@ describe.skipIf(!hasClang)("SQLite's record helpers, shaved from the amalgamatio
 
   // Mem's layout, as clang lays it out for this build.
   const mem = recordLayouts(
-    execFileSync("clang", [...ARGS, "-fsyntax-only", "-Xclang", "-fdump-record-layouts", file], {
-      encoding: "utf8",
-      maxBuffer: 1 << 30,
-    }),
+    execFileSync(
+      "clang",
+      [...ARGS, "-fsyntax-only", "-Xclang", "-fdump-record-layouts-complete", file],
+      {
+        encoding: "utf8",
+        maxBuffer: 1 << 30,
+      },
+    ),
   ).get("struct sqlite3_value");
 
   const exe = join(work, "sqlite-helpers");
