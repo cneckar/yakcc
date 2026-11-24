@@ -16,6 +16,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   breakEven,
+  buildConfirmPrompt,
   buildPrompt,
   clientView,
   loadTasks,
@@ -47,6 +48,9 @@ export const DEFAULTS = Object.freeze({
   // Max share of the budget per source package in the fill's first pass (#1271).
   maxPackageShare: 0.5,
   seeds: 1,
+  // The fallback arm's gate: "confirm" (a reading turn picks the candidates worth reusing)
+  // or "score" (the retrieval-score threshold, kept for comparison).
+  gate: "confirm",
 });
 
 /**
@@ -185,6 +189,7 @@ export async function runAll({ tasks, client, model, options = {} }) {
               slice: rank.slice,
               strongThreshold: o.strongThreshold,
               decide: decideFallback,
+              gate: o.gate,
               model,
             })),
             selection: "rank",
@@ -237,10 +242,17 @@ export function planRun({ tasks, options = {}, outputTokensPerCall = 2000 }) {
     if (arms.includes("slice-fill")) prompts.push(buildPrompt(task, "slice", filled));
     if (arms.includes("slice-oracle")) prompts.push(buildPrompt(task, "slice", oracle));
     if (arms.includes("fallback")) {
-      const p = strong ? buildPrompt(task, "slice", rank) : buildPrompt(task, "scratch", []);
-      prompts.push(p);
-      // Upper bound: a repair turn repeats the prompt with the reply.
-      if (strong) prompts.push(p + "x".repeat(outputTokensPerCall * 4));
+      if (o.gate === "score") {
+        const p = strong ? buildPrompt(task, "slice", rank) : buildPrompt(task, "scratch", []);
+        prompts.push(p);
+        // Upper bound: a repair turn repeats the prompt with the reply.
+        if (strong) prompts.push(p + "x".repeat(outputTokensPerCall * 4));
+      } else {
+        // Upper bound: the confirm turn, a compose turn with every candidate kept, a repair.
+        const p = buildPrompt(task, "slice", rank);
+        if (rank.length > 0) prompts.push(buildConfirmPrompt(task, rank));
+        prompts.push(p, p + "x".repeat(outputTokensPerCall * 4));
+      }
     }
     calls += prompts.length * o.seeds;
     inputTokens += prompts.reduce((n, p) => n + est(p), 0) * o.seeds;
@@ -317,6 +329,7 @@ async function main() {
     ...(args.budget ? { tokenBudget: Number(args.budget) } : {}),
     ...(args.share ? { maxPackageShare: Number(args.share) } : {}),
     ...(args.arms ? { arms: args.arms.split(",") } : {}),
+    ...(args.gate ? { gate: args.gate } : {}),
   };
   for (const a of options.arms ?? [])
     if (!ARMS.includes(a) && !OPTIONAL_ARMS.includes(a)) throw new Error(`unknown arm ${a}`);

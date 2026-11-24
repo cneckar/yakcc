@@ -230,7 +230,118 @@ export function buildRepairPrompt(task, slice, previousCode, holes) {
  * The gap is measured on the candidate and the slice scores only, never on the held-out check.
  * `decide` is `decideFallback` from @yakcc/shave (injected, so this file needs no build).
  */
-export async function runFallbackArm({ task, client, slice, strongThreshold, decide, model }) {
+/** The confirm-gate prompt: the task, then the numbered slice candidates; reply with indexes. */
+export function buildConfirmPrompt(task, slice) {
+  const lines = [
+    `Task: ${task.spec}`,
+    "",
+    "A code registry retrieved these candidates. Which of them would you reuse, in whole or in part, to write the task's code? Judge by what each does, not by its name.",
+    'Reply with one JSON object and nothing else: {"use": [candidate numbers]}, or {"use": []} if none helps.',
+    "",
+  ];
+  slice.forEach((c, i) => {
+    const where = `${c.citation.sourceFile}:${c.citation.lineStart}-${c.citation.lineEnd}`;
+    if (c.text.includes("\n")) lines.push(`${i + 1}. ${where}:`, "```js", c.text, "```");
+    else lines.push(`${i + 1}. ${where}: ${c.text}`);
+  });
+  return lines.join("\n");
+}
+
+/** The indexes a confirm reply chose (1-based, in range), or null when it is not readable. */
+export function parseConfirm(text, n) {
+  const end = text.lastIndexOf("}");
+  for (
+    let start = text.lastIndexOf("{", end);
+    start >= 0;
+    start = text.lastIndexOf("{", start - 1)
+  ) {
+    try {
+      const v = JSON.parse(text.slice(start, end + 1));
+      if (Array.isArray(v?.use))
+        return [...new Set(v.use.map(Number))]
+          .filter((i) => Number.isInteger(i) && i >= 1 && i <= n)
+          .sort((a, b) => a - b);
+    } catch {}
+    if (start === 0) break;
+  }
+  return null;
+}
+
+/**
+ * The gap-gated fallback arm. Two gates decide whether the slice is worth composing from:
+ *   - "confirm" (default; B12's finding): a reading turn asks the model which candidates it
+ *     would reuse. None: write from the spec alone (trigger "none-confirmed"). Some: compose
+ *     from only those. Retrieval scores are not used, because B11 showed they do not
+ *     separate relevant slices from irrelevant ones.
+ *   - "score": the earlier rule. A candidate at or above the strong threshold, or else
+ *     synthesize (trigger "near-miss-only").
+ * Under either gate, a composed reply with closure holes gets one repair turn (trigger
+ * "unexplained-residual"). Every trigger is logged with its reason. The held-out check is
+ * never read.
+ */
+export async function runFallbackArm(args) {
+  if ((args.gate ?? "confirm") === "confirm") return runConfirmFallback(args);
+  return runScoreFallback(args);
+}
+
+async function runConfirmFallback({ task, client, slice, model }) {
+  const t0 = Date.now();
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let stopped = null;
+  const stopReasons = [];
+  const call = async (prompt) => {
+    const reply = await client.complete(prompt);
+    inputTokens += reply.inputTokens;
+    outputTokens += reply.outputTokens;
+    if (reply.stopReason !== undefined) stopReasons.push(reply.stopReason);
+    return reply;
+  };
+  const confirm =
+    slice.length === 0 ? { text: '{"use": []}' } : await call(buildConfirmPrompt(task, slice));
+  const chosen = parseConfirm(confirm.text, slice.length) ?? [];
+  const used = chosen.map((i) => slice[i - 1]);
+  let turns = slice.length === 0 ? 0 : 1;
+  let trigger = null;
+  const ask = async (prompt) => {
+    const reply = await call(prompt);
+    turns++;
+    stopped = stopFailure(reply);
+    return extractCode(reply.text);
+  };
+  let code;
+  if (used.length === 0) {
+    trigger = { reason: "none-confirmed", shown: slice.length };
+    code = await ask(buildPrompt(task, "scratch", []));
+  } else {
+    code = await ask(buildPrompt(task, "slice", used));
+    const holes = stopped === null ? closureHoles(code) : [];
+    if (holes.length > 0) {
+      trigger = { reason: "unexplained-residual", used: chosen, holes };
+      code = await ask(buildRepairPrompt(task, used, code, holes));
+    }
+  }
+  const ms = Date.now() - t0;
+  const score = stopped ?? scoreSolution(task, code);
+  return {
+    arm: "fallback",
+    task: task.id,
+    ...(model !== undefined ? { model } : {}),
+    gate: "confirm",
+    pass: score.pass,
+    error: score.error,
+    inputTokens,
+    outputTokens,
+    turns,
+    ms,
+    decision: used.length > 0 && trigger === null ? "compose" : "synthesize",
+    confirmed: used.map((c) => c.id),
+    trigger,
+    ...(stopReasons.length > 0 ? { stopReasons } : {}),
+  };
+}
+
+async function runScoreFallback({ task, client, slice, strongThreshold, decide, model }) {
   const scores = task.slice.map((c) => c.score);
   const first = decide({ scores, strongThreshold, unexplainedCount: 0 });
   const bestScore = scores.length === 0 ? null : Math.max(...scores);
@@ -276,6 +387,7 @@ export async function runFallbackArm({ task, client, slice, strongThreshold, dec
     outputTokens,
     turns,
     ms,
+    gate: "score",
     decision: first.action === "reuse" && trigger === null ? "compose" : "synthesize",
     trigger,
     ...(stopReasons.length > 0 ? { stopReasons } : {}),

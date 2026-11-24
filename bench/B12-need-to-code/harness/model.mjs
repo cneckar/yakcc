@@ -16,7 +16,34 @@ export const PRICES = {
   "claude-sonnet-5-5": [2, 10],
   "claude-haiku-5-5": [0.1, 0.5],
 };
-export const DEFAULT_MODEL = "claude-opus-5-5";
+// Bulk generation (descriptions, queries, picks) defaults to the cheapest current model.
+// Use --model to spot-check a stronger one on a --sample of the same items; do not run a
+// whole corpus on a large model by default (the first held-out run did, at ~35x the cost).
+export const DEFAULT_MODEL = "claude-haiku-5-5";
+
+/** The default spending cap per script run, in dollars (raise with --max-dollars). */
+export const DEFAULT_MAX_DOLLARS = 2;
+
+/**
+ * Refuse a run whose estimated cost on `model` exceeds `maxDollars`. The estimate comes
+ * from estimateCost (characters / 4 for input); a model with no price is refused.
+ */
+export function checkBudget(estimate, model, maxDollars = DEFAULT_MAX_DOLLARS) {
+  const e = estimate[model];
+  if (e === undefined) throw new Error(`no price for ${model}; add it to PRICES before running`);
+  if (e.dollars > maxDollars)
+    throw new Error(
+      `estimated $${e.dollars} on ${model} exceeds the cap of $${maxDollars}; pass --max-dollars to raise it`,
+    );
+  return e;
+}
+
+/** Every k-th item, so a sample is deterministic and the same across models. */
+export function evenSample(items, n) {
+  if (!(n > 0) || n >= items.length) return items;
+  const step = items.length / n;
+  return Array.from({ length: n }, (_, i) => items[Math.floor(i * step)]);
+}
 
 /** A rough cost for a planned run: tokens estimated as chars / 4. */
 export function estimateCost(inputChars, outputTokens, calls) {
