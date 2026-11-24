@@ -22,6 +22,7 @@
 
 import { createHash } from "node:crypto";
 import {
+  type CallExpression,
   Node,
   Project,
   ScriptKind,
@@ -34,6 +35,7 @@ import { KNOWN_PRIMITIVES } from "./base-set.js";
 import { canonicalizeGraph } from "./canonical.js";
 import { isHeapLabel } from "./heap-labels.js";
 import { normalizeLiteral } from "./literal.js";
+import { mathOperation } from "./operations.js";
 import { jsOperation } from "./ops.js";
 import { RUNTIME_MODULE } from "./runtime.js";
 import type {
@@ -3014,9 +3016,42 @@ class Lifter {
       ...(Node.isBinaryExpression(node) ? [node] : []),
       ...node.getDescendantsOfKind(SyntaxKind.BinaryExpression),
     ];
+    // A destructuring assignment's targets are every name its pattern writes (`({ a: x, b } = o)`,
+    // `[x, , ...y] = xs`, defaults and nested patterns included).
+    const considerPattern = (target: Node): void => {
+      if (Node.isParenthesizedExpression(target)) {
+        considerPattern(target.getExpression());
+        return;
+      }
+      if (Node.isObjectLiteralExpression(target)) {
+        for (const p of target.getProperties()) {
+          if (Node.isShorthandPropertyAssignment(p)) consider(p.getNameNode());
+          else if (Node.isPropertyAssignment(p)) {
+            const init = p.getInitializer();
+            if (init !== undefined) considerPattern(init);
+          } else if (Node.isSpreadAssignment(p)) considerPattern(p.getExpression());
+        }
+        return;
+      }
+      if (Node.isArrayLiteralExpression(target)) {
+        for (const el of target.getElements()) {
+          if (Node.isSpreadElement(el)) considerPattern(el.getExpression());
+          else if (!Node.isOmittedExpression(el)) considerPattern(el);
+        }
+        return;
+      }
+      // A default (`x = 1` in a pattern) writes its left side.
+      if (
+        Node.isBinaryExpression(target) &&
+        target.getOperatorToken().getKind() === SyntaxKind.EqualsToken
+      )
+        considerPattern(target.getLeft());
+      else consider(target);
+    };
     for (const bin of bins) {
       const op = bin.getOperatorToken().getKind();
-      if (op === SyntaxKind.EqualsToken || COMPOUND_ASSIGN.has(op)) consider(bin.getLeft());
+      if (op === SyntaxKind.EqualsToken) considerPattern(bin.getLeft());
+      else if (COMPOUND_ASSIGN.has(op)) consider(bin.getLeft());
     }
     const unaries = [
       ...(Node.isPostfixUnaryExpression(node) || Node.isPrefixUnaryExpression(node) ? [node] : []),
@@ -3134,6 +3169,16 @@ class Lifter {
       });
       this.env.set(THIS, made as ValueId);
       return made as ValueId;
+    }
+    if (Node.isCallExpression(node) && !node.hasQuestionDotToken()) {
+      // `Math.sin(x)`, with `Math` the platform's: the operation `Math.sin`, a reference to the atom
+      // that implements it (DEC-DUC-OPERATIONS-AS-ATOMS-001, #1362). Pure, as `+` is.
+      const op = this.operationCall(node);
+      if (op !== undefined)
+        return this.emit("op", this.liftElements(node.getArguments() as Node[]), 1, {
+          origin: { kind: "Operation", text: truncate(node.getText()) },
+          label: op,
+        })[0] as ValueId;
     }
     if (Node.isCallExpression(node) || Node.isNewExpression(node)) {
       const inputs: ValueId[] = [];
@@ -3723,6 +3768,34 @@ class Lifter {
       origin: { kind: "PropertyAccess", text: truncate(name) },
       label: ".value",
     })[0] as ValueId;
+  }
+
+  /**
+   * The operation a call is, when it calls a member of the platform's `Math` that is an operation
+   * reference with as many plain arguments as it takes (`Math.sin(x)`); undefined otherwise.
+   */
+  private operationCall(call: CallExpression): string | undefined {
+    const callee = call.getExpression();
+    if (!Node.isPropertyAccessExpression(callee) || callee.hasQuestionDotToken()) return undefined;
+    const object = callee.getExpression();
+    if (!Node.isIdentifier(object) || object.getText() !== "Math") return undefined;
+    const args = call.getArguments();
+    if (args.some((a) => Node.isSpreadElement(a))) return undefined;
+    if (mathOperation(callee.getName(), args.length) === undefined) return undefined;
+    return this.isPlatformName("Math") ? `Math.${callee.getName()}` : undefined;
+  }
+
+  /** Whether a name, read here, is the platform's: nothing in or around the atom binds it. */
+  private isPlatformName(name: string): boolean {
+    return (
+      !this.env.has(name) &&
+      !this.imports.has(name) &&
+      !this.bindings.has(name) &&
+      !this.cells.has(name) &&
+      name !== this.functionSelf &&
+      name !== this.classSelf &&
+      (this.ambient.has(name) || RUNTIME_PRIMITIVES.has(name))
+    );
   }
 
   /** Whether a name is a binding outside the atom that it writes (its value is the binding). */

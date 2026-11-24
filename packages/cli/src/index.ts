@@ -37,6 +37,7 @@ import type { RegistryOptions } from "@yakcc/registry";
 import pkg from "../package.json" with { type: "json" };
 import { benchB3 } from "./commands/bench-b3.js";
 import { bootstrap } from "./commands/bootstrap.js";
+import { buildNative } from "./commands/build-native.js";
 import { build } from "./commands/build.js";
 import { compileSelf } from "./commands/compile-self.js";
 import { compile } from "./commands/compile.js";
@@ -181,6 +182,8 @@ COMMANDS
         [--foreign-policy             TS target only: how to handle foreign-block deps
               <allow|reject|tag>]     (ignored with warning for --target python/rust)
   build [--registry <p>] [<dir>]      Materialize .yakcc/manifest.json atom references into .yakcc/atoms/
+  build --native <entry> [-o <out>] [--target <t>]
+                                      Build a program (its entry module and every module it imports) into a native executable
   compile <entry> [--registry <p>]   Assemble a module from a contract id, spec file, or directory
                [--out <dir>]          Output directory (default: ./yakcc-out or <dir>/dist)
                [--target <ts|python|  Language target (default: ts); python writes module.py
@@ -314,6 +317,8 @@ export async function runCli(
       // .yakcc/atoms/<alias>.ts via assemble() — offline, deterministic, idempotent.
       // subcommand may be a flag (--registry) or a project-root positional — reassemble.
       const buildArgv = subcommand !== undefined ? [subcommand, ...rest] : rest;
+      // `yakcc build --native <entry>`: a program built into an executable (#1333).
+      if (buildArgv.includes("--native")) return buildNative(buildArgv, logger);
       return build(buildArgv, logger, { embeddings: opts?.embeddings });
     }
 

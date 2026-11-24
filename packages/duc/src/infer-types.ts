@@ -1,4 +1,5 @@
 import { ts } from "ts-morph";
+import { operationReference } from "./operations.js";
 import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
 // SPDX-License-Identifier: Apache-2.0
@@ -560,6 +561,8 @@ function opType(
 ): DucType {
   const label = n.label ?? "";
   const arity = n.inputs.length;
+  // An operation reference to one of Math's atoms (#1362) gives a float64.
+  if (operationReference(label) !== undefined) return NUM("float");
   if (arity === 2 && (label === "+" || label === "+=")) {
     const [a, b] = [at(0), at(1)];
     if (isString(a) || isString(b)) return STRING;

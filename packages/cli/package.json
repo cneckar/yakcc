@@ -69,6 +69,7 @@
     "@yakcc/shave-python": "workspace:*",
     "@yakcc/shave-rust": "workspace:*",
     "@yakcc/contracts": "workspace:*",
+    "@yakcc/duc": "workspace:*",
     "@yakcc/federation": "workspace:*",
     "@yakcc/hooks-base": "workspace:*",
     "@yakcc/hooks-claude-code": "workspace:*",

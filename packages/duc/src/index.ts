@@ -159,6 +159,11 @@ export {
 } from "./native.js";
 export type { NativeModule, NativeModuleStatement, NativeModules } from "./emit-llvm-boxed.js";
 export { emitLlvmBoxed, emitNativeModules, moduleSymbol } from "./emit-llvm-boxed.js";
+export type { NativeEsm, NativeImport } from "./emit-llvm-boxed.js";
+export { DEFAULT_BINDING, ProgramError, programRecord } from "./program.js";
+export type { ProgramRecord } from "./program.js";
+export { buildProgram } from "./build.js";
+export type { BuildOptions, BuildResult } from "./build.js";
 export {
   ecmaScriptLabel,
   ecmaScriptView,
@@ -168,3 +173,25 @@ export {
   namedOperations,
 } from "./ops.js";
 export { byMeaning, contractSignature } from "./by-meaning.js";
+export type { LeafFunction, LeafImpl, LeafType } from "./leaves.js";
+export {
+  LEAF_FUNCTIONS,
+  LEAF_OPERATIONS,
+  MATH_LEAVES,
+  MEMORY_LEAF_NAMES,
+  isLeafFunction,
+  leafFunctionsJs,
+} from "./leaves.js";
+export type { OperationReference } from "./operations.js";
+export {
+  OPERATION_REFERENCES,
+  atomCallees,
+  atomGraph,
+  atomNames,
+  atomRoot,
+  atomSource,
+  linkedAtomGraph,
+  mathOperation,
+  operationReference,
+  operationRoot,
+} from "./operations.js";

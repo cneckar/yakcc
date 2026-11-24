@@ -235,8 +235,9 @@ describe("what the boxed wasm lowering refuses, with the reason (#1300)", () => 
     expect(refusal("export function f(x) { return function* () { yield x; }; }")).toMatch(
       /no stack switching/,
     );
+    // Math.sin is a reference to V8's shaved atom (#1362), not lowered here yet.
     expect(refusal("export function f(x) { return Math.sin(x); }")).toMatch(
-      /implementation-approximated/,
+      /"Math.sin" is not in the subset/,
     );
   });
 });

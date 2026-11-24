@@ -2523,7 +2523,7 @@ export function createCMemory() {
         return r;
       }
     }
-    // Say which region is nearest below, and why the access is outside it.
+    // Which region is nearest below (for debugging; the message is the native runtime's).
     let near = "";
     for (let i = regions.length - 1; i >= 0; i--) {
       const r = regions[i] as Region;
@@ -2532,8 +2532,9 @@ export function createCMemory() {
         break;
       }
     }
-    throw new CMemoryTrap(
-      `memory trap: ${write ? "store" : "load"} of ${n} at 0x${a.toString(16)}${near}`,
+    throw Object.assign(
+      new CMemoryTrap(`memory trap: ${write ? "store" : "load"} of ${n} at 0x${a.toString(16)}`),
+      { nearest: near.trim() },
     );
   };
   const alloc = (size: number, align: number, constant = false): number => {

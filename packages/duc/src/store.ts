@@ -18,6 +18,7 @@ import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { canonicalizeGraph, graphIdentity } from "./canonical.js";
 import { type CompactGraph, decodeGraph, encodeGraph } from "./compact.js";
+import { operationReference, operationRoot } from "./operations.js";
 import type { DiamondLabel, DucGraph, DucNode, NodeOrigin } from "./types.js";
 
 /** The version of the stored structure's encoding. Version 2 adds the ordering flag (#1285). */
@@ -28,11 +29,14 @@ export const GRAPH_FORMAT_VERSION = 2;
  * same source (a new construct lifted, a canonical rule) changes identities, so it bumps this: a
  * stored graph from an older lifter is still valid, but relifting its source may give another.
  */
-export const LIFTER_VERSION = 52;
+export const LIFTER_VERSION = 53;
 
-/** One reference's link: the reference, by reason, symbol and module, and the contract it links to. */
+/**
+ * One reference's link: the reference, by reason, symbol and module, and what it links to: a
+ * contract, or, for an operation (reason `operation`, #1362), the root of the atom implementing it.
+ */
 export interface StoredLink {
-  readonly reason: DiamondLabel["reason"];
+  readonly reason: DiamondLabel["reason"] | "operation";
   readonly symbol: string;
   readonly module?: string;
   readonly spec: string;
@@ -160,6 +164,12 @@ function linksOf(g: DucGraph, out: Map<string, StoredLink>): void {
         ...(d.module !== undefined ? { module: d.module } : {}),
         spec: d.spec,
       });
+    // An operation that is an atom is linked to the atom's root (DEC-DUC-OPERATIONS-AS-ATOMS-001).
+    const op = n.kind === "op" ? operationReference(n.label) : undefined;
+    if (op !== undefined) {
+      const link = { reason: "operation" as const, symbol: op.label };
+      out.set(linkKey(link), { ...link, spec: operationRoot(op.label) });
+    }
     if (n.closure !== undefined) linksOf(n.closure, out);
   }
 }

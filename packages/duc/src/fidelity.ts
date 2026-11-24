@@ -13,6 +13,7 @@
 
 import { ts } from "ts-morph";
 import { parseAtomSource } from "./lift.js";
+import { operationReference } from "./operations.js";
 import type { DucGraph } from "./types.js";
 
 export interface LiftFidelity {
@@ -114,10 +115,15 @@ export function topLevelNames(source: string): Set<string> {
   return names;
 }
 
-/** The names a graph reports as references: its diamond sources, and its closures'. */
+/**
+ * The names a graph reports as references: its diamond sources, the platform namespace of each
+ * operation reference (`Math` for `Math.sin`, #1362), and its closures'.
+ */
 export function graphFreeNames(graph: DucGraph, into: Set<string> = new Set()): Set<string> {
   for (const n of graph.nodes) {
     if (n.diamond !== undefined && !notASourceName(n.diamond.symbol)) into.add(n.diamond.symbol);
+    const op = n.kind === "op" ? operationReference(n.label) : undefined;
+    if (op !== undefined) into.add(op.label.slice(0, op.label.indexOf(".")));
     if (n.closure !== undefined) graphFreeNames(n.closure, into);
   }
   return into;

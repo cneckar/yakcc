@@ -350,8 +350,9 @@ describe("what the boxed lowering refuses, for now (#1292)", () => {
       /not in the subset/,
     );
     expect(refusal("export function f(x) { return [, x]; }")).toMatch(/an array with holes/);
+    // Math.sin is a reference to V8's shaved atom (#1362): lane:native lowers the atom next.
     expect(refusal("export function f(x) { return Math.sin(x); }")).toMatch(
-      /implementation-approximated/,
+      /"Math.sin" is not in the subset/,
     );
   });
 });
