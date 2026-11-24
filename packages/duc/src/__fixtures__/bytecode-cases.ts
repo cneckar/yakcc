@@ -333,6 +333,39 @@ export const numericText = fc.oneof(
 
 export const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
   [
+    "rest parameters: called with arguments, with a spread, as a function value, and as an array method's callback",
+    "export function f(xs: unknown[], n: number): unknown { const g = (a: unknown, ...r: unknown[]) => [a, r.length, r]; const h = (...r: unknown[]) => r.length + n; const v: any = n > 1 ? g : h; const p = (a: unknown, b: unknown) => [b, a, n]; return [g(1), g(1, 2, 3), g(n, ...xs), h(...xs, ...xs), h(), v(xs, n), v(...xs), xs.map(g), xs.map((x: unknown, ...more: unknown[]) => more.length), g(...xs), g(...xs, n), p(...xs), p(n, ...xs)]; }",
+    ["unknown[]", "number"],
+    "unknown",
+    fc.tuple(
+      fc.array(fc.oneof(fc.integer({ min: -2, max: 9 }), fc.constantFrom("a", null)), {
+        maxLength: 4,
+      }),
+      fc.integer({ min: 0, max: 3 }),
+    ),
+  ],
+  [
+    "sort (by default, as strings, and with a comparator), spread in array literals, calls and object literals, Array.from, Math.max/min of a spread",
+    "export function f(xs: number[], ys: unknown[], s: string, o: any): unknown { const a = [...xs.filter((x: number) => x === x)]; a.sort((p: number, q: number) => p - q); const b: any = [...ys, 1, ...s]; b.sort(); const g = (...r: unknown[]) => r.length; const c: any = ys; const cs = c.slice(); cs.sort((p: any, q: any) => (String(p) < String(q) ? 1 : String(p) > String(q) ? -1 : 0)); return [a, b, cs, Math.max(...xs), Math.min(...xs, 3), Array.from(s), Array.from(ys), Array.from(new Set(xs)), { ...o, z: 1 }, { y: 2, ...o }, [...new Map([[1, s]])], c.concat(...[[1], 2])]; }",
+    ["number[]", "unknown[]", "string", "unknown"],
+    "unknown",
+    fc.tuple(
+      fc.array(
+        fc.oneof(fc.integer({ min: -20, max: 20 }), fc.constantFrom(-0, Number.NaN, 1e21, 0.5)),
+        { maxLength: 6 },
+      ),
+      fc.array(
+        fc.oneof(fc.integer({ min: -2, max: 12 }), fc.constantFrom("a", "", "10", null, undefined)),
+        { maxLength: 5 },
+      ),
+      text,
+      fc.oneof(
+        fc.constantFrom(null, undefined, 3, "ab"),
+        fc.dictionary(fc.constantFrom("y", "z", "w"), fc.integer()).map((d) => ({ ...d })),
+      ),
+    ),
+  ],
+  [
     "string methods (split, repeat, padStart/End, lastIndexOf, trimStart/End, at, replace/replaceAll with $-patterns and a callback) and array methods (slice, at, lastIndexOf, concat, reverse)",
     "export function f(s: string, t: string, n: number, xs: unknown[]): unknown { let rep = ''; try { rep = s.repeat(n); } catch (e) { rep = (e as Error).name; } const a: any = xs; const r = [1, 2, 3]; r.reverse(); return [s.split(t), s.split(''), s.split(t, 2), s.split(), rep, s.padStart(n, t), s.padEnd(6, t), s.padStart(5), s.lastIndexOf(t), s.lastIndexOf(t, n), s.trimStart(), s.trimEnd(), s.at(n), s.at(-1), s.replace(t, '[$&]'), s.replaceAll(t, '<$$>'), s.replace(t, (m: string, p: number) => m.length + ':' + p), s.replaceAll('', '-'), a.slice(1), a.slice(-2, n), a.at(-1), a.lastIndexOf(t), a.concat([1, 2], s), r]; }",
     ["string", "string", "number", "unknown[]"],

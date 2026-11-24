@@ -787,6 +787,39 @@ ${loop("      if (!__ykTruthy(g(a[i], i, a))) return false;", "  return true;")}
 ${loop("      acc = g(acc, a[i], i, a);", "  return acc;")}
 }`,
     },
+    // sort(comparefn): stable (an insertion sort), the comparator's result made a number (NaN is
+    // 0), undefined elements last without calling it; in place, the array returned.
+    [`__ykSort${kind}`]: {
+      inputs: [arr, "function"],
+      output: "unknown",
+      source: `export function f(a: ${arr}, g: (p: unknown, q: unknown) => unknown): ${arr} {
+  const n = a.length;
+  let i = 1;
+  while (i < n) {
+    const x = a[i];
+    let j = i - 1;
+    while (j >= 0) {
+      const y = a[j];
+      const ty = __ykTag(y);
+      const tx = __ykTag(x);
+      let c = 0;
+      if (ty === 0 && tx === 0) c = 0;
+      else if (ty === 0) c = 1;
+      else if (tx === 0) c = -1;
+      else {
+        c = __ykToNumber(g(y, x));
+        if (c !== c) c = 0;
+      }
+      if (c <= 0) break;
+      a[j + 1] = y;
+      j = j - 1;
+    }
+    a[j + 1] = x;
+    i = i + 1;
+  }
+  return a;
+}`,
+    },
     [`__ykReduce${kind}`]: {
       inputs: [arr, "function"],
       output: "unknown",
@@ -1322,6 +1355,44 @@ export const COLLECTION_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     }
     return out;
   }
+  // sort() with no comparator: by ToString, undefined last; stable (an insertion sort).
+  if (__ykStrEquals(name, "sort")) {
+    if (args.length > 0 && __ykTag(arg(0)) !== 0) {
+      const g = arg(0);
+      if (__ykTag(g) !== 8) return __ykNotAFunction();
+    }
+    const g = arg(0);
+    let i = 1;
+    while (i < n) {
+      const x = __ykIndex(a, i);
+      let j = i - 1;
+      while (j >= 0) {
+        const y = __ykIndex(a, j);
+        const ty = __ykTag(y);
+        const tx = __ykTag(x);
+        let c = 0;
+        if (ty === 0 && tx === 0) c = 0;
+        else if (ty === 0) c = 1;
+        else if (tx === 0) c = -1;
+        else if (__ykTag(g) === 8) {
+          c = __ykToNumber(__ykCallWith(g, [y, x]));
+          if (c !== c) c = 0;
+        } else {
+          const sy = __ykToString(y);
+          const sx = __ykToString(x);
+          c = __ykStrLess(sx, sy) ? 1 : __ykStrLess(sy, sx) ? -1 : 0;
+        }
+        if (c <= 0) break;
+        if (__ykTag(a) === 5) __ykArr(a)[j + 1] = __ykNum(y);
+        else __ykArrAny(a)[j + 1] = y;
+        j = j - 1;
+      }
+      if (__ykTag(a) === 5) __ykArr(a)[j + 1] = __ykNum(x);
+      else __ykArrAny(a)[j + 1] = x;
+      i = i + 1;
+    }
+    return a;
+  }
   // slice, at, lastIndexOf, reverse (in place), concat.
   const rel = (v: unknown, d: number): number => {
     if (__ykTag(v) === 0) return d;
@@ -1525,6 +1596,92 @@ export const COLLECTION_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
  * a value of any kind, converted as the method does (an absent one is undefined).
  */
 export const METHOD_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
+  // Each element an iterable gives (__ykIterSource), pushed onto out.
+  __ykRestFrom: {
+    inputs: ["unknown[]", "number"],
+    output: "unknown[]",
+    source: String.raw`export function f(a: unknown[], from: number): unknown[] {
+  const out: unknown[] = [];
+  let i = from;
+  while (i < a.length) {
+    out.push(a[i]);
+    i = i + 1;
+  }
+  return out;
+}`,
+  },
+  __ykAppendAll: {
+    inputs: ["unknown[]", "unknown"],
+    output: "unknown",
+    source: String.raw`export function f(out: unknown[], x: unknown): unknown {
+  const src = __ykIterSource(x);
+  const n = __ykNum(__ykGetAny(src, "length"));
+  let i = 0;
+  while (i < n) {
+    out.push(__ykIndex(src, i));
+    i = i + 1;
+  }
+  return __ykUndef();
+}`,
+  },
+  // Object.assign's copy of one source (an object literal's spread): its own enumerable keys, in
+  // order; undefined and null give none.
+  __ykAssign: {
+    inputs: ["YkObject", "unknown"],
+    output: "unknown",
+    source: String.raw`export function f(o: YkObject, src: unknown): unknown {
+  const t = __ykTag(src);
+  if (t === 0 || t === 1) return __ykUndef();
+  const keys = __ykKeysOf(src, false);
+  let i = 0;
+  while (i < keys.length) {
+    const k = __ykStr(keys[i]);
+    __ykPut(o, k, t === 7 ? __ykGetAny(src, k) : __ykIndex(src, i));
+    i = i + 1;
+  }
+  return __ykUndef();
+}`,
+  },
+  // Array.from(items): an iterable's elements, else an array-like's (its length, its indices).
+  __ykArrayFrom: {
+    inputs: ["unknown"],
+    output: "unknown[]",
+    source: String.raw`export function f(x: unknown): unknown[] {
+  const out = [];
+  out.push(__ykUndef());
+  out.pop();
+  const t = __ykTag(x);
+  if (t === 0 || t === 1) return __ykArrAny(__ykCannotConvert());
+  const coll = t === 7 && __ykTag(__ykObjCls(__ykObj(x))) === 4 && (__ykStrEquals(__ykStr(__ykObjCls(__ykObj(x))), "Map") || __ykStrEquals(__ykStr(__ykObjCls(__ykObj(x))), "Set"));
+  if (t === 4 || t === 5 || t === 6 || coll) {
+    __ykAppendAll(out, x);
+    return out;
+  }
+  const n = __ykToInteger(__ykGetAny(x, "length"));
+  let i = 0;
+  while (i < n) {
+    out.push(t === 7 ? __ykGetAny(x, __ykNumberToString(i)) : __ykUndef());
+    i = i + 1;
+  }
+  return out;
+}`,
+  },
+  // Math.max / Math.min of an array of arguments (a spread call): NaN if any is NaN; -0 below 0.
+  __ykMaxMinOf: {
+    inputs: ["unknown[]", "boolean"],
+    output: "number",
+    source: String.raw`export function f(args: unknown[], max: boolean): number {
+  let r = max ? -Infinity : Infinity;
+  let i = 0;
+  while (i < args.length) {
+    const v = __ykToNumber(args[i]);
+    if (v !== v) r = NaN;
+    else if (r === r) r = max ? Math.max(r, v) : Math.min(r, v);
+    i = i + 1;
+  }
+  return r;
+}`,
+  },
   // ToIntegerOrInfinity of any value.
   __ykToInteger: {
     inputs: ["unknown"],
