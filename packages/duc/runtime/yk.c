@@ -67,6 +67,9 @@ typedef struct {
   int32_t home_static; /* a static member (or a closure inside one): `super` is the parent itself */
   int32_t mode;      /* 0 a function; 1 async: a call runs it as a coroutine, giving a promise;
                         2 a generator: a call gives the generator object (#1295) */
+  uint32_t nfields;  /* a class: its instance fields, defined on each instance it makes (#1330) */
+  yk *field_keys;
+  yk *field_inits;   /* each a method: run with the instance as its receiver, its result the value */
   uint32_t n;
   yk captures[];
 } yk_closure;
@@ -840,7 +843,8 @@ yk yk_define_accessor(yk obj, yk key, yk getter, yk setter) {
   return obj;
 }
 
-/* A class (kinds: 0 constructor, 1 method, 2 getter, 3 setter; each static or not). */
+/* A class (kinds: 0 constructor, 1 method, 2 getter, 3 setter, 4 field, 5 static block; each static
+   or not). A field's member is its initializer; a computed name is the key's value (#1330). */
 static yk default_constructor(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self, (void)argc, (void)argv;
   return YK_UNDEFINED;
@@ -855,6 +859,17 @@ static int is_error_constructor(yk f) {
   return code == builtin_error || code == builtin_type_error || code == builtin_range_error ||
          code == builtin_syntax_error;
 }
+/* A class's instance fields, defined on a receiver in order, each initializer run with it as its
+   receiver: by `new` for a base class before its constructor's body, and for a derived class when
+   its super(..) returns (#1330). A field is defined, not assigned: a setter does not see it. */
+static void init_fields(yk cls, yk self) {
+  yk_closure *c = (yk_closure *)PTR(cls);
+  for (uint32_t i = 0; i < c->nfields; i++) {
+    yk_closure *init = (yk_closure *)PTR(c->field_inits[i]);
+    yk v = init->code(init, self, 0, NULL);
+    own_set((yk_object *)PTR(self), c->field_keys[i], v);
+  }
+}
 /* super(args) in a derived constructor: the parent's constructor run on this receiver (#1294). */
 yk yk_super_construct(void *closure, yk self, uint64_t argc, const yk *argv) {
   yk cls = ((yk_closure *)closure)->class_self;
@@ -866,16 +881,34 @@ yk yk_super_construct(void *closure, yk self, uint64_t argc, const yk *argv) {
     yk_object *o = (yk_object *)PTR(self), *e = (yk_object *)PTR(made);
     o->error = 1;
     for (uint32_t i = 0; i < e->len; i++) own_set(o, e->keys[i], e->values[i]);
+    init_fields(cls, self);
     return self;
   }
   yk_closure *p = (yk_closure *)PTR(parent);
+  /* A base parent's fields are defined before its body runs; a derived parent's by its super(). */
+  if (p->is_class && p->parent == 0) init_fields(parent, self);
   yk r = p->code(p, self, argc, argv);
-  return is_reference(r) ? r : self;
+  if (is_reference(r)) return r;
+  init_fields(cls, self);
+  return self;
 }
 /* A derived class with no constructor of its own passes its arguments to its parent's. */
 static yk default_derived_constructor(void *c, yk self, uint64_t argc, const yk *argv) {
   yk_super_construct(c, self, argc, argv);
   return YK_UNDEFINED;
+}
+/* super[key]: the parent's member by a key's value (#1330); super.name is it by a name. */
+yk yk_super_get_key(void *closure, yk self, yk key) {
+  yk_closure *c = (yk_closure *)closure;
+  yk cls = c->class_self;
+  yk parent = cls == 0 ? 0 : ((yk_closure *)PTR(cls))->parent;
+  if (parent == 0 || !is_closure(parent)) return YK_UNDEFINED;
+  key = to_string(key);
+  yk slot;
+  yk_closure *p = (yk_closure *)PTR(parent);
+  yk base = c->home_static ? parent : (p->is_class || p->has_this) ? ensure_prototype(parent) : 0;
+  if (base == 0 || !chain_get(base, key, &slot)) return YK_UNDEFINED;
+  return resolve_slot(slot, self);
 }
 /* super.name: the parent's member (its prototype's, or for a static member the parent's own),
    read with this function's receiver (#1294). */
@@ -913,14 +946,33 @@ yk yk_class_new(yk parent, uint64_t n, const yk *kinds, const yk *names, const y
   for (uint64_t i = 0; i < n; i++) {
     int kind = (int)num(kinds[i]);
     ((yk_closure *)PTR(members[i]))->class_self = cls;
-    ((yk_closure *)PTR(members[i]))->home_static = kind != 0 && statics[i] == YK_TRUE;
-    if (kind == 0) continue;
+    ((yk_closure *)PTR(members[i]))->home_static =
+        kind != 0 && (statics[i] == YK_TRUE || kind == 5);
+    if (kind == 0 || kind == 5) continue;
+    if (kind == 4) {
+      if (statics[i] == YK_TRUE) continue;
+      /* An instance field: kept, in order, for each instance. */
+      c->field_keys = realloc(c->field_keys, (c->nfields + 1) * sizeof(yk));
+      c->field_inits = realloc(c->field_inits, (c->nfields + 1) * sizeof(yk));
+      if (c->field_keys == NULL || c->field_inits == NULL) abort();
+      c->field_keys[c->nfields] = to_string(names[i]);
+      c->field_inits[c->nfields++] = members[i];
+      continue;
+    }
     yk_object *target = statics[i] == YK_TRUE ? own_props(cls) : (yk_object *)PTR(proto);
     yk name = to_string(names[i]);
     if (kind == 1) own_set(target, name, members[i]);
     else define_accessor(target, name, kind == 2 ? members[i] : 0, kind == 3 ? members[i] : 0);
   }
   c->class_self = cls;
+  /* The static fields and blocks run now, in order, with the class as their receiver. */
+  for (uint64_t i = 0; i < n; i++) {
+    int kind = (int)num(kinds[i]);
+    if (!(kind == 5 || (kind == 4 && statics[i] == YK_TRUE))) continue;
+    yk_closure *m = (yk_closure *)PTR(members[i]);
+    yk v = m->code(m, cls, 0, NULL);
+    if (kind == 4) own_set(own_props(cls), to_string(names[i]), v);
+  }
   return cls;
 }
 yk yk_closure_class(void *closure) {
@@ -2262,6 +2314,24 @@ static void coro_resume(coro *co, yk value, int mode) {
   }
 }
 
+/* Suspends the running coroutine; what it is resumed with, and how (0 next, 1 throw, 2 return). */
+static yk coro_suspend_mode(yk out, int *mode) {
+  coro *co = current_coro;
+  co->transfer = out;
+  co->handlers = handlers;
+  co->state = 1;
+  swapcontext(&co->ctx, &co->back);
+  *mode = co->mode;
+  return co->transfer;
+}
+
+/* The running generator returns `value` through whatever it is in (its finally blocks run). */
+static void generator_return_through(yk value) {
+  current_coro->returning = value;
+  if (generator_return_token == 0) generator_return_token = BOX(T_INTERNAL, alloc(sizeof(int32_t) * 2));
+  yk_throw(generator_return_token);
+}
+
 /* Suspends the running coroutine; what it is resumed with is returned, thrown, or returned through. */
 static yk coro_suspend(yk out) {
   coro *co = current_coro;
@@ -2355,16 +2425,62 @@ yk yk_yield(yk v) {
   return coro_suspend(v);
 }
 
-/* yield* v: each value v's iteration gives, yielded in turn; its return value is the result. */
+/* yield* v: each value v's iteration gives, yielded in turn; its return value is the result. What
+   the consumer sends, throws or returns is passed on to a generator delegated to, so its catch and
+   finally blocks see it, as ECMAScript's yield* does (#1330). */
 yk yk_yield_star(yk v) {
   if (is_object(v) && ((yk_object *)PTR(v))->kind == 5) {
+    coro *co = current_coro;
+    if (co == NULL || co->kind != 1) type_error("yield is only valid in generators here");
     yk sent = YK_UNDEFINED, out;
-    while (generator_resume(v, sent, 0, &out)) sent = yk_yield(out);
-    return out;
+    int mode = 0;
+    for (;;) {
+      if (!generator_resume(v, sent, mode, &out)) {
+        /* Done: by return(), this generator returns too, with what the delegate returned. */
+        if (mode == 2) generator_return_through(out);
+        return out;
+      }
+      sent = coro_suspend_mode(out, &mode);
+    }
   }
   yk it = yk_iter_new(v, 0), e;
   while (yk_iter_next(it, &e)) yk_yield(e);
   return YK_UNDEFINED;
+}
+
+/* __yakccTryGen(body, handler, finalizer): a try statement in a generator whose blocks yield, its
+   blocks generator functions delegated to in turn (#1330). As __yakccTry, but each block is run as
+   yield* block(): what the consumer sends, throws or returns reaches it. */
+static yk star_code(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)self;
+  return yk_yield_star(call_value(((yk_closure *)c)->captures[0], YK_UNDEFINED, argc, argv));
+}
+static yk try_gen_code(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  yk body = argv[0], handler_fn = argc > 1 ? argv[1] : YK_UNDEFINED, fin = argc > 2 ? argv[2] : YK_UNDEFINED;
+  yk r;
+  int threw = protected_call(yk_closure_new(star_code, 0, 1, &body), 0, NULL, &r);
+  if (threw && is_closure(handler_fn) && !is_generator_return(r)) {
+    yk exc = r;
+    threw = protected_call(yk_closure_new(star_code, 0, 1, &handler_fn), 1, &exc, &r);
+  }
+  if (is_closure(fin)) {
+    yk done = call_value(yk_closure_new(star_code, 0, 1, &fin), YK_UNDEFINED, 0, NULL);
+    if (is_array(done) && arr(done)->len > 0 && strict_equal(arr(done)->items[0], yk_number(1))) return done;
+  }
+  if (threw) yk_throw(r);
+  return r;
+}
+
+/* Leaving a for…of early (a break, or a return from the loop's function) closes its iterator: a
+   generator's return() runs, so its finally blocks do (IteratorClose). Done iterators are left. */
+void yk_iter_close(yk itv) {
+  yk_iter *it = (yk_iter *)PTR(itv);
+  if (it->gen == 0) return;
+  coro *co = (coro *)((yk_object *)PTR(it->gen))->ext;
+  if (co->state == 3) return;
+  yk out;
+  generator_resume(it->gen, YK_UNDEFINED, 2, &out);
 }
 
 /* --- the methods of promises and generators --- */
@@ -2626,7 +2742,7 @@ yk yk_settle(yk v) {
  * A global the platform gives, by name: a function value, NaN or Infinity, or undefined when the
  * runtime has none (so a `typeof` probe for it sees what a platform without it gives).
  */
-#define N_GLOBALS 22
+#define N_GLOBALS 23
 yk yk_global(const char *name, uint64_t n) {
   if (n == 3 && memcmp(name, "NaN", 3) == 0) return yk_number(NAN);
   if (n == 8 && memcmp(name, "Infinity", 8) == 0) return yk_number(INFINITY);
@@ -2635,14 +2751,14 @@ yk yk_global(const char *name, uint64_t n) {
                                          "isNaN", "isFinite", "Array", "globalThis", "__yakccTry",
                                          "Error", "TypeError", "RangeError", "SyntaxError",
                                          "Map", "Set", "Object", "JSON", "Symbol", "Promise",
-                                         "__yakccTryAsync", "queueMicrotask"};
+                                         "__yakccTryAsync", "queueMicrotask", "__yakccTryGen"};
   static yk_code codes[N_GLOBALS] = {builtin_string, builtin_number, builtin_boolean,
                                      builtin_parse_float, builtin_parse_int, builtin_is_nan,
                                      builtin_is_finite, builtin_array, NULL, builtin_try,
                                      builtin_error, builtin_type_error, builtin_range_error,
                                      builtin_syntax_error, builtin_map, builtin_set, builtin_object,
                                      NULL, NULL, builtin_promise, try_async_body,
-                                     builtin_queue_microtask};
+                                     builtin_queue_microtask, try_gen_code};
   for (int i = 0; i < N_GLOBALS; i++)
     if (strlen(names[i]) == n && memcmp(names[i], name, n) == 0) {
       if (fns[i] != 0) return fns[i];
@@ -2659,6 +2775,7 @@ yk yk_global(const char *name, uint64_t n) {
         return fns[i] = with_methods(builtin_promise, 5, m, k);
       }
       if (codes[i] == try_async_body) return fns[i] = yk_closure_mode(yk_closure_new(try_async_body, 0, 0, NULL), 1);
+      if (codes[i] == try_gen_code) return fns[i] = yk_closure_mode(yk_closure_new(try_gen_code, 0, 0, NULL), 2);
       if (codes[i] == builtin_array) {
         static const char *const m[2] = {"from", "isArray"};
         static const yk_code k[2] = {builtin_array_from, builtin_array_is_array};
@@ -2690,6 +2807,8 @@ yk yk_new(yk f, uint64_t argc, const yk *argv) {
     if (c->is_class || c->has_this) {
       yk o = yk_object_of(0, NULL, NULL);
       ((yk_object *)PTR(o))->proto = ensure_prototype(f);
+      /* A base class's fields are the instance's before its constructor's body runs (#1330). */
+      if (c->is_class && c->parent == 0) init_fields(f, o);
       yk r = c->code(c, o, argc, argv);
       return is_reference(r) ? r : o;
     }
