@@ -1,0 +1,640 @@
+{
+  "set": "readme",
+  "model": "claude-haiku-5-5",
+  "usage": {
+    "inputTokens": 41626,
+    "outputTokens": 17012,
+    "calls": 33
+  },
+  "dropped": {
+    "leak": 31,
+    "unresolved": 93,
+    "malformed": 0
+  },
+  "queries": [
+    {
+      "id": "readme-1",
+      "need": "When a token fails verification because its expiration time has passed, I want an error I can recognize, with the expiry timestamp available so I can report when it expired.",
+      "api": "TokenExpiredError",
+      "targets": [
+        "jsonwebtoken-9.0.2:*#TokenExpiredError"
+      ]
+    },
+    {
+      "id": "readme-2",
+      "need": "When a token is malformed, has a bad signature, is missing a signature, or fails audience, issuer, subject, or ID checks, I want a general error type with a descriptive message so I can reject the token and explain why.",
+      "api": "JsonWebTokenError",
+      "targets": [
+        "jsonwebtoken-9.0.2:*#JsonWebTokenError"
+      ]
+    },
+    {
+      "id": "readme-3",
+      "need": "When a token is presented before its not-before time, I want a specific error that tells me the token isn't active yet and includes the date it becomes valid.",
+      "api": "NotBeforeError",
+      "targets": [
+        "jsonwebtoken-9.0.2:*#NotBeforeError"
+      ]
+    },
+    {
+      "id": "readme-4",
+      "need": "I need to generate a short, unique string identifier for each new record I create, something URL-friendly and compact that is safe to use across multiple server processes without collisions.",
+      "api": "nanoid",
+      "targets": [
+        "nanoid-3.3.12:*#nanoid"
+      ]
+    },
+    {
+      "id": "readme-5",
+      "need": "I have a bunch of promise-returning tasks and want to run them so that only a fixed number execute at the same time, starting new ones as earlier ones finish, while still getting all their results together.",
+      "api": "pLimit",
+      "targets": [
+        "p-limit-7.3.0:*#pLimit"
+      ]
+    },
+    {
+      "id": "readme-6",
+      "need": "I want to create a limiter with a concurrency setting that I can pass either as a plain number or as an options object, and I want pending tasks to reject with an abort-style error when I clear the waiting queue so that my awaited Promise.all doesn't hang.",
+      "api": "pLimit",
+      "targets": [
+        "p-limit-7.3.0:*#pLimit"
+      ]
+    },
+    {
+      "id": "readme-7",
+      "need": "I have one async function that gets called many times, for example in a loop, and I want the function itself to never run more than a set number of instances at once, without setting up a separate limiter at each call site.",
+      "api": "limitFunction",
+      "targets": [
+        "p-limit-7.3.0:*#limitFunction"
+      ]
+    },
+    {
+      "id": "readme-8",
+      "need": "I need to cap how many times a function can run within a rolling time window, such as at most 5 calls every second, and have extra calls wait their turn instead of failing.",
+      "api": "pThrottle",
+      "targets": [
+        "p-throttle-8.1.0:*#pThrottle"
+      ]
+    },
+    {
+      "id": "readme-9",
+      "need": "I want the rate limit enforced strictly for every individual call, so that no sliding time window ever exceeds my maximum count, even if that costs more processing overhead.",
+      "api": "pThrottle",
+      "targets": [
+        "p-throttle-8.1.0:*#pThrottle"
+      ]
+    },
+    {
+      "id": "readme-10",
+      "need": "I want to cancel all calls that are still waiting in the throttle queue when I abort a controller, with those pending calls rejecting using the abort reason I provide.",
+      "api": "pThrottle",
+      "targets": [
+        "p-throttle-8.1.0:*#pThrottle"
+      ]
+    },
+    {
+      "id": "readme-11",
+      "need": "I want to be notified with the arguments whenever a call has to be held back because the rate limit was reached, so I can monitor how often throttling happens.",
+      "api": "pThrottle",
+      "targets": [
+        "p-throttle-8.1.0:*#pThrottle"
+      ]
+    },
+    {
+      "id": "readme-12",
+      "need": "I need each call to consume a different share of the rate limit based on its arguments, for example an API where some requests cost more quota points than others.",
+      "api": "pThrottle",
+      "targets": [
+        "p-throttle-8.1.0:*#pThrottle"
+      ]
+    },
+    {
+      "id": "readme-13",
+      "need": "I have a version string with stray whitespace, a leading equals sign, or a leading 'v'. I want it cleaned up into a plain version number.",
+      "api": "clean",
+      "targets": [
+        "semver-7.8.0:*#clean"
+      ]
+    },
+    {
+      "id": "readme-14",
+      "need": "I need to check whether a specific version falls within a range expression that combines alternatives, hyphen ranges, and wildcards.",
+      "api": "satisfies",
+      "targets": [
+        "semver-7.8.0:*#satisfies"
+      ]
+    },
+    {
+      "id": "readme-15",
+      "need": "I need to know whether one version is strictly newer than another.",
+      "api": "gt",
+      "targets": [
+        "semver-7.8.0:*#gt"
+      ]
+    },
+    {
+      "id": "readme-16",
+      "need": "I need to know whether one version is strictly older than another.",
+      "api": "lt",
+      "targets": [
+        "semver-7.8.0:*#lt"
+      ]
+    },
+    {
+      "id": "readme-17",
+      "need": "Given a range like '>=1.0.0', I want the lowest version that satisfies it.",
+      "api": "minVersion",
+      "targets": [
+        "semver-7.8.0:*#minVersion"
+      ]
+    },
+    {
+      "id": "readme-18",
+      "need": "I have a messy string like 'v2' or '42.6.7.9.3-alpha' that is not strictly valid, and I want to extract the closest proper version from it.",
+      "api": "coerce",
+      "targets": [
+        "semver-7.8.0:*#coerce"
+      ]
+    },
+    {
+      "id": "readme-19",
+      "need": "I want to pick only the versions out of a list that match a range, and get the highest one.",
+      "api": "maxSatisfying",
+      "targets": [
+        "semver-7.8.0:*#maxSatisfying"
+      ]
+    },
+    {
+      "id": "readme-20",
+      "need": "I want to pick only the versions out of a list that match a range, and get the lowest one.",
+      "api": "minSatisfying",
+      "targets": [
+        "semver-7.8.0:*#minSatisfying"
+      ]
+    },
+    {
+      "id": "readme-21",
+      "need": "I want to turn a range expression into its individual comparator pieces so I can inspect them.",
+      "api": "toComparators",
+      "targets": [
+        "semver-7.8.0:*#toComparators"
+      ]
+    },
+    {
+      "id": "readme-22",
+      "need": "I need to check whether a version is greater than every version in a range.",
+      "api": "gtr",
+      "targets": [
+        "semver-7.8.0:*#gtr"
+      ]
+    },
+    {
+      "id": "readme-23",
+      "need": "I need to check whether a version is less than every version in a range.",
+      "api": "ltr",
+      "targets": [
+        "semver-7.8.0:*#ltr"
+      ]
+    },
+    {
+      "id": "readme-24",
+      "need": "I need to know whether two ranges have any version in common.",
+      "api": "intersects",
+      "targets": [
+        "semver-7.8.0:*#intersects"
+      ]
+    },
+    {
+      "id": "readme-25",
+      "need": "I need to know whether every version accepted by one range is also accepted by another range.",
+      "api": "subset",
+      "targets": [
+        "semver-7.8.0:*#subset"
+      ]
+    },
+    {
+      "id": "readme-26",
+      "need": "I want to bump a version by major, minor, patch, or prerelease level, optionally with a custom prerelease identifier.",
+      "api": "inc",
+      "targets": [
+        "semver-7.8.0:*#inc"
+      ]
+    },
+    {
+      "id": "readme-27",
+      "need": "I want to know which part of a version changed between two versions, such as major, minor, patch, or prerelease.",
+      "api": "diff",
+      "targets": [
+        "semver-7.8.0:*#diff"
+      ]
+    },
+    {
+      "id": "readme-28",
+      "need": "I want to parse a version string into an object whose fields I can read and modify, including prerelease and build parts.",
+      "api": "SemVer",
+      "targets": [
+        "semver-7.8.0:*#SemVer"
+      ]
+    },
+    {
+      "id": "readme-29",
+      "need": "I want to compare versions in a relaxed way that tolerates minor formatting differences.",
+      "api": "compareLoose",
+      "targets": [
+        "semver-7.8.0:*#compareLoose"
+      ]
+    },
+    {
+      "id": "readme-30",
+      "need": "I want to compare versions including their build metadata as a tiebreaker.",
+      "api": "compareBuild",
+      "targets": [
+        "semver-7.8.0:*#compareBuild"
+      ]
+    },
+    {
+      "id": "readme-31",
+      "need": "I have a list of version strings and want them sorted from oldest to newest, or newest to oldest.",
+      "api": "sort",
+      "targets": [
+        "semver-7.8.0:*#sort"
+      ]
+    },
+    {
+      "id": "readme-32",
+      "need": "I want to check whether two versions are equal, or not equal, using the version precedence rules.",
+      "api": "eq",
+      "targets": [
+        "semver-7.8.0:*#eq"
+      ]
+    },
+    {
+      "id": "readme-33",
+      "need": "I want to shorten a version to a given number of leading components, such as just major or major.minor.",
+      "api": "truncate",
+      "targets": [
+        "semver-7.8.0:*#truncate"
+      ]
+    },
+    {
+      "id": "readme-34",
+      "need": "I want to bump a version and attach a prerelease label such as beta, so 1.2.3 becomes 1.2.4-beta.0.",
+      "api": "inc",
+      "targets": [
+        "semver-7.8.0:*#inc"
+      ]
+    },
+    {
+      "id": "readme-35",
+      "need": "I want to step through a prerelease series by bumping an existing prerelease version like 1.2.4-beta.0 to 1.2.4-beta.1, and then finalize it to the plain release 1.2.4.",
+      "api": "inc",
+      "targets": [
+        "semver-7.8.0:*#inc"
+      ]
+    },
+    {
+      "id": "readme-36",
+      "need": "I want to bump a version string to its next prerelease, using a label like beta, and choose whether the counter starts at zero or one, or leave the number off entirely.",
+      "api": "inc",
+      "targets": [
+        "semver-7.8.0:*#inc"
+      ]
+    },
+    {
+      "id": "readme-37",
+      "need": "I want to bump a version string to the next major, minor, or patch release, or to a prerelease of the next version, optionally with a custom label, and get nothing back if the input is invalid.",
+      "api": "inc",
+      "targets": [
+        "semver-7.8.0:*#inc"
+      ]
+    },
+    {
+      "id": "readme-38",
+      "need": "I want to know whether two version ranges or comparators overlap, meaning some version satisfies both.",
+      "api": "intersects",
+      "targets": [
+        "semver-7.8.0:*#intersects"
+      ]
+    },
+    {
+      "id": "readme-39",
+      "need": "I want to convert a string into a structured version object, or get nothing if it isn't a valid version.",
+      "api": "parse",
+      "targets": [
+        "semver-7.8.0:*#parse"
+      ]
+    },
+    {
+      "id": "readme-40",
+      "need": "I want to strip a version down to a given level, such as removing prerelease and build info and zeroing lower components when keeping only major or minor, without changing the higher components.",
+      "api": "truncate",
+      "targets": [
+        "semver-7.8.0:*#truncate"
+      ]
+    },
+    {
+      "id": "readme-41",
+      "need": "I want to test whether one version is greater than another, using semantic version precedence rather than string comparison.",
+      "api": "gt",
+      "targets": [
+        "semver-7.8.0:*#gt"
+      ]
+    },
+    {
+      "id": "readme-42",
+      "need": "I want to test whether one version is greater than or equal to another by semantic precedence.",
+      "api": "gte",
+      "targets": [
+        "semver-7.8.0:*#gte"
+      ]
+    },
+    {
+      "id": "readme-43",
+      "need": "I want to test whether one version is less than another by semantic precedence.",
+      "api": "lt",
+      "targets": [
+        "semver-7.8.0:*#lt"
+      ]
+    },
+    {
+      "id": "readme-44",
+      "need": "I want to test whether one version is less than or equal to another by semantic precedence.",
+      "api": "lte",
+      "targets": [
+        "semver-7.8.0:*#lte"
+      ]
+    },
+    {
+      "id": "readme-45",
+      "need": "I want to check whether two version strings are logically equal even if written differently, and also check that they are not equal.",
+      "api": "eq",
+      "targets": [
+        "semver-7.8.0:*#eq"
+      ]
+    },
+    {
+      "id": "readme-46",
+      "need": "I want to check whether two versions are logically different, the opposite of checking equality.",
+      "api": "neq",
+      "targets": [
+        "semver-7.8.0:*#neq"
+      ]
+    },
+    {
+      "id": "readme-47",
+      "need": "I want to apply a comparison operator given as a text symbol to two versions and get a boolean, with an error if the symbol is unrecognized; symbols for plain string equality and inequality should also work.",
+      "api": "cmp",
+      "targets": [
+        "semver-7.8.0:*#cmp"
+      ]
+    },
+    {
+      "id": "readme-48",
+      "need": "I want a three-way comparison of two versions returning 0, 1, or -1, which I can pass to a sort to order versions ascending.",
+      "api": "compare",
+      "targets": [
+        "semver-7.8.0:*#compare"
+      ]
+    },
+    {
+      "id": "readme-49",
+      "need": "I want a reverse three-way comparison of two versions so that sorting produces a descending list.",
+      "api": "rcompare",
+      "targets": [
+        "semver-7.8.0:*#rcompare"
+      ]
+    },
+    {
+      "id": "readme-50",
+      "need": "I want to compare two versions where build metadata breaks ties when their precedence is otherwise equal, and use that to sort ascending.",
+      "api": "compareBuild",
+      "targets": [
+        "semver-7.8.0:*#compareBuild"
+      ]
+    },
+    {
+      "id": "readme-51",
+      "need": "I want to compare two version strings in a lenient way that tolerates slightly malformed input.",
+      "api": "compareLoose",
+      "targets": [
+        "semver-7.8.0:*#compareLoose"
+      ]
+    },
+    {
+      "id": "readme-52",
+      "need": "I want to find out what kind of change separates two versions, such as major, minor, patch, or prerelease, or learn that they are the same.",
+      "api": "diff",
+      "targets": [
+        "semver-7.8.0:*#diff"
+      ]
+    },
+    {
+      "id": "readme-53",
+      "need": "I have a list of version strings and want them ordered from lowest to highest, using build metadata as a tiebreaker.",
+      "api": "sort",
+      "targets": [
+        "semver-7.8.0:*#sort"
+      ]
+    },
+    {
+      "id": "readme-54",
+      "need": "I have a list of version strings and want them ordered from highest to lowest, using build metadata as a tiebreaker.",
+      "api": "rsort",
+      "targets": [
+        "semver-7.8.0:*#rsort"
+      ]
+    },
+    {
+      "id": "readme-55",
+      "need": "I want to know whether two individual comparators, such as a bound like '>=1.2.3' and another like '<2.0.0', overlap so that some version could satisfy both.",
+      "api": "intersects",
+      "targets": [
+        "semver-7.8.0:*#intersects"
+      ]
+    },
+    {
+      "id": "readme-56",
+      "need": "I have a version range written as a string and want to check whether it is syntactically valid, getting back a normalized form if it is or nothing if it is not.",
+      "api": "validRange",
+      "targets": [
+        "semver-7.8.0:*#validRange"
+      ]
+    },
+    {
+      "id": "readme-57",
+      "need": "I have a single version and a range string, and I want a yes or no answer on whether that version falls within the range.",
+      "api": "satisfies",
+      "targets": [
+        "semver-7.8.0:*#satisfies"
+      ]
+    },
+    {
+      "id": "readme-58",
+      "need": "I have a list of versions and a range, and I want the highest version in the list that falls within the range, or nothing if none qualify.",
+      "api": "maxSatisfying",
+      "targets": [
+        "semver-7.8.0:*#maxSatisfying"
+      ]
+    },
+    {
+      "id": "readme-59",
+      "need": "I have a list of versions and a range, and I want the lowest version in the list that falls within the range, or nothing if none qualify.",
+      "api": "minSatisfying",
+      "targets": [
+        "semver-7.8.0:*#minSatisfying"
+      ]
+    },
+    {
+      "id": "readme-60",
+      "need": "Given a range, I want to find the smallest version that could possibly match it, for example to set a minimum required version.",
+      "api": "minVersion",
+      "targets": [
+        "semver-7.8.0:*#minVersion"
+      ]
+    },
+    {
+      "id": "readme-61",
+      "need": "I want to check whether a version is higher than every version a given range could match, so I know it is newer than the whole range.",
+      "api": "gtr",
+      "targets": [
+        "semver-7.8.0:*#gtr"
+      ]
+    },
+    {
+      "id": "readme-62",
+      "need": "I want to check whether a version is lower than every version a given range could match, so I know it is older than the whole range.",
+      "api": "ltr",
+      "targets": [
+        "semver-7.8.0:*#ltr"
+      ]
+    },
+    {
+      "id": "readme-63",
+      "need": "I want to know whether a version lies entirely above or entirely below a range, choosing the direction with a '>' or '<' argument, since the range may have gaps so being above or below is not the same as not matching.",
+      "api": "outside",
+      "targets": [
+        "semver-7.8.0:*#outside"
+      ]
+    },
+    {
+      "id": "readme-64",
+      "need": "I have a range and want to know whether any of its comparators overlap with each other, meaning the range has at least some version that could be allowed.",
+      "api": "intersects",
+      "targets": [
+        "semver-7.8.0:*#intersects"
+      ]
+    },
+    {
+      "id": "readme-65",
+      "need": "I have two ranges and want to confirm that every version allowed by the first one is also allowed by the second one.",
+      "api": "subset",
+      "targets": [
+        "semver-7.8.0:*#subset"
+      ]
+    },
+    {
+      "id": "readme-66",
+      "need": "I have a version string with stray whitespace, an equals sign, or a 'v' prefix, and I want it normalized to a plain valid version, or null if it can't be made valid; I may also want a lenient mode that tolerates sloppy prerelease formatting.",
+      "api": "clean",
+      "targets": [
+        "semver-7.8.0:*#clean"
+      ]
+    },
+    {
+      "id": "readme-67",
+      "need": "I have a unique identifier written as a 36-character hyphenated hex string, and I need its 16 raw bytes as a byte array in the same left-to-right order the hex digits appear. If the string isn't a valid identifier, I want an error thrown.",
+      "api": "uuid.parse",
+      "targets": [
+        "uuid-11.1.1:*#parse"
+      ]
+    },
+    {
+      "id": "readme-68",
+      "need": "I have 16 bytes stored in an array-like collection, possibly starting at some offset within a larger buffer, and I need them converted into the standard hyphenated hex identifier string. If the bytes can't produce a valid identifier, I want an error.",
+      "api": "uuid.stringify",
+      "targets": [
+        "uuid-11.1.1:*#stringify"
+      ]
+    },
+    {
+      "id": "readme-69",
+      "need": "I want to generate a time-based unique identifier, and optionally control the node field, clock sequence, timestamp, and sub-millisecond offset, or supply my own random bytes or random generator. I also want the result written directly into a byte buffer at a given offset when I need binary output instead of a string.",
+      "api": "uuid.v1",
+      "targets": [
+        "uuid-11.1.1:*#v1"
+      ]
+    },
+    {
+      "id": "readme-70",
+      "need": "I have existing version 1 identifiers and need them converted to the newer time-ordered version 6 layout so the timestamp bits sort correctly, without changing the rest of the value.",
+      "api": "uuid.v1ToV6",
+      "targets": [
+        "uuid-11.1.1:*#v1ToV6"
+      ]
+    },
+    {
+      "id": "readme-71",
+      "need": "I want a deterministic identifier derived from a name and a namespace using MD5 hashing, so the same inputs always produce the same identifier, optionally written into a byte buffer at an offset.",
+      "api": "uuid.v3",
+      "targets": [
+        "uuid-11.1.1:*#v3"
+      ]
+    },
+    {
+      "id": "readme-72",
+      "need": "I need a random unique identifier, optionally seeded with my own 16 random bytes or a random generator function, and I want the option to write its binary form into a buffer at a chosen offset.",
+      "api": "uuid.v4",
+      "targets": [
+        "uuid-11.1.1:*#v4"
+      ]
+    },
+    {
+      "id": "readme-73",
+      "need": "I have existing version 6 UUIDs stored in my system and need to convert them back to version 1 format.",
+      "api": "uuid.v6ToV1",
+      "targets": [
+        "uuid-11.1.1:*#v6ToV1"
+      ]
+    },
+    {
+      "id": "readme-74",
+      "need": "I need to accept only UUIDs of one specific version, like v4, and reject valid UUIDs of other versions.",
+      "api": "uuid.validate",
+      "targets": [
+        "uuid-11.1.1:*#validate"
+      ]
+    },
+    {
+      "id": "readme-75",
+      "need": "I am generating timestamp-based UUIDs and want to pass my own options without those options disturbing the uniqueness guarantees across calls.",
+      "api": "v1",
+      "targets": [
+        "uuid-11.1.1:*#v1"
+      ]
+    },
+    {
+      "id": "readme-76",
+      "need": "I want to check that some untrusted input matches the shape I expect, and get back a typed, validated copy of it that I can use safely; if the input is wrong, I need an error instead.",
+      "api": "parse",
+      "targets": [
+        "zod-3.25.76:*#parse"
+      ]
+    },
+    {
+      "id": "readme-77",
+      "need": "I have a validation rule that has to wait on something asynchronous, like a lookup or network check, and I need a way to run validation that returns a promise so I can await the result.",
+      "api": "parseAsync",
+      "targets": [
+        "zod-3.25.76:*#parseAsync"
+      ]
+    },
+    {
+      "id": "readme-78",
+      "need": "I need to add a custom check to a string schema, such as a maximum length enforced by an async function, without rewriting the whole schema.",
+      "api": "refine",
+      "targets": [
+        "zod-3.25.76:*#refine"
+      ]
+    }
+  ]
+}

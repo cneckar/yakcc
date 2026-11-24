@@ -1,0 +1,595 @@
+{
+  "set": "seed",
+  "pool": "large roots",
+  "model": "claude-haiku-5-5",
+  "k": 10,
+  "usage": {
+    "inputTokens": 84983,
+    "outputTokens": 4870,
+    "calls": 38
+  },
+  "summary": {
+    "queries": 38,
+    "targetShown": 0.9333333333333333,
+    "rightOfPositives": 0.9333333333333333,
+    "rightWhenShown": 1,
+    "reusePrecision": 1,
+    "wrongReuseOnNegatives": 0,
+    "correctNoneOnNegatives": 1,
+    "invalid": 0,
+    "rightOfPositivesSameFunction": 0.9333333333333333,
+    "reusePrecisionSameFunction": 1
+  },
+  "rows": [
+    {
+      "id": "csv-to-records",
+      "positive": true,
+      "pick": 3,
+      "picked": "csv-parse-6.2.1/lib/sync.js#parse@3",
+      "reason": "Synchronous parse(data, opts) takes CSV text, handles quoting and delimiters via options, and returns an array of records or keyed objects when columns are set.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 66,
+        "confirmInput": 2702,
+        "confirmOutput": 180
+      },
+      "leverage": 19.63886063072228
+    },
+    {
+      "id": "highest-version-in-range",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/ranges/max-satisfying.js#maxSatisfying@6",
+      "reason": "maxSatisfying takes a version list and range and returns the highest match or null",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 55,
+        "confirmInput": 2331,
+        "confirmOutput": 105
+      },
+      "leverage": 11.012456084318108
+    },
+    {
+      "id": "version-satisfies-range",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/functions/satisfies.js#satisfies@4",
+      "reason": "satisfies(version, range, options) directly tests a version against a range with loose option support",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 58,
+        "confirmInput": 2297,
+        "confirmOutput": 148
+      },
+      "leverage": 10.252479711451757
+    },
+    {
+      "id": "lowest-version-of-range",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/ranges/min-version.js#minVersion@7",
+      "reason": "minVersion takes only a range and returns the lowest version that could satisfy it, with no candidate list required",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 21,
+        "confirmInput": 2232,
+        "confirmOutput": 126
+      },
+      "leverage": 11.995281429052914
+    },
+    {
+      "id": "range-within-range",
+      "positive": true,
+      "pick": 7,
+      "picked": "semver-7.8.0/ranges/subset.js#subset@45",
+      "reason": "subset(sub, dom) checks whether every version matching the first range also matches the second, which is exactly the containment test needed",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 25,
+        "confirmInput": 2246,
+        "confirmOutput": 96
+      },
+      "leverage": 14.282707821816905
+    },
+    {
+      "id": "parse-iso8601",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+      "reason": "date-fns parseISO parses ISO 8601 date-times into Date, returning invalid date for malformed input",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 65,
+        "confirmInput": 2351,
+        "confirmOutput": 52
+      },
+      "leverage": 2.7912125340599454
+    },
+    {
+      "id": "format-iso8601",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+      "reason": "formatISO outputs ISO 8601 with date, time and offset, supporting extended/basic formats and date-only or time-only representations.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 49,
+        "confirmInput": 2088,
+        "confirmOutput": 59
+      },
+      "leverage": 1.2975646879756468
+    },
+    {
+      "id": "deep-copy",
+      "positive": true,
+      "pick": 2,
+      "picked": "lodash-4.17.21/_baseClone.js#baseClone@90",
+      "reason": "baseClone is lodash's core deep-clone routine: it tracks circular refs via a stack and handles Maps, Sets, Dates, RegExps, typed arrays, buffers, and prototypes.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 61,
+        "confirmInput": 2411,
+        "confirmOutput": 234
+      },
+      "leverage": 3.6785898095728253
+    },
+    {
+      "id": "deep-merge-objects",
+      "positive": true,
+      "pick": 2,
+      "picked": "lodash-4.17.21/_baseMerge.js#baseMerge@20",
+      "reason": "baseMerge recursively merges a source into an object, delegating nested objects and arrays to baseMergeDeep",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 39,
+        "confirmInput": 2080,
+        "confirmOutput": 269
+      },
+      "leverage": 3.276243093922652
+    },
+    {
+      "id": "rate-limit-calls",
+      "positive": true,
+      "pick": 1,
+      "picked": "lodash-4.17.21/throttle.js#throttle@51",
+      "reason": "lodash throttle limits invocations to once per wait interval, with leading and trailing options",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 41,
+        "confirmInput": 2155,
+        "confirmOutput": 99
+      },
+      "leverage": 2.497373029772329
+    },
+    {
+      "id": "delay-until-quiet",
+      "positive": true,
+      "pick": 1,
+      "picked": "lodash-4.17.21/debounce.js#debounce@66",
+      "reason": "lodash debounce delays calls until wait ms since last call, supports leading/trailing options, maxWait, and cancel/flush methods",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 57,
+        "confirmInput": 2294,
+        "confirmOutput": 60
+      },
+      "leverage": 2.2837790899617927
+    },
+    {
+      "id": "set-at-deep-path",
+      "positive": true,
+      "pick": 1,
+      "picked": "lodash-4.17.21/set.js#set@31",
+      "reason": "lodash set creates missing objects and arrays along a deep path, matching the need directly",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 41,
+        "confirmInput": 2295,
+        "confirmOutput": 157
+      },
+      "leverage": 1.67427701674277
+    },
+    {
+      "id": "bounded-cache-with-ttl",
+      "positive": true,
+      "pick": 1,
+      "picked": "lru-cache-11.3.6/dist/esm/index.js#LRUCache@94",
+      "reason": "lru-cache LRUCache matches: size/count bounds, LRU eviction, TTL, stale reads, and fetch to fill missing entries",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 59,
+        "confirmInput": 2284,
+        "confirmOutput": 64
+      },
+      "leverage": 25.401862711279755
+    },
+    {
+      "id": "limit-concurrent-promises",
+      "positive": true,
+      "pick": 1,
+      "picked": "p-limit-7.3.0/index.js#pLimit@3",
+      "reason": "pLimit caps concurrent promise-returning tasks, queues the rest, and exposes active and pending counts",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 44,
+        "confirmInput": 2081,
+        "confirmOutput": 139
+      },
+      "leverage": 1.30173564753004
+    },
+    {
+      "id": "throttle-async-calls",
+      "positive": true,
+      "pick": 1,
+      "picked": "p-throttle-8.1.0/index.js#pThrottle@21",
+      "reason": "p-throttle limits calls per time interval, queues excess calls, and offers strict mode and abort signal support",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 43,
+        "confirmInput": 2096,
+        "confirmOutput": 51
+      },
+      "leverage": 4.138737334372564
+    },
+    {
+      "id": "validate-email",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/isEmail.js#isEmail@66",
+      "reason": "isEmail takes options for display names, TLD requirement, IP domains, and length limits",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 49,
+        "confirmInput": 2293,
+        "confirmOutput": 44
+      },
+      "leverage": 4.211385061638868
+    },
+    {
+      "id": "validate-url",
+      "positive": true,
+      "pick": 2,
+      "picked": "validator-13.15.35/lib/isURL.js#isURL@64",
+      "reason": "validator.isURL validates URL strings with options for protocols, TLD requirement, underscores, IP hosts, ports, and host whitelists.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 59,
+        "confirmInput": 2218,
+        "confirmOutput": 79
+      },
+      "leverage": 5.146148555708391
+    },
+    {
+      "id": "canonical-email",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+      "reason": "normalizeEmail lowercases and applies provider rules like Gmail dot and plus removal, matching the canonicalization need",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 53,
+        "confirmInput": 2320,
+        "confirmOutput": 57
+      },
+      "leverage": 1.4041811846689896
+    },
+    {
+      "id": "password-strength",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/isStrongPassword.js#isStrongPassword@88",
+      "reason": "validator.isStrongPassword checks minimum length and lowercase, uppercase, digit, and symbol counts, or returns a numeric score",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 54,
+        "confirmInput": 2257,
+        "confirmOutput": 62
+      },
+      "leverage": 1.3746915756080365
+    },
+    {
+      "id": "time-ordered-id",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/esm/v7.js#v7@4",
+      "reason": "uuid v7 is time-ordered, uses a millisecond timestamp with random bits, keeps monotonic state (updateV7State), and returns the standard 8-4-4-4-12 string",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 64,
+        "confirmInput": 2049,
+        "confirmOutput": 205
+      },
+      "leverage": 1.0931054802592812
+    },
+    {
+      "id": "name-based-id",
+      "positive": true,
+      "pick": 3,
+      "picked": "uuid-11.1.1/dist/esm/v5.js#v5@4",
+      "reason": "uuid v5 wrapper: SHA-1 name-based UUID in standard string form",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 59,
+        "confirmInput": 2179,
+        "confirmOutput": 387
+      },
+      "leverage": 0.7734180086187344
+    },
+    {
+      "id": "md5-digest",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+      "reason": "md5(bytes) takes a byte array and returns the MD5 digest as bytes, matching the need directly",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 20,
+        "confirmInput": 1983,
+        "confirmOutput": 51
+      },
+      "leverage": 0.13686911890504705
+    },
+    {
+      "id": "sha1-digest",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+      "reason": "sha1(bytes) directly computes a SHA-1 digest from raw bytes, returning 20-byte array; others are MD5 or UUID wrappers",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 22,
+        "confirmInput": 1961,
+        "confirmOutput": 68
+      },
+      "leverage": 0.13479883865615927
+    },
+    {
+      "id": "closest-by-edits",
+      "positive": true,
+      "pick": 5,
+      "picked": "fastest-levenshtein-1.0.16/esm/mod.js#closest@155",
+      "reason": "closest(str, arr) returns the candidate string in a list with the smallest edit distance to the input, which is the requested task. It builds on the fast bit-parallel distance function.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 33,
+        "confirmInput": 2121,
+        "confirmOutput": 155
+      },
+      "leverage": 1.4570401829467494
+    },
+    {
+      "id": "object-schema-validation",
+      "positive": true,
+      "pick": 1,
+      "picked": "zod-3.25.76/v3/types.js#ZodObject@1879",
+      "reason": "ZodObject covers typed fields, path-tagged issues, strict/passthrough/strip modes, and deepPartialify for partial variants",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 62,
+        "confirmInput": 2566,
+        "confirmOutput": 312
+      },
+      "leverage": 19.826420198376915
+    },
+    {
+      "id": "string-schema-rules",
+      "positive": true,
+      "pick": 2,
+      "picked": "zod-3.25.76/v3/types.js#ZodString@477",
+      "reason": "Zod ZodString covers min/max length, regex, email and datetime formats, and optional text conversion; trim and lowercase are not explicit in the description.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 61,
+        "confirmInput": 2442,
+        "confirmOutput": 375
+      },
+      "leverage": 19.141064474253568
+    },
+    {
+      "id": "base64-decode",
+      "positive": true,
+      "pick": 1,
+      "picked": "base64-js-1.5.1/index.js#toByteArray@53",
+      "reason": "base64-js toByteArray decodes base64 text to bytes, handles padding, and throws on invalid length",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 34,
+        "confirmInput": 2065,
+        "confirmOutput": 51
+      },
+      "leverage": 0.857429718875502
+    },
+    {
+      "id": "dependency-order",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "None of the candidates implements a topological sort with cycle detection; all are version sorting, rate limiting, or schema validators.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 41,
+        "confirmInput": 2240,
+        "confirmOutput": 85
+      },
+      "leverage": 0.8118466898954704
+    },
+    {
+      "id": "compiled-json-pointer",
+      "positive": true,
+      "pick": 1,
+      "picked": "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+      "reason": "compile(pointer) parses a JSON Pointer once and returns reusable get/set functions, matching the need exactly",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 30,
+        "confirmInput": 2525,
+        "confirmOutput": 54
+      },
+      "leverage": 1.0475382003395586
+    },
+    {
+      "id": "custom-alphabet-ids",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate builds random strings of a set length from a custom alphabet; the uuid generators produce fixed-format hex UUIDs.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 34,
+        "confirmInput": 2078,
+        "confirmOutput": 198
+      },
+      "leverage": 0.6686226065472514
+    },
+    {
+      "id": "yaml-parse",
+      "positive": false,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate parses YAML; the closest (csv-parse) handles CSV only.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 34,
+        "confirmInput": 2208,
+        "confirmOutput": 102
+      },
+      "leverage": null
+    },
+    {
+      "id": "markdown-render",
+      "positive": false,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate renders Markdown to HTML; all are CSV parsing or Zod validation modules.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 34,
+        "confirmInput": 2238,
+        "confirmOutput": 48
+      },
+      "leverage": null
+    },
+    {
+      "id": "deflate-compress",
+      "positive": false,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate implements DEFLATE compression or decompression; all are base64, hashing, UUID, cipher, CSV, or validation code.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 26,
+        "confirmInput": 2018,
+        "confirmOutput": 141
+      },
+      "leverage": null
+    },
+    {
+      "id": "cron-next-run",
+      "positive": false,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate parses cron expressions or computes cron fire times; the closest ones handle dates or ISO strings only.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 22,
+        "confirmInput": 2411,
+        "confirmOutput": 112
+      },
+      "leverage": null
+    },
+    {
+      "id": "text-line-diff",
+      "positive": false,
+      "pick": 0,
+      "picked": null,
+      "reason": "All candidates are semver version/range utilities; none computes a line-by-line text diff.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 31,
+        "confirmInput": 2129,
+        "confirmOutput": 74
+      },
+      "leverage": null
+    },
+    {
+      "id": "route-matching",
+      "positive": false,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate matches path route patterns with named parameter extraction; all are URL, email, semver, or Zod schema utilities.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 36,
+        "confirmInput": 2471,
+        "confirmOutput": 111
+      },
+      "leverage": null
+    },
+    {
+      "id": "currency-formatting",
+      "positive": false,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate formats numbers. isCurrency only validates strings, and the rest are unrelated validators or date formatting.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 36,
+        "confirmInput": 2244,
+        "confirmOutput": 142
+      },
+      "leverage": null
+    },
+    {
+      "id": "image-resize",
+      "positive": false,
+      "pick": 0,
+      "picked": null,
+      "reason": "None of the candidates resizes image buffers; they are CSV parsing, object merging, UUID generation, SHA-1, and cloning.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 28,
+        "confirmInput": 2024,
+        "confirmOutput": 118
+      },
+      "leverage": null
+    }
+  ]
+}

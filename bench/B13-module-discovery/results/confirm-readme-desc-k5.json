@@ -1,0 +1,1195 @@
+{
+  "set": "readme",
+  "pool": "large roots",
+  "model": "claude-haiku-5-5",
+  "k": 5,
+  "usage": {
+    "inputTokens": 90364,
+    "outputTokens": 11494,
+    "calls": 78
+  },
+  "summary": {
+    "queries": 78,
+    "targetShown": 0.8205128205128205,
+    "rightOfPositives": 0.782051282051282,
+    "rightWhenShown": 0.953125,
+    "reusePrecision": 0.8714285714285714,
+    "wrongReuseOnNegatives": null,
+    "correctNoneOnNegatives": null,
+    "invalid": 0,
+    "rightOfPositivesSameFunction": 0.782051282051282,
+    "reusePrecisionSameFunction": 0.8714285714285714
+  },
+  "rows": [
+    {
+      "id": "readme-1",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "All candidates are Zod schema/validation utilities; none handles token expiration checks or exposes an expiry timestamp.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 46,
+        "confirmInput": 1120,
+        "confirmOutput": 92
+      },
+      "leverage": 0.11049723756906077
+    },
+    {
+      "id": "readme-2",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "None of the candidates handles token errors. They are zod schema validators, not a general error type for rejecting malformed or unauthorized tokens.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 66,
+        "confirmInput": 1175,
+        "confirmOutput": 175
+      },
+      "leverage": 0.13865546218487396
+    },
+    {
+      "id": "readme-3",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate handles token not-before (nbf) checks; the zod and validator options only validate date bounds or return booleans, and date-fns only formats dates.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 43,
+        "confirmInput": 1286,
+        "confirmOutput": 158
+      },
+      "leverage": 0.07638585770405937
+    },
+    {
+      "id": "readme-4",
+      "positive": true,
+      "pick": 3,
+      "picked": "uuid-11.1.1/dist/esm/v6.js#v6@4",
+      "reason": "uuid v6 generates unique time-based IDs without needing a deterministic name; v3 is hash-based and not unique per call, and the others are validation or schema tools.",
+      "outcome": "wrong-reuse",
+      "reachable": false,
+      "tokens": {
+        "request": 49,
+        "confirmInput": 1298,
+        "confirmOutput": 222
+      },
+      "leverage": 0.38823972860912176
+    },
+    {
+      "id": "readme-5",
+      "positive": true,
+      "pick": 1,
+      "picked": "p-limit-7.3.0/index.js#pLimit@3",
+      "reason": "pLimit queues async tasks so only N run at once, which matches the need; Promise.all collects results",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 58,
+        "confirmInput": 1147,
+        "confirmOutput": 176
+      },
+      "leverage": 1.6832110487699612
+    },
+    {
+      "id": "readme-6",
+      "positive": true,
+      "pick": 1,
+      "picked": "p-limit-7.3.0/index.js#pLimit@3",
+      "reason": "pLimit accepts a number or an options object and queues tasks with a clear/queue mechanism; no candidate explicitly rejects pending tasks with an abort error, so this is the closest match.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 79,
+        "confirmInput": 1134,
+        "confirmOutput": 297
+      },
+      "leverage": 1.2939615129396151
+    },
+    {
+      "id": "readme-7",
+      "positive": true,
+      "pick": 2,
+      "picked": "p-limit-7.3.0/index.js#limitFunction@117",
+      "reason": "limitFunction wraps a function directly and caps concurrent executions of that function, with no separate limiter per call site",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 55,
+        "confirmInput": 1139,
+        "confirmOutput": 171
+      },
+      "leverage": 1.8025561921551343
+    },
+    {
+      "id": "readme-8",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "None implements a rolling-window rate limit. p-limit caps concurrency, not calls per time window. lodash throttle allows one call per interval and coalesces extras rather than queuing them.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 49,
+        "confirmInput": 1214,
+        "confirmOutput": 268
+      },
+      "leverage": 3.794212218649518
+    },
+    {
+      "id": "readme-9",
+      "positive": true,
+      "pick": 2,
+      "picked": "p-throttle-8.1.0/index.js#pThrottle@21",
+      "reason": "p-throttle supports a strict mode and rate-limits calls within a time interval, matching the sliding-window requirement.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 51,
+        "confirmInput": 1117,
+        "confirmOutput": 102
+      },
+      "leverage": 5.6429330499468655
+    },
+    {
+      "id": "readme-10",
+      "positive": true,
+      "pick": 2,
+      "picked": "p-throttle-8.1.0/index.js#pThrottle@21",
+      "reason": "p-throttle accepts an abort signal and returns promise-returning throttled calls, so queued calls can be rejected with the abort reason.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 50,
+        "confirmInput": 1187,
+        "confirmOutput": 103
+      },
+      "leverage": 5.440573770491803
+    },
+    {
+      "id": "readme-11",
+      "positive": true,
+      "pick": 1,
+      "picked": "p-throttle-8.1.0/index.js#pThrottle@21",
+      "reason": "p-throttle has a delay callback option that fires with the call's arguments when a call is held back by the rate limit",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 45,
+        "confirmInput": 1129,
+        "confirmOutput": 153
+      },
+      "leverage": 5.011798017932987
+    },
+    {
+      "id": "readme-12",
+      "positive": true,
+      "pick": 1,
+      "picked": "p-throttle-8.1.0/index.js#pThrottle@21",
+      "reason": "p-throttle's options include a weight setting, so each call can consume a different share of the rate limit based on its arguments.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 40,
+        "confirmInput": 1004,
+        "confirmOutput": 83
+      },
+      "leverage": 6.559604694255714
+    },
+    {
+      "id": "readme-13",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/clean.js#clean@4",
+      "reason": "clean() trims whitespace and strips leading '=' or 'v' to return a normalized version",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 45,
+        "confirmInput": 1160,
+        "confirmOutput": 46
+      },
+      "leverage": 7.755417956656347
+    },
+    {
+      "id": "readme-14",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/satisfies.js#satisfies@4",
+      "reason": "satisfies() directly tests whether a version falls within a range expression, handling alternatives, hyphen ranges, and wildcards.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 39,
+        "confirmInput": 1196,
+        "confirmOutput": 157
+      },
+      "leverage": 15.675551470588234
+    },
+    {
+      "id": "readme-15",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/gt.js#gt@4",
+      "reason": "gt returns true only when first version is strictly greater than second, matching the need",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 17,
+        "confirmInput": 1076,
+        "confirmOutput": 39
+      },
+      "leverage": 9.008112094395278
+    },
+    {
+      "id": "readme-16",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/functions/lt.js#lt@4",
+      "reason": "lt returns true only when first version is strictly lower than second, matching strictly older",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 16,
+        "confirmInput": 1096,
+        "confirmOutput": 148
+      },
+      "leverage": 6.375260960334028
+    },
+    {
+      "id": "readme-17",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/ranges/min-version.js#minVersion@7",
+      "reason": "minVersion(range) takes only a range and returns the lowest satisfying version, which matches the request directly",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 28,
+        "confirmInput": 1227,
+        "confirmOutput": 122
+      },
+      "leverage": 18.002023267577137
+    },
+    {
+      "id": "readme-18",
+      "positive": true,
+      "pick": 3,
+      "picked": "semver-7.8.0/functions/coerce.js#coerce@7",
+      "reason": "coerce extracts a valid semver from loose input like 'v2' or '42.6.7.9.3-alpha'",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 52,
+        "confirmInput": 1157,
+        "confirmOutput": 119
+      },
+      "leverage": 7.281312127236581
+    },
+    {
+      "id": "readme-19",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/ranges/max-satisfying.js#maxSatisfying@6",
+      "reason": "maxSatisfying takes a version list and range and returns the highest match, exactly what's needed.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 25,
+        "confirmInput": 1172,
+        "confirmOutput": 46
+      },
+      "leverage": 22.580222658808122
+    },
+    {
+      "id": "readme-20",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+      "reason": "minSatisfying takes a list of versions and a range and returns the lowest match, which is exactly the filter-then-minimum behavior needed.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 26,
+        "confirmInput": 1200,
+        "confirmOutput": 100
+      },
+      "leverage": 18.84153005464481
+    },
+    {
+      "id": "readme-21",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/ranges/to-comparators.js#toComparators@6",
+      "reason": "toComparators takes a range and options and returns the comparator strings per alternative set, which is exactly the decomposition needed.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 27,
+        "confirmInput": 1195,
+        "confirmOutput": 54
+      },
+      "leverage": 21.303125
+    },
+    {
+      "id": "readme-22",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/ranges/gtr.js#gtr@5",
+      "reason": "gtr checks whether a version is greater than all versions in a range, exactly the requested capability",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 18,
+        "confirmInput": 1071,
+        "confirmOutput": 45
+      },
+      "leverage": 26.28427128427128
+    },
+    {
+      "id": "readme-23",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/ranges/ltr.js#ltr@5",
+      "reason": "ltr checks whether a version is lower than every version in a range, which matches the need exactly.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 17,
+        "confirmInput": 1104,
+        "confirmOutput": 69
+      },
+      "leverage": 23.748370273794002
+    },
+    {
+      "id": "readme-24",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/ranges/intersects.js#intersects@4",
+      "reason": "intersects(r1, r2) takes two ranges and returns whether any version satisfies both, which is the overlap check needed.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 16,
+        "confirmInput": 1196,
+        "confirmOutput": 87
+      },
+      "leverage": 21.06954997077732
+    },
+    {
+      "id": "readme-25",
+      "positive": true,
+      "pick": 4,
+      "picked": "semver-7.8.0/ranges/subset.js#subset@45",
+      "reason": "subset checks whether every version matching one range also matches another range, which is exactly the requirement",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 23,
+        "confirmInput": 1125,
+        "confirmOutput": 44
+      },
+      "leverage": 27.89041095890411
+    },
+    {
+      "id": "readme-26",
+      "positive": true,
+      "pick": 3,
+      "picked": "semver-7.8.0/functions/inc.js#inc@5",
+      "reason": "inc takes a version, a release type (major/minor/patch/prerelease), and an optional prerelease identifier, returning the bumped version",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 38,
+        "confirmInput": 1120,
+        "confirmOutput": 120
+      },
+      "leverage": 2.968586387434555
+    },
+    {
+      "id": "readme-27",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/diff.js#diff@5",
+      "reason": "diff returns the release type (major, minor, patch, prerelease) between two versions, matching the need",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 32,
+        "confirmInput": 1115,
+        "confirmOutput": 47
+      },
+      "leverage": 9.298013245033113
+    },
+    {
+      "id": "readme-28",
+      "positive": true,
+      "pick": 5,
+      "picked": "semver-7.8.0/classes/semver.js#SemVer@9",
+      "reason": "SemVer class parses into an object with editable major/minor/patch, prerelease and build fields",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 32,
+        "confirmInput": 1163,
+        "confirmOutput": 113
+      },
+      "leverage": 6.387711864406779
+    },
+    {
+      "id": "readme-29",
+      "positive": true,
+      "pick": 3,
+      "picked": "semver-7.8.0/functions/compare-loose.js#compareLoose@4",
+      "reason": "compareLoose compares two version strings using lenient parsing, which matches the relaxed, formatting-tolerant comparison needed.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 27,
+        "confirmInput": 1152,
+        "confirmOutput": 223
+      },
+      "leverage": 5.085345545378852
+    },
+    {
+      "id": "readme-30",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/compare-build.js#compareBuild@4",
+      "reason": "compareBuild orders two versions and uses build metadata as the tiebreaker, matching the request",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 22,
+        "confirmInput": 1130,
+        "confirmOutput": 100
+      },
+      "leverage": 7.316091954022989
+    },
+    {
+      "id": "readme-31",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/functions/sort.js#sort@4",
+      "reason": "sorts version strings ascending in place; rsort (candidate 1) covers the descending case",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 30,
+        "confirmInput": 1149,
+        "confirmOutput": 210
+      },
+      "leverage": 5.270327799063431
+    },
+    {
+      "id": "readme-32",
+      "positive": true,
+      "pick": 5,
+      "picked": "semver-7.8.0/functions/eq.js#eq@4",
+      "reason": "eq(a, b, loose) returns true when two versions compare equal under semver precedence; no neq candidate exists, so eq covers equality checks.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 27,
+        "confirmInput": 1093,
+        "confirmOutput": 115
+      },
+      "leverage": 6.77759290072102
+    },
+    {
+      "id": "readme-33",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate truncates a version to N leading components; major and minor return single integers only",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 27,
+        "confirmInput": 1122,
+        "confirmOutput": 214
+      },
+      "leverage": 5.754189944134079
+    },
+    {
+      "id": "readme-34",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/functions/inc.js#inc@5",
+      "reason": "inc() bumps a version by release type and accepts a prerelease identifier like beta, producing 1.2.4-beta.0",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 44,
+        "confirmInput": 1169,
+        "confirmOutput": 102
+      },
+      "leverage": 2.985781990521327
+    },
+    {
+      "id": "readme-35",
+      "positive": true,
+      "pick": 3,
+      "picked": "semver-7.8.0/functions/inc.js#inc@5",
+      "reason": "inc bumps versions, including prerelease increments like beta.0 to beta.1 and finalizing a prerelease",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 67,
+        "confirmInput": 1159,
+        "confirmOutput": 168
+      },
+      "leverage": 2.429305912596401
+    },
+    {
+      "id": "readme-36",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/functions/inc.js#inc@5",
+      "reason": "inc takes a release type plus identifier label and identifierBase option (0, 1, or none), which matches bumping to the next prerelease with a chosen counter start.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 49,
+        "confirmInput": 1163,
+        "confirmOutput": 67
+      },
+      "leverage": 3.2530120481927707
+    },
+    {
+      "id": "readme-37",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/inc.js#inc@5",
+      "reason": "inc takes a release type and optional prerelease identifier, and returns the bumped version or null when invalid",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 56,
+        "confirmInput": 1142,
+        "confirmOutput": 122
+      },
+      "leverage": 2.7903543307086616
+    },
+    {
+      "id": "readme-38",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/ranges/intersects.js#intersects@4",
+      "reason": "intersects(r1, r2, options) takes two ranges and returns whether some version satisfies both, matching the overlap need directly.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 30,
+        "confirmInput": 1243,
+        "confirmOutput": 57
+      },
+      "leverage": 21.483909415971393
+    },
+    {
+      "id": "readme-39",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/coerce.js#coerce@7",
+      "reason": "Returns a parsed SemVer object or null; the others return strings or booleans",
+      "outcome": "wrong-reuse",
+      "reachable": false,
+      "tokens": {
+        "request": 29,
+        "confirmInput": 1133,
+        "confirmOutput": 261
+      },
+      "leverage": 0.2400309717382888
+    },
+    {
+      "id": "readme-40",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/truncate.js#truncate@7",
+      "reason": "truncate takes a version and a level name (major/minor), zeroes lower parts and drops prerelease/build, matching the need",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 50,
+        "confirmInput": 1160,
+        "confirmOutput": 56
+      },
+      "leverage": 7.923076923076923
+    },
+    {
+      "id": "readme-41",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/functions/gt.js#gt@4",
+      "reason": "gt returns true when the first version is strictly greater, using semver precedence; a direct fit for a greater-than test.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 30,
+        "confirmInput": 1136,
+        "confirmOutput": 102
+      },
+      "leverage": 6.801224944320712
+    },
+    {
+      "id": "readme-42",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/gte.js#gte@4",
+      "reason": "gte(a, b, loose) returns true when first version is greater than or equal to second, matching the need",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 25,
+        "confirmInput": 1107,
+        "confirmOutput": 47
+      },
+      "leverage": 8.329925017041582
+    },
+    {
+      "id": "readme-43",
+      "positive": true,
+      "pick": 3,
+      "picked": "semver-7.8.0/functions/lt.js#lt@4",
+      "reason": "lt returns true only when the first version is strictly lower than the second, matching the test.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 20,
+        "confirmInput": 1106,
+        "confirmOutput": 110
+      },
+      "leverage": 6.956150341685649
+    },
+    {
+      "id": "readme-44",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/lte.js#lte@4",
+      "reason": "lte(a, b, loose) returns true when first version is less than or equal to second, matching the less-than-or-equal semver precedence check",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 24,
+        "confirmInput": 1085,
+        "confirmOutput": 59
+      },
+      "leverage": 8.146666666666667
+    },
+    {
+      "id": "readme-45",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/eq.js#eq@4",
+      "reason": "eq compares parsed semver values, so differently written but equivalent versions match; the inverse check is covered by its negation",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 31,
+        "confirmInput": 1094,
+        "confirmOutput": 281
+      },
+      "leverage": 4.604370761115298
+    },
+    {
+      "id": "readme-46",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/functions/cmp.js#cmp@10",
+      "reason": "cmp with the '!=' operator calls neq and returns a boolean for whether two versions differ",
+      "outcome": "wrong-reuse",
+      "reachable": false,
+      "tokens": {
+        "request": 24,
+        "confirmInput": 1140,
+        "confirmOutput": 169
+      },
+      "leverage": 5.805225653206651
+    },
+    {
+      "id": "readme-47",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/cmp.js#cmp@10",
+      "reason": "cmp takes an operator string, returns a boolean, throws on unknown operators, and handles string equality and inequality",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 61,
+        "confirmInput": 1357,
+        "confirmOutput": 273
+      },
+      "leverage": 4.4449950445986115
+    },
+    {
+      "id": "readme-48",
+      "positive": true,
+      "pick": 3,
+      "picked": "semver-7.8.0/functions/compare.js#compare@4",
+      "reason": "compare(a, b, loose) returns -1, 0, or 1 in ascending order, matching the three-way sort comparator needed",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 42,
+        "confirmInput": 1133,
+        "confirmOutput": 168
+      },
+      "leverage": 5.748969308291342
+    },
+    {
+      "id": "readme-49",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/rcompare.js#rcompare@4",
+      "reason": "rcompare reverses the comparison order, so sorting yields a descending list",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 28,
+        "confirmInput": 1136,
+        "confirmOutput": 62
+      },
+      "leverage": 7.7049180327868845
+    },
+    {
+      "id": "readme-50",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/sort.js#sort@4",
+      "reason": "Sorts ascending using build metadata as the tiebreaker, covering both the comparison and the sort",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 41,
+        "confirmInput": 1149,
+        "confirmOutput": 518
+      },
+      "leverage": 3.227687626774848
+    },
+    {
+      "id": "readme-51",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/functions/compare-loose.js#compareLoose@4",
+      "reason": "compareLoose is a dedicated lenient comparator that tolerates loosely formatted versions and returns a sign ordering",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 28,
+        "confirmInput": 1120,
+        "confirmOutput": 287
+      },
+      "leverage": 4.532467532467533
+    },
+    {
+      "id": "readme-52",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/diff.js#diff@5",
+      "reason": "diff returns the release change type (major, minor, patch, prerelease) or null when equal, matching the need",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 41,
+        "confirmInput": 1110,
+        "confirmOutput": 49
+      },
+      "leverage": 9
+    },
+    {
+      "id": "readme-53",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/functions/sort.js#sort@4",
+      "reason": "Sorts the list in place in ascending order and uses build metadata as the tiebreaker, matching the request. Candidate 1 sorts descending, so it is the wrong direction.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 36,
+        "confirmInput": 1202,
+        "confirmOutput": 168
+      },
+      "leverage": 5.571557155715571
+    },
+    {
+      "id": "readme-54",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/rsort.js#rsort@4",
+      "reason": "rsort sorts the list in place newest-to-oldest, with build metadata as the tiebreaker",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 36,
+        "confirmInput": 1202,
+        "confirmOutput": 113
+      },
+      "leverage": 6.358500256805342
+    },
+    {
+      "id": "readme-55",
+      "positive": true,
+      "pick": 3,
+      "picked": "semver-7.8.0/classes/comparator.js#Comparator@5",
+      "reason": "Comparator class handles single constraints and includes an overlap check between two comparators",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 53,
+        "confirmInput": 1277,
+        "confirmOutput": 130
+      },
+      "leverage": 16.44616788321168
+    },
+    {
+      "id": "readme-56",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/ranges/valid.js#validRange@4",
+      "reason": "validRange returns the normalized range string or null if invalid, matching the need exactly",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 44,
+        "confirmInput": 1165,
+        "confirmOutput": 42
+      },
+      "leverage": 21.448275862068964
+    },
+    {
+      "id": "readme-57",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/satisfies.js#satisfies@4",
+      "reason": "takes a single version and range, returns boolean true/false membership",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 31,
+        "confirmInput": 1222,
+        "confirmOutput": 35
+      },
+      "leverage": 21.978092783505158
+    },
+    {
+      "id": "readme-58",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/ranges/max-satisfying.js#maxSatisfying@6",
+      "reason": "maxSatisfying takes a version list and range and returns the highest match, or nothing",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 38,
+        "confirmInput": 1209,
+        "confirmOutput": 72
+      },
+      "leverage": 19.602046617396248
+    },
+    {
+      "id": "readme-59",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+      "reason": "takes a version list and range, returns lowest satisfying version or null",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 39,
+        "confirmInput": 1210,
+        "confirmOutput": 37
+      },
+      "leverage": 21.68553459119497
+    },
+    {
+      "id": "readme-60",
+      "positive": true,
+      "pick": 3,
+      "picked": "semver-7.8.0/ranges/min-version.js#minVersion@7",
+      "reason": "minVersion takes only a range and returns the lowest version satisfying it, which matches the request. minSatisfying needs a list of candidate versions.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 33,
+        "confirmInput": 1157,
+        "confirmOutput": 159
+      },
+      "leverage": 16.811525743977327
+    },
+    {
+      "id": "readme-61",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/ranges/gtr.js#gtr@5",
+      "reason": "gtr checks whether a version is greater than all versions in a range, which matches the need.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 33,
+        "confirmInput": 1159,
+        "confirmOutput": 71
+      },
+      "leverage": 21.697438951756997
+    },
+    {
+      "id": "readme-62",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/ranges/ltr.js#ltr@5",
+      "reason": "ltr checks whether a version is less than every version in the range, which is exactly the 'older than the whole range' test.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 32,
+        "confirmInput": 1156,
+        "confirmOutput": 81
+      },
+      "leverage": 21.167925624636837
+    },
+    {
+      "id": "readme-63",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/ranges/outside.js#outside@13",
+      "reason": "outside() takes a version, range, and '>'/'<' direction, returning whether the version lies entirely beyond the range, matching the gap-aware requirement",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 62,
+        "confirmInput": 1305,
+        "confirmOutput": 66
+      },
+      "leverage": 18.68380462724936
+    },
+    {
+      "id": "readme-64",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/ranges/intersects.js#intersects@4",
+      "reason": "returns a boolean for whether any version satisfies both ranges; passing the same range twice checks its own satisfiability",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 40,
+        "confirmInput": 1200,
+        "confirmOutput": 496
+      },
+      "leverage": 9.291237113402062
+    },
+    {
+      "id": "readme-65",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/ranges/subset.js#subset@45",
+      "reason": "subset(sub, dom) checks whether every version allowed by the first range is also allowed by the second, which is the required containment test.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 32,
+        "confirmInput": 1130,
+        "confirmOutput": 79
+      },
+      "leverage": 24.166172106824927
+    },
+    {
+      "id": "readme-66",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/clean.js#clean@4",
+      "reason": "clean trims whitespace and leading '=' or 'v', returns the normalized version or null, and accepts options (such as loose mode) for sloppy prerelease formatting.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 82,
+        "confirmInput": 1194,
+        "confirmOutput": 168
+      },
+      "leverage": 5.124795417348609
+    },
+    {
+      "id": "readme-67",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate parses a UUID string into raw bytes; they are version converters, hashers, or a Base64 decoder.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 79,
+        "confirmInput": 1115,
+        "confirmOutput": 232
+      },
+      "leverage": 0.31273408239700373
+    },
+    {
+      "id": "readme-68",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "All candidates generate name-based or time-based UUIDs by hashing or time; none converts existing 16 bytes at an offset into a hyphenated string.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 78,
+        "confirmInput": 1186,
+        "confirmOutput": 286
+      },
+      "leverage": 0.4258150365934797
+    },
+    {
+      "id": "readme-69",
+      "positive": true,
+      "pick": 4,
+      "picked": "uuid-11.1.1/dist/cjs/v1.js#v1@7",
+      "reason": "v1 is the time-based version with node, clockseq, msecs/nsecs (sub-millisecond) options, custom rng, and buf/offset output",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 92,
+        "confirmInput": 1119,
+        "confirmOutput": 237
+      },
+      "leverage": 1.5937047756874096
+    },
+    {
+      "id": "readme-70",
+      "positive": true,
+      "pick": 4,
+      "picked": "uuid-11.1.1/dist/esm/v1ToV6.js#v1ToV6@3",
+      "reason": "v1ToV6 converts existing v1 UUIDs to v6 layout, preserving the rest of the value and returning the same format",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 56,
+        "confirmInput": 1128,
+        "confirmOutput": 58
+      },
+      "leverage": 1.5930506478209658
+    },
+    {
+      "id": "readme-71",
+      "positive": true,
+      "pick": 2,
+      "picked": "uuid-11.1.1/dist/esm/v3.js#v3@4",
+      "reason": "v3 hashes name and namespace with MD5 deterministically and can write bytes to an optional buffer at an offset",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 60,
+        "confirmInput": 1158,
+        "confirmOutput": 230
+      },
+      "leverage": 1.4953987730061349
+    },
+    {
+      "id": "readme-72",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs/v4.js#v4@6",
+      "reason": "v4 is the random UUID: it accepts custom random bytes or an rng function and can write into a buffer at an offset.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 57,
+        "confirmInput": 1084,
+        "confirmOutput": 96
+      },
+      "leverage": 1.1654948620876149
+    },
+    {
+      "id": "readme-73",
+      "positive": true,
+      "pick": 3,
+      "picked": "uuid-11.1.1/dist/cjs/v6ToV1.js#v6ToV1@5",
+      "reason": "v6ToV1 converts version 6 UUIDs to version 1 in the same format; candidates 3 and 4 are equivalent",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 32,
+        "confirmInput": 1030,
+        "confirmOutput": 150
+      },
+      "leverage": 1.3943298969072164
+    },
+    {
+      "id": "readme-74",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate validates UUID versions; uuid v4 generates UUIDs and the semver functions are unrelated.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 36,
+        "confirmInput": 1132,
+        "confirmOutput": 98
+      },
+      "leverage": 0.06936736958934518
+    },
+    {
+      "id": "readme-75",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/esm/v7.js#v7@4",
+      "reason": "Time-ordered v7 with optional timestamp/sequence/randomness settings, and it keeps uniqueness across calls via updateV7State",
+      "outcome": "wrong-reuse",
+      "reachable": true,
+      "tokens": {
+        "request": 44,
+        "confirmInput": 1084,
+        "confirmOutput": 358
+      },
+      "leverage": 1.4237233354880414
+    },
+    {
+      "id": "readme-76",
+      "positive": true,
+      "pick": 1,
+      "picked": "zod-3.25.76/src/v3/types.ts#ZodObject@2450",
+      "reason": "ZodObject validates untrusted input against a defined shape and returns the parsed, typed result, with errors recorded on mismatch",
+      "outcome": "wrong-reuse",
+      "reachable": false,
+      "tokens": {
+        "request": 55,
+        "confirmInput": 1277,
+        "confirmOutput": 213
+      },
+      "leverage": 0.09361864730607566
+    },
+    {
+      "id": "readme-77",
+      "positive": true,
+      "pick": 1,
+      "picked": "zod-3.25.76/src/v3/types.ts#ZodPromise@4233",
+      "reason": "ZodPromise returns a promise resolving to the validated value, supporting async-mode validation I can await",
+      "outcome": "wrong-reuse",
+      "reachable": false,
+      "tokens": {
+        "request": 51,
+        "confirmInput": 1290,
+        "confirmOutput": 354
+      },
+      "leverage": 0.08597285067873303
+    },
+    {
+      "id": "readme-78",
+      "positive": true,
+      "pick": 3,
+      "picked": "zod-3.25.76/src/v3/types.ts#custom@4913",
+      "reason": "custom() accepts an async predicate and error params; its typed signature returns a ZodType, so it fits best",
+      "outcome": "wrong-reuse",
+      "reachable": false,
+      "tokens": {
+        "request": 40,
+        "confirmInput": 1162,
+        "confirmOutput": 289
+      },
+      "leverage": 22.604203776273604
+    }
+  ]
+}
