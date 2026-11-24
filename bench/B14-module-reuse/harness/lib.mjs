@@ -109,8 +109,8 @@ export const ROUTE_LINES = 60;
  * for. B14's first live run put break-even near 2,000 output tokens of from-scratch code; the
  * model cannot count tokens before writing, so the threshold is stated in lines.
  */
-export function routePrompt(task) {
-  return `Task: ${task.spec}\n\nIf you can write this correctly in about ${ROUTE_LINES} lines of code or fewer, write it now. ${CODE_RULES}\n\nOtherwise, do not write any code: say what reusable library module would do the heavy lifting, as one or two sentences for a code search: the capability, its inputs and outputs, the behavior that matters.`;
+export function routePrompt(task, lines = ROUTE_LINES) {
+  return `Task: ${task.spec}\n\nIf you can write this correctly in about ${lines} lines of code or fewer, write it now. ${CODE_RULES}\n\nOtherwise, do not write any code: say what reusable library module would do the heavy lifting, as one or two sentences for a code search: the capability, its inputs and outputs, the behavior that matters.`;
 }
 
 export function confirmPrompt(task, need, candidates) {
@@ -182,7 +182,15 @@ export async function runScratch({ task, client }) {
  * With `route`, the first call is routePrompt: a reply with code is the solution (one call, no
  * search); a reply without code is the need, and the reuse path continues from it.
  */
-export async function runReuse({ task, client, search, rootSourceOf, k = 5, route = false }) {
+export async function runReuse({
+  task,
+  client,
+  search,
+  rootSourceOf,
+  k = 5,
+  route = false,
+  routeLines = ROUTE_LINES,
+}) {
   const t0 = Date.now();
   let inputTokens = 0;
   let outputTokens = 0;
@@ -195,7 +203,7 @@ export async function runReuse({ task, client, search, rootSourceOf, k = 5, rout
     return r.text;
   };
   const arm = route ? "routed" : "reuse";
-  const first = (await call(route ? routePrompt(task) : needPrompt(task))).trim();
+  const first = (await call(route ? routePrompt(task, routeLines) : needPrompt(task))).trim();
   if (route && /```/.test(first)) {
     const score = scoreSolution(task, extractCode(first));
     return {
