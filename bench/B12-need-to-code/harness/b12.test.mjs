@@ -23,7 +23,15 @@ import {
   signatureScore,
 } from "./match.mjs";
 import { auroc, mrr, recallAt, summarizeConfig } from "./metrics.mjs";
-import { extractJson, maskName, modelClient } from "./model.mjs";
+import {
+  DEFAULT_MODEL,
+  checkBudget,
+  estimateCost,
+  evenSample,
+  extractJson,
+  maskName,
+  modelClient,
+} from "./model.mjs";
 import { FIXTURES, bareContext, callTagged, resolveCallable, taggedEqual } from "./sandbox.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -280,6 +288,18 @@ describe("model-backed steps (no calls)", () => {
     } finally {
       for (const [k, v] of Object.entries(saved)) if (v !== undefined) process.env[k] = v;
     }
+  });
+  it("default to the cheapest model, and refuse a run over the spending cap", () => {
+    assert.equal(DEFAULT_MODEL, "claude-haiku-5-5");
+    const est = estimateCost(4_000_000, 100_000, 10); // 1M input tokens
+    assert.equal(checkBudget(est, "claude-haiku-5-5", 2).dollars, 0.15);
+    assert.throws(() => checkBudget(est, "claude-opus-5-5", 2), /exceeds the cap of \$2/);
+    assert.throws(() => checkBudget(est, "unknown-model", 2), /no price/);
+  });
+  it("sample evenly and deterministically", () => {
+    const items = Array.from({ length: 10 }, (_, i) => i);
+    assert.deepEqual(evenSample(items, 5), [0, 2, 4, 6, 8]);
+    assert.deepEqual(evenSample(items, 50), items);
   });
   it("mask a definition's own name, and read a JSON reply", () => {
     assert.equal(

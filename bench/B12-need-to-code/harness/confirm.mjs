@@ -18,7 +18,15 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isTarget } from "./match.mjs";
-import { DEFAULT_MODEL, estimateCost, extractJson, mapLimit, modelClient } from "./model.mjs";
+import {
+  DEFAULT_MAX_DOLLARS,
+  DEFAULT_MODEL,
+  checkBudget,
+  estimateCost,
+  extractJson,
+  mapLimit,
+  modelClient,
+} from "./model.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const benchDir = resolve(here, "..");
@@ -190,6 +198,15 @@ async function main() {
   }
 
   const model = arg("model", DEFAULT_MODEL);
+  checkBudget(
+    estimateCost(
+      items.reduce((n, it) => n + SYSTEM.length + it.prompt.length, 0),
+      items.length * 300,
+      items.length,
+    ),
+    model,
+    Number(arg("max-dollars", String(DEFAULT_MAX_DOLLARS))),
+  );
   const client = await modelClient({ model, maxTokens: 2000, effort: arg("effort", "medium") });
   const rows = await mapLimit(
     items,
