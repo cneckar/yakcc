@@ -1,0 +1,36 @@
+{
+  "name": "@yakcc/node-platform",
+  "version": "0.6.0-alpha.0",
+  "description": "Node's library and its bindings, shaved: the platform a shaved program runs on (#1329, #1331).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "private": true,
+  "files": ["dist", "vendor", "README.md"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cneckar/yakcc.git",
+    "directory": "packages/node-platform"
+  },
+  "scripts": {
+    "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "lint": "biome check src/"
+  },
+  "dependencies": {
+    "@yakcc/duc": "workspace:*",
+    "@yakcc/shave": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "vitest": "^4.1.5"
+  }
+}

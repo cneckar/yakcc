@@ -30,7 +30,8 @@
       "**/__fixtures__/**/proof/*.json",
       ".worktrees/**",
       "tmp/**",
-      "runtime/**"
+      "runtime/**",
+      "packages/node-platform/vendor/**"
     ]
   }
 }
