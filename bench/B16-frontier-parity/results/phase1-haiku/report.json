@@ -1,0 +1,1494 @@
+{
+  "runs": [
+    "phase1-haiku"
+  ],
+  "tiers": {
+    "hard": [
+      "range-within-range",
+      "canonical-emails",
+      "ranges-overlap",
+      "lowest-allowed-version",
+      "coerce-version",
+      "above-range",
+      "domain-name-valid"
+    ],
+    "medium": [
+      "best-compatible-version"
+    ],
+    "easy": [
+      "sort-iso-timestamps",
+      "deep-copy",
+      "apply-path-updates",
+      "keep-valid-urls",
+      "name-based-uuid",
+      "md5-hex",
+      "spell-suggest",
+      "build-order",
+      "base64-decode",
+      "iso-utc-string",
+      "bump-version",
+      "version-change-kind",
+      "sort-versions",
+      "sha1-hex",
+      "uuid-v3",
+      "iban-valid",
+      "isbn-valid",
+      "ip-address-valid",
+      "credit-card-valid",
+      "isin-valid",
+      "mac-address-valid",
+      "lat-long-valid",
+      "ean-valid",
+      "issn-valid",
+      "json-pointer-get",
+      "edit-distance"
+    ]
+  },
+  "arms": {
+    "S-haiku": {
+      "tasks": 34,
+      "meanPass1": 0.782,
+      "dollars": 0.6019,
+      "perCorrect": 0.004525
+    },
+    "S-haiku-max": {
+      "tasks": 34,
+      "meanPass1": 0.418,
+      "dollars": 2.0949,
+      "perCorrect": 0.030361
+    },
+    "R-haiku": {
+      "tasks": 34,
+      "meanPass1": 0.912,
+      "dollars": 0.2253,
+      "perCorrect": 0.001817
+    },
+    "O-haiku": {
+      "tasks": 34,
+      "meanPass1": 0.949,
+      "dollars": 0.1609,
+      "perCorrect": 0.001247
+    }
+  },
+  "hypotheses": {
+    "H1_parity": "pending: needs phase 2 (frontier scratch arms)",
+    "H2_cost": "pending: needs phase 2 (frontier scratch arms)",
+    "H3_noHarm": {
+      "tasks": 26,
+      "meanPassDiff": 0,
+      "costRatioGeo": 0.9346831533684651,
+      "holds": true
+    },
+    "H5_lift": {
+      "tasks": 7,
+      "meanLift": 0.5714285714285714,
+      "ci": [
+        0.14285714285714285,
+        0.8571428571428571
+      ],
+      "holds": false
+    },
+    "discoveryLoss": {
+      "tasks": 34,
+      "meanOracleMinusRouted": 0.03676470588235294,
+      "ci": [
+        -0.007352941176470588,
+        0.09558823529411764
+      ]
+    },
+    "H4_byFamily": {
+      "versioning": {
+        "tasks": 9,
+        "routedPass1": 0.8888888888888888,
+        "haikuScratchPass1": 0.4,
+        "bestScratchPass1": 0.4
+      },
+      "dates": {
+        "tasks": 2,
+        "routedPass1": 1,
+        "haikuScratchPass1": 1,
+        "bestScratchPass1": 1
+      },
+      "data": {
+        "tasks": 6,
+        "routedPass1": 1,
+        "haikuScratchPass1": 1,
+        "bestScratchPass1": 1
+      },
+      "validation": {
+        "tasks": 12,
+        "routedPass1": 0.8333333333333334,
+        "haikuScratchPass1": 0.8333333333333334,
+        "bestScratchPass1": 0.8333333333333334
+      },
+      "hashing": {
+        "tasks": 5,
+        "routedPass1": 1,
+        "haikuScratchPass1": 1,
+        "bestScratchPass1": 1
+      }
+    }
+  },
+  "perTask": [
+    {
+      "task": "best-compatible-version",
+      "family": "versioning",
+      "tier": "medium",
+      "oneShot": null,
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 0.6,
+          "caseShare": 0.6,
+          "perAttempt": 0.013381,
+          "perCorrect": 0.022301,
+          "meanOutput": 26718
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016022,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001575,
+          "perCorrect": 0.001575,
+          "meanOutput": 2702
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000926,
+          "perCorrect": 0.000926,
+          "meanOutput": 1756
+        }
+      }
+    },
+    {
+      "task": "range-within-range",
+      "family": "versioning",
+      "tier": "hard",
+      "oneShot": null,
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016015,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016015,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001105,
+          "perCorrect": 0.001105,
+          "meanOutput": 1775
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000722,
+          "perCorrect": 0.000722,
+          "meanOutput": 1340
+        }
+      }
+    },
+    {
+      "task": "sort-iso-timestamps",
+      "family": "dates",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.003639,
+          "perCorrect": 0.003639,
+          "meanOutput": 7235
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016022,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.006511,
+          "perCorrect": 0.006511,
+          "meanOutput": 12515
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.002727,
+          "perCorrect": 0.002727,
+          "meanOutput": 5284
+        }
+      }
+    },
+    {
+      "task": "deep-copy",
+      "family": "data",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.002597,
+          "perCorrect": 0.002597,
+          "meanOutput": 5164
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016015,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.002482,
+          "perCorrect": 0.002482,
+          "meanOutput": 4597
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000292,
+          "perCorrect": 0.000292,
+          "meanOutput": 530
+        }
+      }
+    },
+    {
+      "task": "apply-path-updates",
+      "family": "data",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001546,
+          "perCorrect": 0.001546,
+          "meanOutput": 3059
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016017,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000887,
+          "perCorrect": 0.000887,
+          "meanOutput": 1723
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000303,
+          "perCorrect": 0.000303,
+          "meanOutput": 553
+        }
+      }
+    },
+    {
+      "task": "canonical-emails",
+      "family": "validation",
+      "tier": "hard",
+      "oneShot": null,
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0.955,
+          "perAttempt": 0.000588,
+          "perCorrect": null,
+          "meanOutput": 1134
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0.955,
+          "perAttempt": 0.003689,
+          "perCorrect": null,
+          "meanOutput": 7337
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 0,
+          "caseShare": 0.955,
+          "perAttempt": 0.000677,
+          "perCorrect": null,
+          "meanOutput": 1295
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 0.25,
+          "caseShare": 0.966,
+          "perAttempt": 0.002918,
+          "perCorrect": 0.01167,
+          "meanOutput": 5561
+        }
+      }
+    },
+    {
+      "task": "keep-valid-urls",
+      "family": "validation",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000947,
+          "perCorrect": 0.000947,
+          "meanOutput": 1859
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016017,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000677,
+          "perCorrect": 0.000677,
+          "meanOutput": 1302
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001539,
+          "perCorrect": 0.001539,
+          "meanOutput": 2729
+        }
+      }
+    },
+    {
+      "task": "name-based-uuid",
+      "family": "hashing",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.002216,
+          "perCorrect": 0.002216,
+          "meanOutput": 4394
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0.2,
+          "caseShare": 0.2,
+          "perAttempt": 0.015443,
+          "perCorrect": 0.077216,
+          "meanOutput": 30849
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.003028,
+          "perCorrect": 0.003028,
+          "meanOutput": 5479
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000258,
+          "perCorrect": 0.000258,
+          "meanOutput": 453
+        }
+      }
+    },
+    {
+      "task": "md5-hex",
+      "family": "hashing",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.002401,
+          "perCorrect": 0.002401,
+          "meanOutput": 4776
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016013,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001931,
+          "perCorrect": 0.001931,
+          "meanOutput": 3540
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.00097,
+          "perCorrect": 0.00097,
+          "meanOutput": 1887
+        }
+      }
+    },
+    {
+      "task": "spell-suggest",
+      "family": "data",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.00053,
+          "perCorrect": 0.00053,
+          "meanOutput": 1033
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.010587,
+          "perCorrect": 0.010587,
+          "meanOutput": 21148
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000595,
+          "perCorrect": 0.000595,
+          "meanOutput": 1145
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000242,
+          "perCorrect": 0.000242,
+          "meanOutput": 420
+        }
+      }
+    },
+    {
+      "task": "build-order",
+      "family": "data",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000859,
+          "perCorrect": 0.000859,
+          "meanOutput": 1690
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0.8,
+          "caseShare": 0.8,
+          "perAttempt": 0.013639,
+          "perCorrect": 0.017049,
+          "meanOutput": 27250
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000756,
+          "perCorrect": 0.000756,
+          "meanOutput": 1467
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000986,
+          "perCorrect": 0.000986,
+          "meanOutput": 1809
+        }
+      }
+    },
+    {
+      "task": "base64-decode",
+      "family": "hashing",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000701,
+          "perCorrect": 0.000701,
+          "meanOutput": 1373
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.009936,
+          "perCorrect": 0.009936,
+          "meanOutput": 19842
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000741,
+          "perCorrect": 0.000741,
+          "meanOutput": 1435
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000461,
+          "perCorrect": 0.000461,
+          "meanOutput": 751
+        }
+      }
+    },
+    {
+      "task": "iso-utc-string",
+      "family": "dates",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000832,
+          "perCorrect": 0.000832,
+          "meanOutput": 1640
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0.8,
+          "caseShare": 0.8,
+          "perAttempt": 0.00748,
+          "perCorrect": 0.00935,
+          "meanOutput": 14935
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000206,
+          "perCorrect": 0.000206,
+          "meanOutput": 371
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001861,
+          "perCorrect": 0.001861,
+          "meanOutput": 3505
+        }
+      }
+    },
+    {
+      "task": "ranges-overlap",
+      "family": "versioning",
+      "tier": "hard",
+      "oneShot": null,
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016018,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016018,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001176,
+          "perCorrect": 0.001176,
+          "meanOutput": 1954
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.00048,
+          "perCorrect": 0.00048,
+          "meanOutput": 898
+        }
+      }
+    },
+    {
+      "task": "lowest-allowed-version",
+      "family": "versioning",
+      "tier": "hard",
+      "oneShot": null,
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016025,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016025,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.00117,
+          "perCorrect": 0.00117,
+          "meanOutput": 1808
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000674,
+          "perCorrect": 0.000674,
+          "meanOutput": 1183
+        }
+      }
+    },
+    {
+      "task": "coerce-version",
+      "family": "versioning",
+      "tier": "hard",
+      "oneShot": null,
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0.933,
+          "perAttempt": 0.001262,
+          "perCorrect": null,
+          "meanOutput": 2477
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016023,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 0,
+          "caseShare": 0.939,
+          "perAttempt": 0.001063,
+          "perCorrect": null,
+          "meanOutput": 2062
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 0.5,
+          "caseShare": 0.97,
+          "perAttempt": 0.001858,
+          "perCorrect": 0.003716,
+          "meanOutput": 3510
+        }
+      }
+    },
+    {
+      "task": "bump-version",
+      "family": "versioning",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.003888,
+          "perCorrect": 0.003888,
+          "meanOutput": 7704
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016035,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.004103,
+          "perCorrect": 0.004103,
+          "meanOutput": 8013
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001303,
+          "perCorrect": 0.001303,
+          "meanOutput": 2494
+        }
+      }
+    },
+    {
+      "task": "version-change-kind",
+      "family": "versioning",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.004145,
+          "perCorrect": 0.004145,
+          "meanOutput": 8228
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016031,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.005189,
+          "perCorrect": 0.005189,
+          "meanOutput": 9830
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.003323,
+          "perCorrect": 0.003323,
+          "meanOutput": 6453
+        }
+      }
+    },
+    {
+      "task": "sort-versions",
+      "family": "versioning",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.00125,
+          "perCorrect": 0.00125,
+          "meanOutput": 2449
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0.8,
+          "caseShare": 0.8,
+          "perAttempt": 0.014779,
+          "perCorrect": 0.018474,
+          "meanOutput": 29507
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.002939,
+          "perCorrect": 0.002939,
+          "meanOutput": 5630
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001548,
+          "perCorrect": 0.001548,
+          "meanOutput": 3026
+        }
+      }
+    },
+    {
+      "task": "above-range",
+      "family": "versioning",
+      "tier": "hard",
+      "oneShot": null,
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0.554,
+          "perAttempt": 0.011205,
+          "perCorrect": null,
+          "meanOutput": 22366
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016022,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001278,
+          "perCorrect": 0.001278,
+          "meanOutput": 2151
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000296,
+          "perCorrect": 0.000296,
+          "meanOutput": 529
+        }
+      }
+    },
+    {
+      "task": "sha1-hex",
+      "family": "hashing",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001656,
+          "perCorrect": 0.001656,
+          "meanOutput": 3287
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0.6,
+          "caseShare": 0.6,
+          "perAttempt": 0.013414,
+          "perCorrect": 0.022357,
+          "meanOutput": 26804
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.002346,
+          "perCorrect": 0.002346,
+          "meanOutput": 4172
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001352,
+          "perCorrect": 0.001352,
+          "meanOutput": 2446
+        }
+      }
+    },
+    {
+      "task": "uuid-v3",
+      "family": "hashing",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.002944,
+          "perCorrect": 0.002944,
+          "meanOutput": 5845
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016021,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001438,
+          "perCorrect": 0.001438,
+          "meanOutput": 2505
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000592,
+          "perCorrect": 0.000592,
+          "meanOutput": 1117
+        }
+      }
+    },
+    {
+      "task": "iban-valid",
+      "family": "validation",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.0046,
+          "perCorrect": 0.0046,
+          "meanOutput": 9159
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016021,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001194,
+          "perCorrect": 0.001194,
+          "meanOutput": 1995
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000401,
+          "perCorrect": 0.000401,
+          "meanOutput": 727
+        }
+      }
+    },
+    {
+      "task": "isbn-valid",
+      "family": "validation",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000585,
+          "perCorrect": 0.000585,
+          "meanOutput": 1121
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.006155,
+          "perCorrect": 0.006155,
+          "meanOutput": 12261
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000742,
+          "perCorrect": 0.000742,
+          "meanOutput": 1417
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001544,
+          "perCorrect": 0.001544,
+          "meanOutput": 2908
+        }
+      }
+    },
+    {
+      "task": "ip-address-valid",
+      "family": "validation",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.002982,
+          "perCorrect": 0.002982,
+          "meanOutput": 5912
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0,
+          "perAttempt": 0.016025,
+          "perCorrect": null,
+          "meanOutput": 32000
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.004882,
+          "perCorrect": 0.004882,
+          "meanOutput": 9395
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001413,
+          "perCorrect": 0.001413,
+          "meanOutput": 2701
+        }
+      }
+    },
+    {
+      "task": "credit-card-valid",
+      "family": "validation",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001468,
+          "perCorrect": 0.001468,
+          "meanOutput": 2884
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.012497,
+          "perCorrect": 0.012497,
+          "meanOutput": 24943
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.002385,
+          "perCorrect": 0.002385,
+          "meanOutput": 4601
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.002026,
+          "perCorrect": 0.002026,
+          "meanOutput": 3923
+        }
+      }
+    },
+    {
+      "task": "isin-valid",
+      "family": "validation",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001129,
+          "perCorrect": 0.001129,
+          "meanOutput": 2224
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.00447,
+          "perCorrect": 0.00447,
+          "meanOutput": 8904
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.00074,
+          "perCorrect": 0.00074,
+          "meanOutput": 1428
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000577,
+          "perCorrect": 0.000577,
+          "meanOutput": 1005
+        }
+      }
+    },
+    {
+      "task": "mac-address-valid",
+      "family": "validation",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.00061,
+          "perCorrect": 0.00061,
+          "meanOutput": 1182
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.005748,
+          "perCorrect": 0.005748,
+          "meanOutput": 11459
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001047,
+          "perCorrect": 0.001047,
+          "meanOutput": 2039
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001005,
+          "perCorrect": 0.001005,
+          "meanOutput": 1872
+        }
+      }
+    },
+    {
+      "task": "lat-long-valid",
+      "family": "validation",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001012,
+          "perCorrect": 0.001012,
+          "meanOutput": 1985
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.013408,
+          "perCorrect": 0.013408,
+          "meanOutput": 26777
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000764,
+          "perCorrect": 0.000764,
+          "meanOutput": 1472
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001626,
+          "perCorrect": 0.001626,
+          "meanOutput": 3153
+        }
+      }
+    },
+    {
+      "task": "ean-valid",
+      "family": "validation",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.00046,
+          "perCorrect": 0.00046,
+          "meanOutput": 883
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.002825,
+          "perCorrect": 0.002825,
+          "meanOutput": 5613
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000416,
+          "perCorrect": 0.000416,
+          "meanOutput": 778
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 0.75,
+          "caseShare": 0.974,
+          "perAttempt": 0.001526,
+          "perCorrect": 0.002034,
+          "meanOutput": 2984
+        }
+      }
+    },
+    {
+      "task": "issn-valid",
+      "family": "validation",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000612,
+          "perCorrect": 0.000612,
+          "meanOutput": 1185
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.003946,
+          "perCorrect": 0.003946,
+          "meanOutput": 7853
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000402,
+          "perCorrect": 0.000402,
+          "meanOutput": 748
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000663,
+          "perCorrect": 0.000663,
+          "meanOutput": 1217
+        }
+      }
+    },
+    {
+      "task": "domain-name-valid",
+      "family": "validation",
+      "tier": "hard",
+      "oneShot": null,
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0.974,
+          "perAttempt": 0.001198,
+          "perCorrect": null,
+          "meanOutput": 2350
+        },
+        "S-haiku-max": {
+          "n": 5,
+          "pass1": 0,
+          "caseShare": 0.195,
+          "perAttempt": 0.015787,
+          "perCorrect": null,
+          "meanOutput": 31529
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 0,
+          "caseShare": 0.974,
+          "perAttempt": 0.000847,
+          "perCorrect": null,
+          "meanOutput": 1631
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 0.75,
+          "caseShare": 0.993,
+          "perAttempt": 0.002117,
+          "perCorrect": 0.002823,
+          "meanOutput": 4039
+        }
+      }
+    },
+    {
+      "task": "json-pointer-get",
+      "family": "data",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.00066,
+          "perCorrect": 0.00066,
+          "meanOutput": 1276
+        },
+        "S-haiku-max": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.007438,
+          "perCorrect": 0.007438,
+          "meanOutput": 14833
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000632,
+          "perCorrect": 0.000632,
+          "meanOutput": 1204
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.001369,
+          "perCorrect": 0.001369,
+          "meanOutput": 2651
+        }
+      }
+    },
+    {
+      "task": "edit-distance",
+      "family": "data",
+      "tier": "easy",
+      "oneShot": "S-haiku",
+      "arms": {
+        "S-haiku": {
+          "n": 5,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000416,
+          "perCorrect": 0.000416,
+          "meanOutput": 804
+        },
+        "S-haiku-max": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.003599,
+          "perCorrect": 0.003599,
+          "meanOutput": 7171
+        },
+        "R-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000395,
+          "perCorrect": 0.000395,
+          "meanOutput": 744
+        },
+        "O-haiku": {
+          "n": 4,
+          "pass1": 1,
+          "caseShare": 1,
+          "perAttempt": 0.000326,
+          "perCorrect": 0.000326,
+          "meanOutput": 589
+        }
+      }
+    }
+  ]
+}
