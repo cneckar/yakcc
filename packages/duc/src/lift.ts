@@ -903,29 +903,6 @@ class Lifter {
     );
   }
 
-  /**
-   * A lowered statement's returns are the function's: in a loop's body, exits of the loop, as the
-   * returns of the statement it was lowered from are (#1330).
-   */
-  private noteExits(lowered: Node | undefined): Node | undefined {
-    for (const r of lowered?.getDescendantsOfKind(SyntaxKind.ReturnStatement) ?? [])
-      if (!isInsideNestedFunction(r, lowered as Node)) this.loweredExits.add(r.compilerNode);
-    return lowered;
-  }
-
-  /** The returns of lowered statements (see noteExits). */
-  private readonly loweredExits = new Set<import("ts-morph").ts.Node>();
-
-  /** Whether a statement holds an exit of the loop whose body is being lifted. */
-  private holdsLoopExit(stmt: Node, loop: Node): boolean {
-    return (
-      containsLoopJump(stmt, loop) ||
-      stmt
-        .getDescendantsOfKind(SyntaxKind.ReturnStatement)
-        .some((r) => this.loweredExits.has(r.compilerNode))
-    );
-  }
-
   private tryCount = 0;
 
   private classRewriteCount = 0;
@@ -1113,46 +1090,11 @@ class Lifter {
    * leaves the statement.
    */
   private lowerTry(t: import("ts-morph").TryStatement): Node | undefined {
+    const shape = tryShape(t);
+    if (shape === undefined) return undefined;
+    const { parts, vars, awaits } = shape;
     const handler = t.getCatchClause();
     const finalizer = t.getFinallyBlock();
-    const parts = [
-      t.getTryBlock(),
-      ...(handler !== undefined ? [handler.getBlock()] : []),
-      ...(finalizer !== undefined ? [finalizer] : []),
-    ];
-    const vars: string[] = [];
-    let awaits = false;
-    for (const part of parts) {
-      const own = (n: Node): boolean => !isInsideNestedFunction(n, part);
-      for (const list of part.getDescendantsOfKind(SyntaxKind.VariableDeclarationList)) {
-        if (!own(list) || list.getDeclarationKind() !== "var") continue;
-        // A var belongs to the function: only a plain name can be declared there instead.
-        const header = list.getParent();
-        if (Node.isForInStatement(header) || Node.isForOfStatement(header)) return undefined;
-        for (const d of list.getDeclarations()) {
-          if (!Node.isIdentifier(d.getNameNode())) return undefined;
-          if (!vars.includes(d.getName())) vars.push(d.getName());
-        }
-      }
-      // A yield cannot move into a closure; an await can, into an async one.
-      if (part.getDescendantsOfKind(SyntaxKind.YieldExpression).some(own)) return undefined;
-      if (part.getDescendantsOfKind(SyntaxKind.AwaitExpression).some(own)) awaits = true;
-      if (part.getDescendantsOfKind(SyntaxKind.ForOfStatement).some((f) => own(f) && f.isAwaited()))
-        awaits = true;
-      const inside = (target: Node | undefined): boolean =>
-        target?.getAncestors().some((a) => a.compilerNode === part.compilerNode) === true;
-      for (const j of [
-        ...part.getDescendantsOfKind(SyntaxKind.BreakStatement),
-        ...part.getDescendantsOfKind(SyntaxKind.ContinueStatement),
-      ]) {
-        if (!own(j)) continue;
-        if (j.getLabel() !== undefined) return undefined;
-        const target = Node.isBreakStatement(j)
-          ? breakTarget(j)
-          : j.getAncestors().find((a) => isLoopStatement(a));
-        if (!inside(target)) return undefined;
-      }
-    }
     const returns = parts.flatMap((part) =>
       part
         .getDescendantsOfKind(SyntaxKind.ReturnStatement)
@@ -1227,7 +1169,33 @@ class Lifter {
       .getSourceFile()
       .getProject()
       .createSourceFile(`__try${n}_${t.getStart()}.ts`, source, { overwrite: true });
-    return file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0];
+    // The return after the call is the try's returns: in a loop's body, an exit of the loop (#1330).
+    return this.noteExits(
+      file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0],
+    );
+  }
+
+  /**
+   * A lowered statement's returns are the function's: in a loop's body, exits of the loop, as the
+   * returns of the statement it was lowered from are (#1330).
+   */
+  private noteExits(lowered: Node | undefined): Node | undefined {
+    for (const r of lowered?.getDescendantsOfKind(SyntaxKind.ReturnStatement) ?? [])
+      if (!isInsideNestedFunction(r, lowered as Node)) this.loweredExits.add(r.compilerNode);
+    return lowered;
+  }
+
+  /** The returns of lowered statements (see noteExits). */
+  private readonly loweredExits = new Set<import("ts-morph").ts.Node>();
+
+  /** Whether a statement holds an exit of the loop whose body is being lifted. */
+  private holdsLoopExit(stmt: Node, loop: Node): boolean {
+    return (
+      containsLoopJump(stmt, loop) ||
+      stmt
+        .getDescendantsOfKind(SyntaxKind.ReturnStatement)
+        .some((r) => this.loweredExits.has(r.compilerNode))
+    );
   }
 
   /**
@@ -1481,17 +1449,29 @@ class Lifter {
     const derived =
       Node.isConstructorDeclaration(fn) &&
       (fn.getParent() as import("ts-morph").ClassDeclaration).getHeritageClauses().length > 0;
-    const supers = fn.getDescendantsOfKind(SyntaxKind.SuperKeyword);
+    // Its own: one in a function or class inside it is that function's (#1330).
+    const supers = fn
+      .getDescendantsOfKind(SyntaxKind.SuperKeyword)
+      .filter(
+        (k) =>
+          receiverOwner(k) === fn ||
+          (Node.isArrowFunction(fn) && receiverOwner(k) === receiverOwner(fn)),
+      );
     // `super(..);`, or `const v = super(..);` as the TypeScript lowering writes it.
     const superStatement = (k: Node): boolean => {
       const call = k.getParent();
       if (!Node.isCallExpression(call) || call.getExpression() !== k) return false;
       const up = call.getParent();
       const statement = Node.isVariableDeclaration(up) ? up.getParent()?.getParent() : up;
-      return (
-        (Node.isExpressionStatement(up) || Node.isVariableStatement(statement)) &&
-        statement?.getParent()?.getParent() === fn
-      );
+      if (!(Node.isExpressionStatement(up) || Node.isVariableStatement(statement))) return false;
+      // A statement of the constructor's body, or of a branch inside it (#1330): each path makes the
+      // receiver once, and the receiver after an if is the join of its sides'. Not in a loop or a
+      // nested function, where it could run other than once.
+      for (let p = statement?.getParent(); p !== undefined; p = p.getParent()) {
+        if (p === fn) return true;
+        if (isFunctionLikeNode(p) || isLoopStatement(p) || Node.isTryStatement(p)) return false;
+      }
+      return false;
     };
     // `super.name` (read or called) in a member of a derived class, or an arrow inside one: the
     // parent's member, with this function's receiver (#1294). A write through `super` is not.
@@ -1990,6 +1970,18 @@ class Lifter {
       });
       this.reportReturn(returned as ValueId);
       return;
+    }
+
+    // A derived constructor's receiver made on the sides (#1330): it is live after the if when every
+    // side that falls through made it. It joins as a name would; the join's before-value is never read.
+    if (!before.has(THIS)) {
+      const made = [
+        ...(thenDead ? [] : [thenEnv.get(THIS)]),
+        ...(elseDead ? [] : [elseEnv.get(THIS)]),
+      ];
+      if (made.length > 0 && made.every((v) => v !== undefined)) {
+        before.set(THIS, made[0] as ValueId);
+      }
     }
 
     // Join: for every name live before the if, if the two branches disagree emit
@@ -4707,9 +4699,10 @@ function loopJumpsOf(loop: Node): Node[] {
     ...loop
       .getDescendantsOfKind(SyntaxKind.ReturnStatement)
       .filter((r) => !isInsideNestedFunction(r, loop)),
-    // A throw ends its path; one inside an inner loop is that loop's.
+    // A throw ends its path; one inside an inner loop is that loop's, and one inside a try is inside
+    // the closures the try lowers to (#1330).
     ...loop.getDescendantsOfKind(SyntaxKind.ThrowStatement).filter((t) => {
-      if (isInsideNestedFunction(t, loop)) return false;
+      if (isInsideNestedFunction(t, loop) || outermostTry(t, loop) !== undefined) return false;
       for (let p: Node | undefined = t.getParent(); p !== undefined; p = p.getParent())
         if (isLoopStatement(p)) return p === loop;
       return false;
@@ -4732,6 +4725,69 @@ function containsLoopJump(stmt: Node, loop: Node): boolean {
 }
 
 /**
+ * A try statement's blocks, the function's own names they declare with `var`, and whether they await:
+ * what Lifter.lowerTry needs. Undefined when it cannot be lowered: a var that is not a plain name, a
+ * yield, or a break or continue that leaves the statement.
+ */
+function tryShape(
+  t: import("ts-morph").TryStatement,
+): { parts: import("ts-morph").Block[]; vars: string[]; awaits: boolean } | undefined {
+  const handler = t.getCatchClause();
+  const finalizer = t.getFinallyBlock();
+  const parts = [
+    t.getTryBlock(),
+    ...(handler !== undefined ? [handler.getBlock()] : []),
+    ...(finalizer !== undefined ? [finalizer] : []),
+  ];
+  const vars: string[] = [];
+  let awaits = false;
+  for (const part of parts) {
+    const own = (n: Node): boolean => !isInsideNestedFunction(n, part);
+    for (const list of part.getDescendantsOfKind(SyntaxKind.VariableDeclarationList)) {
+      if (!own(list) || list.getDeclarationKind() !== "var") continue;
+      // A var belongs to the function: only a plain name can be declared there instead.
+      const header = list.getParent();
+      if (Node.isForInStatement(header) || Node.isForOfStatement(header)) return undefined;
+      for (const d of list.getDeclarations()) {
+        if (!Node.isIdentifier(d.getNameNode())) return undefined;
+        if (!vars.includes(d.getName())) vars.push(d.getName());
+      }
+    }
+    // A yield cannot move into a closure; an await can, into an async one.
+    if (part.getDescendantsOfKind(SyntaxKind.YieldExpression).some(own)) return undefined;
+    if (part.getDescendantsOfKind(SyntaxKind.AwaitExpression).some(own)) awaits = true;
+    if (part.getDescendantsOfKind(SyntaxKind.ForOfStatement).some((f) => own(f) && f.isAwaited()))
+      awaits = true;
+    const inside = (target: Node | undefined): boolean =>
+      target?.getAncestors().some((a) => a.compilerNode === part.compilerNode) === true;
+    for (const j of [
+      ...part.getDescendantsOfKind(SyntaxKind.BreakStatement),
+      ...part.getDescendantsOfKind(SyntaxKind.ContinueStatement),
+    ]) {
+      if (!own(j)) continue;
+      if (j.getLabel() !== undefined) return undefined;
+      const target = Node.isBreakStatement(j)
+        ? breakTarget(j)
+        : j.getAncestors().find((a) => isLoopStatement(a));
+      if (!inside(target)) return undefined;
+    }
+  }
+  return { parts, vars, awaits };
+}
+
+/** The outermost try statement between a node and `boundary`, if any. */
+function outermostTry(node: Node, boundary: Node): import("ts-morph").TryStatement | undefined {
+  let found: import("ts-morph").TryStatement | undefined;
+  for (
+    let p = node.getParent();
+    p !== undefined && p.compilerNode !== boundary.compilerNode;
+    p = p.getParent()
+  )
+    if (Node.isTryStatement(p)) found = p;
+  return found;
+}
+
+/**
  * Whether a loop's jumps can be lifted as exits: none labelled, none inside a nested loop or a switch
  * of the loop that could not take them, no throw, and a block holding a jump declares no name the
  * rest of the body could read.
@@ -4746,8 +4802,12 @@ function jumpsSupported(loop: Node): boolean {
   // Every loop statement has a body statement.
   const body = (loop as import("ts-morph").WhileStatement).getStatement();
   for (const j of loopJumpsOf(loop)) {
+    // A return inside a try is the return after the call the try lowers to (#1330): it is written
+    // where the try is.
+    const t = Node.isReturnStatement(j) ? outermostTry(j, body) : undefined;
+    if (t !== undefined && tryShape(t) === undefined) return false;
     for (
-      let p: Node | undefined = j.getParent();
+      let p: Node | undefined = t !== undefined ? t.getParent() : j.getParent();
       p !== undefined && p.compilerNode !== body.compilerNode;
       p = p.getParent()
     ) {

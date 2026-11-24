@@ -580,11 +580,20 @@ function emitFunction(
     if (node.closure !== undefined) {
       const recursive = node.closure.nodes.some((n) => n.label === "function-self");
       const arrow = label === "closure" || label === "async closure";
+      // A capture is a value: a loop's carried variable is reassigned, so the closure captures a const
+      // of its value where it is made (#1330), as a for loop's header binding is captured per pass.
+      const snapshots: string[] = [];
+      const captured = node.inputs.map((v, i) => {
+        const r = ref(v);
+        if (!carriedNames.has(r)) return r;
+        snapshots.push(`const ${name}_c${i} = ${r};`);
+        return `${name}_c${i}`;
+      });
       // A recursive arrow is the const it initializes, and reads itself by that name, as written.
       const inner = emitFunction(
         node.closure,
         `${prefix}${node.id}_`,
-        node.inputs.map((v) => ref(v)),
+        captured,
         imports,
         false,
         recursive && arrow ? name : "Fn_",
@@ -602,7 +611,7 @@ function emitFunction(
           : base === "closure"
             ? `${isAsync ? "async " : ""}(${params}) => {`
             : `${fn} (${params}) {`;
-      return [`const ${name} = ${head}`, ...inner.body.map((l) => `  ${l}`), "};"];
+      return [...snapshots, `const ${name} = ${head}`, ...inner.body.map((l) => `  ${l}`), "};"];
     }
     // A reassigned variable is a temporary, and the value's own name is a const: a closure that
     // captures the value then captures a name that is never assigned again.
@@ -699,10 +708,14 @@ function emitFunction(
     ];
   };
 
+  /** The names of loops' carried variables: assigned at the end of each pass. */
+  const carriedNames = new Set<string>();
+
   const emitLoop = (loop: DucNode): string[] => {
     const rec = loop.loop as DucLoop;
     const count = rec.carry.length;
     const carried = rec.carry.map((v) => nameOf(v));
+    for (const c of carried) carriedNames.add(c);
     const before = carried.map((name, i) => `let ${name} = ${ref(loop.inputs[i] as ValueId)};`);
     const guarded = guardLoops.has(loop.id);
     const header =

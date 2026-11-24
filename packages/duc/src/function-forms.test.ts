@@ -5,6 +5,7 @@
  * source computes, and the round trip holds.
  */
 import { describe, expect, it } from "vitest";
+import { runnable } from "./__fixtures__/runnable.js";
 import { graphIdentity } from "./canonical.js";
 import { emitTypeScript } from "./emit-ts.js";
 import { liftAtom } from "./lift.js";
@@ -104,6 +105,58 @@ describe("a return inside a switch inside a loop (#1330)", () => {
       expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
     });
   }
+});
+
+describe("a try with a return inside a loop (#1330)", () => {
+  const LOOPS: [string, string, unknown][] = [
+    [
+      "a retry loop: return from the try, rethrow from the handler on the last pass",
+      "export function f(t) { const tries = []; for (let i = 1; i <= t; i++) { try { tries.push(i); if (i < 3) throw new Error('again'); return [i * 2, tries]; } catch (e) { if (i === t) throw e; } } }",
+      4,
+    ],
+    [
+      "for-of: a return from the try, a handler that recovers, statements after the try",
+      "export function f(xs) { let n = 0; for (const x of xs) { try { if (x < 0) return 'neg'; n += JSON.parse(x); } catch (e) { n += 100; } n++; } return n; }",
+      ["1", "x", "2"],
+    ],
+    [
+      "for-of, the return taken",
+      "export function f(xs) { let n = 0; for (const x of xs) { try { if (x < 0) return 'neg'; n += JSON.parse(x); } catch (e) { n += 100; } n++; } return n; }",
+      ["1", -1, "2"],
+    ],
+    [
+      "while: a return from the handler",
+      "export function f(t) { let i = 0; while (i < t) { i++; try { if (i === 2) throw new Error('two'); } catch (e) { return e.message + i; } } return 'none'; }",
+      5,
+    ],
+    [
+      "a finally that runs on the return",
+      "export function f(t) { const log = []; for (let i = 0; i < t; i++) { try { if (i === 1) return log; log.push('t' + i); } finally { log.push('f' + i); } } return log; }",
+      3,
+    ],
+  ];
+  for (const [name, source, input] of LOOPS) {
+    it(name, () => {
+      const g = liftAtom(source);
+      expect(opaque(g)).toEqual([]);
+      const code = emitTypeScript(g);
+      const go = (c: string): unknown =>
+        (
+          new Function(`${runnable(c).replace(/^export /m, "")}; return f;`)() as (
+            x: unknown,
+          ) => unknown
+        )(input);
+      expect(go(code), code).toEqual(go(source));
+      expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    });
+  }
+
+  it("a break that leaves the try is not lifted yet", () => {
+    const g = liftAtom(
+      "export function f(xs) { let n = 0; for (const x of xs) { try { if (x) break; n++; } catch (e) {} } return n; }",
+    );
+    expect(opaque(g).length).toBeGreaterThan(0);
+  });
 });
 
 describe("for await (#1330)", () => {
