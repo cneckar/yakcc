@@ -43,6 +43,7 @@ export interface JvmModule {
 const MAIN = "Yk";
 const NUMS = "YkNums";
 const ARR = "YkArr";
+const OBJ = "YkObj";
 const OBJECT = "java/lang/Object";
 
 /** Each type's JVM descriptor. */
@@ -52,6 +53,7 @@ const DESC: Record<WT, string> = {
   str: "Ljava/lang/String;",
   nums: `L${NUMS};`,
   arr: `L${ARR};`,
+  obj: `L${OBJ};`,
   any: `L${OBJECT};`,
 };
 const width = (t: WT): number => (t === "f64" ? 2 : 1);
@@ -666,6 +668,7 @@ function encodeFunction(
         } else if (x.to === "str") a.checkcast("java/lang/String");
         else if (x.to === "nums") a.checkcast(NUMS);
         else if (x.to === "arr") a.checkcast(ARR);
+        else if (x.to === "obj") a.checkcast(OBJ);
         break;
       case "ref.eq":
         a.bool(OP.if_acmpeq, 2);
@@ -865,6 +868,7 @@ function primitiveCode(pool: Pool, key: string, params: readonly WT[], result: W
         ["java/lang/Double", 3],
         ["java/lang/String", 4],
         [NUMS, 5],
+        [OBJ, 7],
       ];
       const notNull = a.label();
       p(0);
@@ -914,6 +918,46 @@ function primitiveCode(pool: Pool, key: string, params: readonly WT[], result: W
       a.checkcast(NUMS);
       ret();
       break;
+    case "__ykObj":
+      p(0);
+      a.checkcast(OBJ);
+      ret();
+      break;
+    case "__ykObjNew": {
+      // A new object of the class: two empty arrays.
+      const emptyArr = (): void => {
+        a.op([OP.new, ...u2(pool.cls(ARR))], 1);
+        a.op([OP.dup], 1);
+        a.invokespecial(ARR, "<init>", "()V");
+        a.op([OP.dup], 1);
+        a.iconst(0);
+        a.op([OP.anewarray, ...u2(pool.cls(OBJECT))], 0);
+        a.putfield(ARR, "data", `[L${OBJECT};`);
+      };
+      a.op([OP.new, ...u2(pool.cls(OBJ))], 1);
+      a.op([OP.dup], 1);
+      a.invokespecial(OBJ, "<init>", "()V");
+      a.op([OP.dup], 1);
+      emptyArr();
+      a.putfield(OBJ, "keys", DESC.arr);
+      a.op([OP.dup], 1);
+      emptyArr();
+      a.putfield(OBJ, "vals", DESC.arr);
+      a.op([OP.dup], 1);
+      p(0);
+      a.putfield(OBJ, "cls", DESC.any);
+      ret();
+      break;
+    }
+    case "__ykObjKeys":
+    case "__ykObjVals":
+    case "__ykObjCls": {
+      const field = key === "__ykObjKeys" ? "keys" : key === "__ykObjVals" ? "vals" : "cls";
+      p(0);
+      a.getfield(OBJ, field, field === "cls" ? DESC.any : DESC.arr);
+      ret();
+      break;
+    }
     case "__ykUndef":
       a.getstatic(MAIN, "UNDEF", DESC.any);
       ret();
@@ -1152,6 +1196,14 @@ function hostHelper(pool: Pool, name: string): Asm {
 
 /** The class of an array: its length, its storage, and a constructor. */
 function arrayClass(name: string, store: string): Uint8Array {
+  return dataClass(name, [
+    { name: "len", desc: "I" },
+    { name: "data", desc: store },
+  ]);
+}
+
+/** A class of public fields and a constructor that sets none of them. */
+function dataClass(name: string, fields: readonly { name: string; desc: string }[]): Uint8Array {
   const pool = new Pool();
   const init = new Asm(pool);
   init.load("any", 0);
@@ -1161,10 +1213,7 @@ function arrayClass(name: string, store: string): Uint8Array {
   return classFile(
     pool,
     name,
-    [
-      { name: "len", desc: "I", flags: 0x0001 },
-      { name: "data", desc: store, flags: 0x0001 },
-    ],
+    fields.map((f) => ({ ...f, flags: 0x0001 })),
     [{ name: "<init>", desc: "()V", flags: 0x0001, code: init }],
   );
 }
@@ -1222,6 +1271,14 @@ export function emitJvm(
       [MAIN, main],
       [NUMS, arrayClass(NUMS, "[D")],
       [ARR, arrayClass(ARR, `[L${OBJECT};`)],
+      [
+        OBJ,
+        dataClass(OBJ, [
+          { name: "keys", desc: DESC.arr },
+          { name: "vals", desc: DESC.arr },
+          { name: "cls", desc: DESC.any },
+        ]),
+      ],
     ]),
     params: f.params,
     result: f.result,
@@ -1240,12 +1297,13 @@ export function emitJvm(
 const HARNESS = `import java.io.*;
 import java.lang.reflect.*;
 public class YkHarness {
-  static Class<?> nums, arr;
+  static Class<?> nums, arr, obj;
   static Object undef;
   public static void main(String[] argv) throws Exception {
     Class<?> yk = Class.forName("Yk");
     nums = Class.forName("YkNums");
     arr = Class.forName("YkArr");
+    obj = Class.forName("YkObj");
     undef = yk.getField("UNDEF").get(null);
     Method f = null;
     for (Method m : yk.getMethods()) if (m.getName().equals("f")) f = m;
@@ -1277,6 +1335,17 @@ public class YkHarness {
       case 't': return Boolean.TRUE;
       case 'f': return Boolean.FALSE;
       case 'n': return bits(r);
+      case 'O': {
+        Object keys = dec("A" + r, Object.class);
+        Object[] kv = (Object[]) arr.getField("data").get(keys);
+        int n = arr.getField("len").getInt(keys) / 2;
+        Object[] ks = new Object[n], vs = new Object[n];
+        for (int i = 0; i < n; i++) { ks[i] = kv[2 * i]; vs[i] = kv[2 * i + 1]; }
+        Object o = obj.getConstructor().newInstance();
+        obj.getField("keys").set(o, mkArr(ks));
+        obj.getField("vals").set(o, mkArr(vs));
+        return o;
+      }
       case 'A': {
         java.util.List<Object> xs = new java.util.ArrayList<>();
         int at = 0;
@@ -1307,6 +1376,12 @@ public class YkHarness {
       }
     }
   }
+  static Object mkArr(Object[] xs) throws Exception {
+    Object o = arr.getConstructor().newInstance();
+    arr.getField("len").setInt(o, xs.length);
+    arr.getField("data").set(o, xs);
+    return o;
+  }
   static String hex(double d) { return String.format("%016x", Double.doubleToRawLongBits(d)); }
   static String enc(Object v, Class<?> t) throws Exception {
     if (t == double.class) return "n" + hex((Double) v);
@@ -1319,6 +1394,18 @@ public class YkHarness {
       StringBuilder b = new StringBuilder("s");
       String s = (String) v;
       for (int i = 0; i < s.length(); i++) b.append(String.format("%04x", (int) s.charAt(i)));
+      return b.toString();
+    }
+    if (obj.isInstance(v)) {
+      Object keys = obj.getField("keys").get(v), vals = obj.getField("vals").get(v);
+      int n = arr.getField("len").getInt(keys);
+      Object[] ks = (Object[]) arr.getField("data").get(keys);
+      Object[] vs = (Object[]) arr.getField("data").get(vals);
+      StringBuilder b = new StringBuilder("O");
+      for (int i = 0; i < n; i++) {
+        String k = enc(ks[i], Object.class), e = enc(vs[i], Object.class);
+        b.append(k.length()).append(':').append(k).append(e.length()).append(':').append(e);
+      }
       return b.toString();
     }
     if (arr.isInstance(v)) {
@@ -1380,6 +1467,11 @@ function encodeValue(v: unknown, t?: WT): string {
     return `s${[...Array(v.length).keys()].map((i) => v.charCodeAt(i).toString(16).padStart(4, "0")).join("")}`;
   if (Array.isArray(v) && t !== "arr" && v.every((e) => typeof e === "number"))
     return `a${v.map((e) => hex16(e as number)).join("")}`;
+  if (v !== null && typeof v === "object" && !Array.isArray(v))
+    return `O${Object.entries(v)
+      .flatMap(([k, e]) => [encodeValue(k), encodeValue(e)])
+      .map((x) => `${x.length}:${x}`)
+      .join("")}`;
   if (Array.isArray(v))
     return `A${v
       .map((e) => {
@@ -1403,6 +1495,12 @@ function decodeValue(s: string): unknown {
     for (let i = 0; i < r.length; i += 4)
       out += String.fromCharCode(Number.parseInt(r.slice(i, i + 4), 16));
     return out;
+  }
+  if (k === "O") {
+    const kv = decodeValue(`A${r}`) as unknown[];
+    const o: Record<string, unknown> = {};
+    for (let i = 0; i < kv.length; i += 2) o[kv[i] as string] = kv[i + 1];
+    return o;
   }
   if (k === "A") {
     const out: unknown[] = [];

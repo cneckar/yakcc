@@ -240,6 +240,16 @@ export const anyValue = fc.oneof(
     ),
     { minLength: 1, maxLength: 3 },
   ),
+  // Plain objects (an object's primitive is "[object Object]"); fc.dictionary's have no prototype.
+  fc
+    .dictionary(
+      fc.constantFrom("a", "b", "x"),
+      fc.oneof(fc.integer(), fc.string({ maxLength: 2 })),
+      {
+        maxKeys: 2,
+      },
+    )
+    .map((d) => ({ ...d })),
 );
 
 // biome-ignore lint/suspicious/noExplicitAny: the operators are ECMAScript's, over any values.
@@ -257,11 +267,28 @@ export const DYNAMIC_OPS: [string, string, (r: unknown) => unknown, Op][] = [
   ["String", "__ykToString", (r) => r, (a) => String(a)],
   ["Number", "__ykToNumber", (r) => r, (a) => Number(a)],
 ];
-/** The same value: by Object.is, an array element by element (nested arrays too). */
-export const same = (a: unknown, b: unknown): boolean =>
-  Array.isArray(a) && Array.isArray(b)
-    ? a.length === b.length && a.every((x, i) => same(x, b[i]))
-    : Object.is(a, b);
+/**
+ * The same value: by Object.is; an array element by element; a plain object key by key, in order
+ * (nested ones too).
+ */
+export const same = (a: unknown, b: unknown): boolean => {
+  if (Array.isArray(a) && Array.isArray(b))
+    return a.length === b.length && a.every((x, i) => same(x, b[i]));
+  if (a !== null && b !== null && typeof a === "object" && typeof b === "object") {
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    return (
+      !Array.isArray(a) &&
+      !Array.isArray(b) &&
+      ka.length === kb.length &&
+      ka.every(
+        (k, i) =>
+          k === kb[i] && same((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]),
+      )
+    );
+  }
+  return Object.is(a, b);
+};
 
 export const numericText = fc.oneof(
   text,
@@ -271,6 +298,20 @@ export const numericText = fc.oneof(
 );
 
 export const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
+  [
+    "objects: literals, property reads and writes, computed keys, missing properties, toString, +, ==, typeof",
+    "export function f(a: number, s: string, x: unknown): unknown { const o: any = { n: a, s: s, x: x }; o.n = o.n + 1; o.extra = s; const k = s.length > 1 ? 'n' : 's'; const p: any = { n: 1, n2: 2 }; p[k] = x; return [o.n, o.s, o.missing, o[k], o.x, String(o), o + '!', o == '[object Object]', typeof o, o === o, o === p, p, { a: o.x, b: [a], c: { d: s } }]; }",
+    ["number", "string", "unknown"],
+    "unknown",
+    fc.tuple(fc.oneof(fc.integer({ min: -3, max: 3 }), fc.double()), text, anyValue),
+  ],
+  [
+    "errors: new Error and its message, name and toString; a subclass; Error called without new",
+    "export function f(m: string, b: boolean): unknown { const e = b ? new Error(m) : new TypeError(); const g = Error(m + '!'); return [e.message, e.name, String(e), g.message, e + '', typeof e, (e as any).missing, String(new RangeError(m))]; }",
+    ["string", "boolean"],
+    "unknown",
+    fc.tuple(text, fc.boolean()),
+  ],
   [
     "arrays of any values: mixed literals, push and pop, reads in and out of range, join, ==, +, typeof",
     "export function f(x: unknown, n: number, s: string): unknown { const a = [x, n, s]; const b = []; b.push(s); b.push(n); b.push(x); const p = b.pop(); const e = []; return [a.length, a[1], a[5], a[-0], a[1.5], b.length, p, e.pop(), String(a), a + '|' + b, a == s, a[0] === x, typeof a, b, [a, [n]], e]; }",

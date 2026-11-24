@@ -47,7 +47,7 @@ export const ATOMS: Readonly<Record<string, RuntimeAtom>> = {
  * A value's type: a number, a boolean, a string, an array of numbers, or a value of any of these
  * kinds or undefined or null.
  */
-export type WT = "f64" | "i32" | "str" | "nums" | "arr" | "any";
+export type WT = "f64" | "i32" | "str" | "nums" | "arr" | "obj" | "any";
 
 /** The f64 operations: arithmetic, Math's native functions, and comparisons (to an i32). */
 export type F64Op =
@@ -106,6 +106,17 @@ export type Ins =
   | { readonly op: "br"; readonly depth: number }
   | { readonly op: "br_if"; readonly depth: number };
 
+/** The error classes `new` makes: an object of that class, whose name it inherits. */
+const ERROR_CLASSES: ReadonlySet<string> = new Set([
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "EvalError",
+  "URIError",
+]);
+
 export const NATIVE_MATH: ReadonlySet<string> = new Set(["floor", "ceil", "trunc", "sqrt", "abs"]);
 export const MATH_CONSTANTS: Readonly<Record<string, number>> = {
   PI: Math.PI,
@@ -159,6 +170,13 @@ export const PRIMITIVES: Readonly<Record<string, { params: WT[]; result: WT }>> 
   __ykArrAny: { params: ["any"], result: "arr" },
   // Undefined as a value; and the point where a TypeError is thrown (a trap until exceptions).
   __ykUndef: { params: [], result: "any" },
+  // An object: a cast to one, an empty one of a class (a string, or not one for a plain object),
+  // its keys and its values (arrays, shared, in insertion order), and its class.
+  __ykObj: { params: ["any"], result: "obj" },
+  __ykObjNew: { params: ["any"], result: "obj" },
+  __ykObjKeys: { params: ["obj"], result: "arr" },
+  __ykObjVals: { params: ["obj"], result: "arr" },
+  __ykObjCls: { params: ["obj"], result: "any" },
   __ykTypeError: { params: [], result: "any" },
   __ykSame: { params: ["any", "any"], result: "i32" },
 };
@@ -322,6 +340,8 @@ function wt(t: DucType | undefined, what: string): WT {
   if (t.k === "array" && t.of?.k === "num") return "nums";
   // An array of anything else holds values of any kind.
   if (t.k === "array") return "arr";
+  // An object type, or the runtime's name for an object in an atom.
+  if (t.k === "object" || (t.k === "named" && t.name === "YkObject")) return "obj";
   // A value that may be of more than one kind, undefined or null.
   if (t.k === "unknown" || t.k === "null" || t.k === "undefined") return "any";
   if (t.k === "union") {
@@ -349,6 +369,7 @@ type Callee =
   | { readonly k: "math"; readonly name: string }
   | { readonly k: "string-of" }
   | { readonly k: "number-of" }
+  | { readonly k: "error-class"; readonly name: string }
   | { readonly k: "method"; readonly recv: ValueId; readonly name: string }
   | { readonly k: "prim"; readonly name: string }
   | { readonly k: "atom"; readonly name: string }
@@ -412,6 +433,7 @@ function lowerFunction(
             str: "a string",
             nums: "an array of numbers",
             arr: "an array",
+            obj: "an object",
             any: "a value of any kind",
             undef: "undefined",
             "?": "nothing yet",
@@ -521,6 +543,7 @@ function lowerFunction(
       if (sym === "Math") return { call: { k: "math", name: "" } };
       if (sym === "String") return { call: { k: "string-of" } };
       if (sym === "Number") return { call: { k: "number-of" } };
+      if (ERROR_CLASSES.has(sym)) return { call: { k: "error-class", name: sym } };
       if (PRIMITIVES[sym] !== undefined) return { call: { k: "prim", name: sym } };
       if (ATOMS[sym] !== undefined) return { call: { k: "atom", name: sym } };
       throw new LoweringError(`"${sym}" is not in the wasm base set`);
@@ -555,10 +578,8 @@ function lowerFunction(
           return { call: { k: "method", recv: ins[0] as ValueId, name: `${t0}.${member}` } };
         throw new LoweringError(`the array method ${member} is not in the subset yet`);
       }
-      if (t0 === "any")
-        throw new LoweringError(
-          `the member ${member} of a value of any kind is not in the subset yet`,
-        );
+      // A property of an object, or of a value of any kind: the runtime atoms.
+      if (t0 === "obj" || t0 === "any") return "any";
       if ((t0 === "f64" || t0 === "i32") && member === "toString")
         return { call: { k: "method", recv: ins[0] as ValueId, name: "toString" } };
       if (t0 === "str") {
@@ -578,6 +599,7 @@ function lowerFunction(
       if (callee.k === "math") return "f64";
       if (callee.k === "string-of") return "str";
       if (callee.k === "number-of") return "f64";
+      if (callee.k === "error-class") return "obj";
       if (callee.k === "prim") return (PRIMITIVES[callee.name] as { result: WT }).result;
       if (callee.k === "method" && callee.name === "nums.push") {
         stored(callee.recv, ins[1] === undefined ? "?" : get(ins[1] as ValueId));
@@ -604,10 +626,31 @@ function lowerFunction(
       if (known.some((x) => typeof x === "object")) throw new LoweringError("+ of a function");
       if (known.length === 0) return "?";
       // An array's primitive is its join, a string: + of one concatenates.
-      if (known.some((x) => x === "str" || x === "nums" || x === "arr")) return "str";
+      if (known.some((x) => x === "str" || x === "nums" || x === "arr" || x === "obj"))
+        return "str";
       // A value of any kind may be a string: ECMAScript's + decides (the runtime atom).
       if (known.some((x) => x === "any")) return known.length === 2 ? "any" : "?";
       return "f64";
+    }
+    if (label.startsWith("object:")) {
+      if (ins.some((_, i) => typeof operand(i) === "object"))
+        throw new LoweringError("an object of functions is not in the subset yet");
+      return "obj";
+    }
+    if (/^\.\w+=$/.test(label) && ins.length === 2) {
+      const t0 = operand(0);
+      if (t0 === "?") return "?";
+      if (t0 !== "obj")
+        throw new LoweringError(`a property write to ${show(t0)} is not in the subset yet`);
+      if (typeof operand(1) === "object")
+        throw new LoweringError("a function stored in an object is not in the subset yet");
+      return "obj";
+    }
+    if (label === "NewExpression") {
+      const t0 = operand(0);
+      if (t0 === "?") return "?";
+      if (typeof t0 === "object" && t0.call.k === "error-class") return "obj";
+      throw new LoweringError("new of other than an error class is not in the subset yet");
     }
     if (label === "ArrayLiteral") {
       // As TypeScript types it: numbers make an array of numbers; anything else, or nothing in a
@@ -625,7 +668,7 @@ function lowerFunction(
     if (label === "ElementAccess" && ins.length === 2) {
       const t0 = operand(0);
       if (t0 === "?") return "?";
-      if (t0 === "str" || t0 === "any") return "any";
+      if (t0 === "str" || t0 === "any" || t0 === "obj") return "any";
       if (t0 !== "nums" && t0 !== "arr")
         throw new LoweringError(`an element read of ${show(t0)} is not in the subset`);
       const t1 = operand(1);
@@ -637,6 +680,8 @@ function lowerFunction(
     if (label === "[]=" && ins.length === 3) {
       const t0 = operand(0);
       if (t0 === "?") return "?";
+      // An object's property, by a computed key.
+      if (t0 === "obj") return "obj";
       if (t0 !== "nums" && t0 !== "arr")
         throw new LoweringError(`an element write to ${show(t0)} is not in the subset`);
       if (t0 === "nums") stored(ins[0] as ValueId, get(ins[2] as ValueId));
@@ -736,7 +781,16 @@ function lowerFunction(
     else if (t === "i32") emit({ op: "const.i32", x: 0 });
     else if (t === "nums") emit({ op: "nums.of", n: 0 });
     else if (t === "arr") emit({ op: "arr.of", n: 0 });
-    else emit({ op: "const.str", s: "" });
+    else if (t === "obj") {
+      emit({ op: "const.undef" }, { op: "call", fn: mod.primitive("__ykObjNew").fn });
+    } else emit({ op: "const.str", s: "" });
+  };
+  /** An error of a class (new Error(m), or Error(m)): the runtime atom. */
+  const makeError = (cls: string, message: ValueId | undefined): void => {
+    emit({ op: "const.str", s: cls });
+    if (message === undefined) emit({ op: "const.undef" });
+    else push(message, "any");
+    emit({ op: "call", fn: mod.atom("__ykMakeError").fn });
   };
   /** Push a string constant: its UTF-16 units, as a new array. */
   const pushText = (text: string): void => {
@@ -762,7 +816,8 @@ function lowerFunction(
       pushText("false");
       push(v);
       select("str");
-    } else call(mod.atom(t === "nums" ? "__ykJoinNums" : "__ykJoinAny"), [v], "ToString");
+    } else if (t === "obj") call(mod.atom("__ykObjToString"), [v], "ToString");
+    else call(mod.atom(t === "nums" ? "__ykJoinNums" : "__ykJoinAny"), [v], "ToString");
   };
   /** Push a value; `want` is the type it is used as (an undefined stands for that type's default). */
   /**
@@ -854,8 +909,9 @@ function lowerFunction(
     if (typeof t !== "string" || t === "undef")
       throw new LoweringError("a value made a number has no value here");
     if (t === "str") call(mod.atom("__ykStringToNumber"), [v], "ToNumber");
-    else if (t === "nums" || t === "arr") {
-      call(mod.atom(t === "nums" ? "__ykJoinNums" : "__ykJoinAny"), [v], "ToNumber");
+    else if (t === "nums" || t === "arr" || t === "obj") {
+      const prim = { nums: "__ykJoinNums", arr: "__ykJoinAny", obj: "__ykObjToString" }[t];
+      call(mod.atom(prim), [v], "ToNumber");
       emit({ op: "call", fn: mod.atom("__ykStringToNumber").fn });
     } else pushAs(v, "f64", "an operand");
   };
@@ -872,8 +928,8 @@ function lowerFunction(
       emit({ op: "str.len" });
       return;
     }
-    if (t === "nums" || t === "arr") {
-      // An array is an object: always truthy.
+    if (t === "nums" || t === "arr" || t === "obj") {
+      // An array is an object, and an object is always truthy.
       emit({ op: "drop", t }, { op: "const.i32", x: 1 });
       return;
     }
@@ -940,6 +996,42 @@ function lowerFunction(
         set(out);
         return;
       }
+      if (t0 === "obj" || t0 === "any" || t0 === "undef") {
+        // A property of an object or any value: its own, else what an error inherits; lengths;
+        // a TypeError for undefined and null.
+        push(ins[0] as ValueId, "any");
+        emit({ op: "const.str", s: label.slice(1) });
+        emit({ op: "call", fn: mod.atom("__ykGetAny").fn });
+        set(out);
+        return;
+      }
+    }
+    if (label.startsWith("object:")) {
+      // An empty object, then each property put in order (a later one replaces an earlier one).
+      const keys = JSON.parse(label.slice("object:".length)) as string[];
+      emit({ op: "const.undef" }, { op: "call", fn: mod.primitive("__ykObjNew").fn });
+      set(out);
+      keys.forEach((k, i) => {
+        push(out);
+        emit({ op: "const.str", s: k });
+        push(ins[i] as ValueId, "any");
+        emit({ op: "call", fn: mod.atom("__ykPut").fn }, { op: "drop", t: "obj" });
+      });
+      return;
+    }
+    if (/^\.\w+=$/.test(label) && ins.length === 2) {
+      push(ins[0] as ValueId, "obj");
+      emit({ op: "const.str", s: label.slice(1, -1) });
+      push(ins[1] as ValueId, "any");
+      emit({ op: "call", fn: mod.atom("__ykPut").fn });
+      set(out);
+      return;
+    }
+    if (label === "NewExpression") {
+      const callee = (ty(ins[0] as ValueId) as { call: Callee }).call as { name: string };
+      makeError(callee.name, ins[1]);
+      set(out);
+      return;
     }
     if (label === "CallExpression") {
       const callee = (ty(ins[0] as ValueId) as { call: Callee }).call;
@@ -960,6 +1052,8 @@ function lowerFunction(
           for (const a of args) pushNumber(a);
           emit({ op: "call", fn });
         }
+      } else if (callee.k === "error-class") {
+        makeError(callee.name, args[0]);
       } else if (callee.k === "number-of") {
         if (args.length === 0) emit({ op: "const.f64", x: 0 });
         else pushNumber(args[0] as ValueId);
@@ -1038,6 +1132,14 @@ function lowerFunction(
     }
     if (label === "ElementAccess") {
       const of = opType(ins[0] as ValueId);
+      if (of === "obj") {
+        // An object's property by a computed key: the key made a string (ToPropertyKey).
+        push(ins[0] as ValueId, "any");
+        pushString(ins[1] as ValueId);
+        emit({ op: "call", fn: mod.atom("__ykGetAny").fn });
+        set(out);
+        return;
+      }
       if (of === "str" || of === "any") {
         // A string's unit, or any value's element: the runtime atom.
         push(ins[0] as ValueId, "any");
@@ -1048,6 +1150,14 @@ function lowerFunction(
       }
       const prim = of === "arr" ? "arrAt" : t === "any" ? "numsAt" : "numsGet";
       call(mod.primitive(prim), ins, "an element read");
+      set(out);
+      return;
+    }
+    if (label === "[]=" && t === "obj") {
+      push(ins[0] as ValueId);
+      pushString(ins[1] as ValueId);
+      push(ins[2] as ValueId, "any");
+      emit({ op: "call", fn: mod.atom("__ykPut").fn });
       set(out);
       return;
     }
@@ -1116,14 +1226,14 @@ function lowerFunction(
       // ECMAScript's IsStrictlyEqual, IsLooselyEqual and IsLessThan over these types. An array of
       // numbers is an object: equal only to itself, and a primitive (its join) where one is needed.
       const strictly = label === "===" || label === "!==";
-      const strLike = (t: WT) => t === "str" || t === "nums" || t === "arr";
+      const strLike = (t: WT) => t === "str" || t === "nums" || t === "arr" || t === "obj";
       if (ta === tb && equality) {
         if (ta === "str") call(mod.atom("__ykStrEquals"), [a, b], label);
         else {
           push(a);
           push(b);
           emit(
-            ta === "nums" || ta === "arr" || ta === "any"
+            ta === "nums" || ta === "arr" || ta === "obj" || ta === "any"
               ? { op: "ref.eq" }
               : ta === "i32"
                 ? { op: "i32", name: "eq" }
@@ -1178,6 +1288,7 @@ function lowerFunction(
           str: "string",
           nums: "object",
           arr: "object",
+          obj: "object",
           undef: "undefined",
         };
         const name0 = typeof t0 === "string" ? names[t0] : undefined;
