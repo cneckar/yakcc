@@ -45,17 +45,63 @@ The expected values follow the published semantics: npm semver, ISO 8601, RFC 41
 (including the RFC's DNS example) and RFC 1321. They were cross-checked against the corpus
 modules. The small tasks are controls, where writing should win.
 
-## Status
+## Results: live run on Haiku 5.5 (3 seeds, `results/live-claude-haiku-5-5.json`)
 
-- **Harness and offline validation:** done (`results/offline-validation.json`). The offline
-  client answers with references. Its reuse arm passes 12 of 13: the exception is
-  `deep-copy`, where the offline client's need, the spec's first sentence, does not
-  surface `cloneDeep`. Its scratch arm passes only the 4 tasks that have a hand-written
-  scratch reference; the large tasks have none on purpose. These numbers validate the
-  plumbing and measure nothing.
-- **Live run: needs a go-ahead in #1258.** `node harness/run.mjs --dry-run --seeds 3` bounds
-  it at 156 calls, about $0.10 on Haiku 5.5 (about $4 on Opus 5.5). Haiku is the default,
-  and the run refuses above `--max-dollars` (default $2).
+152 calls, about $0.095 (87k input and 173k output tokens). Output tokens include the
+model's thinking (effort low).
+
+| | Pass rate | Mean output tokens | Mean input tokens | Dollars per passing task |
+|---|---|---|---|---|
+| All 13 tasks, scratch | 1.00 | 2,705 | 165 | $0.00137 |
+| All 13 tasks, reuse | 1.00 | 1,741 | 2,077 | **$0.00108 (−21%)** |
+| Large (8), scratch | 1.00 | 3,937 | 174 | $0.00199 |
+| Large (8), reuse | 1.00 | 2,241 | 2,500 | **$0.00137 (−31%)** |
+| Medium (2), scratch | 1.00 | 523 | 170 | $0.00028 |
+| Medium (2), reuse | 1.00 | 855 | 1,090 | $0.00054 (+93%) |
+| Small (3), scratch | 1.00 | 872 | 137 | $0.00045 |
+| Small (3), reuse | 1.00 | 998 | 1,607 | $0.00066 (+47%) |
+
+Mean output tokens per task (scratch → reuse) and the reuse arm's picks (T = the target
+module, x = another module, - = none):
+
+| Task | Scratch | Reuse | Picks |
+|---|---|---|---|
+| best-compatible-version | 7,831 | **2,242** | TTT |
+| range-within-range | 9,770 | **1,793** | xTT |
+| sort-iso-timestamps | 3,811 | 3,028 | TTT |
+| deep-copy | 1,877 | 911 | TxT |
+| name-based-uuid | 3,377 | 2,831 | xxx |
+| apply-path-updates | 1,086 | 1,423 | TTT |
+| keep-valid-urls | 854 | 1,753 | TTT |
+| md5-hex | 2,891 | 3,951 | TTT |
+| canonical-emails | 647 | 921 | --- |
+| spell-suggest | 399 | 788 | xxT |
+| build-order | 822 | 1,015 | --- |
+| base64-decode | 734 | 930 | --T |
+| iso-utc-string | 1,060 | 1,049 | --- |
+
+### What it shows
+
+- **Correctness does not separate the arms on these tasks.** Both pass every test in
+  every seed. Haiku writes even npm range matching, range containment and SHA-1 from
+  scratch correctly, so these held-out tests are at the ceiling. Showing a correctness
+  benefit from reuse needs harder tasks or a weaker model.
+- **Reuse pays where the module is big and its use is simple.** The two semver range
+  tasks drop from about 7,800 and 9,800 output tokens to about 2,200 and 1,800, a 3.5–5.4×
+  saving. Over the large tasks, reuse is 31% cheaper per passing task.
+- **Reuse costs more where the glue is not trivial, or the task is small.**
+  - `md5-hex`: the glue still has to UTF-8 encode and hex-format the digest.
+  - `keep-valid-urls`: the model wrote a short regex from scratch.
+  - The small and medium tasks: the extra turns cost more than the code saved. The model
+    mostly said NONE on the small controls, as it should, but the need turn still costs
+    a call.
+- **Break-even, roughly:** reuse wins when writing the code from scratch would take more
+  than about 2,000 output tokens. Below that, write it. A caller can route on that,
+  sending only needs it expects to be large to the library.
+- **Picking a module other than the target still passed** in several runs. For
+  `name-based-uuid`, the model picked uuid's `sha1` every time, reused the hash, and wrote
+  the UUID layout (version and variant bits, formatting) itself. The library offers more
+  than one valid level of reuse.
 
 ## Running
 
