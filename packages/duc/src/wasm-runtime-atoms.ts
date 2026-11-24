@@ -696,7 +696,8 @@ export const BIGNUM_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
 /**
  * ECMAScript's conversions and generic operators as atoms over dynamic values (`unknown`). A
  * dynamic value is inspected by primitives: `__ykTag` (0 undefined, 1 null, 2 boolean, 3 number,
- * 4 string, 5 an array of numbers), and `__ykNum`, `__ykBool`, `__ykStr`, `__ykArr` read it as that
+ * 4 string, 5 an array of numbers, 6 an array of any values), and `__ykNum`, `__ykBool`, `__ykStr`,
+ * `__ykArr`, `__ykArrAny` read it as that
  * kind; `__ykSame` is reference equality.
  */
 export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
@@ -715,6 +716,75 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   return out;
 }`,
   },
+  // Array.prototype.join(",") of an array of any values: undefined and null are empty.
+  __ykJoinAny: {
+    inputs: ["unknown[]"],
+    output: "string",
+    source: `export function f(a: unknown[]): string {
+  let out = "";
+  let i = 0;
+  while (i < a.length) {
+    if (i > 0) out = out + ",";
+    const t = __ykTag(a[i]);
+    if (t !== 0 && t !== 1) out = out + __ykToString(a[i]);
+    i = i + 1;
+  }
+  return out;
+}`,
+  },
+  // A value's element (x[i], i a number): a string's unit, an array's element, undefined for a
+  // missing one or any other value; undefined and null have none (a TypeError). __ykUndef is
+  // undefined as a value (in an atom a literal undefined stands for a default).
+  __ykIndex: {
+    inputs: ["unknown", "number"],
+    output: "unknown",
+    source: `export function f(x: unknown, i: number): unknown {
+  const t = __ykTag(x);
+  if (t === 0 || t === 1) return __ykTypeError();
+  if (i !== Math.floor(i) || i < 0) return __ykUndef();
+  if (t === 4) {
+    const s = __ykStr(x);
+    if (i < s.length) return __ykSub(s, i, i + 1);
+    return __ykUndef();
+  }
+  if (t === 5) {
+    const a = __ykArr(x);
+    if (i < a.length) return a[i];
+    return __ykUndef();
+  }
+  if (t === 6) {
+    const b = __ykArrAny(x);
+    if (i < b.length) return b[i];
+    return __ykUndef();
+  }
+  return __ykUndef();
+}`,
+  },
+  // An array of values of any kind, each a number, as an array of numbers.
+  __ykArrToNums: {
+    inputs: ["unknown[]"],
+    output: "number[]",
+    source: `export function f(a: unknown[]): number[] {
+  const out: number[] = [];
+  let i = 0;
+  while (i < a.length) {
+    out.push(__ykNum(a[i]));
+    i = i + 1;
+  }
+  return out;
+}`,
+  },
+  // ToPrimitive (ECMA-262 7.1.1) of an object: an array is its join. Any other value is itself.
+  __ykToPrimitive: {
+    inputs: ["unknown"],
+    output: "unknown",
+    source: `export function f(x: unknown): unknown {
+  const t = __ykTag(x);
+  if (t === 5) return __ykJoinNums(__ykArr(x));
+  if (t === 6) return __ykJoinAny(__ykArrAny(x));
+  return x;
+}`,
+  },
   // ToNumber (ECMA-262 7.1.4).
   __ykToNumber: {
     inputs: ["unknown"],
@@ -726,7 +796,7 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   if (t === 1) return 0;
   if (t === 2) return __ykBool(x) ? 1 : 0;
   if (t === 4) return __ykStringToNumber(__ykStr(x));
-  return __ykStringToNumber(__ykJoinNums(__ykArr(x)));
+  return __ykStringToNumber(__ykStr(__ykToPrimitive(x)));
 }`,
   },
   // ToString (ECMA-262 7.1.17).
@@ -740,7 +810,7 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   if (t === 0) return "undefined";
   if (t === 1) return "null";
   if (t === 2) return __ykBool(x) ? "true" : "false";
-  return __ykJoinNums(__ykArr(x));
+  return __ykStr(__ykToPrimitive(x));
 }`,
   },
   // The typeof operator.
@@ -799,8 +869,8 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   if (ta === 4 && tb === 3) return __ykStringToNumber(__ykStr(a)) === __ykNum(b);
   if (ta === 2) return __ykLooseEquals(__ykBool(a) ? 1 : 0, b);
   if (tb === 2) return __ykLooseEquals(a, __ykBool(b) ? 1 : 0);
-  if ((ta === 3 || ta === 4) && tb === 5) return __ykLooseEquals(a, __ykJoinNums(__ykArr(b)));
-  if (ta === 5 && (tb === 3 || tb === 4)) return __ykLooseEquals(__ykJoinNums(__ykArr(a)), b);
+  if ((ta === 3 || ta === 4) && tb >= 5) return __ykLooseEquals(a, __ykToPrimitive(b));
+  if (ta >= 5 && (tb === 3 || tb === 4)) return __ykLooseEquals(__ykToPrimitive(a), b);
   return false;
 }`,
   },
@@ -809,8 +879,8 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     inputs: ["unknown", "unknown"],
     output: "unknown",
     source: `export function f(a: unknown, b: unknown): unknown {
-  const pa = __ykTag(a) === 5 ? __ykJoinNums(__ykArr(a)) : a;
-  const pb = __ykTag(b) === 5 ? __ykJoinNums(__ykArr(b)) : b;
+  const pa = __ykToPrimitive(a);
+  const pb = __ykToPrimitive(b);
   if (__ykTag(pa) === 4 || __ykTag(pb) === 4) return __ykToString(pa) + __ykToString(pb);
   return __ykToNumber(pa) + __ykToNumber(pb);
 }`,
@@ -820,8 +890,8 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     inputs: ["unknown", "unknown"],
     output: "number",
     source: `export function f(a: unknown, b: unknown): number {
-  const pa = __ykTag(a) === 5 ? __ykJoinNums(__ykArr(a)) : a;
-  const pb = __ykTag(b) === 5 ? __ykJoinNums(__ykArr(b)) : b;
+  const pa = __ykToPrimitive(a);
+  const pb = __ykToPrimitive(b);
   if (__ykTag(pa) === 4 && __ykTag(pb) === 4) return __ykStrLess(__ykStr(pa), __ykStr(pb)) ? 0 : 1;
   const x = __ykToNumber(pa);
   const y = __ykToNumber(pb);
@@ -849,11 +919,18 @@ export const RUNTIME_PRIMITIVES_JS = {
             ? 3
             : typeof x === "string"
               ? 4
-              : 5,
+              : (x as unknown[]).every((e) => typeof e === "number")
+                ? 5
+                : 6,
   __ykNum: (x: unknown): number => x as number,
   __ykBool: (x: unknown): boolean => x as boolean,
   __ykStr: (x: unknown): string => x as string,
   __ykArr: (x: unknown): number[] => x as number[],
+  __ykArrAny: (x: unknown): unknown[] => x as unknown[],
+  __ykUndef: (): unknown => undefined,
+  __ykTypeError: (): unknown => {
+    throw new TypeError("a property of undefined or null");
+  },
   __ykSame: (a: unknown, b: unknown): boolean => a === b,
   __ykChar: (u: number): string => String.fromCharCode(u),
   __ykF64Hi: (x: number): number => {

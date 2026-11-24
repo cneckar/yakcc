@@ -42,6 +42,7 @@ export interface JvmModule {
 
 const MAIN = "Yk";
 const NUMS = "YkNums";
+const ARR = "YkArr";
 const OBJECT = "java/lang/Object";
 
 /** Each type's JVM descriptor. */
@@ -50,6 +51,7 @@ const DESC: Record<WT, string> = {
   i32: "I",
   str: "Ljava/lang/String;",
   nums: `L${NUMS};`,
+  arr: `L${ARR};`,
   any: `L${OBJECT};`,
 };
 const width = (t: WT): number => (t === "f64" ? 2 : 1);
@@ -225,6 +227,9 @@ const OP = {
   dstore: 0x39,
   astore: 0x3a,
   daload: 0x31,
+  aaload: 0x32,
+  aastore: 0x53,
+  anewarray: 0xbd,
   dastore: 0x52,
   pop: 0x57,
   pop2: 0x58,
@@ -534,6 +539,29 @@ function encodeFunction(
         a.putfield(NUMS, "data", "[D");
         break;
       }
+      case "arr.of": {
+        for (let i = x.n - 1; i >= 0; i--) a.store("any", scratch("any", `of${i}`));
+        a.op([OP.new, ...u2(pool.cls(ARR))], 1);
+        a.op([OP.dup], 1);
+        a.invokespecial(ARR, "<init>", "()V");
+        a.op([OP.dup], 1);
+        a.iconst(x.n);
+        a.putfield(ARR, "len", "I");
+        a.op([OP.dup], 1);
+        a.iconst(x.n);
+        a.op([OP.anewarray, ...u2(pool.cls(OBJECT))], 0);
+        for (let i = 0; i < x.n; i++) {
+          a.op([OP.dup], 1);
+          a.iconst(i);
+          a.load("any", scratch("any", `of${i}`));
+          a.op([OP.aastore], -3);
+        }
+        a.putfield(ARR, "data", `[L${OBJECT};`);
+        break;
+      }
+      case "arr.len":
+        a.getfield(ARR, "len", "I");
+        break;
       case "get":
         a.load(typeOf(x.i), slot[x.i] as number);
         break;
@@ -637,6 +665,7 @@ function encodeFunction(
           a.invokevirtual("java/lang/Boolean", "booleanValue", "()Z");
         } else if (x.to === "str") a.checkcast("java/lang/String");
         else if (x.to === "nums") a.checkcast(NUMS);
+        else if (x.to === "arr") a.checkcast(ARR);
         break;
       case "ref.eq":
         a.bool(OP.if_acmpeq, 2);
@@ -740,13 +769,31 @@ function primitiveCode(pool: Pool, key: string, params: readonly WT[], result: W
     p(i);
     a.op([OP.d2i], -1);
   };
+  // The array operations, for an array of numbers or of any values.
+  const kind: "nums" | "arr" = key.startsWith("arr") ? "arr" : "nums";
+  const cls = kind === "nums" ? NUMS : ARR;
+  const store = kind === "nums" ? "[D" : `[L${OBJECT};`;
+  const elem: WT = kind === "nums" ? "f64" : "any";
   const data = (): void => {
     p(0);
-    a.getfield(NUMS, "data", "[D");
+    a.getfield(cls, "data", store);
   };
   const len = (): void => {
     p(0);
-    a.getfield(NUMS, "len", "I");
+    a.getfield(cls, "len", "I");
+  };
+  const aload = (): void =>
+    a.op([kind === "nums" ? OP.daload : OP.aaload], kind === "nums" ? 0 : -1);
+  const astore = (): void =>
+    a.op([kind === "nums" ? OP.dastore : OP.aastore], kind === "nums" ? -4 : -3);
+  const newStore = (): void => {
+    if (kind === "nums") a.op([OP.newarray, 7], 0);
+    else a.op([OP.anewarray, ...u2(pool.cls(OBJECT))], 0);
+  };
+  /** The value an empty pop or a missing element gives: NaN in an atom's numbers, else undefined. */
+  const missing = (): void => {
+    if (key === "numsPop" || key === "numsGet") nan();
+    else a.getstatic(MAIN, "UNDEF", DESC.any);
   };
   switch (key) {
     case "__ykUnit": {
@@ -817,6 +864,7 @@ function primitiveCode(pool: Pool, key: string, params: readonly WT[], result: W
         ["java/lang/Boolean", 2],
         ["java/lang/Double", 3],
         ["java/lang/String", 4],
+        [NUMS, 5],
       ];
       const notNull = a.label();
       p(0);
@@ -840,7 +888,7 @@ function primitiveCode(pool: Pool, key: string, params: readonly WT[], result: W
         ret();
         a.place(no);
       }
-      a.dconst(5);
+      a.dconst(6);
       ret();
       break;
     }
@@ -866,16 +914,33 @@ function primitiveCode(pool: Pool, key: string, params: readonly WT[], result: W
       a.checkcast(NUMS);
       ret();
       break;
+    case "__ykUndef":
+      a.getstatic(MAIN, "UNDEF", DESC.any);
+      ret();
+      break;
+    case "__ykTypeError":
+      // Thrown, until exceptions are lowered: the program stops where ECMAScript throws.
+      a.op([OP.new, ...u2(pool.cls("java/lang/IllegalStateException"))], 1);
+      a.op([OP.dup], 1);
+      a.invokespecial("java/lang/IllegalStateException", "<init>", "()V");
+      a.op([0xbf], -1); // athrow
+      break;
+    case "__ykArrAny":
+      p(0);
+      a.checkcast(ARR);
+      ret();
+      break;
     case "__ykSame":
       p(0);
       p(1);
       a.bool(OP.if_acmpeq, 2);
       ret();
       break;
-    case "numsPush": {
+    case "numsPush":
+    case "arrPush": {
       // When full, grow to 2 len + 4; data[len] = x; len = len + 1; the new length.
       const n = local("i32");
-      const grown = local("nums");
+      const grown = local("any");
       const room = a.label();
       len();
       a.store("i32", n);
@@ -888,7 +953,7 @@ function primitiveCode(pool: Pool, key: string, params: readonly WT[], result: W
       a.op([OP.ishl], -1);
       a.iconst(4);
       a.op([OP.iadd], -1);
-      a.op([OP.newarray, 7], 0);
+      newStore();
       a.store("any", grown);
       data();
       a.iconst(0);
@@ -898,17 +963,17 @@ function primitiveCode(pool: Pool, key: string, params: readonly WT[], result: W
       a.invokestatic("java/lang/System", "arraycopy", "(Ljava/lang/Object;ILjava/lang/Object;II)V");
       p(0);
       a.load("any", grown);
-      a.putfield(NUMS, "data", "[D");
+      a.putfield(cls, "data", store);
       a.place(room);
       data();
       a.load("i32", n);
       p(1);
-      a.op([OP.dastore], -4);
+      astore();
       p(0);
       a.load("i32", n);
       a.iconst(1);
       a.op([OP.iadd], -1);
-      a.putfield(NUMS, "len", "I");
+      a.putfield(cls, "len", "I");
       a.load("i32", n);
       a.iconst(1);
       a.op([OP.iadd], -1);
@@ -916,13 +981,15 @@ function primitiveCode(pool: Pool, key: string, params: readonly WT[], result: W
       ret();
       break;
     }
-    case "numsPop": {
-      // An empty array pops undefined: NaN stands for it, and is never observed.
+    case "numsPop":
+    case "numsPopAny":
+    case "arrPop": {
+      // An empty array pops undefined (NaN stands for it in an atom, and is never observed).
       const n = local("i32");
       const some = a.label();
       len();
       a.jump(OP.ifne, some, -1);
-      nan();
+      missing();
       ret();
       a.place(some);
       len();
@@ -931,15 +998,18 @@ function primitiveCode(pool: Pool, key: string, params: readonly WT[], result: W
       a.store("i32", n);
       p(0);
       a.load("i32", n);
-      a.putfield(NUMS, "len", "I");
+      a.putfield(cls, "len", "I");
       data();
       a.load("i32", n);
-      a.op([OP.daload], 0);
+      aload();
+      if (key === "numsPopAny")
+        a.invokestatic("java/lang/Double", "valueOf", "(D)Ljava/lang/Double;");
       ret();
       break;
     }
     case "numsGet":
-    case "numsAt": {
+    case "numsAt":
+    case "arrAt": {
       // An index that is an integer in [0, length) reads the element; any other reads undefined
       // (NaN stands for it in an atom's numsGet; numsAt is a program's, and gives undefined).
       const k = local("i32");
@@ -958,16 +1028,16 @@ function primitiveCode(pool: Pool, key: string, params: readonly WT[], result: W
       a.jump(OP.if_icmpge, out, -2);
       data();
       a.load("i32", k);
-      a.op([OP.daload], 0);
+      aload();
       if (key === "numsAt") a.invokestatic("java/lang/Double", "valueOf", "(D)Ljava/lang/Double;");
       ret();
       a.place(out);
-      if (key === "numsAt") a.getstatic(MAIN, "UNDEF", DESC.any);
-      else nan();
+      missing();
       ret();
       break;
     }
-    case "numsSet": {
+    case "numsSet":
+    case "arrSet": {
       // a[i] = v within the array, or at its end (a push); anywhere else is not lowered.
       const k = local("i32");
       const inside = a.label();
@@ -979,14 +1049,14 @@ function primitiveCode(pool: Pool, key: string, params: readonly WT[], result: W
       a.jump(OP.if_icmpne, inside, -2);
       p(0);
       p(2);
-      a.invokestatic(MAIN, methodName("prim:numsPush"), ["nums", "f64"], "f64");
+      a.invokestatic(MAIN, methodName(`prim:${kind}Push`), [kind, elem], "f64");
       a.op([OP.pop2], -2);
       a.jump(OP.goto, end, 0);
       a.place(inside);
       data();
       a.load("i32", k);
       p(2);
-      a.op([OP.dastore], -4);
+      astore();
       a.place(end);
       p(0);
       ret();
@@ -1080,8 +1150,8 @@ function hostHelper(pool: Pool, name: string): Asm {
   return a;
 }
 
-/** The class of arrays of numbers: two fields and a constructor. */
-function numsClass(): Uint8Array {
+/** The class of an array: its length, its storage, and a constructor. */
+function arrayClass(name: string, store: string): Uint8Array {
   const pool = new Pool();
   const init = new Asm(pool);
   init.load("any", 0);
@@ -1090,10 +1160,10 @@ function numsClass(): Uint8Array {
   init.locals(1);
   return classFile(
     pool,
-    NUMS,
+    name,
     [
       { name: "len", desc: "I", flags: 0x0001 },
-      { name: "data", desc: "[D", flags: 0x0001 },
+      { name: "data", desc: store, flags: 0x0001 },
     ],
     [{ name: "<init>", desc: "()V", flags: 0x0001, code: init }],
   );
@@ -1150,7 +1220,8 @@ export function emitJvm(
   return {
     classes: new Map([
       [MAIN, main],
-      [NUMS, numsClass()],
+      [NUMS, arrayClass(NUMS, "[D")],
+      [ARR, arrayClass(ARR, `[L${OBJECT};`)],
     ]),
     params: f.params,
     result: f.result,
@@ -1169,11 +1240,12 @@ export function emitJvm(
 const HARNESS = `import java.io.*;
 import java.lang.reflect.*;
 public class YkHarness {
-  static Class<?> nums;
+  static Class<?> nums, arr;
   static Object undef;
   public static void main(String[] argv) throws Exception {
     Class<?> yk = Class.forName("Yk");
     nums = Class.forName("YkNums");
+    arr = Class.forName("YkArr");
     undef = yk.getField("UNDEF").get(null);
     Method f = null;
     for (Method m : yk.getMethods()) if (m.getName().equals("f")) f = m;
@@ -1205,6 +1277,20 @@ public class YkHarness {
       case 't': return Boolean.TRUE;
       case 'f': return Boolean.FALSE;
       case 'n': return bits(r);
+      case 'A': {
+        java.util.List<Object> xs = new java.util.ArrayList<>();
+        int at = 0;
+        while (at < r.length()) {
+          int colon = r.indexOf(':', at);
+          int n = Integer.parseInt(r.substring(at, colon));
+          xs.add(dec(r.substring(colon + 1, colon + 1 + n), Object.class));
+          at = colon + 1 + n;
+        }
+        Object o = arr.getConstructor().newInstance();
+        arr.getField("len").setInt(o, xs.size());
+        arr.getField("data").set(o, xs.toArray());
+        return o;
+      }
       case 's': {
         char[] c = new char[r.length() / 4];
         for (int i = 0; i < c.length; i++) c[i] = (char) Integer.parseInt(r.substring(4 * i, 4 * i + 4), 16);
@@ -1233,6 +1319,16 @@ public class YkHarness {
       StringBuilder b = new StringBuilder("s");
       String s = (String) v;
       for (int i = 0; i < s.length(); i++) b.append(String.format("%04x", (int) s.charAt(i)));
+      return b.toString();
+    }
+    if (arr.isInstance(v)) {
+      int n = arr.getField("len").getInt(v);
+      Object[] d = (Object[]) arr.getField("data").get(v);
+      StringBuilder b = new StringBuilder("A");
+      for (int i = 0; i < n; i++) {
+        String e = enc(d[i], Object.class);
+        b.append(e.length()).append(':').append(e);
+      }
       return b.toString();
     }
     int n = nums.getField("len").getInt(v);
@@ -1274,15 +1370,23 @@ const fromHex16 = (h: string): number => {
   return v.getFloat64(0);
 };
 
-function encodeValue(v: unknown): string {
+/** A value as the harness reads it; `t`, the parameter's type, decides an empty array's kind. */
+function encodeValue(v: unknown, t?: WT): string {
   if (v === undefined) return "u";
   if (v === null) return "l";
   if (typeof v === "boolean") return v ? "t" : "f";
   if (typeof v === "number") return `n${hex16(v)}`;
   if (typeof v === "string")
     return `s${[...Array(v.length).keys()].map((i) => v.charCodeAt(i).toString(16).padStart(4, "0")).join("")}`;
-  if (Array.isArray(v) && v.every((e) => typeof e === "number"))
+  if (Array.isArray(v) && t !== "arr" && v.every((e) => typeof e === "number"))
     return `a${v.map((e) => hex16(e as number)).join("")}`;
+  if (Array.isArray(v))
+    return `A${v
+      .map((e) => {
+        const x = encodeValue(e);
+        return `${x.length}:${x}`;
+      })
+      .join("")}`;
   throw new TypeError(`${String(v)} is not a value the JVM lowering represents`);
 }
 
@@ -1300,6 +1404,17 @@ function decodeValue(s: string): unknown {
       out += String.fromCharCode(Number.parseInt(r.slice(i, i + 4), 16));
     return out;
   }
+  if (k === "A") {
+    const out: unknown[] = [];
+    let at = 0;
+    while (at < r.length) {
+      const colon = r.indexOf(":", at);
+      const n = Number(r.slice(at, colon));
+      out.push(decodeValue(r.slice(colon + 1, colon + 1 + n)));
+      at = colon + 1 + n;
+    }
+    return out;
+  }
   if (k === "a")
     return Array.from({ length: r.length / 16 }, (_, i) => fromHex16(r.slice(16 * i, 16 * i + 16)));
   // A call that threw: its exception, as an Error.
@@ -1314,7 +1429,9 @@ export function runJvm(m: JvmModule, calls: readonly (readonly unknown[])[]): un
   const dir = mkdtempSync(join(tmpdir(), "yk-jvm-"));
   mkdirSync(dir, { recursive: true });
   for (const [name, bytes] of m.classes) writeFileSync(join(dir, `${name}.class`), bytes);
-  const input = calls.map((args) => args.map(encodeValue).join("\t")).join("\n");
+  const input = calls
+    .map((args) => args.map((v, i) => encodeValue(v, m.params[i])).join("\t"))
+    .join("\n");
   const r = spawnSync("java", ["-cp", `${dir}:${harness()}`, "YkHarness"], {
     input: calls.length > 0 ? `${input}\n` : "",
     encoding: "utf8",
