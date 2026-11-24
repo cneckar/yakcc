@@ -901,65 +901,174 @@ class Lifter {
 
   private tryCount = 0;
 
+  private classRewriteCount = 0;
+
   /**
-   * A class as one operation over its members' closures (#1276): the constructor, then each method
-   * and accessor in order, its label naming each member's kind, name and whether it is static. A
-   * member reads the class's own name as `class-self`. Undefined when it is not that: a heritage
-   * clause (`super` needs the parent), a field, a static block, a computed or private name, a
-   * parameter property, or a member that is not a closure. An async or generator method is one.
+   * A class as one operation over its members (#1276, #1330): the constructor, then each member in
+   * order, its label naming each member's kind, name and whether it is static. A member reads the
+   * class's own name as `class-self`.
+   *
+   * - A method, accessor or the constructor is its closure.
+   * - A field (`x = e`, `static y = e`) is its initializer: a closure run with the instance (or the
+   *   class) as its receiver, when the instance is made (or the class defined), in order. A field
+   *   with no initializer is `undefined`'s; one whose initializer is `(() => { body })()` is `body`'s
+   *   (the TypeScript lowering writes an initializer so).
+   * - A static block (`static { .. }`) is a closure run with the class as its receiver, in order.
+   * - A computed name (`[k]`), or a name that is not an identifier (`"a-b"`, `1`), is the key's
+   *   value: an input before the member's closure, evaluated when the class is defined, in member
+   *   order. Its entry's name is null.
+   *
+   * Undefined when it is not that: a private name, a parameter property, a decorator, or a member
+   * that is not one of these.
    */
   private liftClass(
     node: import("ts-morph").ClassDeclaration | import("ts-morph").ClassExpression,
   ): ValueId | undefined {
+    if (node.getDecorators().length > 0) return undefined;
+    const members = node.getMembers().filter((m) => !isTypeOnlyMember(m));
+    for (const m of members) {
+      if (Node.isConstructorDeclaration(m)) {
+        if (m.getParameters().some((p) => p.getScope() !== undefined || p.isReadonly()))
+          return undefined;
+        continue;
+      }
+      if (Node.isClassStaticBlockDeclaration(m)) continue;
+      if (
+        !(
+          Node.isMethodDeclaration(m) ||
+          Node.isGetAccessorDeclaration(m) ||
+          Node.isSetAccessorDeclaration(m) ||
+          Node.isPropertyDeclaration(m)
+        )
+      )
+        return undefined;
+      if (Node.isPrivateIdentifier(m.getNameNode())) return undefined;
+      if (!Node.isPropertyDeclaration(m) && m.getBody() === undefined) return undefined;
+    }
+    // Fields and static blocks are lifted as the methods they mean, and a computed name as an
+    // identifier, from a copy of the file with the class rewritten so: the members' scopes are the
+    // file's, so what they read and what is assigned around them are as written.
+    const rewritten = this.rewriteClass(node, members);
+    if (rewritten === undefined) return undefined;
     // `extends P` is evaluated first: the parent is the class's first input, `["extends"]` its
     // first entry (#1276). An `implements` clause is a type and computes nothing.
     const heritage = node.getExtends();
     const parent = heritage !== undefined ? this.liftExpr(heritage.getExpression()) : undefined;
     const self = node.getName();
-    const members: unknown[] = [];
-    const closures: FunctionLike[] = [];
-    for (const m of node.getMembers()) {
+    const entries: unknown[] = [];
+    const values: ValueId[] = [];
+    let ctor: { entry: unknown; value: ValueId } | undefined;
+    for (const [i, m] of members.entries()) {
+      const fn = rewritten[i] as FunctionLike;
       if (Node.isConstructorDeclaration(m)) {
         if (m.getBody() === undefined) continue;
-        if (m.getParameters().some((p) => p.getScope() !== undefined || p.isReadonly()))
-          return undefined;
-        members.unshift(["constructor"]);
-        closures.unshift(m);
+        const value = this.liftClosure(fn, undefined, self);
+        if (value === undefined) return undefined;
+        ctor = { entry: ["constructor"], value };
         continue;
       }
-      if (
-        !(
-          Node.isMethodDeclaration(m) ||
-          Node.isGetAccessorDeclaration(m) ||
-          Node.isSetAccessorDeclaration(m)
-        )
-      )
-        return undefined;
+      if (Node.isClassStaticBlockDeclaration(m)) {
+        const value = this.liftClosure(fn, undefined, self);
+        if (value === undefined) return undefined;
+        entries.push(["block"]);
+        values.push(value);
+        continue;
+      }
       const nameNode = m.getNameNode();
-      if (!Node.isIdentifier(nameNode)) return undefined;
-      if (m.getBody() === undefined) return undefined;
-      const kind = Node.isMethodDeclaration(m)
-        ? "method"
-        : Node.isGetAccessorDeclaration(m)
-          ? "get"
-          : "set";
-      members.push([kind, nameNode.getText(), m.isStatic()]);
-      closures.push(m);
-    }
-    const values: ValueId[] = [];
-    for (const fn of closures) {
+      // A computed or literal name: the key's value, now, in member order.
+      let name: string | null = null;
+      if (Node.isIdentifier(nameNode)) name = nameNode.getText();
+      else
+        values.push(
+          this.liftExpr(
+            Node.isComputedPropertyName(nameNode) ? nameNode.getExpression() : (nameNode as Node),
+          ),
+        );
+      const kind = Node.isPropertyDeclaration(m)
+        ? "field"
+        : Node.isMethodDeclaration(m)
+          ? "method"
+          : Node.isGetAccessorDeclaration(m)
+            ? "get"
+            : "set";
       const value = this.liftClosure(fn, undefined, self);
       if (value === undefined) return undefined;
+      entries.push([kind, name, m.isStatic()]);
       values.push(value);
     }
+    if (ctor !== undefined) {
+      entries.unshift(ctor.entry);
+      values.unshift(ctor.value);
+    }
     if (parent !== undefined) {
-      members.unshift(["extends"]);
+      entries.unshift(["extends"]);
       values.unshift(parent);
     }
+    // Defining a class with a static field or block runs code: it is ordered among the heap
+    // operations, as a call is.
+    const runsAtDefinition = entries.some(
+      (e) => Array.isArray(e) && (e[0] === "block" || (e[0] === "field" && e[2] === true)),
+    );
     return this.emit("op", values, 1, {
       origin: { kind: "Class", text: truncate(self ?? "class") },
-      label: `class:${labelJson(members)}`,
+      label: `class:${labelJson(entries)}`,
+      ...(runsAtDefinition ? { heap: true } : {}),
     })[0] as ValueId;
+  }
+
+  /**
+   * Each member of a class as the function it lifts as, in the same order: a method, accessor or
+   * constructor as itself (renamed when its name is not an identifier), a field as a method that
+   * returns its initializer, a static block as a static method. Members that need no rewriting are
+   * returned as they are; otherwise from a copy of the file with the class rewritten.
+   */
+  private rewriteClass(
+    node: import("ts-morph").ClassDeclaration | import("ts-morph").ClassExpression,
+    members: readonly Node[],
+  ): (FunctionLike | undefined)[] | undefined {
+    const plain = (m: Node): boolean =>
+      Node.isConstructorDeclaration(m) ||
+      ((Node.isMethodDeclaration(m) ||
+        Node.isGetAccessorDeclaration(m) ||
+        Node.isSetAccessorDeclaration(m)) &&
+        Node.isIdentifier(m.getNameNode()));
+    if (members.every(plain)) return members.map((m) => m as FunctionLike);
+    const file = node.getSourceFile();
+    let text = file.getFullText();
+    const edits: [number, number, string][] = [];
+    for (const [i, m] of members.entries()) {
+      if (plain(m)) continue;
+      if (Node.isClassStaticBlockDeclaration(m)) {
+        edits.push([m.getStart(), m.getEnd(), `static __yk_member${i}() ${staticBody(m)}`]);
+        continue;
+      }
+      if (Node.isPropertyDeclaration(m)) {
+        const body = initializerBody(m.getInitializer());
+        edits.push([
+          m.getStart(),
+          m.getEnd(),
+          `${m.isStatic() ? "static " : ""}__yk_member${i}() ${body}`,
+        ]);
+        continue;
+      }
+      // A method or accessor whose name is not an identifier: the same member, renamed.
+      const nameNode = (m as import("ts-morph").MethodDeclaration).getNameNode();
+      edits.push([nameNode.getStart(), nameNode.getEnd(), `__yk_member${i}`]);
+    }
+    for (const [from, to, replacement] of edits.sort((a, b) => b[0] - a[0]))
+      text = text.slice(0, from) + replacement + text.slice(to);
+    const copy = file
+      .getProject()
+      .createSourceFile(`__class${this.classRewriteCount++}.ts`, text, { overwrite: true });
+    const at = node.getStart();
+    const cls = [
+      ...copy.getDescendantsOfKind(SyntaxKind.ClassDeclaration),
+      ...copy.getDescendantsOfKind(SyntaxKind.ClassExpression),
+    ].find((c) => c.getStart() === at);
+    if (cls === undefined) return undefined;
+    const out = cls.getMembers().filter((m) => !isTypeOnlyMember(m));
+    if (out.length !== members.length) return undefined;
+    return out.map((m) => m as FunctionLike);
   }
 
   /**
@@ -4770,4 +4879,43 @@ function nestedVarNames(body: Node): string[] {
   };
   visit(body);
   return names;
+}
+
+/** A class member that is a type only: it computes nothing (#1330). */
+function isTypeOnlyMember(m: Node): boolean {
+  if (Node.isIndexSignatureDeclaration(m)) return true;
+  if (Node.isPropertyDeclaration(m)) return m.hasDeclareKeyword() || m.isAbstract();
+  if (Node.isMethodDeclaration(m)) return m.isAbstract() || m.getBody() === undefined;
+  return m.getKind() === SyntaxKind.SemicolonClassElement;
+}
+
+/**
+ * A field initializer as a method body: `{ return (e); }`, `{ return undefined; }` for none, and the
+ * arrow's own body for `(() => { body })()` or `(() => e)()`, as the TypeScript lowering writes one.
+ */
+function initializerBody(init: Node | undefined): string {
+  if (init === undefined) return "{ return undefined; }";
+  let call: Node = init;
+  while (Node.isParenthesizedExpression(call)) call = call.getExpression();
+  if (Node.isCallExpression(call) && call.getArguments().length === 0) {
+    let callee: Node = call.getExpression();
+    while (Node.isParenthesizedExpression(callee)) callee = callee.getExpression();
+    if (Node.isArrowFunction(callee) && callee.getParameters().length === 0 && !callee.isAsync()) {
+      const body = callee.getBody();
+      return Node.isBlock(body) ? body.getText() : `{ return (${body.getText()}); }`;
+    }
+  }
+  return `{ return (${init.getText()}); }`;
+}
+
+/** A static block's body, and the arrow's own body when it is only `(() => { body })();`. */
+function staticBody(m: import("ts-morph").ClassStaticBlockDeclaration): string {
+  const body = m.getBody() as import("ts-morph").Block;
+  const statements = body.getStatements();
+  const only = statements.length === 1 ? statements[0] : undefined;
+  if (only !== undefined && Node.isExpressionStatement(only)) {
+    const inner = initializerBody(only.getExpression());
+    if (!inner.startsWith("{ return (")) return inner;
+  }
+  return body.getText();
 }
