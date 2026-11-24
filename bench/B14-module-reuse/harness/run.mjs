@@ -6,6 +6,8 @@
 //   reuse    the model names the capability it needs, the library shows the top 5 modules
 //            (@yakcc/discovery-search searchModules over the module index), the model picks one
 //            or none, then writes glue around lib.<name> (or everything, if none)
+//   routed   the model writes it at once when it is small (one call), else continues as reuse
+//            (--arms picks a subset; default all three)
 // Scored by held-out tests in a vm sandbox; the reused module is bound in the same realm.
 //
 //   node harness/run.mjs --dry-run [--seeds 3]          plan and cost, no calls
@@ -35,6 +37,7 @@ import {
   gluePrompt,
   isTargetEntry,
   needPrompt,
+  routePrompt,
   runReuse,
   runScratch,
   scratchPrompt,
@@ -54,6 +57,12 @@ export function offlineClient(views) {
       const v = byPrompt(prompt);
       const reply = (text) => ({ text, inputTokens: est(prompt), outputTokens: est(text) });
       if (!v) return reply("NONE");
+      // Routed: the offline client writes small tasks at once and searches for the rest.
+      if (prompt.includes("If you can write this correctly")) {
+        if (v.size === "small" && v.referenceScratch)
+          return reply(`\`\`\`ts\n${v.referenceScratch}\n\`\`\``);
+        return reply(v.spec.split(". ")[0]);
+      }
       if (prompt.includes("say what reusable library module")) return reply(v.spec.split(". ")[0]);
       if (prompt.includes('{"pick": candidate number}')) {
         // The offline client picks the candidate whose name and package match its target.
@@ -116,8 +125,10 @@ export async function moduleLibrary(indexFile) {
   };
 }
 
+export const ARMS = ["scratch", "reuse", "routed"];
+
 /** The plan and an upper-bound cost: scratch writes the module (its closure tokens). */
-export function planRun({ tasks, seeds, index }) {
+export function planRun({ tasks, seeds, index, arms = ARMS }) {
   let chars = 0;
   let out = 0;
   let calls = 0;
@@ -125,16 +136,22 @@ export function planRun({ tasks, seeds, index }) {
     const target = index.entries.find((e) => isTargetEntry(t, e));
     const writeTokens = Math.max(300, target?.closureTokens ?? 300);
     // scratch: one call, writes up to the module
-    chars += scratchPrompt(t).length;
-    out += writeTokens;
-    // reuse: need, confirm over 5 candidates, glue with the root source (or scratch), upper bound
+    if (arms.includes("scratch")) {
+      chars += scratchPrompt(t).length;
+      out += writeTokens;
+      calls += 1;
+    }
+    // reuse and routed: first call, confirm over 5 candidates, glue with the root source (or
+    // scratch), upper bound
     const five = index.entries.slice(0, 5);
-    chars +=
-      needPrompt(t).length +
-      confirmPrompt(t, "x".repeat(200), five).length +
-      gluePrompt(t, "f", "x".repeat(4000)).length;
-    out += 150 + 100 + writeTokens;
-    calls += 4;
+    for (const arm of ["reuse", "routed"].filter((a) => arms.includes(a))) {
+      chars +=
+        (arm === "routed" ? routePrompt(t) : needPrompt(t)).length +
+        confirmPrompt(t, "x".repeat(200), five).length +
+        gluePrompt(t, "f", "x".repeat(4000)).length;
+      out += 150 + 100 + writeTokens;
+      calls += 3;
+    }
   }
   return {
     tasks: tasks.length,
@@ -156,8 +173,10 @@ async function main() {
     throw new Error(`no module index at ${indexFile}; run scripts/build-module-index.mjs`);
   const only = arg("tasks", null);
   const tasks = only ? allTasks.filter((t) => only.split(",").includes(t.id)) : allTasks;
+  const arms = arg("arms", ARMS.join(",")).split(",");
+  for (const a of arms) if (!ARMS.includes(a)) throw new Error(`unknown arm ${a}`);
   const library = await moduleLibrary(indexFile);
-  const plan = planRun({ tasks, seeds, index: library.index });
+  const plan = planRun({ tasks, seeds, index: library.index, arms });
   if (argv.includes("--dry-run")) {
     console.log(JSON.stringify(plan, null, 2));
     return;
@@ -166,7 +185,7 @@ async function main() {
   let client;
   let model;
   if (clientName === "offline") {
-    client = offlineClient(tasks.map(clientView));
+    client = offlineClient(tasks.map((t) => ({ ...clientView(t), size: t.size })));
     model = "offline-reference";
   } else if (clientName === "anthropic") {
     model = arg("model", DEFAULT_MODEL);
@@ -177,16 +196,18 @@ async function main() {
   const rows = [];
   for (let seed = 0; seed < seeds; seed++)
     for (const task of tasks) {
-      rows.push({ seed, ...(await runScratch({ task, client })) });
-      rows.push({
-        seed,
-        ...(await runReuse({
-          task,
-          client,
-          search: library.search,
-          rootSourceOf: library.rootSourceOf,
-        })),
-      });
+      if (arms.includes("scratch")) rows.push({ seed, ...(await runScratch({ task, client })) });
+      for (const arm of ["reuse", "routed"].filter((a) => arms.includes(a)))
+        rows.push({
+          seed,
+          ...(await runReuse({
+            task,
+            client,
+            search: library.search,
+            rootSourceOf: library.rootSourceOf,
+            route: arm === "routed",
+          })),
+        });
     }
   const price = PRICES[model] ?? PRICES[DEFAULT_MODEL];
   const summary = summarize(rows, price);
