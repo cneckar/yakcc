@@ -138,6 +138,11 @@ export interface DucUnknown {
    * when the platform lacks it (a UMD wrapper's `define`).
    */
   readonly probe?: boolean;
+  /**
+   * A name bound in a scope enclosing the fragment (#1297): a parameter or a local of the function
+   * the fragment was sliced from. Declared in the same file, as a module binding is.
+   */
+  readonly enclosing?: boolean;
 }
 
 import type { ModuleBindingInfo } from "./module-bindings.js";
@@ -166,6 +171,8 @@ export interface DucGateResult {
   readonly moduleState: readonly DucUnknown[];
   /** CommonJS module scope the atom uses: `exports`, `module`, `require` (recorded). */
   readonly moduleScope: readonly DucUnknown[];
+  /** Names bound in the scopes enclosing a sliced fragment (recorded, #1297). */
+  readonly enclosing: readonly DucUnknown[];
   /** Present when the fragment could not be lifted (a syntax/analysis failure). */
   readonly liftError?: string;
   /**
@@ -222,6 +229,7 @@ export function runDucConservationGate(
   source: string,
   internalSymbols: ReadonlySet<string> = NO_INTERNAL_SYMBOLS,
   moduleBindings: ReadonlyMap<string, ModuleBindingInfo> = NO_MODULE_BINDINGS,
+  enclosingBindings: ReadonlySet<string> = NO_INTERNAL_SYMBOLS,
 ): DucGateResult {
   let unknowns: DucUnknown[];
   let wellFormed: boolean;
@@ -244,6 +252,11 @@ export function runDucConservationGate(
       const { symbol, reason, module } = node.diamond;
       if (seen.has(symbol)) continue;
       const isFree = reason === "free-identifier";
+      // A fragment's read of its enclosing function's binding (#1297): the nearest scope wins.
+      if (isFree && enclosingBindings.has(symbol)) {
+        seen.set(symbol, { symbol, reason, enclosing: true });
+        continue;
+      }
       const scope =
         isFree && inModule && !moduleBindings.has(symbol)
           ? symbol === "exports" || symbol === "module"
@@ -284,6 +297,7 @@ export function runDucConservationGate(
       captures: [],
       moduleState: [],
       moduleScope: [],
+      enclosing: [],
       liftError,
     };
   }
@@ -292,12 +306,14 @@ export function runDucConservationGate(
     u.capture === true ||
     u.moduleState === true ||
     u.moduleScope === true ||
+    u.enclosing === true ||
     u.probe === true;
   const unexplained = unknowns.filter((u) => u.reason === "free-identifier" && !isExplained(u));
   const composition = unknowns.filter((u) => u.composition === true);
   const captures = unknowns.filter((u) => u.capture === true);
   const moduleState = unknowns.filter((u) => u.moduleState === true);
   const moduleScope = unknowns.filter((u) => u.moduleScope === true);
+  const enclosing = unknowns.filter((u) => u.enclosing === true);
   return {
     wellFormed,
     unknowns,
@@ -306,6 +322,7 @@ export function runDucConservationGate(
     captures,
     moduleState,
     moduleScope,
+    enclosing,
     influence,
     fidelity,
   };
@@ -339,8 +356,9 @@ export function enforceDucGate(
   warn: (message: string) => void = (m) => console.warn(m),
   internalSymbols: ReadonlySet<string> = NO_INTERNAL_SYMBOLS,
   moduleBindings: ReadonlyMap<string, ModuleBindingInfo> = NO_MODULE_BINDINGS,
+  enclosingBindings: ReadonlySet<string> = NO_INTERNAL_SYMBOLS,
 ): EnforceDucGateResult {
-  const result = runDucConservationGate(source, internalSymbols, moduleBindings);
+  const result = runDucConservationGate(source, internalSymbols, moduleBindings, enclosingBindings);
   // The sidecar always records the usupp and, when the atom lifted, the
   // `duc_influence` attestation and the captured module constants with their
   // declaration hashes. It is not part of the block's content address.
@@ -358,6 +376,7 @@ export function enforceDucGate(
           moduleState: result.moduleState.map((c) => ({ symbol: c.symbol, declHash: c.declHash })),
         }
       : {}),
+    ...(result.enclosing.length > 0 ? { enclosing: result.enclosing.map((c) => c.symbol) } : {}),
     ...(result.influence !== undefined
       ? { attestations: { duc_influence: result.influence } }
       : {}),

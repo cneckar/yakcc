@@ -368,6 +368,7 @@ import type { IntentCard } from "./intent/types.js";
 import { locateProjectRoot } from "./locate-root.js";
 import { linkPlanAtoms, maybePersistNovelGlueAtom } from "./persist/atom-persist.js";
 import { collectInternalSymbols, moduleBindingsOf } from "./persist/duc-gate.js";
+import { enclosingBindingsOf } from "./persist/module-bindings.js";
 import { FOREIGN_POLICY_DEFAULT } from "./types.js";
 import type {
   CandidateBlock,
@@ -638,6 +639,7 @@ export async function universalize(
           sourceContext: perAtomSourceContext,
           internalSymbols,
           moduleBindings,
+          enclosingBindings: enclosingBindingsOf(candidate.source, entry.sourceRange),
         });
         // Surface the merkleRoot on the entry (may be undefined if intentCard absent).
         // exactOptionalPropertyTypes: spread only when defined to satisfy

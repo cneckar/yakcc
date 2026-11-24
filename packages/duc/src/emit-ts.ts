@@ -77,6 +77,7 @@ const CALLS = new Set(["CallExpression", "CallExpression?.", "NewExpression"]);
 
 const isMemberRead = (label: string): boolean =>
   (label !== "..." && (label.startsWith(".") || label.startsWith("?.")) && !label.endsWith("=")) ||
+  label.startsWith("super.") ||
   label === "ElementAccess" ||
   label === "ElementAccess?.";
 
@@ -372,6 +373,8 @@ function emitFunction(
     if (isMemberRead(label)) {
       if (label === "ElementAccess") return `${arg(0)}[${arg(1)}]`;
       if (label === "ElementAccess?.") return `${arg(0)}?.[${arg(1)}]`;
+      // The parent's member: its input is the receiver `super` reads with, written as `super`.
+      if (label.startsWith("super.")) return label;
       return `${arg(0)}${label}`;
     }
     if (CALLS.has(label)) {
