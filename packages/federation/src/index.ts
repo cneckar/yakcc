@@ -83,3 +83,34 @@ export type { ServeHandle, ServeOptions } from "./serve.js";
 
 export { createCommonsSubmitter } from "./submit.js";
 export type { CommonsSubmitterOptions } from "./submit.js";
+
+// ---------------------------------------------------------------------------
+// DUC implementations on the wire (#1291): the receiver's checks, the wire form, a client and a
+// mirror. A registry receives DUC implementations only through checkSharedSubmission.
+// ---------------------------------------------------------------------------
+export type {
+  ConformanceVector,
+  ModuleRecord,
+  ModuleStatement,
+  ReceiverOptions,
+  ReceiverStore,
+  SharedImplementation,
+  SubmissionVerdict,
+  TrustLevel,
+} from "./duc-submission.js";
+export { checkSharedSubmission } from "./duc-submission.js";
+export type { WireDucImplementation, WireDucLink, WireDucSubmission } from "./duc-wire.js";
+export {
+  deserializeDucImplementation,
+  deserializeDucSubmission,
+  serializeDucImplementation,
+} from "./duc-wire.js";
+export {
+  ducRowOf,
+  moduleRootOf,
+  receiveDucSubmission,
+  receiverStoreOf,
+  sharedImplementationOf,
+} from "./duc-receive.js";
+export type { DucClient, DucClientOptions, DucMirrorReport } from "./duc-client.js";
+export { DucClientError, createDucClient, mirrorDuc } from "./duc-client.js";

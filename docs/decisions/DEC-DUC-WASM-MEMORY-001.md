@@ -92,6 +92,33 @@ atom is checked by the same differential tests against the TypeScript reference.
   Element reads and writes are lowered only in runtime atoms for now: an out-of-range read is undefined in JavaScript, and a program's typed number cannot hold it.
 - **ToString in programs:** a string `+` with a number or a boolean, `String(x)`, `x.toString()` and template literals.
 
+**Progress, slice 3 (ToNumber, and the atoms of dynamic values):**
+- **StringToNumber is a runtime atom** (`__ykStringToNumber`). It implements ECMAScript's grammar: whitespace, the `Infinity` forms, `0x`/`0o`/`0b` integers, and decimals with an exponent. A decimal is read exactly, as a big integer times a power of ten (`__ykDecimalToDouble`), then rounded once to the nearest double, ties to even (`__ykBigToDouble`). It equals V8's `Number(s)` on 3147 strings, as JavaScript and as WasmGC. The strings include subnormals, overflow, halfway cases, and every double written three ways.
+- **ToNumber in programs:** `Number(x)`, unary `+`, and arithmetic on a string, a boolean or an array of numbers (whose primitive is its join).
+- **Comparisons across types**, as ECMAScript defines them:
+  - `==` across types converts both sides;
+  - relational operators compare as strings when both primitives are strings, and as numbers otherwise;
+  - an array is equal only to itself;
+  - `+` with an array concatenates its join.
+- **The atoms of dynamic values** (`DYNAMIC_ATOMS`): ToNumber, ToString, `typeof`, truthiness, `===`, `==`, `+`, and the relational comparison, each over every kind of value (undefined, null, booleans, numbers, strings, arrays of numbers). Each agrees with the engine on 1000 generated pairs, as JavaScript and as WasmGC.
+- **Values of any kind** are `anyref`s:
+  - a number is a box, a struct of one f64;
+  - a boolean is the i31 0 or 1, and undefined is the i31 2;
+  - null is the null reference;
+  - a string or an array is itself.
+
+  Six primitives inspect them: `__ykTag` gives the kind, `__ykNum`, `__ykBool`, `__ykStr` and `__ykArr` read the value as that kind, and `__ykSame` is reference equality. Everything else is the atoms.
+- **In a program:**
+  - A value is of any kind when it can be of two kinds: a parameter or result typed `unknown`, a union, or a choice or loop carry between kinds.
+  - An undefined is a value like any other.
+  - An element read out of range is undefined.
+  - Operators on such values call the atoms, and `??` and `typeof` are lowered.
+  - A result is read as the kind its contract says.
+
+  At the boundary, JavaScript values convert both ways, arrays included. In a runtime atom an undefined still stands for a default, because the atoms never observe one.
+- **Two primitives:** `__ykPow2`, which is exact over the whole range of doubles, and `__ykUnit`, which is NaN out of range as `charCodeAt` is.
+- **A lifter fix:** a block may take the rest of the function when the rest declares again a name the block declares, because the rest's reads are of its own binding. Before this, a loop that returns inside such a block was lifted opaque.
+
 **What stays from B:** its tests. Every program the linear-memory build passes, the WasmGC build must pass on the same inputs. After that, B is removed.
 
 ## Evidence

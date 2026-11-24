@@ -24,7 +24,9 @@ import {
   NODE,
   type StoredLink,
   WEB,
+  byMeaning,
   checkSubmission,
+  contractSignature,
   declaredNamesOf,
   emitTypeScript,
   graphIdentity,
@@ -295,6 +297,14 @@ function decodeAndInspect(impl: SharedImplementation, maxBytes: number): DucGrap
   const spec = specHash(impl.spec);
   if (spec !== impl.specHash) {
     throw new Refusal("integrity", `the contract's hash is ${spec}, not ${impl.specHash}`);
+  }
+  // The operations are those the contract's types choose (#1310): choosing again gives the same graph.
+  const chosen = graphIdentity(byMeaning(graph, contractSignature(impl.spec)));
+  if (chosen !== identity) {
+    throw new Refusal(
+      "integrity",
+      `the graph's operations are not those its contract's types choose (chosen again, its identity is ${chosen})`,
+    );
   }
   // 4. No external code: no construct whose meaning is its source text.
   const external = externalCode(graph);

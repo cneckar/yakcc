@@ -53,7 +53,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
-import { openRegistry } from "@yakcc/registry";
+import { openRegistry, openRegistrySnapshot } from "@yakcc/registry";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _runWithRegistry } from "../src/compile-pipeline.js";
 import type { GapRow, ManifestEntry } from "../src/compile-pipeline.js";
@@ -132,7 +132,7 @@ beforeAll(async () => {
   registryAvailable = true;
 
   // Open the registry and run the compile pipeline.
-  const registry = await openRegistry(DEFAULT_REGISTRY_PATH, NULL_EMBEDDING_OPTS);
+  const registry = await openRegistrySnapshot(DEFAULT_REGISTRY_PATH, NULL_EMBEDDING_OPTS);
   try {
     // Get the corpus atom count for assertions.
     const corpus = await loadCorpusFromRegistry(registry);
@@ -290,7 +290,10 @@ describe("T3: compile-self integration — pipeline mechanics", () => {
       (e) => e.sourcePkg !== null && e.sourceFile !== null,
     );
     if (provenanceEntries.length === 0) {
-      console.warn(t8GapRateReport || "[T3(d)] No manifest entries carry provenance — bootstrap registry may be empty or all atoms are null-provenance.");
+      console.warn(
+        t8GapRateReport ||
+          "[T3(d)] No manifest entries carry provenance — bootstrap registry may be empty or all atoms are null-provenance.",
+      );
       return;
     }
     for (const entry of provenanceEntries.slice(0, 20)) {
@@ -862,8 +865,8 @@ describe("T7: glue-capture schema proof (#333)", () => {
       return;
     }
 
-    const { openRegistry, SCHEMA_VERSION } = await import("@yakcc/registry");
-    const registry = await openRegistry(DEFAULT_REGISTRY_PATH, NULL_EMBEDDING_OPTS);
+    const { openRegistrySnapshot, SCHEMA_VERSION } = await import("@yakcc/registry");
+    const registry = await openRegistrySnapshot(DEFAULT_REGISTRY_PATH, NULL_EMBEDDING_OPTS);
     try {
       // SCHEMA_VERSION constant must be 10 (schema v10 adds source_file_state table,
       // DEC-V2-REGISTRY-SCHEMA-BUMP-V10-001 / wi-363-shave-cache #363).
@@ -888,8 +891,8 @@ describe("T7: glue-capture schema proof (#333)", () => {
       return;
     }
 
-    const { openRegistry } = await import("@yakcc/registry");
-    const registry = await openRegistry(DEFAULT_REGISTRY_PATH, NULL_EMBEDDING_OPTS);
+    const { openRegistrySnapshot } = await import("@yakcc/registry");
+    const registry = await openRegistrySnapshot(DEFAULT_REGISTRY_PATH, NULL_EMBEDDING_OPTS);
     try {
       const glueEntries = await registry.listSourceFileGlue();
       console.info(`[T7(b)] source_file_glue rows in bootstrap registry: ${glueEntries.length}`);
@@ -950,8 +953,8 @@ describe("T7: glue-capture schema proof (#333)", () => {
     const committedSha256 = createHash("sha256").update(committedContent).digest("hex");
     console.info(`[T7(c)] SHA-256(committed bootstrap/expected-roots.json) = ${committedSha256}`);
 
-    const { openRegistry } = await import("@yakcc/registry");
-    const registry = await openRegistry(DEFAULT_REGISTRY_PATH, NULL_EMBEDDING_OPTS);
+    const { openRegistrySnapshot } = await import("@yakcc/registry");
+    const registry = await openRegistrySnapshot(DEFAULT_REGISTRY_PATH, NULL_EMBEDDING_OPTS);
     let freshSha256: string;
     try {
       const freshManifest = await registry.exportManifest();

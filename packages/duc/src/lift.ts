@@ -34,6 +34,7 @@ import { KNOWN_PRIMITIVES } from "./base-set.js";
 import { canonicalizeGraph } from "./canonical.js";
 import { isHeapLabel } from "./heap-labels.js";
 import { normalizeLiteral } from "./literal.js";
+import { jsOperation } from "./ops.js";
 import { RUNTIME_MODULE } from "./runtime.js";
 import type {
   DiamondReason,
@@ -512,11 +513,15 @@ class Lifter {
       ...(this.regionStack.length > 0 ? { region: this.regionStack.join("/") } : {}),
       ...(extra?.diamond !== undefined ? { diamond: extra.diamond } : {}),
       ...(extra?.origin !== undefined ? { origin: extra.origin } : {}),
-      // Structural label (D6): explicit, else the syntactic kind of the origin.
+      // Structural label (D6): explicit, else the syntactic kind of the origin. An ECMAScript
+      // operator is named as an operation (`+` is `js.add`, #1310).
       ...(extra?.label !== undefined
-        ? { label: extra.label }
+        ? { label: kind === "op" ? jsOperation(extra.label, given.length) : extra.label }
         : extra?.origin !== undefined && (kind === "op" || kind === "literal-source")
-          ? { label: extra.origin.kind }
+          ? {
+              label:
+                kind === "op" ? jsOperation(extra.origin.kind, given.length) : extra.origin.kind,
+            }
           : kind === "sel" && extra?.origin?.text === HEAP
             ? { label: "heap" }
             : {}),
@@ -1172,6 +1177,10 @@ class Lifter {
       )
         lexical.add(st.getName() as string);
     }
+    // A name the tail declares at its own top level is, everywhere in the tail, the tail's binding
+    // (its scope is the scope the tail is in), never the block's: reading it is not reading the
+    // block's name (DEC-LIFT-BLOCK-TAIL-SHADOW-001).
+    for (const t of tail) for (const n of topLevelDeclaredNames(t)) lexical.delete(n);
     return !tail.some((t) => this.readNamesOf(t).some((n) => lexical.has(n)));
   }
 
@@ -1815,8 +1824,9 @@ class Lifter {
       const thenValue = thenEnv.get(name) ?? beforeValue;
       const elseValue = elseEnv.get(name) ?? beforeValue;
       // A side that has thrown on every path never reaches here. When the other side's value was made
-      // before the if (or is a constant), it is the value; otherwise the join keeps the value from before
-      // on the dead side.
+      // before the if (or is a constant), it is the value; otherwise the join takes `undefined` on the
+      // dead side, never read: the value the name had before the if depends on how the source named
+      // its values, and the TypeScript lowering names them differently (#1316).
       // The heap token keeps the throwing side's: what follows waits for the branch (#1285).
       if (thenDead !== elseDead && name !== HEAP) {
         const live = thenDead ? elseValue : thenValue;
@@ -1827,9 +1837,10 @@ class Lifter {
           this.env.set(name, live);
           continue;
         }
+        const dead = this.undefinedValue();
         const [joined] = this.emit(
           "sel",
-          [condValue, thenDead ? beforeValue : live, thenDead ? live : beforeValue],
+          [condValue, thenDead ? dead : live, thenDead ? live : dead],
           1,
           { origin: { kind: "IfJoin", text: name } },
         );
@@ -3958,6 +3969,18 @@ function baseIdentifierOfTarget(target: Node | undefined): string | undefined {
 }
 
 /** All identifier names bound by a (possibly destructuring) binding-name node. */
+/**
+ * The names a statement declares in the scope it is in: those of a variable statement and of a
+ * named function or class declaration.
+ */
+function topLevelDeclaredNames(stmt: Node): string[] {
+  if (Node.isVariableStatement(stmt))
+    return stmt.getDeclarations().flatMap((d) => patternNames(d.getNameNode()));
+  if ((Node.isFunctionDeclaration(stmt) || Node.isClassDeclaration(stmt)) && stmt.getName())
+    return [stmt.getName() as string];
+  return [];
+}
+
 function patternNames(nameNode: Node): string[] {
   if (Node.isIdentifier(nameNode)) return [nameNode.getText()];
   const names: string[] = [];

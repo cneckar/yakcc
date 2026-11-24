@@ -26,12 +26,14 @@ import { parseArgs } from "node:util";
 import type { BlockMerkleRoot } from "@yakcc/contracts";
 import {
   SchemaVersionMismatchError,
+  createDucClient,
   createHttpTransport,
+  mirrorDuc,
   mirrorRegistry,
   pullBlock,
   serveRegistry,
 } from "@yakcc/federation";
-import type { ServeHandle, Transport } from "@yakcc/federation";
+import type { DucClient, ServeHandle, Transport } from "@yakcc/federation";
 import type { Registry, RegistryOptions } from "@yakcc/registry";
 import { acquireWriteLock, openRegistry } from "@yakcc/registry";
 import type { Logger } from "../index.js";
@@ -51,6 +53,11 @@ export interface FederationOptions {
    * Tests inject a stub Transport to avoid network I/O.
    */
   transport?: Transport;
+  /**
+   * Client for the peer's DUC implementations (#1291). Default: an HTTP client of --remote, when the
+   * transport is not injected; tests inject one, or none to mirror block triplets only.
+   */
+  ducClient?: DucClient;
   /**
    * When true, the serve subcommand starts the server and returns the
    * ServeHandle immediately without registering SIGINT/SIGTERM handlers or
@@ -260,7 +267,11 @@ async function runFederationMirror(
 
   try {
     const report = await mirrorRegistry(remote, registry, transport);
-    logger.log(JSON.stringify(report, null, 2));
+    // The peer's DUC implementations, each received through the receiver's checks (#1291).
+    const ducClient =
+      opts?.ducClient ?? (opts?.transport === undefined ? createDucClient(remote) : undefined);
+    const duc = ducClient !== undefined ? await mirrorDuc(ducClient, registry) : undefined;
+    logger.log(JSON.stringify(duc !== undefined ? { ...report, duc } : report, null, 2));
     return 0;
   } catch (err) {
     if (err instanceof SchemaVersionMismatchError) {

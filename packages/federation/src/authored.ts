@@ -12,6 +12,8 @@ import { type SpecYak, specHash } from "@yakcc/contracts";
 import {
   type DucGraph,
   LineFormError,
+  byMeaning,
+  contractSignature,
   emitTypeScript,
   graphIdentity,
   liftAtom,
@@ -58,6 +60,8 @@ export async function checkAuthoredGraph(
   let graph: DucGraph;
   try {
     graph = parseLineForm(lineForm.endsWith("\n") ? lineForm : `${lineForm}\n`);
+    // Its operations as the contract's types choose them (#1310), whichever names the model wrote.
+    graph = byMeaning(graph, contractSignature(contract));
   } catch (e) {
     if (e instanceof LineFormError)
       return { ok: false, findings: [{ check: "parse", reason: e.message, line: e.line }] };
@@ -87,7 +91,9 @@ export async function checkAuthoredGraph(
   // P2: the graph's TypeScript lowering lifts back to the same graph.
   if (v?.refused === undefined) {
     try {
-      const back = graphIdentity(liftAtom(emitTypeScript(graph)));
+      const back = graphIdentity(
+        byMeaning(liftAtom(emitTypeScript(graph)), contractSignature(contract)),
+      );
       if (back !== packed.identity)
         findings.push({
           check: "round-trip",

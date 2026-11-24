@@ -28,7 +28,7 @@ export const GRAPH_FORMAT_VERSION = 2;
  * same source (a new construct lifted, a canonical rule) changes identities, so it bumps this: a
  * stored graph from an older lifter is still valid, but relifting its source may give another.
  */
-export const LIFTER_VERSION = 40;
+export const LIFTER_VERSION = 42;
 
 /** One reference's link: the reference, by reason, symbol and module, and the contract it links to. */
 export interface StoredLink {
@@ -75,6 +75,11 @@ export function graphRoot(
  *
  * The TypeScript text is a lowering of the graph, not part of the root.
  */
+/** The root of a record outside a graph (a module record), as BLAKE3 hex of its canonical text. */
+export function recordRoot(canonicalText: string): string {
+  return bytesToHex(blake3(new TextEncoder().encode(canonicalText)));
+}
+
 export function ducBlockRoot(specHash: string, root: string, proofRoot: string): string {
   return bytesToHex(
     blake3(concat([hexToBytes(specHash), hexToBytes(root), hexToBytes(proofRoot)])),

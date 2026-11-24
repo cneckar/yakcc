@@ -1,4 +1,5 @@
 import { ts } from "ts-morph";
+import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
@@ -311,7 +312,9 @@ const BOOLEAN_METHODS = new Set([
 const MATH_INTEGER = new Set(["floor", "ceil", "round", "trunc", "sign", "clz32", "imul"]);
 
 /** Infer the types of a graph's values from the contract's signature. */
-export function inferTypes(g: DucGraph, sig: Signature): TypeReport {
+export function inferTypes(input: DucGraph, sig: Signature): TypeReport {
+  // The rules below read ECMAScript's operators; every operation is one of their cases (#1310).
+  const g = ecmaScriptView(input);
   const types = new Map<ValueId, DucType>();
   const ambiguities: Ambiguity[] = [];
   const results = inferGraph(g, sig.inputs, types, ambiguities, 0);

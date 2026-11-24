@@ -274,6 +274,7 @@ export {
   type ForeignTripletFields,
   type BlockMerkleRoot,
   blockMerkleRoot,
+  proofRoot,
   specHash,
   isLocalTriplet,
   isForeignTriplet,

@@ -3,6 +3,7 @@
 // evaluator covers the arithmetic, comparison, literal, select and loop nodes the test sources use.
 import { describe, expect, it } from "vitest";
 import { liftAtom } from "./lift.js";
+import { ecmaScriptView } from "./ops.js";
 import type { DucGraph, DucNode, ValueId } from "./types.js";
 
 // biome-ignore lint/suspicious/noExplicitAny: the evaluator applies JavaScript's operators to untyped values
@@ -124,7 +125,9 @@ function evalScope(g: DucGraph, scope: string | undefined, values: Map<ValueId, 
 }
 
 /** Evaluates a graph on arguments, returning its observations in order. */
-function evaluate(g: DucGraph, args: readonly unknown[]): unknown[] {
+function evaluate(input: DucGraph, args: readonly unknown[]): unknown[] {
+  // The evaluator implements ECMAScript's operators: it reads each operation as one (#1310).
+  const g = ecmaScriptView(input);
   const values = new Map<ValueId, unknown>();
   for (const node of g.nodes) {
     if (node.kind === "param-source")

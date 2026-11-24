@@ -1,3 +1,4 @@
+import { mayInfluence } from "./influence.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The retrieval signature: the deterministic text an atom is embedded from (#1275, item 3).
@@ -10,7 +11,7 @@
  *
  * Embeddings are an index over this text. Selection is a structural check, never a similarity score.
  */
-import { mayInfluence } from "./influence.js";
+import { ecmaScriptLabel } from "./ops.js";
 import type { DucGraph } from "./types.js";
 
 export interface RetrievalSignatureOptions {
@@ -50,7 +51,9 @@ export function retrievalSignature(g: DucGraph, options: RetrievalSignatureOptio
   // An opaque node's label ends in a content hash, which is noise for retrieval: keep its kind.
   const ops = g.nodes
     .filter((n) => n.kind === "op")
-    .map((n) => (n.label ?? n.origin?.kind ?? "op").replace(/#[0-9a-f]+$/, ""));
+    // An operation as the ECMAScript operator it is a case of: a query written without the contract's
+    // types matches the atom whose operations were chosen by them (#1310).
+    .map((n) => ecmaScriptLabel(n.label ?? n.origin?.kind ?? "op").replace(/#[0-9a-f]+$/, ""));
   const literals = g.nodes.filter((n) => n.kind === "literal-source").map((n) => n.label ?? "");
   const diamonds = g.nodes.filter((n) => n.diamond !== undefined).map((n) => n.diamond);
   const primitives = diamonds

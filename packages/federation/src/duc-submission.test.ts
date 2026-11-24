@@ -9,7 +9,15 @@
  */
 import { brotliCompressSync } from "node:zlib";
 import { type SpecYak, specHash } from "@yakcc/contracts";
-import { type DucGraph, graphIdentity, liftAtom, linkReferences, packGraph } from "@yakcc/duc";
+import {
+  type DucGraph,
+  byMeaning,
+  contractSignature,
+  graphIdentity,
+  liftAtom,
+  linkReferences,
+  packGraph,
+} from "@yakcc/duc";
 import { describe, expect, it } from "vitest";
 import {
   type ConformanceVector,
@@ -43,7 +51,8 @@ function implementation(
   evidence: ConformanceVector[] = [],
   over: Partial<SharedImplementation> = {},
 ): SharedImplementation {
-  const packed = packGraph(graph);
+  // As a sender sends it: its operations chosen by its contract's types (#1310).
+  const packed = packGraph(byMeaning(graph, contractSignature(spec)));
   return {
     spec,
     specHash: specHash(spec),
@@ -133,6 +142,26 @@ describe("the receiver's checks, in order (#1287)", () => {
     const v = await verdictOf(wrongSpec);
     expect(v?.refused?.check).toBe("integrity");
     expect(v?.refused?.reason).toContain("contract's hash");
+  });
+
+  it("3 integrity: the operations are those the contract's types choose (#1310)", async () => {
+    // `a + b` over two numbers is f64.add. Sent as ECMAScript's js.add, its keys match its content,
+    // but choosing again under its contract gives another graph.
+    const g = liftAtom("export function f(a: number, b: number) { return a + b; }");
+    const spec = contract("f", ["number", "number"], "number");
+    const packed = packGraph(g);
+    const sent = implementation(spec, g, [], {
+      structure: packed.structure,
+      identity: packed.identity,
+      root: packed.root,
+      links: packed.links,
+    });
+    const v = await verdictOf(sent);
+    expect(v?.refused?.check).toBe("integrity");
+    expect(v?.refused?.reason).toContain("contract's types choose");
+    // The same graph under a contract whose types are not known is ECMAScript's, and passes the check.
+    const untyped = contract("f", ["unknown", "unknown"], "unknown");
+    expect((await verdictOf(implementation(untyped, g)))?.refused?.check).not.toBe("integrity");
   });
 
   it("3 integrity: a graph's root commits to its links and its format version (#1306)", async () => {

@@ -1,6 +1,7 @@
 import { canonicalizeGraph } from "./canonical.js";
 import { isHeapLabel } from "./heap-labels.js";
 import { normalizeLiteral } from "./literal.js";
+import { namedOperation } from "./ops.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The line form: the authoring format a model writes (#1275). One directive per line, in
@@ -790,7 +791,8 @@ export function parseLineForm(text: string): DucGraph {
       unclosed.kind === "if" ? "if is not closed by end" : "loop is not closed by end",
     );
   }
-  const graph = canonicalizeGraph(nodes, obs, branches);
+  // An operator written as ECMAScript writes it is that operator's operation (`+` is `js.add`, #1310).
+  const graph = canonicalizeGraph(nodes.map(namedOperation), obs, branches);
   return mode !== undefined ? { ...graph, mode } : graph;
 }
 
@@ -1112,12 +1114,14 @@ export function printLineForm(g: DucGraph): string {
     }
     for (const loop of loopNodes) {
       if (loop.region !== scope) continue;
-      // The body reads literals directly, so they come before the loop too.
+      // The body reads literals directly, so they come before the loop too: a do loop's next
+      // first-pass flag is the literal `false`.
       const body = bodyPathOf(loop);
-      const literals = g.nodes
-        .filter((n) => isPrefix(body, n.region))
-        .flatMap((n) => n.inputs)
-        .filter((v) => producerOf(v).kind === "literal-source");
+      const literals = [
+        ...g.nodes.filter((n) => isPrefix(body, n.region)).flatMap((n) => n.inputs),
+        ...(loop.loop?.next ?? []),
+        ...(loop.loop?.cond !== undefined ? [loop.loop.cond] : []),
+      ].filter((v) => producerOf(v).kind === "literal-source");
       items.push({
         first: nodeIndex.get(loop.id) as number,
         produces: loop.outputs,

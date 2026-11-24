@@ -4,6 +4,8 @@
  * The lifter orders them by the heap token, and the line form threads the token through those a
  * program writes without one (#1288).
  */
+import { ecmaScriptLabel } from "./ops.js";
+
 const HEAP_LABELS = new Set([
   "delete[]",
   "CallExpression",
@@ -25,7 +27,8 @@ const HEAP_LABELS = new Set([
  * Whether an operation reads or writes shared state, so its place among the others is structure: a
  * call, `new`, a member read or write, `in`, a spread, an opaque summary (its label has a hash).
  */
-export function isHeapLabel(label: string): boolean {
+export function isHeapLabel(named: string): boolean {
+  const label = ecmaScriptLabel(named);
   return (
     HEAP_LABELS.has(label) ||
     label.includes("#") ||

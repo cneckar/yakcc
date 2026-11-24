@@ -151,7 +151,7 @@ describe("exits (#1276)", () => {
     const g = liftAtom(src);
     expect(g.nodes.some((n) => n.kind === "loop" && n.loop !== undefined)).toBe(true);
     const thrown = g.nodes.find((n) => n.label === "throw");
-    const added = g.nodes.find((n) => n.label === "+");
+    const added = g.nodes.find((n) => n.label === "js.add");
     expect(thrown?.region).toMatch(/\.t$/);
     expect(added?.region).toMatch(/\.e$/);
     const code = emitTypeScript(g);
@@ -161,6 +161,18 @@ describe("exits (#1276)", () => {
     expect(run([1, 2, 3])).toBe(6);
     expect(() => run([1, -1, 3])).toThrow("neg");
     expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
+  });
+
+  it("a join's dead side, never read, is undefined: the source's names for its values do not reach the graph (#1316)", () => {
+    // A side that throws never reaches the join; what the name held before the if is not part of it.
+    const src =
+      'export function f(n: number, p: number) { while (p < n) { p++; if (p >= n) throw new Error("x"); while (p < n) { p++; } } return p; }';
+    const g = liftAtom(src);
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+    // The same function with the increment written into another name before the if.
+    const renamed =
+      'export function f(n: number, p: number) { while (p < n) { let q = p; q++; let r = q; if (q >= n) { throw new Error("x"); } else { while (r < n) { r++; } } p = r; } return p; }';
+    expect(graphIdentity(liftAtom(renamed))).toBe(graphIdentity(g));
   });
 
   it("a join whose sides hold the same new value takes it, and a side that throws does not join", () => {
@@ -174,7 +186,7 @@ describe("exits (#1276)", () => {
       "export function f(n: number, a: boolean, b: boolean) { let i = 0; let s = 0; while (i < n) { const j = i + 1; if (a) { s = 1; } else if (b) { throw new Error('b'); } else { s = 2; } i = j; } return [i, s]; }",
     );
     const sels = g.nodes.filter((n) => n.kind === "sel");
-    const plus = g.nodes.find((n) => n.label === "+")?.outputs[0];
+    const plus = g.nodes.find((n) => n.label === "js.add")?.outputs[0];
     expect(sels.some((n) => n.inputs.includes(plus as string))).toBe(false);
   });
 

@@ -55,6 +55,7 @@ export {
   GRAPH_FORMAT_VERSION,
   LIFTER_VERSION,
   ducBlockRoot,
+  recordRoot,
   graphRoot,
   packGraph,
   unpackGraph,
@@ -158,4 +159,12 @@ export {
 } from "./native.js";
 export type { NativeModule, NativeModuleStatement, NativeModules } from "./emit-llvm-boxed.js";
 export { emitLlvmBoxed, emitNativeModules, moduleSymbol } from "./emit-llvm-boxed.js";
-export { ecmaScriptLabel, ecmaScriptView } from "./ops.js";
+export {
+  ecmaScriptLabel,
+  ecmaScriptView,
+  GENERIC_OPERATIONS,
+  jsOperation,
+  namedOperation,
+  namedOperations,
+} from "./ops.js";
+export { byMeaning, contractSignature } from "./by-meaning.js";

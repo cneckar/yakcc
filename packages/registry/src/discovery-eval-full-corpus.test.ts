@@ -102,7 +102,7 @@ import type {
   Registry,
   SpecHash,
 } from "./index.js";
-import { openRegistry } from "./storage.js";
+import { openRegistry, openRegistrySnapshot } from "./storage.js";
 
 // ---------------------------------------------------------------------------
 // Provider / report selection
@@ -785,7 +785,8 @@ beforeAll(async () => {
   }
 
   // Open the bootstrap registry (read-write so we can re-embed and add seed atoms)
-  registry = await openRegistry(BOOTSTRAP_REGISTRY_PATH, { embeddings: embeddingProvider });
+  // A copy: opening migrates, and no test writes the committed registry (#1291).
+  registry = await openRegistrySnapshot(BOOTSTRAP_REGISTRY_PATH, { embeddings: embeddingProvider });
 
   if (USE_LOCAL_PROVIDER) {
     // Fix 1 (DEC-V3-DISCOVERY-EVAL-FIX-001): Re-embed all blocks with semantic provider.
