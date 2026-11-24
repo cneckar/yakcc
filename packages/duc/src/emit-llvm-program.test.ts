@@ -15,6 +15,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { canonicalizeText } from "../../contracts/src/canonicalize.js";
 import { contractId } from "../../contracts/src/contract-id.js";
 import { canRun, decode, encode, same } from "./__fixtures__/native-harness.js";
+import { buildProgram } from "./build.js";
 import { emitNativeModules } from "./emit-llvm-boxed.js";
 import { compileObject, compileRuntime } from "./native.js";
 import { programRecord } from "./program.js";
@@ -159,5 +160,35 @@ describe.skipIf(!canRun("x86_64-linux"))("programs, natively (#1333)", () => {
         bad.push(`id: ${JSON.stringify(got[2 * i + 1])} vs ${id}`);
     });
     expect(bad).toEqual([]);
+  }, 600_000);
+
+  it("yakcc build --native: the acceptance command, built into an executable, prints what Node does", () => {
+    const exe = join(work, "bin", "contract-id");
+    const built = buildProgram(here("./__fixtures__/program/contract-id-cli.ts"), exe, {
+      root: here("../../.."),
+    });
+    expect(built.modules.some((m) => m.endsWith("@noble/hashes/blake3.js"))).toBe(true);
+    const specs = fc.sample(spec, { numRuns: 40, seed: 1361 });
+    const run = spawnSync(
+      exe,
+      specs.map((s) => JSON.stringify(s)),
+      { maxBuffer: 1 << 24 },
+    );
+    expect(run.stderr.toString()).toBe("");
+    expect(run.status).toBe(0);
+    const want = specs.map(
+      (s) => `${contractId(s as never)} ${canonicalizeText(s as never).length}`,
+    );
+    expect(run.stdout.toString().split("\n").slice(0, -1)).toEqual(want);
+    // No argument: the usage on stderr, exit code 2; malformed JSON: an uncaught SyntaxError, exit 1.
+    const none = spawnSync(exe, []);
+    expect([none.status, none.stdout.toString(), none.stderr.toString()]).toEqual([
+      2,
+      "",
+      "usage: contract-id <spec.json>...\n",
+    ]);
+    const bad = spawnSync(exe, ["{not json"]);
+    expect(bad.status).toBe(1);
+    expect(bad.stderr.toString()).toMatch(/SyntaxError/);
   }, 600_000);
 });

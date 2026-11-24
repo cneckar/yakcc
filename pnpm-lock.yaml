@@ -220,6 +220,9 @@ importers:
       '@yakcc/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@yakcc/duc':
+        specifier: workspace:*
+        version: link:../duc
       '@yakcc/federation':
         specifier: workspace:*
         version: link:../federation

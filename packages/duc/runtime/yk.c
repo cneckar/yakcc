@@ -232,6 +232,8 @@ static uint32_t to_uint32(yk v);
 static int32_t to_int32(yk v);
 static int buffer_get(yk obj, yk key, yk *out);
 static void range_error(const char *what);
+static int program_mode;
+yk yk_global(const char *name, uint64_t n);
 static yk buffer_primitive(yk v);
 static int buffer_set(yk obj, yk key, yk value);
 static int buffer_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
@@ -1370,7 +1372,9 @@ _Noreturn void yk_throw(yk v) {
     fputs("Uncaught ", stderr);
     for (uint32_t i = 0; i < s->len; i++) fputc(s->units[i] < 0x80 ? (int)s->units[i] : '?', stderr);
     fputc('\n', stderr);
-    exit(70);
+    /* A program's uncaught exception exits 1, as Node's; the test harnesses see 70. */
+    fflush(stdout);
+    exit(program_mode ? 1 : 70);
   }
   thrown = v;
   longjmp(handlers->env, 1);
@@ -4144,6 +4148,365 @@ static int buffer_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out
 static yk_array *typed_items_v(yk v) { return typed_items(typed_of(v)); }
 static yk buffer_primitive(yk v) { return array_join(typed_items(typed_of(v)), str(ascii(","))); }
 
+/* --- a program's entry: process, console, JSON.parse (#1333) ------------------------------------
+ *
+ * A program built by `yakcc build --native` runs its entry module from a generated main:
+ * yk_main_begin(argc, argv), the entry's initializer, then yk_main_end(), which runs the jobs left and
+ * gives the exit code (process.exitCode, else 0). An exception nothing catches ends the program with
+ * exit code 1, as Node's does. These are the interim layer-0 primitives over the C library; #1365
+ * moves them onto the system-call leaf.
+ */
+
+static int program_mode = 0;
+static int program_argc = 0;
+static char **program_argv = NULL;
+static yk process_value = 0;
+
+/* A string's UTF-8 bytes written to a stream (a lone surrogate as U+FFFD, as Node writes it). */
+static void write_utf8(FILE *f, yk_string *s) {
+  yk bytes = utf8_bytes(s);
+  yk_view *t = typed_of(bytes);
+  fwrite(view_bytes(t), 1, t->length, f);
+}
+
+/* A primitive as util.inspect writes it; an object stops the program (not in the runtime yet). */
+static yk inspect_primitive(yk v, int top) {
+  if (is_string(v)) {
+    if (top) return v;
+    type_error("console formatting of a string inside a structure is not in the native runtime yet");
+  }
+  if (is_number(v)) {
+    double d = num(v);
+    if (d == 0 && 1 / d < 0) return ascii("-0");
+    return number_to_string(d);
+  }
+  if (is_bigint(v)) return concat(str(big_to_string_v(v)), str(ascii("n")));
+  if (is_reference(v)) {
+    fputs("TypeError: console formatting of an object is not in the native runtime yet\n", stderr);
+    exit(70);
+  }
+  return to_string(v);
+}
+
+/* util.format: %s %d %i %f %j %o %O %c %% in a first string argument, then the rest, spaced. */
+static yk format_args(uint64_t argc, const yk *argv) {
+  yk out = ascii("");
+  uint64_t next = 0;
+  if (argc > 0 && is_string(argv[0])) {
+    yk_string *f = str(argv[0]);
+    next = 1;
+    uint32_t last = 0;
+    for (uint32_t i = 0; i + 1 < f->len; i++) {
+      if (f->units[i] != '%') continue;
+      uint16_t c = f->units[i + 1];
+      yk piece = 0;
+      if (c == '%') piece = ascii("%");
+      else if (next < argc && (c == 's' || c == 'd' || c == 'i' || c == 'f' || c == 'j' || c == 'o' ||
+                               c == 'O' || c == 'c')) {
+        yk a = argv[next++];
+        if (c == 's') piece = is_string(a) ? a : inspect_primitive(a, 1);
+        else if (c == 'd') piece = is_bigint(a) ? inspect_primitive(a, 1) : is_reference(a) ? ascii("NaN") : inspect_primitive(yk_number(to_number(a)), 1);
+        else if (c == 'i') {
+          double d = is_reference(a) ? NAN : trunc(to_number(a));
+          piece = is_bigint(a) ? inspect_primitive(a, 1) : inspect_primitive(yk_number(d), 1);
+        } else if (c == 'f') piece = inspect_primitive(yk_number(string_to_number(str(to_string(a)))), 1);
+        else if (c == 'j') piece = yk_call_method(yk_global("JSON", 4), "stringify", 9, 1, &a);
+        else if (c == 'c') piece = ascii("");
+        else piece = inspect_primitive(a, 1);
+      }
+      if (piece == 0) continue;
+      yk_string *head = new_string(i - last);
+      memcpy(head->units, f->units + last, (size_t)(i - last) * 2);
+      out = concat(str(out), head);
+      out = concat(str(out), str(piece));
+      last = i + 2;
+      i++;
+    }
+    yk_string *tail = new_string(f->len - last);
+    memcpy(tail->units, f->units + last, (size_t)(f->len - last) * 2);
+    out = concat(str(out), tail);
+  }
+  for (uint64_t k = next; k < argc; k++) {
+    if (k > 0) out = concat(str(out), str(ascii(" ")));
+    out = concat(str(out), str(inspect_primitive(argv[k], 1)));
+  }
+  return out;
+}
+static yk console_out(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  write_utf8(stdout, str(format_args(argc, argv)));
+  fputc('\n', stdout);
+  return YK_UNDEFINED;
+}
+static yk console_err(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  fflush(stdout);
+  write_utf8(stderr, str(format_args(argc, argv)));
+  fputc('\n', stderr);
+  return YK_UNDEFINED;
+}
+static yk stream_write(FILE *f, uint64_t argc, const yk *argv) {
+  yk v = argc > 0 ? argv[0] : YK_UNDEFINED;
+  yk_view *t = typed_of(v);
+  if (t != NULL) fwrite(view_bytes(t), 1, (size_t)t->length * ta_size[t->type], f);
+  else if (is_string(v)) write_utf8(f, str(v));
+  else type_error("The \"chunk\" argument must be of type string or an instance of Buffer or Uint8Array");
+  return YK_TRUE;
+}
+static yk stdout_write(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return stream_write(stdout, argc, argv);
+}
+static yk stderr_write(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  fflush(stdout);
+  return stream_write(stderr, argc, argv);
+}
+static int exit_code_of(void) {
+  if (process_value == 0) return 0;
+  yk code = yk_get(process_value, ascii("exitCode"));
+  if (code == YK_UNDEFINED) return 0;
+  return (int)(to_int32(code) & 0xff);
+}
+static yk process_exit(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  if (argc > 0 && argv[0] != YK_UNDEFINED) yk_set(process_value, ascii("exitCode"), argv[0]);
+  fflush(stdout);
+  fflush(stderr);
+  exit(exit_code_of());
+}
+
+static yk with_one_method(const char *name, yk_code code) {
+  yk o = yk_object_of(0, NULL, NULL);
+  own_set((yk_object *)PTR(o), ascii(name), yk_closure_new(code, 0, 0, NULL));
+  return o;
+}
+
+static yk process_global(void) {
+  if (process_value != 0) return process_value;
+  extern char **environ;
+  yk p = yk_object_of(0, NULL, NULL);
+  yk_object *o = (yk_object *)PTR(p);
+  /* argv: Node's is [node, script, ...args]; a native program is its own interpreter and script. */
+  yk_array *args = new_array(4);
+  const char *self = program_argc > 0 ? program_argv[0] : "yakcc-native";
+  push(args, ascii(self));
+  push(args, ascii(self));
+  for (int i = 1; i < program_argc; i++) push(args, ascii(program_argv[i]));
+  own_set(o, ascii("argv"), BOX(T_ARRAY, args));
+  yk env = yk_object_of(0, NULL, NULL);
+  for (char **e = environ; e != NULL && *e != NULL; e++) {
+    const char *eq = strchr(*e, '=');
+    if (eq == NULL) continue;
+    own_set((yk_object *)PTR(env), yk_string_utf8(*e, (uint64_t)(eq - *e)), ascii(eq + 1));
+  }
+  own_set(o, ascii("env"), env);
+  own_set(o, ascii("platform"), ascii("linux"));
+  own_set(o, ascii("exit"), yk_closure_new(process_exit, 0, 0, NULL));
+  own_set(o, ascii("stdout"), with_one_method("write", stdout_write));
+  own_set(o, ascii("stderr"), with_one_method("write", stderr_write));
+  return process_value = p;
+}
+static yk console_global(void) {
+  static yk c = 0;
+  if (c != 0) return c;
+  c = yk_object_of(0, NULL, NULL);
+  yk_object *o = (yk_object *)PTR(c);
+  const char *outs[3] = {"log", "info", "debug"};
+  const char *errs[2] = {"error", "warn"};
+  for (int i = 0; i < 3; i++) own_set(o, ascii(outs[i]), yk_closure_new(console_out, 0, 0, NULL));
+  for (int i = 0; i < 2; i++) own_set(o, ascii(errs[i]), yk_closure_new(console_err, 0, 0, NULL));
+  return c;
+}
+
+/* --- JSON.parse (ECMA-262 25.5.1): the strict grammar, else a SyntaxError; then the reviver --- */
+
+typedef struct {
+  yk_string *s;
+  uint32_t i;
+} json_reader;
+static _Noreturn void json_error(json_reader *r) {
+  (void)r;
+  yk_throw(make_error("SyntaxError", ascii("Unexpected token in JSON")));
+}
+static void json_ws(json_reader *r) {
+  while (r->i < r->s->len) {
+    uint16_t c = r->s->units[r->i];
+    if (c != ' ' && c != '\t' && c != '\n' && c != '\r') break;
+    r->i++;
+  }
+}
+static int json_word(json_reader *r, const char *w) {
+  size_t n = strlen(w);
+  if (r->i + n > r->s->len) return 0;
+  for (size_t k = 0; k < n; k++)
+    if (r->s->units[r->i + k] != (uint16_t)w[k]) return 0;
+  r->i += (uint32_t)n;
+  return 1;
+}
+static yk json_string(json_reader *r) {
+  r->i++; /* the opening quote */
+  yk_array *units = new_array(8);
+  for (;;) {
+    if (r->i >= r->s->len) json_error(r);
+    uint16_t c = r->s->units[r->i++];
+    if (c == '"') break;
+    if (c < 0x20) json_error(r);
+    if (c != '\\') {
+      push(units, yk_number(c));
+      continue;
+    }
+    if (r->i >= r->s->len) json_error(r);
+    uint16_t e = r->s->units[r->i++];
+    uint16_t out;
+    switch (e) {
+    case '"': out = '"'; break;
+    case '\\': out = '\\'; break;
+    case '/': out = '/'; break;
+    case 'b': out = 8; break;
+    case 'f': out = 12; break;
+    case 'n': out = 10; break;
+    case 'r': out = 13; break;
+    case 't': out = 9; break;
+    case 'u': {
+      if (r->i + 4 > r->s->len) json_error(r);
+      out = 0;
+      for (int k = 0; k < 4; k++) {
+        uint16_t h = r->s->units[r->i++];
+        int d = h >= '0' && h <= '9' ? h - '0' : h >= 'a' && h <= 'f' ? h - 'a' + 10 : h >= 'A' && h <= 'F' ? h - 'A' + 10 : -1;
+        if (d < 0) json_error(r);
+        out = (uint16_t)(out * 16 + d);
+      }
+      break;
+    }
+    default: json_error(r);
+    }
+    push(units, yk_number(out));
+  }
+  yk_string *s = new_string(units->len);
+  for (uint32_t k = 0; k < units->len; k++) s->units[k] = (uint16_t)num(units->items[k]);
+  return string_of(s);
+}
+static yk json_number(json_reader *r) {
+  uint32_t start = r->i;
+  if (r->i < r->s->len && r->s->units[r->i] == '-') r->i++;
+  if (r->i >= r->s->len) json_error(r);
+  if (r->s->units[r->i] == '0') r->i++;
+  else if (r->s->units[r->i] >= '1' && r->s->units[r->i] <= '9')
+    while (r->i < r->s->len && r->s->units[r->i] >= '0' && r->s->units[r->i] <= '9') r->i++;
+  else
+    json_error(r);
+  if (r->i < r->s->len && r->s->units[r->i] == '.') {
+    r->i++;
+    if (!(r->i < r->s->len && r->s->units[r->i] >= '0' && r->s->units[r->i] <= '9')) json_error(r);
+    while (r->i < r->s->len && r->s->units[r->i] >= '0' && r->s->units[r->i] <= '9') r->i++;
+  }
+  if (r->i < r->s->len && (r->s->units[r->i] == 'e' || r->s->units[r->i] == 'E')) {
+    r->i++;
+    if (r->i < r->s->len && (r->s->units[r->i] == '+' || r->s->units[r->i] == '-')) r->i++;
+    if (!(r->i < r->s->len && r->s->units[r->i] >= '0' && r->s->units[r->i] <= '9')) json_error(r);
+    while (r->i < r->s->len && r->s->units[r->i] >= '0' && r->s->units[r->i] <= '9') r->i++;
+  }
+  char *buf = alloc(r->i - start + 1);
+  for (uint32_t k = start; k < r->i; k++) buf[k - start] = (char)r->s->units[k];
+  buf[r->i - start] = 0;
+  return yk_number(strtod(buf, NULL));
+}
+static yk json_value(json_reader *r) {
+  json_ws(r);
+  if (r->i >= r->s->len) json_error(r);
+  uint16_t c = r->s->units[r->i];
+  if (c == '"') return json_string(r);
+  if (c == '-' || (c >= '0' && c <= '9')) return json_number(r);
+  if (json_word(r, "true")) return YK_TRUE;
+  if (json_word(r, "false")) return YK_FALSE;
+  if (json_word(r, "null")) return YK_NULL;
+  if (c == '[') {
+    r->i++;
+    yk_array *a = new_array(4);
+    json_ws(r);
+    if (r->i < r->s->len && r->s->units[r->i] == ']') {
+      r->i++;
+      return BOX(T_ARRAY, a);
+    }
+    for (;;) {
+      push(a, json_value(r));
+      json_ws(r);
+      if (r->i >= r->s->len) json_error(r);
+      uint16_t d = r->s->units[r->i++];
+      if (d == ']') return BOX(T_ARRAY, a);
+      if (d != ',') json_error(r);
+    }
+  }
+  if (c == '{') {
+    r->i++;
+    yk o = yk_object_of(0, NULL, NULL);
+    json_ws(r);
+    if (r->i < r->s->len && r->s->units[r->i] == '}') {
+      r->i++;
+      return o;
+    }
+    for (;;) {
+      json_ws(r);
+      if (r->i >= r->s->len || r->s->units[r->i] != '"') json_error(r);
+      yk k = json_string(r);
+      json_ws(r);
+      if (r->i >= r->s->len || r->s->units[r->i++] != ':') json_error(r);
+      own_set((yk_object *)PTR(o), k, json_value(r));
+      json_ws(r);
+      if (r->i >= r->s->len) json_error(r);
+      uint16_t d = r->s->units[r->i++];
+      if (d == '}') return o;
+      if (d != ',') json_error(r);
+    }
+  }
+  json_error(r);
+}
+/* InternalizeJSONProperty: the holder's value at name, its elements' or properties' revived first
+   (one revived to undefined deleted; an array element set to undefined: no holes here). */
+static yk json_revive(yk holder, yk name, yk reviver) {
+  yk val = yk_get(holder, name);
+  if (is_array(val)) {
+    yk_array *a = arr(val);
+    for (uint32_t i = 0; i < a->len; i++) a->items[i] = json_revive(val, to_string(yk_number(i)), reviver);
+  } else if (is_object(val)) {
+    yk_array *keys = ordered_keys((yk_object *)PTR(val));
+    for (uint32_t i = 0; i < keys->len; i++) {
+      yk e = json_revive(val, keys->items[i], reviver);
+      if (e == YK_UNDEFINED) yk_delete(val, keys->items[i]);
+      else own_set((yk_object *)PTR(val), keys->items[i], e);
+    }
+  }
+  yk args[2] = {name, val};
+  return call_value(reviver, holder, 2, args);
+}
+static yk builtin_json_parse(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  json_reader r = {str(to_string(argc > 0 ? argv[0] : YK_UNDEFINED)), 0};
+  yk v = json_value(&r);
+  json_ws(&r);
+  if (r.i != r.s->len) json_error(&r);
+  if (argc > 1 && is_closure(argv[1])) {
+    yk root = yk_object_of(0, NULL, NULL);
+    own_set((yk_object *)PTR(root), ascii(""), v);
+    return json_revive(root, ascii(""), argv[1]);
+  }
+  return v;
+}
+
+/* The generated main's: the arguments, and what an uncaught exception does. */
+void yk_main_begin(int argc, char **argv) {
+  program_mode = 1;
+  program_argc = argc;
+  program_argv = argv;
+}
+int yk_main_end(void) {
+  yk_drain();
+  fflush(stdout);
+  fflush(stderr);
+  return exit_code_of();
+}
+
 /* BigInt(x): a number (an integer, else a RangeError), a string (StringToBigInt, else a
    SyntaxError), a boolean, or a BigInt. */
 static yk builtin_bigint(void *c, yk s, uint64_t argc, const yk *argv) {
@@ -4273,6 +4636,8 @@ yk yk_global(const char *name, uint64_t n) {
     yk b = buffer_global(name, n);
     if (b != 0) return b;
   }
+  if (n == 7 && memcmp(name, "process", 7) == 0) return process_global();
+  if (n == 7 && memcmp(name, "console", 7) == 0) return console_global();
   if (n == 3 && memcmp(name, "NaN", 3) == 0) return yk_number(NAN);
   if (n == 8 && memcmp(name, "Infinity", 8) == 0) return yk_number(INFINITY);
   static yk fns[N_GLOBALS];
@@ -4292,9 +4657,9 @@ yk yk_global(const char *name, uint64_t n) {
     if (strlen(names[i]) == n && memcmp(names[i], name, n) == 0) {
       if (fns[i] != 0) return fns[i];
       if (strcmp(names[i], "JSON") == 0) {
-        static const char *const m[1] = {"stringify"};
-        static const yk_code k[1] = {builtin_json_stringify};
-        return fns[i] = with_methods(NULL, 1, m, k);
+        static const char *const m[2] = {"stringify", "parse"};
+        static const yk_code k[2] = {builtin_json_stringify, builtin_json_parse};
+        return fns[i] = with_methods(NULL, 2, m, k);
       }
       if (codes[i] == NULL) return YK_UNDEFINED;
       if (codes[i] == builtin_promise) {
