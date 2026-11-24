@@ -159,7 +159,7 @@
   {
     "name": "refBytesToHex",
     "origin": "8dc97fc0c4bb3f7158cb8c7090a785fcd51d044a7444f876ed40f828ad31f8b4",
-    "identity": "93563d90eaad350315b969850dc286b4e5d03f7676c2f44eab52f3fdeb7ce718",
+    "identity": "9e2caa01bdb2f8843cdd490181a5a853ed93f5f47ed1abf14bcc446e677f55a0",
     "constructs": ["loop", "array", "string"],
     "args": [
       {

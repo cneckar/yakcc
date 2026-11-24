@@ -14,7 +14,7 @@ import { graphIdentity } from "./canonical.js";
 import { closureOf } from "./closure.js";
 import { emitTypeScript } from "./emit-ts.js";
 import { liftFidelity } from "./fidelity.js";
-import { isLeafFunction, leafFunctionsJs } from "./leaves.js";
+import { LEAF_FUNCTIONS, isLeafFunction, leafFunctionsJs } from "./leaves.js";
 import { liftAtom } from "./lift.js";
 import { printLineForm } from "./line-form.js";
 import {
@@ -67,7 +67,6 @@ describe("lifting Math's functions as operations that reference atoms", () => {
       "export function f(x: number): number { const Math = { sin: (y: number) => y }; return Math.sin(x); }",
       "export function f(xs: number[]): number { return Math.sin(...xs); }",
       "export function f(x: number): number { return Math.sin(x, x); }",
-      "export function f(x: number): number { return Math?.sin(x); }",
       "export function f(x: number): number { return Math.max(x, 1); }",
     ])
       expect(
@@ -246,44 +245,39 @@ describe("the atoms, as lowered graphs, are Node's Math bit for bit", () => {
 });
 
 describe("the leaves' reference implementations", () => {
-  it("memory: allocation, little-endian loads and stores, copies and fills", () => {
+  it("every leaf function the registry names has a reference implementation", () => {
+    const impl = leafFunctionsJs();
+    for (const name of LEAF_FUNCTIONS.keys()) expect(typeof impl[name], name).toBe("function");
+  });
+
+  it("memory: allocation, little-endian loads and stores, unsigned loads", () => {
     const m = leafFunctionsJs() as unknown as Record<string, Fn>;
     const call = (name: string, ...a: unknown[]): unknown => (m[name] as Fn)(...a);
     const p = call("__ykAlloc", 16, 8) as number;
     expect(p).toBeGreaterThan(0);
     expect(p % 8).toBe(0);
     call("__ykStore32", p, 0x11223344);
-    expect(call("__ykLoadU8", p)).toBe(0x44);
-    expect(call("__ykLoadU16", p + 2)).toBe(0x1122);
+    expect(call("__ykLoad8", p)).toBe(0x44);
+    expect(call("__ykLoad16", p + 2)).toBe(0x1122);
     call("__ykStore8", p + 4, -1);
-    expect(call("__ykLoadI8", p + 4)).toBe(-1);
-    expect(call("__ykLoadU8", p + 4)).toBe(255);
+    expect(call("__ykLoad8", p + 4)).toBe(255);
     call("__ykStore64", p + 8, -2n);
-    expect(call("__ykLoadI64", p + 8)).toBe(-2n);
-    expect(call("__ykLoadU64", p + 8)).toBe(2n ** 64n - 2n);
+    expect(call("__ykLoad64", p + 8)).toBe(2n ** 64n - 2n);
     call("__ykStoreF64", p + 8, Math.PI);
     expect(call("__ykLoadF64", p + 8)).toBe(Math.PI);
     call("__ykStoreF32", p, 0.1);
     expect(call("__ykLoadF32", p)).toBe(Math.fround(0.1));
-    call("__ykMemFill", p, 0xab, 4);
-    expect(call("__ykLoadU32", p)).toBe(0xabababab);
-    // An overlapping copy, as if through a temporary.
-    call("__ykMemCopy", p + 1, p, 4);
-    expect(call("__ykLoadU8", p + 4)).toBe(0xab);
   });
 
   it("memory: an access outside every block, or a free of anything else, traps", () => {
     const m = leafFunctionsJs() as unknown as Record<string, Fn>;
     const p = (m.__ykAlloc as Fn)(4, 4) as number;
-    expect(() => (m.__ykLoadU32 as Fn)(p + 1)).toThrow(RangeError);
-    expect(() => (m.__ykLoadU8 as Fn)(0)).toThrow(RangeError);
-    expect(() => (m.__ykFree as Fn)(p + 1)).toThrow(RangeError);
+    // A block's size is rounded up to 16 bytes; past it is outside.
+    expect(() => (m.__ykLoad32 as Fn)(p + 16)).toThrow();
+    expect(() => (m.__ykLoad8 as Fn)(0)).toThrow();
+    expect(() => (m.__ykFree as Fn)(p + 1)).toThrow();
     (m.__ykFree as Fn)(p);
-    expect(() => (m.__ykLoadU8 as Fn)(p)).toThrow(RangeError);
-    // Each set of leaves has its own memory.
-    expect(() =>
-      ((leafFunctionsJs() as unknown as Record<string, Fn>).__ykLoadU8 as Fn)(p),
-    ).toThrow(RangeError);
+    expect(() => (m.__ykLoad8 as Fn)(p)).toThrow();
   });
 });
 

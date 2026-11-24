@@ -752,8 +752,13 @@ function emitFunction(
         : undefined,
     );
     const next = rec.next.map((v, i) => `${carried[i]} = ${ref(v)};`);
+    // Tested again after the pass, on the carried values the next pass starts from, so a stop
+    // leaves before the next element is pulled (#1330). Only a condition over the carried values
+    // alone can be tested there.
+    const names = guard.length > 0 ? (guard[0]?.match(/\$[\w$]+/g) ?? []) : [];
+    const retest = guard.length > 0 && names.every((name) => carried.includes(name)) ? guard : [];
     const after = loop.outputs.map((v, i) => `const ${nameOf(v)} = ${carried[i]};`);
-    return [...before, header, ...indent([...guard, ...body, ...next]), "}", ...after];
+    return [...before, header, ...indent([...guard, ...body, ...next, ...retest]), "}", ...after];
   };
 
   /** The statements of one scope, each after the values it needs. */
