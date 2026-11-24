@@ -337,6 +337,24 @@ const ERROR_CLASSES: ReadonlySet<string> = new Set([
 ]);
 
 export const NATIVE_MATH: ReadonlySet<string> = new Set(["floor", "ceil", "trunc", "sqrt", "abs"]);
+/** Number's constants. */
+const NUMBER_CONSTANTS: Readonly<Record<string, number>> = {
+  MAX_SAFE_INTEGER: Number.MAX_SAFE_INTEGER,
+  MIN_SAFE_INTEGER: Number.MIN_SAFE_INTEGER,
+  EPSILON: Number.EPSILON,
+  MAX_VALUE: Number.MAX_VALUE,
+  MIN_VALUE: Number.MIN_VALUE,
+  POSITIVE_INFINITY: Number.POSITIVE_INFINITY,
+  NEGATIVE_INFINITY: Number.NEGATIVE_INFINITY,
+  NaN: Number.NaN,
+};
+/** Number's predicates (Number.isNaN, ...): runtime atoms. */
+const NUMBER_PREDICATES: ReadonlySet<string> = new Set([
+  "isNaN",
+  "isFinite",
+  "isInteger",
+  "isSafeInteger",
+]);
 export const MATH_CONSTANTS: Readonly<Record<string, number>> = {
   PI: Math.PI,
   E: Math.E,
@@ -1300,6 +1318,14 @@ function lowerFunction(
       if (t0 === "?") return "?";
       if (typeof t0 === "object" && t0.call.k === "math")
         return MATH_CONSTANTS[member] !== undefined ? "f64" : { call: { k: "math", name: member } };
+      if (typeof t0 === "object" && t0.call.k === "number-of") {
+        if (NUMBER_CONSTANTS[member] !== undefined) return "f64";
+        if (NUMBER_PREDICATES.has(member))
+          return {
+            call: { k: "atom", name: `__ykNumber${member[0]?.toUpperCase()}${member.slice(1)}` },
+          };
+        throw new LoweringError(`Number.${member} is not in the subset yet`);
+      }
       if (typeof t0 === "object" && t0.call.k === "class-ref") {
         if (t0.call.name !== "Array" || (member !== "isArray" && member !== "from"))
           throw new LoweringError(`${t0.call.name}.${member} is not in the subset yet`);
@@ -1327,6 +1353,8 @@ function lowerFunction(
       if (t0 === "obj" || t0 === "any") return "any";
       if ((t0 === "f64" || t0 === "i32") && member === "toString")
         return { call: { k: "method", recv: ins[0] as ValueId, name: "toString" } };
+      if (t0 === "f64" && member === "toFixed")
+        return { call: { k: "method", recv: ins[0] as ValueId, name: "toFixed" } };
       if (t0 === "str") {
         if (member === "length") return "f64";
         if (STRING_METHODS[member] !== undefined)
@@ -1395,7 +1423,8 @@ function lowerFunction(
       if (callee.k === "method" && callee.name === "nums.pop") return trusted ? "f64" : "any";
       if (callee.k === "method" && callee.name === "arr.push") return "f64";
       if (callee.k === "method" && callee.name === "arr.pop") return "any";
-      if (callee.k === "method" && callee.name === "toString") return "str";
+      if (callee.k === "method" && (callee.name === "toString" || callee.name === "toFixed"))
+        return "str";
       if (callee.k === "method" && callee.name.endsWith(".sort") && ins.length === 1) return "any";
       if (callee.k === "method" && ARRAY_FN_METHODS.has(callee.name.split(".")[1] ?? "")) {
         const sig = arrayFnSig(callee, ins.slice(1));
@@ -1520,6 +1549,11 @@ function lowerFunction(
       return "str";
     }
     if (label === "TypeOfExpression") return "str";
+    if (label === "in" && ins.length === 2) {
+      operand(0);
+      operand(1);
+      return "i32";
+    }
     if (label === "instanceof" && ins.length === 2) {
       if (get(ins[1] as ValueId) === "?") return "?";
       instanceClass(ins[1] as ValueId);
@@ -1755,7 +1789,9 @@ function lowerFunction(
       /^\.\w+$/.test(p.label ?? "") &&
       typeof ty(p.inputs[0] as ValueId) === "object"
     ) {
-      emit({ op: "const.f64", x: MATH_CONSTANTS[(p.label ?? "").slice(1)] as number });
+      const of = ty(p.inputs[0] as ValueId) as { call: Callee };
+      const table = of.call.k === "number-of" ? NUMBER_CONSTANTS : MATH_CONSTANTS;
+      emit({ op: "const.f64", x: table[(p.label ?? "").slice(1)] as number });
       return "f64";
     }
     emit({ op: "get", i: localOf(v) });
@@ -2160,6 +2196,11 @@ function lowerFunction(
       } else if (callee.k === "boolean-of") {
         if (args.length === 0) emit({ op: "const.i32", x: 0 });
         else truthy(args[0] as ValueId);
+      } else if (callee.k === "method" && callee.name === "toFixed") {
+        pushNumber(callee.recv);
+        if (args[0] === undefined) emit({ op: "const.undef" });
+        else push(args[0], "any");
+        emit({ op: "call", fn: mod.atom("__ykToFixed").fn });
       } else if (callee.k === "method" && callee.name === "toString") {
         // A number's in a radix (a boolean's has none: its argument is ignored).
         if (args.length > 0 && opType(callee.recv) === "f64") {
@@ -2448,6 +2489,13 @@ function lowerFunction(
     if (ins.length === 1 && step !== undefined) {
       pushNumber(ins[0] as ValueId);
       emit({ op: "const.f64", x: 1 }, { op: "f64", name: step });
+      set(out);
+      return;
+    }
+    if (label === "in" && ins.length === 2) {
+      push(ins[0] as ValueId, "any");
+      push(ins[1] as ValueId, "any");
+      emit({ op: "call", fn: mod.atom("__ykIn").fn });
       set(out);
       return;
     }

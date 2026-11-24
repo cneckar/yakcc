@@ -1595,6 +1595,71 @@ export const COLLECTION_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
 }`,
   },
   // recv.name(...args) for a receiver of any kind.
+  // Number.isNaN, isFinite, isInteger and isSafeInteger: false for anything but a number.
+  __ykNumberIsNaN: {
+    inputs: ["unknown"],
+    output: "boolean",
+    source: String.raw`export function f(x: unknown): boolean {
+  if (__ykTag(x) !== 3) return false;
+  const n = __ykNum(x);
+  return n !== n;
+}`,
+  },
+  __ykNumberIsFinite: {
+    inputs: ["unknown"],
+    output: "boolean",
+    source: String.raw`export function f(x: unknown): boolean {
+  if (__ykTag(x) !== 3) return false;
+  const n = __ykNum(x);
+  return n === n && n !== Infinity && n !== -Infinity;
+}`,
+  },
+  __ykNumberIsInteger: {
+    inputs: ["unknown"],
+    output: "boolean",
+    source: String.raw`export function f(x: unknown): boolean {
+  if (__ykTag(x) !== 3) return false;
+  const n = __ykNum(x);
+  return n === n && n !== Infinity && n !== -Infinity && Math.trunc(n) === n;
+}`,
+  },
+  __ykNumberIsSafeInteger: {
+    inputs: ["unknown"],
+    output: "boolean",
+    source: String.raw`export function f(x: unknown): boolean {
+  if (__ykTag(x) !== 3) return false;
+  const n = __ykNum(x);
+  return n === n && Math.trunc(n) === n && Math.abs(n) <= 9007199254740991;
+}`,
+  },
+  // key in o: an own property, or one o's prototype chain has (ECMAScript 2025's, as V8 has them,
+  // with V8's own stack of an error); a TypeError when o is not an object. A function's prototype
+  // property (a function declaration's, not an arrow's) is not known here.
+  __ykIn: {
+    inputs: ["unknown", "unknown"],
+    output: "boolean",
+    source: String.raw`export function f(key: unknown, o: unknown): boolean {
+  const t = __ykTag(o);
+  if (t !== 5 && t !== 6 && t !== 7 && t !== 8) {
+    throw __ykMakeError("TypeError", "Cannot use 'in' operator to search for '" + __ykToString(key) + "' in " + __ykToString(o));
+  }
+  const k = __ykTag(key) === 3 ? __ykNumberToString(__ykNum(key)) : __ykToString(key);
+  const listed = (names: string): boolean => __ykIndexOf("," + names + ",", "," + k + ",", 0) >= 0 && __ykIndexOf(k, ",", 0) < 0;
+  if (listed("constructor,__defineGetter__,__defineSetter__,hasOwnProperty,__lookupGetter__,__lookupSetter__,isPrototypeOf,propertyIsEnumerable,toString,valueOf,__proto__,toLocaleString")) return true;
+  if (t === 5 || t === 6) {
+    if (listed("length,at,concat,copyWithin,fill,find,findIndex,findLast,findLastIndex,lastIndexOf,pop,push,reverse,shift,unshift,slice,sort,splice,includes,indexOf,join,keys,entries,values,forEach,filter,flat,flatMap,map,every,some,reduce,reduceRight,toReversed,toSorted,toSpliced,with")) return true;
+    const n = __ykToNumber(k);
+    return __ykStrEquals(__ykNumberToString(n), k) && n >= 0 && n === Math.floor(n) && n < __ykNum(__ykGetAny(o, "length"));
+  }
+  if (t === 8) return listed("length,name,arguments,caller,apply,bind,call");
+  const ob = __ykObj(o);
+  const cls = __ykObjCls(ob);
+  if (__ykTag(cls) === 4 && __ykStrEquals(__ykStr(cls), "Map")) return listed("get,set,has,delete,clear,entries,forEach,keys,size,values");
+  if (__ykTag(cls) === 4 && __ykStrEquals(__ykStr(cls), "Set")) return listed("has,add,delete,clear,entries,forEach,size,values,keys,union,intersection,difference,symmetricDifference,isSubsetOf,isSupersetOf,isDisjointFrom");
+  if (__ykIsErrorCls(cls) && listed("name,message,stack")) return true;
+  return __ykHas(ob, k);
+}`,
+  },
   // An optional chain's link (a?.k, a?.[key], a?.m(...), f?.(...)): undefined when what it reads
   // is undefined or null, else the plain link's result.
   __ykOptGet: {
@@ -1687,6 +1752,7 @@ export const COLLECTION_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   if (t === 5 || t === 6) return __ykArrayMethod(recv, name, args);
   if (t === 4) return __ykStringMethod(__ykStr(recv), name, args);
   if (t === 3 && __ykStrEquals(name, "toString")) return __ykNumberToStringRadix(__ykNum(recv), arg(0));
+  if (t === 3 && __ykStrEquals(name, "toFixed")) return __ykToFixed(__ykNum(recv), arg(0));
   if (t === 2 && __ykStrEquals(name, "toString")) return __ykBool(recv) ? "true" : "false";
   return __ykNoMethod();
 }`,
@@ -1940,6 +2006,66 @@ export const METHOD_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   if (r < 2 || r > 36) throw __ykMakeError("RangeError", "toString() radix must be between 2 and 36");
   if (r === 10) return __ykNumberToString(x);
   return __ykNumberToRadix(x, r);
+}`,
+  },
+  // Number.prototype.toFixed(digits), exactly: the integer n nearest x * 10^f (the larger of two),
+  // from x's significand and exponent as big integers, written with f fraction digits.
+  __ykToFixed: {
+    inputs: ["number", "unknown"],
+    output: "string",
+    source: String.raw`export function f(x0: number, digits: unknown): string {
+  const fd = __ykToInteger(digits);
+  if (fd < 0 || fd > 100 || fd === Infinity) {
+    throw __ykMakeError("RangeError", "toFixed() digits argument must be between 0 and 100");
+  }
+  if (x0 !== x0) return "NaN";
+  if (x0 >= 1e21 || x0 <= -1e21) return __ykNumberToString(x0);
+  const negative = x0 < 0;
+  // -0 is written as 0, and its bits read without the sign.
+  const x = Math.abs(x0);
+  const hi = __ykF64Hi(x);
+  const lo = __ykF64Lo(x);
+  const biased = Math.floor(hi / 1048576);
+  let mant = (hi - biased * 1048576) * 4294967296 + lo;
+  let e = -1074;
+  if (biased > 0) {
+    mant = mant + 4503599627370496;
+    e = biased - 1075;
+  }
+  let n = __ykBigFromInt(mant);
+  let k = 0;
+  while (k < fd) {
+    __ykBigMulSmall(n, 10);
+    k = k + 1;
+  }
+  if (e >= 0) __ykBigShl(n, e);
+  else {
+    const up = __ykBigBit(n, -e - 1);
+    n = __ykBigShr(n, -e);
+    if (up === 1) n = __ykBigAdd(n, [1]);
+  }
+  let text = "";
+  while (n.length > 0) {
+    let rem = 0;
+    let i = n.length - 1;
+    while (i >= 0) {
+      const t = rem * 16777216 + n[i];
+      const q = Math.floor(t / 10000000);
+      n[i] = q;
+      rem = t - q * 10000000;
+      i = i - 1;
+    }
+    while (n.length > 0 && n[n.length - 1] === 0) n.pop();
+    let chunk = __ykNumberToString(rem);
+    if (n.length > 0) while (chunk.length < 7) chunk = "0" + chunk;
+    text = chunk + text;
+  }
+  if (text.length === 0) text = "0";
+  if (fd > 0) {
+    while (text.length <= fd) text = "0" + text;
+    text = __ykSub(text, 0, text.length - fd) + "." + __ykSub(text, text.length - fd, text.length);
+  }
+  return negative ? "-" + text : text;
 }`,
   },
   // A RangeError: Invalid count value.
