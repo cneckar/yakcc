@@ -30,6 +30,7 @@ import {
   ARRAY_FN_ATOMS,
   BIGNUM_ATOMS,
   DYNAMIC_ATOMS,
+  JSON_ATOMS,
   RUNTIME_ATOMS,
   type RuntimeAtom,
 } from "./wasm-runtime-atoms.js";
@@ -93,6 +94,7 @@ export const ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   ...BIGNUM_ATOMS,
   ...DYNAMIC_ATOMS,
   ...ARRAY_FN_ATOMS,
+  ...JSON_ATOMS,
 };
 
 /**
@@ -197,6 +199,55 @@ const arrayFnAtom = (kind: "nums" | "arr", method: string, nargs: number): strin
   const init = method === "reduce" && nargs >= 2 ? "Init" : "";
   return `__yk${name}${init}${kind === "nums" ? "Nums" : "Any"}`;
 };
+
+/**
+ * A builtin used as a function value, as the closure of the call it means: the source of that
+ * closure, or undefined when the builtin is not one of these (a variadic Math function's meaning
+ * depends on how many arguments it is given, so it is not).
+ */
+function builtinSource(c: Callee): string | undefined {
+  const one = (call: string): string => `export function f(x: unknown) { return ${call}; }`;
+  if (c.k === "string-of") return one("String(x)");
+  if (c.k === "number-of") return one("Number(x)");
+  if (c.k === "boolean-of") return one("Boolean(x)");
+  if (c.k === "math" && (NATIVE_MATH.has(c.name) || UNARY_HOST_MATH.has(c.name)))
+    return one(`Math.${c.name}(x as number)`);
+  return undefined;
+}
+const UNARY_HOST_MATH: ReadonlySet<string> = new Set([
+  "round",
+  "sign",
+  "exp",
+  "expm1",
+  "log",
+  "log1p",
+  "log2",
+  "log10",
+  "sin",
+  "cos",
+  "tan",
+  "asin",
+  "acos",
+  "atan",
+  "sinh",
+  "cosh",
+  "tanh",
+  "asinh",
+  "acosh",
+  "atanh",
+  "cbrt",
+  "fround",
+]);
+const builtinGraphs = new Map<string, DucGraph>();
+/** A builtin's closure graph, lifted once (its operations as ECMAScript's). */
+function builtinGraph(source: string): DucGraph {
+  let g = builtinGraphs.get(source);
+  if (g === undefined) {
+    g = ecmaScriptView(liftAtom(source));
+    builtinGraphs.set(source, g);
+  }
+  return g;
+}
 
 /** The error classes `new` makes: an object of that class, whose name it inherits. */
 const ERROR_CLASSES: ReadonlySet<string> = new Set([
@@ -605,9 +656,14 @@ type Callee =
   | { readonly k: "math"; readonly name: string }
   | { readonly k: "string-of" }
   | { readonly k: "number-of" }
+  | { readonly k: "boolean-of" }
   | { readonly k: "error-class"; readonly name: string }
   /** Object, and its keys, values and entries. */
   | { readonly k: "object-ns"; readonly name: string }
+  /** JSON, and its stringify and parse. */
+  | { readonly k: "json-ns"; readonly name: string }
+  /** Array or Function: a class instanceof names, and Array.isArray. */
+  | { readonly k: "class-ref"; readonly name: string }
   /** `__yakccTry(body, handler, finalizer)`: a try statement (#1276). */
   | { readonly k: "try" }
   | { readonly k: "method"; readonly recv: ValueId; readonly name: string }
@@ -803,6 +859,11 @@ function lowerFunction(
         pushCaps: () => types.forEach((_, i) => emit({ op: "get", i: base + i })),
       };
     }
+    // A builtin used as a function: a closure of the call it means (String, Number, Boolean, and
+    // Math's one-argument functions), lifted once.
+    const builtin = builtinSource(c);
+    if (builtin !== undefined)
+      return { fn: builtinGraph(builtin), caps: [], capValues: [], pushCaps: () => {} };
     if (c.k !== "closure") return undefined;
     if (knowing.has(v))
       throw new LoweringError("a closure that calls itself is not in the subset yet");
@@ -928,6 +989,17 @@ function lowerFunction(
     emit({ op: "call", fn });
     return result;
   };
+  /** The class an instanceof names: an error class, Object, Array or Function. */
+  const instanceClass = (v: ValueId): string => {
+    const t = get(v);
+    if (typeof t === "object") {
+      const c = t.call;
+      if (c.k === "error-class") return c.name;
+      if (c.k === "object-ns" && c.name === "") return "Object";
+      if (c.k === "class-ref" && (c.name === "Array" || c.name === "Function")) return c.name;
+    }
+    throw new LoweringError("instanceof of other than a builtin class is not in the subset yet");
+  };
   const computeType = (v: ValueId): VT | "?" => {
     const iterating = elementOf.get(v);
     if (iterating !== undefined) {
@@ -973,8 +1045,11 @@ function lowerFunction(
       if (AMBIENT_NUMBERS[sym] !== undefined) return "f64";
       if (sym === "Math") return { call: { k: "math", name: "" } };
       if (sym === "Object") return { call: { k: "object-ns", name: "" } };
+      if (sym === "JSON") return { call: { k: "json-ns", name: "" } };
+      if (sym === "Array" || sym === "Function") return { call: { k: "class-ref", name: sym } };
       if (sym === "String") return { call: { k: "string-of" } };
       if (sym === "Number") return { call: { k: "number-of" } };
+      if (sym === "Boolean") return { call: { k: "boolean-of" } };
       if (ERROR_CLASSES.has(sym)) return { call: { k: "error-class", name: sym } };
       if (sym === "__yakccTry") return { call: { k: "try" } };
       if (PRIMITIVES[sym] !== undefined) return { call: { k: "prim", name: sym } };
@@ -1016,6 +1091,16 @@ function lowerFunction(
       if (t0 === "?") return "?";
       if (typeof t0 === "object" && t0.call.k === "math")
         return MATH_CONSTANTS[member] !== undefined ? "f64" : { call: { k: "math", name: member } };
+      if (typeof t0 === "object" && t0.call.k === "class-ref") {
+        if (t0.call.name !== "Array" || member !== "isArray")
+          throw new LoweringError(`${t0.call.name}.${member} is not in the subset yet`);
+        return { call: { k: "class-ref", name: "isArray" } };
+      }
+      if (typeof t0 === "object" && t0.call.k === "json-ns") {
+        if (member !== "stringify" && member !== "parse")
+          throw new LoweringError(`JSON.${member} is not in the subset yet`);
+        return { call: { k: "json-ns", name: member } };
+      }
       if (typeof t0 === "object" && t0.call.k === "object-ns") {
         if (member !== "keys" && member !== "values" && member !== "entries")
           throw new LoweringError(`Object.${member} is not in the subset yet`);
@@ -1049,9 +1134,24 @@ function lowerFunction(
       const callee = t0.call;
       if (callee.k === "math") return "f64";
       if (callee.k === "string-of") return "str";
+      if (callee.k === "boolean-of") return "i32";
       if (callee.k === "number-of") return "f64";
       if (callee.k === "error-class") return "obj";
       if (callee.k === "object-ns") return "arr";
+      if (callee.k === "class-ref") return "i32";
+      if (callee.k === "json-ns") {
+        // A replacer or a reviver: not yet.
+        const extra = ins[2];
+        if (callee.name === "stringify" && extra !== undefined) {
+          const te = get(extra);
+          const p2 = producer.get(resolve(extra));
+          if (te !== "undef" && p2?.label !== "null")
+            throw new LoweringError("JSON.stringify with a replacer is not in the subset yet");
+        }
+        if (callee.name === "parse" && extra !== undefined)
+          throw new LoweringError("JSON.parse with a reviver is not in the subset yet");
+        return "any";
+      }
       if (callee.k === "try") {
         // Its closures are called with what they capture (and the handler with what was thrown);
         // its result is a completion record or undefined: a value of any kind.
@@ -1185,6 +1285,13 @@ function lowerFunction(
       return "str";
     }
     if (label === "TypeOfExpression") return "str";
+    if (label === "instanceof" && ins.length === 2) {
+      if (get(ins[1] as ValueId) === "?") return "?";
+      instanceClass(ins[1] as ValueId);
+      return "i32";
+    }
+    // The comma operator: its last operand's value (the others are computed for their effects).
+    if (label === "," && ins.length >= 1) return get(ins[ins.length - 1] as ValueId);
     // A throw has no value: what follows it does not run.
     if (label === "throw") return "undef";
     if (label === "??" && ins.length === 2) {
@@ -1671,6 +1778,21 @@ function lowerFunction(
         }
       } else if (callee.k === "error-class") {
         makeError(callee.name, args[0]);
+      } else if (callee.k === "class-ref") {
+        // Array.isArray(x): x instanceof Array.
+        if (args[0] === undefined) emit({ op: "const.undef" });
+        else push(args[0], "any");
+        emit({ op: "const.str", s: "Array" }, { op: "call", fn: mod.atom("__ykInstanceOf").fn });
+      } else if (callee.k === "json-ns") {
+        const pushOrUndef = (v: ValueId | undefined): void => {
+          if (v === undefined) emit({ op: "const.undef" });
+          else push(v, "any");
+        };
+        pushOrUndef(args[0]);
+        if (callee.name === "stringify") {
+          pushOrUndef(args[2]);
+          emit({ op: "call", fn: mod.atom("__ykJsonStringify").fn });
+        } else emit({ op: "call", fn: mod.atom("__ykJsonParse").fn });
       } else if (callee.k === "object-ns") {
         // Object.keys (__ykKeysOf, not for-in), Object.values and Object.entries (__ykValuesOf).
         if (args[0] === undefined) emit({ op: "const.undef" });
@@ -1684,6 +1806,9 @@ function lowerFunction(
       } else if (callee.k === "string-of") {
         if (args.length === 0) pushText("");
         else pushString(args[0] as ValueId);
+      } else if (callee.k === "boolean-of") {
+        if (args.length === 0) emit({ op: "const.i32", x: 0 });
+        else truthy(args[0] as ValueId);
       } else if (callee.k === "method" && callee.name === "toString") {
         if (args.length > 0)
           throw new LoweringError("toString with a radix is not in the subset yet");
@@ -1897,6 +2022,18 @@ function lowerFunction(
     }
     if (ins.length === 1 && label === "+") {
       pushNumber(ins[0] as ValueId);
+      set(out);
+      return;
+    }
+    if (label === "instanceof" && ins.length === 2) {
+      push(ins[0] as ValueId, "any");
+      emit({ op: "const.str", s: instanceClass(ins[1] as ValueId) });
+      emit({ op: "call", fn: mod.atom("__ykInstanceOf").fn });
+      set(out);
+      return;
+    }
+    if (label === "," && ins.length >= 1) {
+      push(ins[ins.length - 1] as ValueId, t as WT);
       set(out);
       return;
     }
