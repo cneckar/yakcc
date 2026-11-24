@@ -1002,6 +1002,157 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   throw __ykMakeError("TypeError", "Cannot read properties of undefined or null");
 }`,
   },
+  // A property key that is an array index (a canonical numeric string below 2^32 - 1): its
+  // number, else -1.
+  __ykArrayIndex: {
+    inputs: ["string"],
+    output: "number",
+    source: `export function f(k: string): number {
+  const n = k.length;
+  if (n === 0 || n > 10) return -1;
+  if (n > 1 && __ykUnit(k, 0) === 48) return -1;
+  let v = 0;
+  let i = 0;
+  while (i < n) {
+    const c = __ykUnit(k, i);
+    if (c < 48 || c > 57) return -1;
+    v = v * 10 + (c - 48);
+    i = i + 1;
+  }
+  if (v >= 4294967295) return -1;
+  return v;
+}`,
+  },
+  // An object's own keys in ECMAScript's order (OrdinaryOwnPropertyKeys): the array indices
+  // ascending, then the other keys in the order they were made.
+  __ykOwnKeys: {
+    inputs: ["YkObject"],
+    output: "unknown[]",
+    source: `export function f(o: YkObject): unknown[] {
+  const keys = __ykObjKeys(o);
+  const idx: number[] = [];
+  const named = [];
+  let i = 0;
+  while (i < keys.length) {
+    const k = __ykStr(keys[i]);
+    const n = __ykArrayIndex(k);
+    if (n >= 0) idx.push(n);
+    else named.push(k);
+    i = i + 1;
+  }
+  let a = 1;
+  while (a < idx.length) {
+    const x = idx[a];
+    let b = a - 1;
+    while (b >= 0 && idx[b] > x) {
+      idx[b + 1] = idx[b];
+      b = b - 1;
+    }
+    idx[b + 1] = x;
+    a = a + 1;
+  }
+  const out = [];
+  let j = 0;
+  while (j < idx.length) {
+    out.push(__ykNumberToString(idx[j]));
+    j = j + 1;
+  }
+  let m = 0;
+  while (m < named.length) {
+    out.push(named[m]);
+    m = m + 1;
+  }
+  return out;
+}`,
+  },
+  // A value's own enumerable string keys: an object's (in order), an array's or a string's
+  // indices; none for other values. Object.keys throws a TypeError for undefined and null; for-in
+  // visits nothing (forIn).
+  __ykKeysOf: {
+    inputs: ["unknown", "boolean"],
+    output: "unknown[]",
+    source: `export function f(x: unknown, forIn: boolean): unknown[] {
+  const t = __ykTag(x);
+  const out = [];
+  if (t === 0 || t === 1) {
+    if (forIn) return out;
+    return __ykArrAny(__ykCannotConvert());
+  }
+  if (t === 7) return __ykOwnKeys(__ykObj(x));
+  let n = 0;
+  if (t === 4) n = __ykStr(x).length;
+  if (t === 5) n = __ykArr(x).length;
+  if (t === 6) n = __ykArrAny(x).length;
+  let i = 0;
+  while (i < n) {
+    out.push(__ykNumberToString(i));
+    i = i + 1;
+  }
+  return out;
+}`,
+  },
+  // Object.values and Object.entries: each own enumerable key's value, or [key, value].
+  __ykValuesOf: {
+    inputs: ["unknown", "boolean"],
+    output: "unknown[]",
+    source: `export function f(x: unknown, entries: boolean): unknown[] {
+  const keys = __ykKeysOf(x, false);
+  const t = __ykTag(x);
+  const out = [];
+  let i = 0;
+  while (i < keys.length) {
+    const k = keys[i];
+    const v = t === 7 ? __ykGetAny(x, __ykStr(k)) : __ykIndex(x, i);
+    if (entries) out.push([k, v]);
+    else out.push(v);
+    i = i + 1;
+  }
+  return out;
+}`,
+  },
+  // Undefined or null made an object: a TypeError.
+  __ykCannotConvert: {
+    inputs: [],
+    output: "unknown",
+    source: `export function f(): unknown {
+  throw __ykMakeError("TypeError", "Cannot convert undefined or null to object");
+}`,
+  },
+  // What for-of iterates: an array itself (read as it is at each step), a string's code points;
+  // anything else is not iterable (a TypeError).
+  __ykIterSource: {
+    inputs: ["unknown"],
+    output: "unknown",
+    source: `export function f(x: unknown): unknown {
+  const t = __ykTag(x);
+  if (t === 5 || t === 6) return x;
+  if (t === 4) return __ykCodePoints(__ykStr(x));
+  throw __ykMakeError("TypeError", "is not iterable");
+}`,
+  },
+  // A string's code points, each a string: a surrogate pair together, a lone surrogate alone.
+  __ykCodePoints: {
+    inputs: ["string"],
+    output: "unknown[]",
+    source: `export function f(s: string): unknown[] {
+  const out = [];
+  let i = 0;
+  while (i < s.length) {
+    const c = __ykUnit(s, i);
+    if (c >= 55296 && c <= 56319 && i + 1 < s.length) {
+      const d = __ykUnit(s, i + 1);
+      if (d >= 56320 && d <= 57343) {
+        out.push(__ykSub(s, i, i + 2));
+        i = i + 2;
+        continue;
+      }
+    }
+    out.push(__ykSub(s, i, i + 1));
+    i = i + 1;
+  }
+  return out;
+}`,
+  },
   // The call of a value that is not a function: a TypeError.
   __ykNotAFunction: {
     inputs: [],
