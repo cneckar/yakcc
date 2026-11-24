@@ -542,6 +542,8 @@ function lowerFunction(
       );
       return;
     }
+    if (lbl === "super[]")
+      throw new LlvmEmitError("super[key] is not lowered natively yet (#1330)");
     if (lbl.startsWith("super.")) {
       // The parent's member, read with the receiver (#1294).
       if (closure === undefined) throw new LlvmEmitError("super outside a class's member");
@@ -948,6 +950,8 @@ function lowerFunction(
     const exit = freshLabel("exit");
     // An iteration: an iterator over the input after the carries, asked for the next element first.
     let iterator: string | undefined;
+    if (rec.iterate?.of === "async values")
+      throw new LlvmEmitError("for await is not in the subset yet");
     if (rec.iterate !== undefined) {
       m.used.add("yk_iter_new");
       const iterable = operand(loop.inputs[rec.carry.length] as ValueId);

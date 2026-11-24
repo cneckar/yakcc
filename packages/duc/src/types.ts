@@ -197,6 +197,19 @@ export interface DucGraph {
 /** An async function, a generator, or both. */
 export type FunctionMode = "async" | "generator" | "async generator";
 
+/**
+ * What an iteration steps over (#1330): an iterable's values (`for...of`), an object's keys
+ * (`for...in`), or an async iterable's values, each awaited (`for await...of`, in an async function).
+ */
+export type IterateKind = "values" | "keys" | "async values";
+
+/** An iterating loop's label, by what it steps over. */
+export const ITERATE_LABEL: Readonly<Record<IterateKind, string>> = {
+  values: "for-of",
+  keys: "for-in",
+  "async values": "for-await-of",
+};
+
 /** The body of a `loop` node. See `DucNode.loop`. */
 export interface DucLoop {
   readonly id: string;
@@ -210,7 +223,7 @@ export interface DucLoop {
    * element. The iterable is the loop's input right after the carries' initial values. Iterating is
    * a platform primitive, so this holds for any iterable.
    */
-  readonly iterate?: { readonly element: ValueId; readonly of: "values" | "keys" };
+  readonly iterate?: { readonly element: ValueId; readonly of: IterateKind };
 }
 
 /**
