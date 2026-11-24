@@ -1,0 +1,230 @@
+{
+ "id": "spell-suggest",
+ "cases": [
+  {
+   "args": [
+    "aaabdce",
+    [
+     "d"
+    ]
+   ],
+   "returns": "d"
+  },
+  {
+   "args": [
+    "ccb",
+    [
+     "bbeebde",
+     "cee",
+     "b",
+     "abcaaab",
+     "ba"
+    ]
+   ],
+   "returns": "cee"
+  },
+  {
+   "args": [
+    "cdeece",
+    [
+     "decdddad",
+     "eceb",
+     "bcbb",
+     "ddecdcb"
+    ]
+   ],
+   "returns": "eceb"
+  },
+  {
+   "args": [
+    "cebdb",
+    [
+     "da"
+    ]
+   ],
+   "returns": "da"
+  },
+  {
+   "args": [
+    "badae",
+    [
+     "dbbcc"
+    ]
+   ],
+   "returns": "dbbcc"
+  },
+  {
+   "args": [
+    "eadcaaac",
+    [
+     "ecd",
+     "bbba",
+     "adacb",
+     "c",
+     "ada",
+     "cacc"
+    ]
+   ],
+   "returns": "adacb"
+  },
+  {
+   "args": [
+    "becdc",
+    [
+     "aceece",
+     "da",
+     "bbdbe",
+     "dbcccc",
+     "aed"
+    ]
+   ],
+   "returns": "dbcccc"
+  },
+  {
+   "args": [
+    "e",
+    [
+     "aeace",
+     "dccadae",
+     "bbbebca",
+     "ebbabc"
+    ]
+   ],
+   "returns": "aeace"
+  },
+  {
+   "args": [
+    "bcdb",
+    [
+     "b",
+     "daedaec",
+     "bccb",
+     "aedeba",
+     "dcaaada",
+     "accdd"
+    ]
+   ],
+   "returns": "bccb"
+  },
+  {
+   "args": [
+    "cc",
+    [
+     "deadebed"
+    ]
+   ],
+   "returns": "deadebed"
+  },
+  {
+   "args": [
+    "decebdaa",
+    [
+     "ceabda",
+     "eddceacd",
+     "c",
+     "ceda",
+     "b",
+     "abae"
+    ]
+   ],
+   "returns": "ceabda"
+  },
+  {
+   "args": [
+    "dcea",
+    [
+     "eabbeade",
+     "bbeadada"
+    ]
+   ],
+   "returns": "eabbeade"
+  },
+  {
+   "args": [
+    "a",
+    [
+     "bb",
+     "eb",
+     "adbdbcbe"
+    ]
+   ],
+   "returns": "bb"
+  },
+  {
+   "args": [
+    "de",
+    [
+     "bcdeda",
+     "bcdba",
+     "bbbdb",
+     "ababaeb",
+     "bbcdbe"
+    ]
+   ],
+   "returns": "bcdeda"
+  },
+  {
+   "args": [
+    "bbddca",
+    [
+     "add",
+     "cbe",
+     "cc",
+     "dada",
+     "adb"
+    ]
+   ],
+   "returns": "add"
+  },
+  {
+   "args": [
+    "a",
+    [
+     "cbadba"
+    ]
+   ],
+   "returns": "cbadba"
+  },
+  {
+   "args": [
+    "bba",
+    [
+     "aeacdebb",
+     "abbcbb"
+    ]
+   ],
+   "returns": "abbcbb"
+  },
+  {
+   "args": [
+    "de",
+    [
+     "deeacbdb",
+     "bdeeb",
+     "ead",
+     "aecaeb",
+     "e"
+    ]
+   ],
+   "returns": "e"
+  },
+  {
+   "args": [
+    "ddccd",
+    [
+     "adaeeed"
+    ]
+   ],
+   "returns": "adaeeed"
+  },
+  {
+   "args": [
+    "dbdbd",
+    [
+     "c"
+    ]
+   ],
+   "returns": "c"
+  }
+ ]
+}

@@ -1,0 +1,299 @@
+{
+ "id": "canonical-emails",
+ "cases": [
+  {
+   "args": [
+    [
+     "cx@example.org",
+     "cA@live.com",
+     "aaaB.c+yz@outlook.com",
+     "x.a..c+xx@example.org"
+    ]
+   ],
+   "returns": [
+    "cx@example.org",
+    "ca@live.com",
+    "aaab.c@outlook.com",
+    "x.a..c+xx@example.org"
+   ]
+  },
+  {
+   "args": [
+    [
+     "Bbba+zx@example.org",
+     "acBaa@live.com",
+     "B.cb@Company.com"
+    ]
+   ],
+   "returns": [
+    "bbba+zx@example.org",
+    "acbaa@live.com",
+    "b.cb@company.com"
+   ]
+  },
+  {
+   "args": [
+    [
+     "Bx+xy@gmail.com",
+     "BAa@live.com",
+     "cbb.B+yx@gmail.com",
+     "aB..ba+x@gmail.com"
+    ]
+   ],
+   "returns": [
+    "bx@gmail.com",
+    "baa@live.com",
+    "cbbb@gmail.com",
+    "ab..ba@gmail.com"
+   ]
+  },
+  {
+   "args": [
+    [
+     "bccBbB+xxyx@Hotmail.com",
+     "c..b@live.com",
+     "aBBac+x@example.org",
+     "abx+yyxy@gmail.com",
+     "xbaaB@live.com"
+    ]
+   ],
+   "returns": [
+    "bccbbb@hotmail.com",
+    "c..b@live.com",
+    "abbac+x@example.org",
+    "abx@gmail.com",
+    "xbaab@live.com"
+   ]
+  },
+  {
+   "args": [
+    [
+     "Bcabx+yzzy@example.org",
+     "BbAb+zyyz@Company.com",
+     "aB+zzxy@live.com"
+    ]
+   ],
+   "returns": [
+    "bcabx+yzzy@example.org",
+    "bbab+zyyz@company.com",
+    "ab@live.com"
+   ]
+  },
+  {
+   "args": [
+    [
+     "aABBcA@Company.com",
+     "xaAaBA+xzx@outlook.com",
+     "B+y@example.org"
+    ]
+   ],
+   "returns": [
+    "aabbca@company.com",
+    "xaaaba@outlook.com",
+    "b+y@example.org"
+   ]
+  },
+  {
+   "args": [
+    [
+     "bA+xzy@live.com",
+     "xaaa+xx@Company.com",
+     "aabbbx@outlook.com"
+    ]
+   ],
+   "returns": [
+    "ba@live.com",
+    "xaaa+xx@company.com",
+    "aabbbx@outlook.com"
+   ]
+  },
+  {
+   "args": [
+    [
+     "b+yx@live.com",
+     "a.b@gmail.com"
+    ]
+   ],
+   "returns": [
+    "b@live.com",
+    "ab@gmail.com"
+   ]
+  },
+  {
+   "args": [
+    [
+     "x+zx@live.com",
+     "Aca.A@GoogleMail.com",
+     "ab+zz@example.org",
+     "cb@Hotmail.com",
+     "caBB@GoogleMail.com"
+    ]
+   ],
+   "returns": [
+    "x@live.com",
+    "acaa@gmail.com",
+    "ab+zz@example.org",
+    "cb@hotmail.com",
+    "cabb@gmail.com"
+   ]
+  },
+  {
+   "args": [
+    [
+     "AaA.bc+yxzy@outlook.com",
+     "c@live.com",
+     "c+yz@GoogleMail.com",
+     "AcBcBA@outlook.com"
+    ]
+   ],
+   "returns": [
+    "aaa.bc@outlook.com",
+    "c@live.com",
+    "c@gmail.com",
+    "acbcba@outlook.com"
+   ]
+  },
+  {
+   "args": [
+    [
+     "Bx@outlook.com",
+     "AAx@gmail.com",
+     "x..BA+z@Company.com",
+     "c@example.org",
+     "cabaa@gmail.com"
+    ]
+   ],
+   "returns": [
+    "bx@outlook.com",
+    "aax@gmail.com",
+    "x..ba+z@company.com",
+    "c@example.org",
+    "cabaa@gmail.com"
+   ]
+  },
+  {
+   "args": [
+    [
+     "x.bb.b@example.org",
+     "BBaB+zxy@Hotmail.com"
+    ]
+   ],
+   "returns": [
+    "x.bb.b@example.org",
+    "bbab@hotmail.com"
+   ]
+  },
+  {
+   "args": [
+    [
+     "xBc@outlook.com"
+    ]
+   ],
+   "returns": [
+    "xbc@outlook.com"
+   ]
+  },
+  {
+   "args": [
+    [
+     "x@live.com",
+     "aA+y@gmail.com",
+     "x.aBc@Company.com",
+     "abAac+yyy@example.org"
+    ]
+   ],
+   "returns": [
+    "x@live.com",
+    "aa@gmail.com",
+    "x.abc@company.com",
+    "abaac+yyy@example.org"
+   ]
+  },
+  {
+   "args": [
+    [
+     "bBx@Hotmail.com"
+    ]
+   ],
+   "returns": [
+    "bbx@hotmail.com"
+   ]
+  },
+  {
+   "args": [
+    [
+     "xb@outlook.com",
+     "c@Company.com",
+     "cbBb@Company.com",
+     "bbax+yyzy@Hotmail.com"
+    ]
+   ],
+   "returns": [
+    "xb@outlook.com",
+    "c@company.com",
+    "cbbb@company.com",
+    "bbax@hotmail.com"
+   ]
+  },
+  {
+   "args": [
+    [
+     "AAAacB+xxxz@Hotmail.com",
+     "b+xy@gmail.com",
+     "caBa+zy@Company.com",
+     "b@live.com",
+     "xbAbA+xxz@live.com"
+    ]
+   ],
+   "returns": [
+    "aaaacb@hotmail.com",
+    "b@gmail.com",
+    "caba+zy@company.com",
+    "b@live.com",
+    "xbaba@live.com"
+   ]
+  },
+  {
+   "args": [
+    [
+     "Aa+zzyy@gmail.com",
+     "B.c.c@live.com",
+     "b@GoogleMail.com",
+     "xaa@Company.com"
+    ]
+   ],
+   "returns": [
+    "aa@gmail.com",
+    "b.c.c@live.com",
+    "b@gmail.com",
+    "xaa@company.com"
+   ]
+  },
+  {
+   "args": [
+    [
+     "Abx@outlook.com",
+     "AcAcA@example.org",
+     "ccaA.a@gmail.com",
+     "bAa+xx@example.org"
+    ]
+   ],
+   "returns": [
+    "abx@outlook.com",
+    "acaca@example.org",
+    "ccaaa@gmail.com",
+    "baa+xx@example.org"
+   ]
+  },
+  {
+   "args": [
+    [
+     "aaba@live.com"
+    ]
+   ],
+   "returns": [
+    "aaba@live.com"
+   ]
+  }
+ ]
+}

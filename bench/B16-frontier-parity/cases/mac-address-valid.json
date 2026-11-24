@@ -1,0 +1,173 @@
+{
+ "id": "mac-address-valid",
+ "cases": [
+  {
+   "args": [
+    "01:23:45:67:89:ab"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "01-23-45-67-89-AB"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0123.4567.89ab"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0123456789ab"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "01:23:45:67:89:ab:cd:ef"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "01:23:45-67:89:ab"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "01:23:45:67:89"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0g:23:45:67:89:ab"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "07-5b-ad-ef-a5"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "e1:ab:61:1a:25:bd:fe:65"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "06-eb-93-9d-7d-3a-5f"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "cf:08:39:41:3c:02:6f:0f"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "54:bc:9d:84:cb:7e"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "66-ba-00-f7-8f-56"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "e7-c4-4d-78-09-cd"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "69:8a:39:81:c9"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "d1:62:7f:38:c3"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "3e:9b:69:69:f1:c0:89"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "49-d2-29-d1-44-3d"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "06:e8:cd:6a:3d:62"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "df1b.7999.5497"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "fb-e1-b1-a7-01-5c"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "fb-ec-25-27-1d-69-09-3a"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0c-cf-60-10-78-59"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "78-79-fa-88-5e"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0c:62:95:d8:ac"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "da-68-1b-48-60-77"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "a3:62:52:7e:be"
+   ],
+   "returns": false
+  }
+ ]
+}

@@ -1,0 +1,115 @@
+{
+ "id": "isbn-valid",
+ "cases": [
+  {
+   "args": [
+    "978-0-306-40615-7"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0-306-40615-2"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0306406152",
+    10
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0306406152",
+    13
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "080442957X"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "080442957x"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "978 0 306 40615 7"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "9780306406158"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "030640615"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "97803064061577"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1861972717"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "9780306406157"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0780306406157"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "9781861972712"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0781861972712"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2861972717"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0306406152"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "180442957X"
+   ],
+   "returns": false
+  }
+ ]
+}

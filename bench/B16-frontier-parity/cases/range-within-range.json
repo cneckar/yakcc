@@ -1,0 +1,215 @@
+{
+ "id": "range-within-range",
+ "cases": [
+  {
+   "args": [
+    "^3.4.1-beta.9",
+    "~2.9.7"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "~0.1.4",
+    "2.x"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1.x",
+    "^0.8.8-beta.2"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "^1.0.0",
+    "^0.8.11-alpha.2"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "~2.1.4",
+    "^2.1.4"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "^2.3.3",
+    "~2.3.3"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "~2.3.3",
+    "^2.3.3"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "^1.5.6",
+    ">3.0.6"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "^1.2.2",
+    "~1.2.2"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "3.1.1 - 3.2.0",
+    "^3.1.0 || ^4.0.0"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2.1.x",
+    "^2.0.0"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "~2.0.3",
+    "^2.0.3"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2.2.x",
+    "^2.0.0"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    ">2.9.1",
+    "0.x"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    ">=1.8.8 <1.3.7-beta.9",
+    "2.x"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2.x",
+    ">3.4.10-alpha.0"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "~1.0.2",
+    "^1.0.2"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    ">0.8.5",
+    "~3.11.1"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "^3.3.3",
+    ">=3.0.0"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "^3.4.4",
+    "~3.4.4"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "^3.0.2",
+    ">=3.0.0"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "~0.7.7",
+    ">=3.3.3 <1.11.9-alpha.11"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "3.x",
+    "^3.1.3-alpha.2"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    ">=2.11.3 <0.5.5-alpha.11",
+    "3.6.6 - 2.9.0"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "~0.4.1-beta.7",
+    "^1.2.2 || ~2.1.11"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "^1.9.7 || ~1.11.0-alpha.7",
+    "^1.0.10"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1.3.1 - 1.4.0",
+    "^1.3.0 || ^2.0.0"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "^3.2.3",
+    ">=3.0.0"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "^0.10.2",
+    "~3.9.8-beta.1"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "^1.3.4",
+    ">=1.0.0"
+   ],
+   "returns": true
+  }
+ ]
+}

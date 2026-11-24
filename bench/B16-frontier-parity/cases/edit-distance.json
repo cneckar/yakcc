@@ -1,0 +1,257 @@
+{
+ "id": "edit-distance",
+ "cases": [
+  {
+   "args": [
+    "kitten",
+    "sitting"
+   ],
+   "returns": 3
+  },
+  {
+   "args": [
+    "",
+    ""
+   ],
+   "returns": 0
+  },
+  {
+   "args": [
+    "flaw",
+    "lawn"
+   ],
+   "returns": 2
+  },
+  {
+   "args": [
+    "😀a",
+    "a"
+   ],
+   "returns": 2
+  },
+  {
+   "args": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+   ],
+   "returns": 40
+  },
+  {
+   "args": [
+    "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "zyxwvutsrqponmlkjihgfedcba9876543210ZYXWVUTSRQPONMLKJIHGFEDCBA"
+   ],
+   "returns": 60
+  },
+  {
+   "args": [
+    "b",
+    "ddee"
+   ],
+   "returns": 4
+  },
+  {
+   "args": [
+    "acceaaeaaeeddeacacaaaedbdcaceaaebdadecdddececdebdbbeccbdaccebadebdbde",
+    "cccedebdcbabeddabcaceabcceddbbcbaebdccaeccdacceaaacda"
+   ],
+   "returns": 39
+  },
+  {
+   "args": [
+    "badbdecbabbcbceacbedbdeedabbcbbdddcbbedcebabebcdbaceda",
+    "beadbeecebcbcccdabaaeaa"
+   ],
+   "returns": 37
+  },
+  {
+   "args": [
+    "cecccdadbdbadcaccaedeabadabbbcedabbbeadbeccdcdbbeadeedcdbadccceabaaada",
+    "edbdccbcdbbadaebadbca"
+   ],
+   "returns": 50
+  },
+  {
+   "args": [
+    "eaabdbadbedaebcbdabccdaaacabcacaaddceaedcebbcbbacedaddde",
+    "deeabddbdededacadbeb"
+   ],
+   "returns": 41
+  },
+  {
+   "args": [
+    "aaedceceebcbadaeaceeacea",
+    "edeeabcbebacbbacceadebcb"
+   ],
+   "returns": 15
+  },
+  {
+   "args": [
+    "",
+    "cdecacaceabcdbbceedaaaacacdbaaceabaacdeeaddaddbcdecddeeccdeeeddcb"
+   ],
+   "returns": 65
+  },
+  {
+   "args": [
+    "ecabdedcedeccdedaaaebeb",
+    "ceebcdeeccdadbeaebdbbaeecbbebca"
+   ],
+   "returns": 19
+  },
+  {
+   "args": [
+    "dddeebcbdeecebecbbceeddcecdbecbdeaeacbecadd",
+    "baadcaeedaedaaceaceddc"
+   ],
+   "returns": 29
+  },
+  {
+   "args": [
+    "e",
+    "baceecedcbceddcecadabadddbccbdbacccbbaddcedbebebeacedcadc"
+   ],
+   "returns": 56
+  },
+  {
+   "args": [
+    "ceccaa",
+    "eadadbcaebbdcadbbdaccdaadabacbdbcacedbceaccdb"
+   ],
+   "returns": 39
+  },
+  {
+   "args": [
+    "",
+    "bbbecdbcccabbebaabebaaecbacebdbadecaabbdedbaeddbdbbedce"
+   ],
+   "returns": 55
+  },
+  {
+   "args": [
+    "aaeeeab",
+    "acdbadcccabaaccacdadeedabaceededdeaeeebedbcaccabeedc"
+   ],
+   "returns": 45
+  },
+  {
+   "args": [
+    "abddcbdebdabeddedeccdbabbd",
+    "ebedcaaeac"
+   ],
+   "returns": 20
+  },
+  {
+   "args": [
+    "cdacdadbaebcabacadccaaebcaaeebdabcbaedadcabcdbcdbddddbaeaaddbbab",
+    "bebaaedecabdcdeeceaaedaeadcebbcddcdbbdddaebcd"
+   ],
+   "returns": 36
+  },
+  {
+   "args": [
+    "ebaccabdaabaedcacddabbaeabcaebacdabcaccceeed",
+    "cedacacdcbdcbeeeeddbceaaeaadecbbaaebbdcdbaa"
+   ],
+   "returns": 31
+  },
+  {
+   "args": [
+    "caeedacdbdddbbccacdbadcaacaabddbbaaedede",
+    "caddcbbccdbcbaadcdcbbbbeac"
+   ],
+   "returns": 23
+  },
+  {
+   "args": [
+    "ceeedadbcebdaddbaeadecbabeccdecaaeabdecceeececccbe",
+    "dbdedbcbecbeaebcabcbdadcbcabcc"
+   ],
+   "returns": 31
+  },
+  {
+   "args": [
+    "eeddbbdddbbaddccbdbabbdaaabaddcbdeecaaebbacdd",
+    "aadceebdcbaddbedaaccbb"
+   ],
+   "returns": 31
+  },
+  {
+   "args": [
+    "e",
+    "dedebeccbabbdacbdbedeaeddaaabaedcdeb"
+   ],
+   "returns": 35
+  },
+  {
+   "args": [
+    "e",
+    "beebecdeaabdaacaedeadedcaaedcdccbccccdecddacdeadcacbecedaadabebcebb"
+   ],
+   "returns": 66
+  },
+  {
+   "args": [
+    "bddddbaeaadaebadadaeebebcbaaedbd",
+    "cecbccdccddcadeceeebeacaeeddadabbaaaccbeeccbc"
+   ],
+   "returns": 29
+  },
+  {
+   "args": [
+    "cdeccbeddcacacbacdacedaacdadadddabdcdaacaeaeabacd",
+    "ecdacbbaad"
+   ],
+   "returns": 39
+  },
+  {
+   "args": [
+    "eddaebdececadcabbaecdebbcadcdebbdabceaaabebacbddaeacacdbeebcacb",
+    "adaaed"
+   ],
+   "returns": 57
+  },
+  {
+   "args": [
+    "deed",
+    "aaaccadaeacadbeaceceeddddeeceaacdecedaeeabbddacbdacc"
+   ],
+   "returns": 48
+  },
+  {
+   "args": [
+    "abbaebbacdddddaeaaedddbbdcabeccedebb",
+    "bdcaebadcdedbcabecdccaceaadbedebbcbebdddcabbceaecaaceabcbdbaeed"
+   ],
+   "returns": 38
+  },
+  {
+   "args": [
+    "ddccceecaedadcbdaee",
+    "ecabbdebcbddecabacecadeebbbecaecdbcccadcbdbcbcdbadcddcbbcdbddaddd"
+   ],
+   "returns": 48
+  },
+  {
+   "args": [
+    "cbbbbaceeaecbdbddbbcbcaedcebeeebceeeeabbddcbecbccdcdbe",
+    "cababbbebebecdaeadcdbcccaedaadaeadabbaabbddcbedcacbdddadecac"
+   ],
+   "returns": 33
+  },
+  {
+   "args": [
+    "aabecdadecdeceebdcaceecceabdabeaacbdaeebcaeaaddbceae",
+    "becbacdcaeaeacadbebcdaaedbbceddcdea"
+   ],
+   "returns": 28
+  },
+  {
+   "args": [
+    "eaceeccaeacaaeaccecdbdebdecbeaecbeedbeebeaacecceaebbdbebbcae",
+    "ddeeebbddcbaeaecbbedceeeeaedceacdbcabeaaaeeeadeaaaabacbbdcc"
+   ],
+   "returns": 36
+  }
+ ]
+}

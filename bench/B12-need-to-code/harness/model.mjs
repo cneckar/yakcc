@@ -12,6 +12,7 @@ const repo = resolve(here, "..", "..", "..");
 
 /** Dollars per million tokens (input, output), first-party API, as of 2026-11. */
 export const PRICES = {
+  "claude-fable-5-2": [8, 40],
   "claude-opus-5-5": [4, 20],
   "claude-sonnet-5-5": [2, 10],
   "claude-haiku-5-5": [0.1, 0.5],
@@ -85,6 +86,8 @@ export async function modelClient({
   model = DEFAULT_MODEL,
   maxTokens = 4000,
   effort = "low",
+  // Stream the request (needed for large maxTokens: the SDK refuses long non-streaming calls).
+  stream = false,
 } = {}) {
   const apiKey = apiKeyFromEnv();
   if (!apiKey)
@@ -107,13 +110,16 @@ export async function modelClient({
       return (await count(text)) - overhead;
     },
     async complete(system, user) {
-      const m = await client.messages.create({
+      const body = {
         model,
         max_tokens: maxTokens,
-        system,
+        ...(system ? { system } : {}),
         messages: [{ role: "user", content: user }],
         ...(effort ? { output_config: { effort } } : {}),
-      });
+      };
+      const m = stream
+        ? await client.messages.stream(body).finalMessage()
+        : await client.messages.create(body);
       usage.inputTokens += m.usage.input_tokens;
       usage.outputTokens += m.usage.output_tokens;
       usage.calls++;

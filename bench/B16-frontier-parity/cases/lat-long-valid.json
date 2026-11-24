@@ -1,0 +1,179 @@
+{
+ "id": "lat-long-valid",
+ "cases": [
+  {
+   "args": [
+    "40.7128,-74.0060"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "(40.7128, -74.0060)"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "91,0"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "-90,180"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "40.7128 -74.0060"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "+45.5,+120"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "90.0001,0"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "45,180.5"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "(45,10"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "-26.61,73"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "-100,63"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "-30.9, -135"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "-15.613, -90"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "-94.47, -7"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "49.78, 109"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "85,-101"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "51.79,158"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "73.2, -26"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "72.61, 165"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "34.7, 184"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "-12, -13"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "-75.709, 129"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "-13.8, 27"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "-9, 43"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "11.5,-20"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "44.04,-147"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "-24, 42"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "-84,160"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "-28.0, 81"
+   ],
+   "returns": true
+  }
+ ]
+}

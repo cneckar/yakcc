@@ -1,0 +1,179 @@
+{
+ "id": "sha1-hex",
+ "cases": [
+  {
+   "args": [
+    "abc"
+   ],
+   "returns": "a9993e364706816aba3e25717850c26c9cd0d89d"
+  },
+  {
+   "args": [
+    ""
+   ],
+   "returns": "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+  },
+  {
+   "args": [
+    "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+   ],
+   "returns": "84983e441c3bd26ebaae4aa1f95129e5e54670f1"
+  },
+  {
+   "args": [
+    "The quick brown fox jumps over the lazy dog"
+   ],
+   "returns": "2fd4e1c67a2d28fced849ee1bb76e7391b93eb12"
+  },
+  {
+   "args": [
+    "é漢😀"
+   ],
+   "returns": "71b826e24f58e72f518fa6dcc94aed6afaa8af5f"
+  },
+  {
+   "args": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   ],
+   "returns": "c1c8bbdc22796e28c0e15163d20899b65621d65a"
+  },
+  {
+   "args": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   ],
+   "returns": "c2db330f6083854c99d4b5bfb6e8f29f201be699"
+  },
+  {
+   "args": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   ],
+   "returns": "0098ba824b5c16427bd7a1122a5a442a25ec644d"
+  },
+  {
+   "args": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   ],
+   "returns": "291e9a6c66994949b57ba5e650361e98fc36b1ba"
+  },
+  {
+   "args": [
+    ".\nB😀._9caA9A.B\"A \"z\"\"baécCA漢漢xxA9\t/Cb  -0 '\t'~ -Cé 9é~B..b0\tA11y\"\t9-.C_B\"cB-😀\nb\"é😀é.xx.9A_-'y0~z\n_a😀\ny\" "
+   ],
+   "returns": "9fabd65763843f5d13051fc66eade02959cba10f"
+  },
+  {
+   "args": [
+    "CC.\tB/ax\ny/ca-B91 ./漢~😀ac\"/-B'.\n- CéA9.é😀漢9'by😀-'\n\"cbA漢c'y.漢-c-😀é'_a😀~1A 9_x.C'\"A😀. a0'~😀_c 9\"\né😀'a z\"x."
+   ],
+   "returns": "1877a6ef1ab6e45576aba8a25a3e802331ff24f3"
+  },
+  {
+   "args": [
+    "\nby-/cc10漢y漢b😀a0x9C0cayc\"-\"yxzz漢_9 z~Cb01 😀x\n9czé~b9-c~ xz😀'/éza~z"
+   ],
+   "returns": "12484f3206c61603671160e15625ca2545608c3c"
+  },
+  {
+   "args": [
+    "9C\"'Cy\tb/1ca漢Ay漢c0\n漢9zé_0zcz1😀b"
+   ],
+   "returns": "dc75f83fa8f6b35b65f006c91cc8f6a8421c2be4"
+  },
+  {
+   "args": [
+    "0z\t0aaé 漢x~.B.B😀 /😀xcc _😀B~' z .. y 1~A/~9'\".~xCé'漢\n'AAa1漢x ca/C漢b~/ "
+   ],
+   "returns": "b37f4880ff4932b250a8f3f172c0f7c255c773a9"
+  },
+  {
+   "args": [
+    "1a漢c1B B-c\"9c z\"漢0c-\nB\nyAb漢B\t😀😀😀9\n 00😀/A'漢a1c9y\t9/ yA xz'~~yax\tC_1é_ \ny\néca\n\"A漢C_'\"\"😀x1 \"zc漢by_0C0a_xé9x\tyc9écy\n9 z\".ya01a\tz1y/ 1y"
+   ],
+   "returns": "87a6b5b9af31572636135b06433d5efac56e9f16"
+  },
+  {
+   "args": [
+    " Ay C y9~~\t B_😀~zé'0A😀\t \t.x_A😀\n1az9\"\t\"CB.y😀"
+   ],
+   "returns": "777c3c72e1e2c110e0d0c62f490ac86f84517506"
+  },
+  {
+   "args": [
+    "a1\"0ab0B 漢Bc A~y\t 0 .xé9\n"
+   ],
+   "returns": "00d280d08b34d5c5d95016d73e1a06977be350be"
+  },
+  {
+   "args": [
+    "~_-é1'BB/A\t'.z9 .'\"\n1b --é\t0a😀0CC~é911y...\t1\tCy1éBB  0\nba😀a.AC c漢\"zA_\"C1CyCz0😀AAA0B_\n9 A\t/0//"
+   ],
+   "returns": "10abadfc2acb44617a3db78aac49e77ffcb688b4"
+  },
+  {
+   "args": [
+    "0A\t-_c.bBAb~éa'\n\"\t😀 ~C x_é"
+   ],
+   "returns": "b2dca3b5a05419fcfcef903d538333a510d28bb4"
+  },
+  {
+   "args": [
+    "/\t'béé😀"
+   ],
+   "returns": "2a31ce3f902bee356b59200deac0f6d259238f59"
+  },
+  {
+   "args": [
+    "cx b😀éCC9C\"~B_bc/y漢😀_bé'b1z'\n\"a__bAéx0'.zC0é91Béz~z_Aééxy1B  b B~\nbC\nca/\n-C/B -漢~ 1\"c.c-~/B\"_\n"
+   ],
+   "returns": "c5bf27cb06f21eb162ae5a0dc864794b7c0d53d1"
+  },
+  {
+   "args": [
+    "A漢1漢xzy1_1\n_A_9ba😀\t_~é\né漢éx_😀9~\n'y😀漢09Cz'\t~_z_x0'9 x_.漢B.B 😀b0-zzyb😀é9~c漢.0é1漢b\tb'\tCacc0AzaxaCa'9~C0漢c-\"B11\t\"漢éy\"\n~\tBc ~céaé"
+   ],
+   "returns": "dadbcc2cc165e6a0529eb4bcea17abfb2ac5967d"
+  },
+  {
+   "args": [
+    " \"c1\n~ \"y''C_'- -\tA😀c-9_.\t\"acB~\"_x\t---\t Cyc0漢1-漢aé.é\"\téz1\n0a\nyz0\"ab😀.éb漢_xz~ 😀éa\t'x1z.bz 😀0é\n\t Cé1B0.\ty\"x''bC\"9AAy0abAx0 "
+   ],
+   "returns": "043b51f4da2dbd37032d2da54dad1cc3011a0c5e"
+  },
+  {
+   "args": [
+    "cx\"zB\t~9C9AA-aéz99/B~C/z99-漢\t_C.01é9\t.'z_/AyA/C\n\"b1_BBB1ax1/AzyC.\"czbC😀  \n0\"z-é'9"
+   ],
+   "returns": "10fd96968b11aa950206a1311e24e51c7f424a9e"
+  },
+  {
+   "args": [
+    "'"
+   ],
+   "returns": "bb589d0621e5472f470fa3425a234c74b1e202e8"
+  },
+  {
+   "args": [
+    "  y漢A\té1😀C\" B/~_Ax é\t/\"z1漢\"/c.C_x_ c\"C 09c\t9z9é- C😀'\"1Ba.C.Bbx9Bxxy~\ta\"y~aa/"
+   ],
+   "returns": "f5b339f9f42060a5ae71375faaa97820921191bc"
+  },
+  {
+   "args": [
+    "漢😀1 9cz\t1zB9/cBCz~B'  .1\nzéAb0c.😀.😀😀.😀 ~zé''~\"0zé"
+   ],
+   "returns": "19c983b081896e9e9788f5af18f50e56581451d1"
+  },
+  {
+   "args": [
+    "10C1 . é \nz/y"
+   ],
+   "returns": "bb0240b389c9f6f4ae3a6e1acb084930c5c8f43f"
+  },
+  {
+   "args": [
+    "~_'~1.B\t_0/.1/-  😀9\t\t\"漢_BzC.\"\nzBcB9\n~\"c\"😀\tayb  BcxC1é_é0 é-  -yx\t0/0z\"😀B\n0 z.漢a\".z1-9C/\"9 ~漢0x0bbx9~~'A1B-1\".1éé.9y\t\t"
+   ],
+   "returns": "9438c27ed0884812b88e496ae1b7e5da4adcd439"
+  }
+ ]
+}
