@@ -218,6 +218,36 @@ export function specHash(spec: SpecYak): SpecHash {
  * so a foreign triplet with otherwise-identical fields to a local triplet produces a
  * different root.
  */
+/**
+ * A proof manifest's root, hex: BLAKE3(canonical manifest ‖ BLAKE3(artifact) for each declared
+ * artifact, in declaration order). The same proof_root blockMerkleRoot commits to; a DUC block root
+ * commits to it too (DEC-DUC-GRAPH-ROOT-001).
+ */
+export function proofRoot(
+  manifest: ProofManifest,
+  artifacts: ReadonlyMap<string, Uint8Array>,
+): string {
+  return bytesToHex(proofRootBytes(manifest, artifacts));
+}
+
+function proofRootBytes(
+  manifest: ProofManifest,
+  artifacts: ReadonlyMap<string, Uint8Array>,
+): Uint8Array {
+  const manifestBytes = canonicalize(manifest as unknown as ContractSpec);
+  const artifactHashParts: Uint8Array[] = [];
+  for (const artifact of manifest.artifacts) {
+    const artifactBytes = artifacts.get(artifact.path);
+    if (artifactBytes === undefined) {
+      throw new Error(
+        `blockMerkleRoot: artifact "${artifact.path}" declared in manifest but not found in artifacts Map`,
+      );
+    }
+    artifactHashParts.push(blake3(artifactBytes));
+  }
+  return blake3(concatBytes(manifestBytes, ...artifactHashParts));
+}
+
 export function blockMerkleRoot(triplet: BlockTriplet): BlockMerkleRoot {
   if (triplet.kind === "foreign") {
     return blockMerkleRootForeign(triplet);

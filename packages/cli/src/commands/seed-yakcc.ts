@@ -48,7 +48,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BlockMerkleRoot } from "@yakcc/contracts";
 import { createLocalEmbeddingProvider } from "@yakcc/contracts";
-import { type Registry, type RegistryOptions, openRegistry } from "@yakcc/registry";
+import {
+  type Registry,
+  type RegistryOptions,
+  openRegistry,
+  openRegistrySnapshot,
+} from "@yakcc/registry";
 import type { Logger } from "../index.js";
 
 // ---------------------------------------------------------------------------
@@ -247,7 +252,8 @@ export async function seedYakccCorpus(
 
   let sourceRegistry: Registry;
   try {
-    sourceRegistry = await openRegistry(sqlitePath, {
+    // The corpus is a source: read from a copy, so opening (which migrates) never writes it (#1291).
+    sourceRegistry = await openRegistrySnapshot(sqlitePath, {
       embeddings: bootstrapProvider,
     });
   } catch (err) {

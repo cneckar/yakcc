@@ -176,7 +176,7 @@
  *   Migration is pure DDL (CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS);
  *   table starts empty. No backfill required. Closes #1087.
  */
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 19;
 
 // ---------------------------------------------------------------------------
 // Migration 0 → 1: initial schema (v0)
@@ -1574,34 +1574,80 @@ export function applyMigrations(db: MigrationsDb): void {
     db.prepare("UPDATE schema_version SET version = ?").run(16);
   }
 
-  // Migration 16 → 17: DUC graphs as the stored implementation form (#1279, #1275).
-  //
-  // duc_graphs holds each graph structure once, keyed by its identity (structure only, no origins,
-  // no links; brotli-compressed compact encoding). duc_implementations keys an implementation by
-  // the pair (spec_hash, graph_identity): several graphs may implement one contract, and the same
-  // graph may implement several. Links and annotations are separate records, outside identity
-  // (decision 2B). ts_cache is the emitted TypeScript, a cache of the graph.
-  //
-  // Pure DDL; the tables start empty. No backfill: existing blocks keep their impl_source, and a
-  // shave from now on stores the graph beside the block.
-  if (currentVersion < 17) {
-    for (const ddl of MIGRATION_17_DDL) db.exec(ddl);
-    db.prepare("UPDATE schema_version SET version = ?").run(17);
-  }
+  // Migrations 16 → 17 and 17 → 18 created provisional DUC tables (#1279, #1280). Migration 19
+  // replaces them with the final form; a database that never had them only moves its version on.
+  if (currentVersion < 17) db.prepare("UPDATE schema_version SET version = ?").run(17);
+  if (currentVersion < 18) db.prepare("UPDATE schema_version SET version = ?").run(18);
 
-  // Migration 17 → 18: graph search (#1280). duc_signatures holds each graph's retrieval signature
-  // and the vector embedded from it, keyed by graph identity. A plain table, not vec0: the search
-  // scans it with vec_distance_cosine, and the dimension column keeps vectors from a different
-  // embedding model out of a query. The signature text is kept so the vectors can be rebuilt.
+  // Migration 18 → 19: the DUC atom form (#1291, DEC-DUC-FORMAT-001, DEC-DUC-GRAPH-ROOT-001).
   //
-  // Pure DDL; no backfill. Graphs stored from now on with a signature are findable.
-  if (currentVersion < 18) {
-    for (const ddl of MIGRATION_18_DDL) db.exec(ddl);
-    db.prepare("UPDATE schema_version SET version = ?").run(18);
+  // - duc_graphs: each graph structure once, by its identity (the structural key).
+  // - duc_implementations: an implementation of a contract by its graph root, which commits to the
+  //   identity, the links and the format version. Provenance (lifter version, the block it was
+  //   shaved as), the receiver's trust level, its evidence and the TypeScript cache are attached.
+  // - duc_links: what each reference of a root calls, by contract; indexed by target for reverse
+  //   lookups.
+  // - duc_annotations: origin annotations of an implementation.
+  // - duc_signatures: each graph's retrieval signature and its vector (#1280).
+  // - duc_contracts: the contract of an implementation received without a block.
+  // - duc_modules: module records (#1290), by the hash of their canonical JSON.
+  //
+  // The provisional tables held only rows re-derivable by a shave, and nothing was ever stored in
+  // the committed bootstrap registry: they are dropped, not migrated.
+  if (currentVersion < 19) {
+    for (const table of PROVISIONAL_DUC_TABLES) db.exec(`DROP TABLE IF EXISTS ${table}`);
+    for (const ddl of MIGRATION_19_DDL) db.exec(ddl);
+    db.prepare("UPDATE schema_version SET version = ?").run(19);
   }
 }
 
-const MIGRATION_18_DDL: readonly string[] = [
+const PROVISIONAL_DUC_TABLES = [
+  "duc_signatures",
+  "duc_annotations",
+  "duc_links",
+  "duc_implementations",
+  "duc_graphs",
+] as const;
+
+const MIGRATION_19_DDL: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS duc_graphs (
+    graph_identity TEXT    PRIMARY KEY,
+    format_version INTEGER NOT NULL,
+    structure      BLOB    NOT NULL,
+    created_at     INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS duc_implementations (
+    spec_hash         TEXT    NOT NULL,
+    graph_root        TEXT    NOT NULL,
+    graph_identity    TEXT    NOT NULL REFERENCES duc_graphs(graph_identity),
+    format_version    INTEGER NOT NULL,
+    lifter_version    INTEGER NOT NULL,
+    block_root        TEXT    NULL,
+    block_merkle_root TEXT    NULL,
+    trust_level       TEXT    NULL CHECK (trust_level IN ('claimed', 'conforming', 'corroborated')),
+    evidence          TEXT    NULL,
+    base_set          TEXT    NULL,
+    ts_cache          TEXT    NULL,
+    created_at        INTEGER NOT NULL,
+    PRIMARY KEY (spec_hash, graph_root)
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_duc_implementations_graph ON duc_implementations(graph_identity)",
+  "CREATE INDEX IF NOT EXISTS idx_duc_implementations_root ON duc_implementations(graph_root)",
+  `CREATE TABLE IF NOT EXISTS duc_links (
+    graph_root  TEXT NOT NULL,
+    reason      TEXT NOT NULL,
+    symbol      TEXT NOT NULL,
+    module      TEXT NOT NULL DEFAULT '',
+    target_spec TEXT NOT NULL,
+    PRIMARY KEY (graph_root, reason, symbol, module)
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_duc_links_target ON duc_links(target_spec)",
+  `CREATE TABLE IF NOT EXISTS duc_annotations (
+    spec_hash   TEXT NOT NULL,
+    graph_root  TEXT NOT NULL,
+    annotations BLOB NOT NULL,
+    PRIMARY KEY (spec_hash, graph_root)
+  )`,
   `CREATE TABLE IF NOT EXISTS duc_signatures (
     graph_identity TEXT    PRIMARY KEY REFERENCES duc_graphs(graph_identity),
     signature      TEXT    NOT NULL,
@@ -1609,39 +1655,14 @@ const MIGRATION_18_DDL: readonly string[] = [
     embedding      BLOB    NOT NULL
   )`,
   "CREATE INDEX IF NOT EXISTS idx_duc_signatures_dimension ON duc_signatures(dimension)",
-];
-
-const MIGRATION_17_DDL: readonly string[] = [
-  `CREATE TABLE IF NOT EXISTS duc_graphs (
-    graph_identity TEXT    PRIMARY KEY,
-    format_version INTEGER NOT NULL,
-    lifter_version INTEGER NOT NULL,
-    structure      BLOB    NOT NULL,
-    created_at     INTEGER NOT NULL
+  `CREATE TABLE IF NOT EXISTS duc_contracts (
+    spec_hash            TEXT    PRIMARY KEY,
+    spec_canonical_bytes BLOB    NOT NULL,
+    created_at           INTEGER NOT NULL
   )`,
-  `CREATE TABLE IF NOT EXISTS duc_implementations (
-    spec_hash         TEXT    NOT NULL,
-    graph_identity    TEXT    NOT NULL REFERENCES duc_graphs(graph_identity),
-    block_merkle_root TEXT    NULL,
-    ts_cache          TEXT    NULL,
-    created_at        INTEGER NOT NULL,
-    PRIMARY KEY (spec_hash, graph_identity)
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_duc_implementations_graph ON duc_implementations(graph_identity)",
-  `CREATE TABLE IF NOT EXISTS duc_links (
-    spec_hash      TEXT NOT NULL,
-    graph_identity TEXT NOT NULL,
-    reason         TEXT NOT NULL,
-    symbol         TEXT NOT NULL,
-    module         TEXT NOT NULL DEFAULT '',
-    target_spec    TEXT NOT NULL,
-    PRIMARY KEY (spec_hash, graph_identity, reason, symbol, module)
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_duc_links_target ON duc_links(target_spec)",
-  `CREATE TABLE IF NOT EXISTS duc_annotations (
-    spec_hash      TEXT NOT NULL,
-    graph_identity TEXT NOT NULL,
-    annotations    BLOB NOT NULL,
-    PRIMARY KEY (spec_hash, graph_identity)
+  `CREATE TABLE IF NOT EXISTS duc_modules (
+    module_root TEXT    PRIMARY KEY,
+    record      TEXT    NOT NULL,
+    created_at  INTEGER NOT NULL
   )`,
 ];

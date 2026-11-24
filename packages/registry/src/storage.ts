@@ -45,6 +45,9 @@ import {
   blockMerkleRoot as computeBlockMerkleRoot,
   generateEmbedding,
 } from "@yakcc/contracts";
+import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import type {
@@ -53,7 +56,9 @@ import type {
   CandidateMatch,
   CandidateNearMiss,
   DucImplementationRow,
+  DucModuleRow,
   DucSignatureMatch,
+  DucTrustLevel,
   FindCandidatesByQueryOptions,
   FindCandidatesByQueryResult,
   FindCandidatesOptions,
@@ -2180,6 +2185,7 @@ class SqliteRegistry implements Registry {
   // -------------------------------------------------------------------------
 
   async storeDucImplementation(row: DucImplementationRow): Promise<void> {
+    this.assertOpen();
     const now = row.createdAt ?? Date.now();
     // The signature's vector is computed before the transaction: embedding is asynchronous.
     const signature = row.signature ?? null;
@@ -2187,43 +2193,55 @@ class SqliteRegistry implements Registry {
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
-          "INSERT OR IGNORE INTO duc_graphs(graph_identity, format_version, lifter_version, structure, created_at) VALUES (?, ?, ?, ?, ?)",
+          "INSERT OR IGNORE INTO duc_graphs(graph_identity, format_version, structure, created_at) VALUES (?, ?, ?, ?)",
         )
-        .run(
-          row.graphIdentity,
-          row.formatVersion,
-          row.lifterVersion,
-          Buffer.from(row.structure),
-          now,
-        );
+        .run(row.graphIdentity, row.formatVersion, Buffer.from(row.structure), now);
       this.db
         .prepare(
-          `INSERT INTO duc_implementations(spec_hash, graph_identity, block_merkle_root, ts_cache, created_at) VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(spec_hash, graph_identity) DO UPDATE SET
+          `INSERT INTO duc_implementations(spec_hash, graph_root, graph_identity, format_version, lifter_version,
+             block_root, block_merkle_root, trust_level, evidence, base_set, ts_cache, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(spec_hash, graph_root) DO UPDATE SET
+             block_root = COALESCE(excluded.block_root, duc_implementations.block_root),
              block_merkle_root = COALESCE(excluded.block_merkle_root, duc_implementations.block_merkle_root),
+             trust_level = COALESCE(excluded.trust_level, duc_implementations.trust_level),
+             evidence = COALESCE(excluded.evidence, duc_implementations.evidence),
+             base_set = COALESCE(excluded.base_set, duc_implementations.base_set),
              ts_cache = COALESCE(excluded.ts_cache, duc_implementations.ts_cache)`,
         )
         .run(
           row.specHash,
+          row.graphRoot,
           row.graphIdentity,
+          row.formatVersion,
+          row.lifterVersion,
+          row.blockRoot ?? null,
           row.blockMerkleRoot ?? null,
+          row.trustLevel ?? null,
+          row.evidence ?? null,
+          row.baseSet ?? null,
           row.tsCache ?? null,
           now,
         );
-      this.db
-        .prepare("DELETE FROM duc_links WHERE spec_hash = ? AND graph_identity = ?")
-        .run(row.specHash, row.graphIdentity);
+      if (row.specCanonicalBytes !== undefined && row.specCanonicalBytes !== null) {
+        this.db
+          .prepare(
+            "INSERT OR IGNORE INTO duc_contracts(spec_hash, spec_canonical_bytes, created_at) VALUES (?, ?, ?)",
+          )
+          .run(row.specHash, Buffer.from(row.specCanonicalBytes), now);
+      }
+      // A root commits to its links: they are stored once, with it.
       const insertLink = this.db.prepare(
-        "INSERT OR REPLACE INTO duc_links(spec_hash, graph_identity, reason, symbol, module, target_spec) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO duc_links(graph_root, reason, symbol, module, target_spec) VALUES (?, ?, ?, ?, ?)",
       );
       for (const l of row.links)
-        insertLink.run(row.specHash, row.graphIdentity, l.reason, l.symbol, l.module ?? "", l.spec);
+        insertLink.run(row.graphRoot, l.reason, l.symbol, l.module ?? "", l.spec);
       if (row.annotations !== undefined && row.annotations !== null) {
         this.db
           .prepare(
-            "INSERT OR REPLACE INTO duc_annotations(spec_hash, graph_identity, annotations) VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO duc_annotations(spec_hash, graph_root, annotations) VALUES (?, ?, ?)",
           )
-          .run(row.specHash, row.graphIdentity, Buffer.from(row.annotations));
+          .run(row.specHash, row.graphRoot, Buffer.from(row.annotations));
       }
       if (signature !== null && vector !== null) {
         this.db
@@ -2254,57 +2272,68 @@ class SqliteRegistry implements Registry {
       graph_identity: string;
       distance: number;
     }[];
-    const specsOf = this.db.prepare(
-      "SELECT spec_hash FROM duc_implementations WHERE graph_identity = ? ORDER BY created_at, spec_hash",
+    const implsOf = this.db.prepare(
+      "SELECT spec_hash, graph_root FROM duc_implementations WHERE graph_identity = ? ORDER BY created_at, spec_hash, graph_root",
     );
-    return rows.map((r) => ({
-      graphIdentity: r.graph_identity,
-      distance: r.distance,
-      specHashes: (specsOf.all(r.graph_identity) as { spec_hash: string }[]).map(
-        (x) => x.spec_hash,
-      ),
-    }));
+    return rows.map((r) => {
+      const impls = (
+        implsOf.all(r.graph_identity) as { spec_hash: string; graph_root: string }[]
+      ).map((x) => ({ specHash: x.spec_hash, graphRoot: x.graph_root }));
+      return {
+        graphIdentity: r.graph_identity,
+        distance: r.distance,
+        specHashes: [...new Set(impls.map((i) => i.specHash))],
+        implementations: impls,
+      };
+    });
   }
 
   async getDucImplementation(
     specHash: string,
-    graphIdentity: string,
+    graphRoot: string,
   ): Promise<DucImplementationRow | null> {
+    this.assertOpen();
     const impl = this.db
       .prepare(
-        `SELECT i.spec_hash, i.graph_identity, i.block_merkle_root, i.ts_cache, i.created_at, g.format_version, g.lifter_version, g.structure
+        `SELECT i.*, g.structure
          FROM duc_implementations i JOIN duc_graphs g ON g.graph_identity = i.graph_identity
-         WHERE i.spec_hash = ? AND i.graph_identity = ?`,
+         WHERE i.spec_hash = ? AND i.graph_root = ?`,
       )
-      .get(specHash, graphIdentity) as
+      .get(specHash, graphRoot) as
       | {
           spec_hash: string;
+          graph_root: string;
           graph_identity: string;
-          block_merkle_root: string | null;
-          ts_cache: string | null;
-          created_at: number;
           format_version: number;
           lifter_version: number;
+          block_root: string | null;
+          block_merkle_root: string | null;
+          trust_level: DucTrustLevel | null;
+          evidence: string | null;
+          base_set: string | null;
+          ts_cache: string | null;
+          created_at: number;
           structure: Buffer;
         }
       | undefined;
     if (impl === undefined) return null;
     const links = this.db
       .prepare(
-        "SELECT reason, symbol, module, target_spec FROM duc_links WHERE spec_hash = ? AND graph_identity = ? ORDER BY reason, symbol, module",
+        "SELECT reason, symbol, module, target_spec FROM duc_links WHERE graph_root = ? ORDER BY reason, symbol, module",
       )
-      .all(specHash, graphIdentity) as {
+      .all(graphRoot) as {
       reason: string;
       symbol: string;
       module: string;
       target_spec: string;
     }[];
     const notes = this.db
-      .prepare("SELECT annotations FROM duc_annotations WHERE spec_hash = ? AND graph_identity = ?")
-      .get(specHash, graphIdentity) as { annotations: Buffer } | undefined;
+      .prepare("SELECT annotations FROM duc_annotations WHERE spec_hash = ? AND graph_root = ?")
+      .get(specHash, graphRoot) as { annotations: Buffer } | undefined;
     return {
       specHash: impl.spec_hash,
       graphIdentity: impl.graph_identity,
+      graphRoot: impl.graph_root,
       formatVersion: impl.format_version,
       lifterVersion: impl.lifter_version,
       structure: new Uint8Array(impl.structure),
@@ -2315,19 +2344,63 @@ class SqliteRegistry implements Registry {
         spec: l.target_spec,
       })),
       annotations: notes !== undefined ? new Uint8Array(notes.annotations) : null,
+      blockRoot: impl.block_root,
       blockMerkleRoot: impl.block_merkle_root,
+      trustLevel: impl.trust_level,
+      evidence: impl.evidence,
+      baseSet: impl.base_set,
       tsCache: impl.ts_cache,
       createdAt: impl.created_at,
     };
   }
 
   async listDucImplementations(specHash: string): Promise<readonly string[]> {
+    this.assertOpen();
     const rows = this.db
       .prepare(
-        "SELECT graph_identity FROM duc_implementations WHERE spec_hash = ? ORDER BY created_at, graph_identity",
+        "SELECT graph_root FROM duc_implementations WHERE spec_hash = ? ORDER BY created_at, graph_root",
       )
-      .all(specHash) as { graph_identity: string }[];
-    return rows.map((r) => r.graph_identity);
+      .all(specHash) as { graph_root: string }[];
+    return rows.map((r) => r.graph_root);
+  }
+
+  async enumerateDucSpecs(): Promise<readonly string[]> {
+    this.assertOpen();
+    const rows = this.db
+      .prepare("SELECT DISTINCT spec_hash FROM duc_implementations ORDER BY spec_hash")
+      .all() as { spec_hash: string }[];
+    return rows.map((r) => r.spec_hash);
+  }
+
+  async getDucContract(specHash: string): Promise<Uint8Array | null> {
+    this.assertOpen();
+    const own = this.db
+      .prepare("SELECT spec_canonical_bytes FROM duc_contracts WHERE spec_hash = ?")
+      .get(specHash) as { spec_canonical_bytes: Buffer } | undefined;
+    if (own !== undefined) return new Uint8Array(own.spec_canonical_bytes);
+    const block = this.db
+      .prepare("SELECT spec_canonical_bytes FROM blocks WHERE spec_hash = ? LIMIT 1")
+      .get(specHash) as { spec_canonical_bytes: Buffer } | undefined;
+    return block !== undefined ? new Uint8Array(block.spec_canonical_bytes) : null;
+  }
+
+  async storeDucModule(row: DucModuleRow): Promise<void> {
+    this.assertOpen();
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO duc_modules(module_root, record, created_at) VALUES (?, ?, ?)",
+      )
+      .run(row.moduleRoot, row.record, row.createdAt ?? Date.now());
+  }
+
+  async getDucModule(moduleRoot: string): Promise<DucModuleRow | null> {
+    this.assertOpen();
+    const row = this.db
+      .prepare("SELECT module_root, record, created_at FROM duc_modules WHERE module_root = ?")
+      .get(moduleRoot) as { module_root: string; record: string; created_at: number } | undefined;
+    return row === undefined
+      ? null
+      : { moduleRoot: row.module_root, record: row.record, createdAt: row.created_at };
   }
 
   async close(): Promise<void> {
@@ -2509,6 +2582,37 @@ export interface RegistryOptions {
  * @param path    - Filesystem path to the registry database file, or ":memory:".
  * @param options - Optional configuration including embedding provider.
  */
+/**
+ * Open a copy of a registry file, for reading (#1291). Opening a registry migrates it in place, so a
+ * registry read as a source (a shipped corpus, the committed bootstrap registry) is opened as a
+ * temporary copy: the file itself is never written. The copy is removed on close.
+ */
+export async function openRegistrySnapshot(
+  path: string,
+  options?: RegistryOptions,
+): Promise<Registry> {
+  const dir = mkdtempSync(join(tmpdir(), "yakcc-registry-snapshot-"));
+  const copy = join(dir, basename(path));
+  copyFileSync(path, copy);
+  let registry: Registry;
+  try {
+    registry = await openRegistry(copy, options);
+  } catch (err) {
+    rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+  const close = registry.close.bind(registry);
+  return Object.assign(registry, {
+    close: async (): Promise<void> => {
+      try {
+        await close();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  });
+}
+
 export async function openRegistry(path: string, options?: RegistryOptions): Promise<Registry> {
   // Open the SQLite database. better-sqlite3 throws synchronously on failure.
   const db = new Database(path);

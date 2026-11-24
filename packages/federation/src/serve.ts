@@ -49,9 +49,11 @@
 
 import * as http from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
-import type { BlockMerkleRoot, SpecHash } from "@yakcc/contracts";
+import type { BlockMerkleRoot, SpecHash, SpecYak } from "@yakcc/contracts";
 import type { Registry } from "@yakcc/registry";
 import { SCHEMA_VERSION } from "@yakcc/registry";
+import { receiveDucSubmission, sharedImplementationOf } from "./duc-receive.js";
+import { deserializeDucSubmission, serializeDucImplementation } from "./duc-wire.js";
 import { deserializeWireBlockTriplet, serializeWireBlockTriplet } from "./wire.js";
 
 // ---------------------------------------------------------------------------
@@ -399,6 +401,92 @@ async function handleSubmitBlock(
 }
 
 // ---------------------------------------------------------------------------
+// DUC implementations (#1291, DEC-DUC-WIRE-001, DEC-DUC-RECEIVE-001)
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /v1/duc/submit: a submission of DUC implementations and their module records. It is received
+ * through the receiver's checks; what is not refused is stored with the trust level it reached. The
+ * response is the verdict, so a submitter learns which check refused what and why.
+ */
+async function handleSubmitDuc(
+  req: IncomingMessage,
+  res: ServerResponse,
+  local: Registry,
+): Promise<void> {
+  let body: string;
+  try {
+    body = await readBody(req);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === "body_too_large") {
+      res.setHeader("Connection", "close");
+      sendError(res, 413, "body_too_large");
+      return;
+    }
+    sendError(res, 400, "bad_request");
+    return;
+  }
+  let submission: ReturnType<typeof deserializeDucSubmission>;
+  try {
+    submission = deserializeDucSubmission(JSON.parse(body));
+  } catch (err) {
+    const reason =
+      err instanceof SyntaxError
+        ? "malformed_json"
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    sendJson(res, 400, { error: "bad_request", reason });
+    return;
+  }
+  try {
+    const verdict = await receiveDucSubmission(local, submission.batch, submission.modules);
+    sendJson(res, 200, verdict);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    sendJson(res, 500, { error: "internal_error", reason });
+  }
+}
+
+/** GET /v1/duc/<…>: the contracts with DUC implementations, a contract's roots, one implementation, a module record. */
+async function handleGetDuc(res: ServerResponse, local: Registry, path: string): Promise<boolean> {
+  if (path === "/v1/duc/specs") {
+    sendJson(res, 200, { specHashes: await local.enumerateDucSpecs() });
+    return true;
+  }
+  const spec = /^\/v1\/duc\/spec\/([0-9a-f]{64})$/.exec(path);
+  if (spec !== null) {
+    const specHash = spec[1] as string;
+    sendJson(res, 200, { specHash, graphRoots: await local.listDucImplementations(specHash) });
+    return true;
+  }
+  const impl = /^\/v1\/duc\/impl\/([0-9a-f]{64})\/([0-9a-f]{64})$/.exec(path);
+  if (impl !== null) {
+    const row = await local.getDucImplementation(impl[1] as string, impl[2] as string);
+    const contract = row !== null ? await local.getDucContract(row.specHash) : null;
+    if (row === null || contract === null) {
+      sendError(res, 404, "implementation_not_found");
+      return true;
+    }
+    const specYak = JSON.parse(new TextDecoder().decode(contract)) as SpecYak;
+    sendJson(res, 200, serializeDucImplementation(sharedImplementationOf(row, specYak)));
+    return true;
+  }
+  const mod = /^\/v1\/duc\/module\/([0-9a-f]{64})$/.exec(path);
+  if (mod !== null) {
+    const row = await local.getDucModule(mod[1] as string);
+    if (row === null) {
+      sendError(res, 404, "module_not_found");
+      return true;
+    }
+    sendJson(res, 200, JSON.parse(row.record));
+    return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Request dispatcher
 // ---------------------------------------------------------------------------
 
@@ -424,6 +512,16 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, local: Regist
       return;
     }
     await handleSubmitBlock(req, res, local);
+    return;
+  }
+
+  if (rawPath === "/v1/duc/submit") {
+    if (req.method !== "POST") {
+      res.setHeader("Allow", "POST");
+      sendError(res, 405, "method_not_allowed");
+      return;
+    }
+    await handleSubmitDuc(req, res, local);
     return;
   }
 
@@ -470,6 +568,9 @@ async function dispatch(req: IncomingMessage, res: ServerResponse, local: Regist
     await handleListCatalogPage(req, res, local);
     return;
   }
+
+  // Routes: GET /v1/duc/… (#1291)
+  if (rawPath.startsWith("/v1/duc/") && (await handleGetDuc(res, local, rawPath))) return;
 
   // Unknown path → 404 not_found.
   sendError(res, 404, "not_found");

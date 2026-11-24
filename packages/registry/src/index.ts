@@ -754,25 +754,44 @@ export interface DucLinkRow {
   readonly spec: string;
 }
 
+/** How far a receiver trusts an implementation (#1287): its claim, its evidence, a second implementation. */
+export type DucTrustLevel = "claimed" | "conforming" | "corroborated";
+
 /**
- * An implementation as a DUC graph (#1279), keyed by the pair (contract `specHash`, graph identity).
- * Several graphs may implement one contract. The structure is the authoritative form; the TypeScript
- * text, when present, is a cache of what the emitter generates from it.
+ * An implementation of a contract as a DUC graph (#1291, DEC-DUC-FORMAT-001), keyed by the pair
+ * (contract `specHash`, `graphRoot`). The root commits to the graph's identity, its links and its
+ * format version (DEC-DUC-GRAPH-ROOT-001); the identity is the structural key the graph is stored
+ * and searched by. Several graphs may implement one contract. Everything after `links` is attached
+ * to the implementation, outside its root.
  */
 export interface DucImplementationRow {
   readonly specHash: string;
+  /**
+   * The contract's canonical bytes, when it is stored with the implementation: an implementation
+   * received over the wire has no block to carry it.
+   */
+  readonly specCanonicalBytes?: Uint8Array | null;
   readonly graphIdentity: string;
-  /** The version of the structure's encoding. */
+  readonly graphRoot: string;
+  /** The format version the root and the structure's encoding are in. */
   readonly formatVersion: number;
-  /** The version of the lifter that produced the graph. */
+  /** The version of the lifter that produced the graph: provenance. */
   readonly lifterVersion: number;
   /** The structure (no origins, no links), brotli-compressed. */
   readonly structure: Uint8Array;
   readonly links: readonly DucLinkRow[];
   /** Origin annotations, brotli-compressed, or null. */
   readonly annotations?: Uint8Array | null;
-  /** The block this implementation was shaved as, when there is one. */
+  /** BLAKE3(spec_hash ‖ graph_root ‖ proof_root), when the proof root is known. */
+  readonly blockRoot?: string | null;
+  /** The block triplet this implementation was shaved as, when there is one. */
   readonly blockMerkleRoot?: string | null;
+  /** The trust level a receiver gave it, when it was received rather than shaved here. */
+  readonly trustLevel?: DucTrustLevel | null;
+  /** Its conformance vectors, as canonical JSON. */
+  readonly evidence?: string | null;
+  /** The base set it was checked against, as JSON (`{"target":…,"version":…}`). */
+  readonly baseSet?: string | null;
   /** The emitted TypeScript, a cache of the graph. */
   readonly tsCache?: string | null;
   /**
@@ -783,6 +802,15 @@ export interface DucImplementationRow {
   readonly createdAt?: number;
 }
 
+/** A module record (#1290): a module's statements in order, what it requires, and its evidence. */
+export interface DucModuleRow {
+  /** BLAKE3 of the record's canonical JSON. */
+  readonly moduleRoot: string;
+  /** The record, as canonical JSON. */
+  readonly record: string;
+  readonly createdAt?: number;
+}
+
 /** A stored graph found by its retrieval signature (#1280). */
 export interface DucSignatureMatch {
   readonly graphIdentity: string;
@@ -790,6 +818,8 @@ export interface DucSignatureMatch {
   readonly distance: number;
   /** The contracts this graph implements. */
   readonly specHashes: readonly string[];
+  /** Its implementations, by contract and root. */
+  readonly implementations: readonly { readonly specHash: string; readonly graphRoot: string }[];
 }
 
 export interface Registry {
@@ -1240,20 +1270,32 @@ export interface Registry {
 
   /** Release all resources held by this registry instance. */
   /**
-   * Store an implementation's graph (#1279). Idempotent on the pair (specHash, graphIdentity): the
-   * structure of an identity is stored once; links, annotations and the TypeScript cache of the
-   * pair are replaced by the latest store.
+   * Store an implementation's graph (#1291). Idempotent on the pair (specHash, graphRoot): the
+   * structure of an identity and the links of a root are stored once; what is attached to the pair
+   * (annotations, trust level, evidence, the TypeScript cache) is kept unless a store gives it anew.
    */
   storeDucImplementation(row: DucImplementationRow): Promise<void>;
 
   /** The implementation with this pair, or null. */
-  getDucImplementation(
-    specHash: string,
-    graphIdentity: string,
-  ): Promise<DucImplementationRow | null>;
+  getDucImplementation(specHash: string, graphRoot: string): Promise<DucImplementationRow | null>;
 
-  /** The graph identities that implement a contract, oldest first. */
+  /** The graph roots that implement a contract, oldest first. */
   listDucImplementations(specHash: string): Promise<readonly string[]>;
+
+  /** The contracts that have DUC implementations, sorted. */
+  enumerateDucSpecs(): Promise<readonly string[]>;
+
+  /**
+   * A contract's canonical bytes: stored with a DUC implementation, or else a block's. Null when
+   * the registry has neither.
+   */
+  getDucContract(specHash: string): Promise<Uint8Array | null>;
+
+  /** Store a module record (#1290). Idempotent on its root. */
+  storeDucModule(row: DucModuleRow): Promise<void>;
+
+  /** The module record with this root, or null. */
+  getDucModule(moduleRoot: string): Promise<DucModuleRow | null>;
 
   /**
    * The k stored graphs whose retrieval signatures are nearest the given one, nearest first (#1280).
@@ -1363,7 +1405,7 @@ export interface Registry {
 // Public API re-exports
 // ---------------------------------------------------------------------------
 
-export { openRegistry, type RegistryOptions } from "./storage.js";
+export { openRegistry, openRegistrySnapshot, type RegistryOptions } from "./storage.js";
 export { structuralMatch, type MatchResult } from "./search.js";
 export {
   select,
