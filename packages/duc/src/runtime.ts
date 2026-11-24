@@ -35,6 +35,54 @@ export function __yakccTry<T>(
   }
 }
 
+/**
+ * `__yakccTry` for a try statement in a generator whose blocks yield (#1330): its closures are
+ * generators, and the statement delegates to this one with `yield*`, so what the consumer sends,
+ * throws or returns reaches the blocks as it would reach the statement.
+ */
+export function* __yakccTryGen<T>(
+  body: () => Generator<unknown, T, unknown>,
+  handler: ((thrown: unknown) => Generator<unknown, T, unknown>) | undefined,
+  finalizer?: () => Generator<unknown, unknown, unknown>,
+): Generator<unknown, T, unknown> {
+  try {
+    try {
+      return yield* body();
+    } catch (thrown) {
+      if (handler === undefined) throw thrown;
+      return yield* handler(thrown);
+    }
+  } finally {
+    if (finalizer !== undefined) {
+      const done = yield* finalizer();
+      // biome-ignore lint/correctness/noUnsafeFinally: a return in a finally block is the result.
+      if (Array.isArray(done) && done[0] === 1) return done as T;
+    }
+  }
+}
+
+/** `__yakccTryGen` in an async generator: its closures are async generators (#1330). */
+export async function* __yakccTryAsyncGen<T>(
+  body: () => AsyncGenerator<unknown, T, unknown>,
+  handler: ((thrown: unknown) => AsyncGenerator<unknown, T, unknown>) | undefined,
+  finalizer?: () => AsyncGenerator<unknown, unknown, unknown>,
+): AsyncGenerator<unknown, T, unknown> {
+  try {
+    try {
+      return yield* body();
+    } catch (thrown) {
+      if (handler === undefined) throw thrown;
+      return yield* handler(thrown);
+    }
+  } finally {
+    if (finalizer !== undefined) {
+      const done = yield* finalizer();
+      // biome-ignore lint/correctness/noUnsafeFinally: a return in a finally block is the result.
+      if (Array.isArray(done) && done[0] === 1) return done as T;
+    }
+  }
+}
+
 /** `__yakccTry` for a try statement whose blocks await: its closures are async (#1276). */
 export async function __yakccTryAsync<T>(
   body: () => Promise<T>,

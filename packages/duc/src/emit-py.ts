@@ -1585,6 +1585,9 @@ function pyFunction(
 
   const emitLoop = (loop: DucNode): string[] => {
     const rec = loop.loop as DucLoop;
+    // #1330: `for await` is not in this lowering; core's change forced this one line.
+    if (rec.iterate?.of === "async values")
+      throw new PyEmitError("for await is not in the subset yet");
     const count = rec.carry.length;
     const carried = rec.carry.map((v) => nameOf(v));
     const before = carried.map((name, i) => `${name} = ${ref(loop.inputs[i] as ValueId)}`);

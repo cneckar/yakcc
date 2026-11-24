@@ -121,6 +121,9 @@ export const ECMASCRIPT: BaseSet = {
     __yakccTry: {},
     // A try statement whose blocks await: the same, over async closures, as a promise.
     __yakccTryAsync: {},
+    // A try statement whose blocks yield: the same, over generator closures, delegated to (#1330).
+    __yakccTryGen: {},
+    __yakccTryAsyncGen: {},
   },
 };
 
