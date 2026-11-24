@@ -4,9 +4,12 @@
  * the TypeScript lowering computes what the source computes; the round trip holds.
  */
 import { describe, expect, it } from "vitest";
+import { runnable } from "./__fixtures__/runnable.js";
 import { graphIdentity } from "./canonical.js";
+import { decodeGraph, encodeGraph } from "./compact.js";
 import { emitTypeScript } from "./emit-ts.js";
 import { liftAtom } from "./lift.js";
+import { parseLineForm, printLineForm } from "./line-form.js";
 import type { DucGraph } from "./types.js";
 
 const opaque = (g: DucGraph): string[] =>
@@ -16,7 +19,7 @@ const opaque = (g: DucGraph): string[] =>
   ]);
 
 const run = (code: string): unknown =>
-  (new Function(`${code.replace(/^export /m, "")}; return f;`)() as () => unknown)();
+  (new Function(`${runnable(code).replace(/^export /m, "")}; return f;`)() as () => unknown)();
 
 const CASES: [string, string][] = [
   [
@@ -68,6 +71,14 @@ const CASES: [string, string][] = [
     "export function f() { class A { #x = 1; static has(o) { return #x in o; } } return [A.has(new A()), A.has({})]; }",
   ],
   [
+    "super() on each side of an if, with this read after the join and a field defined after it",
+    "export function f() { class B { constructor(x) { this.x = x ?? 'none'; } } const make = (c) => { class A extends B { z = this.x + '!'; constructor(x) { if (c) { super(x); } else { super(); } this.y = this.z; } } return new A('v'); }; const a = make(true); const b = make(false); return [a.x, a.y, b.x, b.y, Object.keys(a)]; }",
+  ],
+  [
+    "super() in nested ifs, and a side that throws",
+    "export function f() { class B { constructor(x) { this.x = x; } } const make = (c) => { class A extends B { constructor() { if (c > 1) { if (c > 2) super(3); else super(2); } else if (c > 0) { super(1); } else { throw new Error('none'); } this.y = this.x * 10; } } return new A(); }; let e; try { make(0); } catch (err) { e = err.message; } return [make(3).y, make(2).y, make(1).y, e]; }",
+  ],
+  [
     "a class expression with fields, assigned and returned",
     "export function f(n) { const K = class { v = n; double() { return this.v * 2; } }; return new K().double(); }",
   ],
@@ -92,6 +103,25 @@ describe("class fields, static blocks and computed names (#1330)", () => {
       "export function f() { class A { constructor() { this.x = 1; } } return new A(); }",
     );
     expect(graphIdentity(field)).not.toBe(graphIdentity(set));
+  });
+
+  it("super() on one side only leaves the receiver unmade after the if: a read of this stays a summary", () => {
+    const g = liftAtom(
+      "export function f(c) { class B {} class A extends B { constructor() { if (c) { super(); } this.y = 1; } } return A; }",
+    );
+    expect(opaque(g).length).toBeGreaterThan(0);
+  });
+
+  it("super[key], read and called, as Node's AbortSignal writes it (#1330)", () => {
+    const source =
+      "export function f() { const kA = Symbol('a'); class P { [kA](n) { return n + this.base; } get g() { return 'pk'; } } class C extends P { constructor() { super(); this.base = 10; } [kA](n) { return super[kA](n) * 2; } read(k) { return [super[k], (() => super[kA](1))()]; } } const c = new C(); return [c[kA](1), c.read('g')]; }";
+    const g = liftAtom(source);
+    expect(opaque(g)).toEqual([]);
+    const code = emitTypeScript(g);
+    expect(run(code), code).toEqual(run(source));
+    expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    expect(graphIdentity(parseLineForm(printLineForm(g)))).toBe(graphIdentity(g));
+    expect(graphIdentity(decodeGraph(encodeGraph(g)))).toBe(graphIdentity(g));
   });
 
   it("a parameter property is not lifted yet: it stays a summary", () => {

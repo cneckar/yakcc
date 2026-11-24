@@ -1,0 +1,3962 @@
+{
+  "implModel": "claude-haiku-5-5",
+  "k": 5,
+  "seconds": 1100,
+  "summary": {
+    "queries": 210,
+    "skipped": 10,
+    "scored": 200,
+    "newPassesOwnExamples": 0.875,
+    "targetFound": {
+      "text top-5": 0.865,
+      "behavior top-5": 0.87,
+      "behavior top-1": 0.74,
+      "union": 0.97
+    },
+    "targetVerdicts": {
+      "equivalent": 121,
+      "near": 16,
+      "inconclusive": 15,
+      "not found": 6,
+      "different": 42
+    },
+    "targetEquivalentOrNear": 0.685,
+    "targetEquivalentOrNearWhenNewPassesExamples": 0.749,
+    "topNeighborIsTarget": 0.765,
+    "otherEquivalent": {
+      "queriesWithAny": 0.195,
+      "total": 68,
+      "sameNameAsTarget": 26
+    },
+    "speed": {
+      "pairs": 137,
+      "newFaster": 0.562,
+      "medianNewOverStored": 0.95
+    },
+    "mutants": {
+      "total": 901,
+      "verdicts": {
+        "different": 472,
+        "inconclusive": 286,
+        "near": 56,
+        "equivalent": 87
+      },
+      "falseEquivalent": 0.097
+    }
+  },
+  "rows": [
+    {
+      "query": "duration-to-ms",
+      "name": "durationToMs",
+      "passesOwnExamples": true,
+      "target": "ms-2.1.3/index.js#parse@48",
+      "behaviorRank": 1,
+      "textRank": 10,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 4.936791666665765,
+        "storedMicros": 2.00929999999668,
+        "ratio": 2.4569709185656308
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "ms-to-short-duration",
+      "name": "msToShortDuration",
+      "passesOwnExamples": true,
+      "target": "ms-2.1.3/index.js#fmtShort@113",
+      "behaviorRank": 1,
+      "textRank": 3,
+      "targetVerdict": "near",
+      "targetTiming": {
+        "newMicros": 1.8823739999934332,
+        "storedMicros": 1.9796539999952074,
+        "ratio": 0.9508600997942016
+      },
+      "targetCounterexamples": [
+        {
+          "args": [2.5],
+          "a": "3ms",
+          "b": "2.5ms"
+        }
+      ],
+      "otherEquivalent": [],
+      "topVerdict": "near",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "bytes-to-base64",
+      "name": "bytesToBase64",
+      "passesOwnExamples": true,
+      "target": "base64-js-1.5.1/index.js#fromByteArray@119",
+      "behaviorRank": 1,
+      "textRank": 3,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.797947999992175,
+        "storedMicros": 2.1760079999949085,
+        "ratio": 0.8262598299254331
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "different", "different", "inconclusive"]
+    },
+    {
+      "query": "base64-encode-byte-range",
+      "name": "base64EncodeByteRange",
+      "passesOwnExamples": true,
+      "target": "base64-js-1.5.1/index.js#encodeChunk@106",
+      "behaviorRank": 1,
+      "textRank": 2,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.410424999998213,
+        "storedMicros": 3.194839999996475,
+        "ratio": 0.7544744024742625
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "different", "different", "different"]
+    },
+    {
+      "query": "int24-to-base64-chars",
+      "name": "int24ToBase64Chars",
+      "passesOwnExamples": true,
+      "target": "base64-js-1.5.1/index.js#tripletToBase64@99",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 0.8199874999991152,
+        "storedMicros": 1.0854025000116962,
+        "ratio": 0.7554685934390967
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "nodes-of-edge-list",
+      "name": "nodesOfEdgeList",
+      "passesOwnExamples": true,
+      "target": "toposort-2.0.2/index.js#uniqueNodes@93",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.014126666666319,
+        "storedMicros": 1.7505666666450754,
+        "ratio": 1.1505569625213707
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different"]
+    },
+    {
+      "query": "adjacency-from-edges",
+      "name": "adjacencyFromEdges",
+      "passesOwnExamples": true,
+      "target": "toposort-2.0.2/index.js#makeOutgoingEdges@103",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "inconclusive",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different"]
+    },
+    {
+      "query": "order-by-dependencies",
+      "name": "orderByDependencies",
+      "passesOwnExamples": true,
+      "target": "toposort-2.0.2/index.js#toposort@37",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "inconclusive",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "is-real-calendar-date",
+      "name": "isRealCalendarDate",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/parseISO.cjs#validateDate@262",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.31350250000105,
+        "storedMicros": 1.801835000005667,
+        "ratio": 1.2839702303450502
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "ms-between-dates",
+      "name": "msBetweenDates",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/differenceInMilliseconds.cjs#differenceInMilliseconds@27",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 11.567066666660443,
+        "storedMicros": 4.732819999965916,
+        "ratio": 2.4440115336614836
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different"]
+    },
+    {
+      "query": "date-plus-days",
+      "name": "datePlusDays",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/addDays.cjs#addDays@32",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 10.86924857143978,
+        "storedMicros": 2.790454285714077,
+        "ratio": 3.895153784487941
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different"]
+    },
+    {
+      "query": "zero-pad-number",
+      "name": "zeroPadNumber",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/_lib/addLeadingZeros.cjs#addLeadingZeros@3",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.310757500017644,
+        "storedMicros": 1.1518674999933864,
+        "ratio": 2.006096621383025
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "near", "different", "different", "different"]
+    },
+    {
+      "query": "parse-iso-date",
+      "name": "parseIsoDate",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+      "behaviorRank": 1,
+      "textRank": 4,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.3356150000011742,
+        "storedMicros": 3.848824999998518,
+        "ratio": 0.3470188953775993
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "cache-function-results",
+      "name": "cacheFunctionResults",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_memoizeCapped.js#memoizeCapped@14",
+      "behaviorRank": null,
+      "textRank": 289,
+      "targetVerdict": "not found",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": []
+    },
+    {
+      "query": "bounded-recent-cache",
+      "name": "boundedRecentCache",
+      "passesOwnExamples": true,
+      "target": null,
+      "skipped": "target not callable at this arity"
+    },
+    {
+      "query": "split-json-pointer",
+      "name": "splitJsonPointer",
+      "passesOwnExamples": true,
+      "target": "jsonpointer-5.0.1/jsonpointer.js#compilePointer@49",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "inconclusive",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "different", "different", "different"]
+    },
+    {
+      "query": "unescape-pointer-token",
+      "name": "unescapePointerToken",
+      "passesOwnExamples": true,
+      "target": "jsonpointer-5.0.1/jsonpointer.js#untilde@11",
+      "behaviorRank": 1,
+      "textRank": 9,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.0687454545404762,
+        "storedMicros": 0.9921672727267089,
+        "ratio": 1.0771827331124444
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "equivalent", "different", "equivalent"]
+    },
+    {
+      "query": "value-at-json-pointer",
+      "name": "valueAtJsonPointer",
+      "passesOwnExamples": true,
+      "target": "jsonpointer-5.0.1/jsonpointer.js#get@66",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "compare-prerelease-identifiers",
+      "name": "comparePrereleaseIdentifiers",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/internal/identifiers.js#compareIdentifiers@4",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 0.9906066666654725,
+        "storedMicros": 1.3668333333205536,
+        "ratio": 0.724745762717767
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "equivalent", "different", "equivalent", "equivalent"]
+    },
+    {
+      "query": "compare-version-core",
+      "name": "compareVersionCore",
+      "passesOwnExamples": true,
+      "target": null,
+      "skipped": "target not callable at this arity"
+    },
+    {
+      "query": "compare-version-prerelease",
+      "name": "compareVersionPrerelease",
+      "passesOwnExamples": true,
+      "target": null,
+      "skipped": "target not callable at this arity"
+    },
+    {
+      "query": "edit-count-between-strings",
+      "name": "editCountBetweenStrings",
+      "passesOwnExamples": true,
+      "target": "fastest-levenshtein-1.0.16/esm/mod.js#distance@141",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.0905199999979232,
+        "storedMicros": 1.6204650000145193,
+        "ratio": 0.6729673272722041
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "equivalent", "near"]
+    },
+    {
+      "query": "nearest-string",
+      "name": "nearestString",
+      "passesOwnExamples": true,
+      "target": "fastest-levenshtein-1.0.16/esm/mod.js#closest@155",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "inconclusive",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "is-uuid",
+      "name": "isUuid",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs/validate.js#validate@4",
+      "behaviorRank": 1,
+      "textRank": 7,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.125247272721026,
+        "storedMicros": 0.9246454545328479,
+        "ratio": 1.2169499857537578
+      },
+      "otherEquivalent": [
+        {
+          "id": "uuid-11.1.1/dist/esm/validate.js#validate@2",
+          "sameName": true
+        },
+        {
+          "id": "validator-13.15.35/lib/isUUID.js#isUUID@24",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "uuid-version-number",
+      "name": "uuidVersionNumber",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs/version.js#version@4",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "inconclusive",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "uuid-to-bytes",
+      "name": "uuidToBytes",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs/parse.js#parse@4",
+      "behaviorRank": 1,
+      "textRank": 3,
+      "targetVerdict": "inconclusive",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "bytes-to-uuid-text",
+      "name": "bytesToUuidText",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs/stringify.js#unsafeStringify@9",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "normalize-semver",
+      "name": "normalizeSemver",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/functions/clean.js#clean@4",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.4329000000040704,
+        "storedMicros": 6.362911764710375,
+        "ratio": 0.2251956420252659
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "different", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "bump-semver",
+      "name": "bumpSemver",
+      "passesOwnExamples": true,
+      "target": null,
+      "skipped": "target not callable at this arity"
+    },
+    {
+      "query": "version-in-range",
+      "name": "versionInRange",
+      "skipped": "new function: transpile: Unterminated template literal."
+    },
+    {
+      "query": "version-difference-kind",
+      "name": "versionDifferenceKind",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/functions/diff.js#diff@5",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 3.9939325000159442,
+        "storedMicros": 5.8902725000007194,
+        "ratio": 0.6780556417407609
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "sort-versions-descending",
+      "name": "sortVersionsDescending",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/functions/rsort.js#rsort@4",
+      "behaviorRank": 39,
+      "textRank": 2,
+      "targetVerdict": "near",
+      "targetTiming": {
+        "newMicros": 2.4034933333071726,
+        "storedMicros": 3.3799233333653924,
+        "ratio": 0.7111088318426478
+      },
+      "targetCounterexamples": [
+        {
+          "args": [["b", "a", "c"]],
+          "a": ["b", "a", "c"],
+          "b": {
+            "throws": "TypeError"
+          }
+        }
+      ],
+      "otherEquivalent": [],
+      "topVerdict": "near",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "inconclusive", "different"]
+    },
+    {
+      "query": "is-email",
+      "name": "isEmail",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isEmail.js#isEmail@66",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 0.8254811764687903,
+        "storedMicros": 2.9530294117627336,
+        "ratio": 0.27953706562510694
+      },
+      "otherEquivalent": [
+        {
+          "id": "validator-13.15.35/lib/isURL.js#isURL@64",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "is-integer-text",
+      "name": "isIntegerText",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isInt.js#isInt@12",
+      "behaviorRank": 2,
+      "textRank": 14,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 0.7366355555617096,
+        "storedMicros": 0.9256944444496185,
+        "ratio": 0.7957653413375341
+      },
+      "otherEquivalent": [
+        {
+          "id": "validator-13.15.35/lib/isCurrency.js#isCurrency@77",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "different"]
+    },
+    {
+      "query": "is-hex-color",
+      "name": "isHexColor",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isHexColor.js#isHexColor@15",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "near",
+      "targetTiming": {
+        "newMicros": 0.7810341176467345,
+        "storedMicros": 1.015688235296265,
+        "ratio": 0.7689703301711627
+      },
+      "targetCounterexamples": [
+        {
+          "args": ["abc"],
+          "a": false,
+          "b": true
+        },
+        {
+          "args": ["abc", ""],
+          "a": false,
+          "b": true
+        },
+        {
+          "args": ["abc", 0],
+          "a": false,
+          "b": true
+        }
+      ],
+      "otherEquivalent": [],
+      "topVerdict": "near",
+      "topIsTarget": true,
+      "mutants": ["different"]
+    },
+    {
+      "query": "escape-html",
+      "name": "escapeHtml",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/escape.js#escape@9",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "near",
+      "targetTiming": {
+        "newMicros": 0.9048600000096485,
+        "storedMicros": 1.6962080000084825,
+        "ratio": 0.5334605189959742
+      },
+      "targetCounterexamples": [
+        {
+          "args": ["a/b~c"],
+          "a": "a/b~c",
+          "b": "a&#x2F;b~c"
+        }
+      ],
+      "otherEquivalent": [],
+      "topVerdict": "near",
+      "topIsTarget": true,
+      "mutants": ["near", "near", "near", "near", "different"]
+    },
+    {
+      "query": "value-at-object-path",
+      "name": "valueAtObjectPath",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/get.js#get@28",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "near",
+      "targetTiming": {
+        "newMicros": 1.8106733333358231,
+        "storedMicros": 1.7215766667019732,
+        "ratio": 1.051752947374997
+      },
+      "targetCounterexamples": [
+        {
+          "args": [
+            {
+              "a": 1,
+              "b": {
+                "c": 2
+              }
+            },
+            "",
+            "Hello World"
+          ],
+          "a": {
+            "a": 1,
+            "b": {
+              "c": 2
+            }
+          },
+          "b": "Hello World"
+        }
+      ],
+      "otherEquivalent": [],
+      "topVerdict": "near",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "equivalent", "different", "different"]
+    },
+    {
+      "query": "coerce-to-number",
+      "name": "coerceToNumber",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/toNumber.js#toNumber@43",
+      "behaviorRank": 1,
+      "textRank": 16,
+      "targetVerdict": "near",
+      "targetTiming": {
+        "newMicros": 1.8614184000063687,
+        "storedMicros": 2.2905743999872357,
+        "ratio": 0.8126426279874347
+      },
+      "targetCounterexamples": [
+        {
+          "args": [""],
+          "a": {
+            "$type": "NaN"
+          },
+          "b": 0
+        },
+        {
+          "args": [[]],
+          "a": {
+            "$type": "NaN"
+          },
+          "b": 0
+        }
+      ],
+      "otherEquivalent": [],
+      "topVerdict": "near",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "near", "different"]
+    },
+    {
+      "query": "gen-1",
+      "name": "gen1",
+      "passesOwnExamples": true,
+      "target": "base64-js-1.5.1/index.js#getLens@22",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 3.7657327272675256,
+        "storedMicros": 3.7751527272418817,
+        "ratio": 0.9975047367206152
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "different", "equivalent", "different", "different"]
+    },
+    {
+      "query": "gen-2",
+      "name": "gen2",
+      "passesOwnExamples": true,
+      "target": "bcryptjs-2.4.3/src/bcrypt/impl.js#_streamtoword@396",
+      "behaviorRank": null,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-3",
+      "name": "gen3",
+      "passesOwnExamples": true,
+      "target": "csv-parse-6.2.1/lib/api/normalize_columns_array.js#normalize_columns_array@4",
+      "behaviorRank": 11,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-4",
+      "name": "gen4",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/_lib/addLeadingZeros.cjs#addLeadingZeros@3",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.5267355555746083,
+        "storedMicros": 1.342160000026019,
+        "ratio": 1.137521275812877
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-5",
+      "name": "gen5",
+      "passesOwnExamples": true,
+      "target": "fastest-levenshtein-1.0.16/esm/mod.js#myers_32@31",
+      "behaviorRank": 2,
+      "textRank": 2,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "near",
+      "topIsTarget": false,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-6",
+      "name": "gen6",
+      "passesOwnExamples": true,
+      "target": "jsonpointer-5.0.1/jsonpointer.js#untilde@11",
+      "behaviorRank": 1,
+      "textRank": 19,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "equivalent", "equivalent", "equivalent", "equivalent"]
+    },
+    {
+      "query": "gen-7",
+      "name": "gen7",
+      "passesOwnExamples": false,
+      "target": "lodash-4.17.21/_arrayEach.js#arrayEach@10",
+      "behaviorRank": 2,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": ["different", "different", "different", "equivalent", "different"]
+    },
+    {
+      "query": "gen-8",
+      "name": "gen8",
+      "passesOwnExamples": true,
+      "target": null,
+      "skipped": "target not callable at this arity"
+    },
+    {
+      "query": "gen-9",
+      "name": "gen9",
+      "passesOwnExamples": true,
+      "target": "ms-2.1.3/index.js#parse@48",
+      "behaviorRank": 1,
+      "textRank": 2,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "near", "different"]
+    },
+    {
+      "query": "gen-10",
+      "name": "gen10",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/classes/range.js#isNullSet@233",
+      "behaviorRank": 1,
+      "textRank": 28,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.1355876922965624,
+        "storedMicros": 1.9860246153817012,
+        "ratio": 1.0753077659544095
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "different", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-11",
+      "name": "gen11",
+      "passesOwnExamples": true,
+      "target": "toposort-2.0.2/index.js#toposort@37",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "near",
+      "targetTiming": {
+        "newMicros": 22.926825454540616,
+        "storedMicros": 20.617342727266738,
+        "ratio": 1.112016507550197
+      },
+      "targetCounterexamples": [
+        {
+          "args": [[1, 2, 3], ""],
+          "a": [1, 2, 3],
+          "b": {
+            "throws": "TypeError"
+          }
+        }
+      ],
+      "otherEquivalent": [],
+      "topVerdict": "near",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-12",
+      "name": "gen12",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs/parse.js#parse@4",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 6.05535999997907,
+        "storedMicros": 5.062143333392062,
+        "ratio": 1.1962047696348947
+      },
+      "otherEquivalent": [
+        {
+          "id": "uuid-11.1.1/dist/esm/parse.js#parse@2",
+          "sameName": true
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "inconclusive", "different", "different"]
+    },
+    {
+      "query": "gen-13",
+      "name": "gen13",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/index.js#_typeof@3",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 0.9054335999768227,
+        "storedMicros": 0.9993664000183344,
+        "ratio": 0.9060076464049738
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "equivalent", "different", "different", "near"]
+    },
+    {
+      "query": "gen-14",
+      "name": "gen14",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v3/ZodError.ts#quotelessJson@175",
+      "behaviorRank": 1,
+      "textRank": 3,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.0916784615255892,
+        "storedMicros": 1.2476515384892433,
+        "ratio": 0.8749866672288011
+      },
+      "otherEquivalent": [
+        {
+          "id": "zod-3.25.76/v3/ZodError.cjs#quotelessJson@23",
+          "sameName": true
+        },
+        {
+          "id": "zod-3.25.76/v3/ZodError.js#quotelessJson@20",
+          "sameName": true
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["near", "different", "near", "different", "different"]
+    },
+    {
+      "query": "gen-15",
+      "name": "gen15",
+      "passesOwnExamples": true,
+      "target": "base64-js-1.5.1/index.js#byteLength@42",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 5.686749090885066,
+        "storedMicros": 6.8344109090553085,
+        "ratio": 0.8320759706371126
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-16",
+      "name": "gen16",
+      "passesOwnExamples": true,
+      "target": "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_encode@38",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 6.055151162788185,
+        "storedMicros": 5.141099999999887,
+        "ratio": 1.1777929164552952
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "equivalent", "equivalent", "different", "near"]
+    },
+    {
+      "query": "gen-17",
+      "name": "gen17",
+      "passesOwnExamples": true,
+      "target": "csv-parse-6.2.1/lib/utils/is_object.js#is_object@1",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.4343569230718107,
+        "storedMicros": 1.4615076922704107,
+        "ratio": 0.9814227668166275
+      },
+      "otherEquivalent": [
+        {
+          "id": "zod-3.25.76/src/v4/core/util.ts#isObject@321",
+          "sameName": false
+        },
+        {
+          "id": "zod-3.25.76/v4/core/util.cjs#isObject@160",
+          "sameName": false
+        },
+        {
+          "id": "zod-3.25.76/v4/core/util.js#isObject@116",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-18",
+      "name": "gen18",
+      "passesOwnExamples": false,
+      "target": "date-fns-4.1.0/addDays.cjs#addDays@32",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 3.866330000164453,
+        "storedMicros": 4.650695000018459,
+        "ratio": 0.8313445625114326
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-19",
+      "name": "gen19",
+      "passesOwnExamples": true,
+      "target": "fastest-levenshtein-1.0.16/esm/mod.js#myers_x@64",
+      "behaviorRank": 2,
+      "textRank": 3,
+      "targetVerdict": "near",
+      "targetTiming": {
+        "newMicros": 3.2800955555608704,
+        "storedMicros": 2.4309555554969444,
+        "ratio": 1.3493029718884935
+      },
+      "targetCounterexamples": [
+        {
+          "args": ["", "Hello World"],
+          "a": 11,
+          "b": 0
+        }
+      ],
+      "otherEquivalent": [
+        {
+          "id": "fastest-levenshtein-1.0.16/esm/mod.js#distance@141",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": false,
+      "mutants": ["different", "different", "different", "near", "different"]
+    },
+    {
+      "query": "gen-20",
+      "name": "gen20",
+      "passesOwnExamples": true,
+      "target": "jsonpointer-5.0.1/jsonpointer.js#compilePointer@49",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 4.935603809509693,
+        "storedMicros": 5.606764761919511,
+        "ratio": 0.8802944334372177
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "equivalent", "different", "different", "near"]
+    },
+    {
+      "query": "gen-21",
+      "name": "gen21",
+      "passesOwnExamples": false,
+      "target": "lodash-4.17.21/_arrayFilter.js#arrayFilter@10",
+      "behaviorRank": null,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "inconclusive", "different", "different"]
+    },
+    {
+      "query": "gen-22",
+      "name": "gen22",
+      "passesOwnExamples": false,
+      "target": "lru-cache-11.3.6/dist/esm/index.js#shouldWarn@22",
+      "behaviorRank": null,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": false,
+      "mutants": ["different", "different"]
+    },
+    {
+      "query": "gen-23",
+      "name": "gen23",
+      "passesOwnExamples": true,
+      "target": "ms-2.1.3/index.js#fmtShort@113",
+      "behaviorRank": 1,
+      "textRank": 2,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.2319439999992028,
+        "storedMicros": 1.0341140000382438,
+        "ratio": 1.1913038600711747
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["near", "near", "equivalent", "near"]
+    },
+    {
+      "query": "gen-24",
+      "name": "gen24",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/classes/range.js#isAny@234",
+      "behaviorRank": 1,
+      "textRank": 5,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.9079366667817037,
+        "storedMicros": 2.2216166666476056,
+        "ratio": 0.8588055245645769
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-25",
+      "name": "gen25",
+      "passesOwnExamples": true,
+      "target": "toposort-2.0.2/index.js#uniqueNodes@93",
+      "behaviorRank": 6,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-26",
+      "name": "gen26",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs/v1ToV6.js#v1ToV6@5",
+      "behaviorRank": 1,
+      "textRank": 3,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-27",
+      "name": "gen27",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/index.js#_interopRequireWildcard@110",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 3.434479999996256,
+        "storedMicros": 3.0484749999595806,
+        "ratio": 1.1266223275709308
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-28",
+      "name": "gen28",
+      "passesOwnExamples": false,
+      "target": "zod-3.25.76/src/v3/errors.ts#getErrorMap@11",
+      "behaviorRank": null,
+      "textRank": 3,
+      "targetVerdict": "inconclusive",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "different"]
+    },
+    {
+      "query": "gen-29",
+      "name": "gen29",
+      "passesOwnExamples": true,
+      "target": "base64-js-1.5.1/index.js#_byteLength@49",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.0308600000280421,
+        "storedMicros": 2.1096024999860674,
+        "ratio": 0.48865129806911506
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-30",
+      "name": "gen30",
+      "passesOwnExamples": true,
+      "target": "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_decode@75",
+      "behaviorRank": 1,
+      "textRank": 3,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 3.314706666731379,
+        "storedMicros": 3.7345822222737803,
+        "ratio": 0.8875709435346795
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "equivalent", "near"]
+    },
+    {
+      "query": "gen-31",
+      "name": "gen31",
+      "passesOwnExamples": true,
+      "target": "csv-parse-6.2.1/lib/utils/underscore.js#underscore@1",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.5724766666729313,
+        "storedMicros": 2.519898333315117,
+        "ratio": 0.6240238528211649
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["near", "near", "different", "equivalent", "different"]
+    },
+    {
+      "query": "gen-32",
+      "name": "gen32",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/constructFrom.cjs#constructFrom@40",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.8830000000307336,
+        "storedMicros": 2.8197706666542217,
+        "ratio": 1.0224235729962878
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "equivalent", "different", "different", "equivalent"]
+    },
+    {
+      "query": "gen-33",
+      "name": "gen33",
+      "passesOwnExamples": true,
+      "target": "fastest-levenshtein-1.0.16/esm/mod.js#distance@141",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.4576000000039735,
+        "storedMicros": 3.611664444389236,
+        "ratio": 0.6804618861594091
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "equivalent", "near"]
+    },
+    {
+      "query": "gen-34",
+      "name": "gen34",
+      "passesOwnExamples": true,
+      "target": "jsonpointer-5.0.1/jsonpointer.js#get@66",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 7.251931111095473,
+        "storedMicros": 5.0111800000175,
+        "ratio": 1.447150393933195
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "different", "different"]
+    },
+    {
+      "query": "gen-35",
+      "name": "gen35",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_arrayLikeKeys.js#arrayLikeKeys@22",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 4.681259999924805,
+        "storedMicros": 4.142460000002757,
+        "ratio": 1.1300676409480575
+      },
+      "otherEquivalent": [
+        {
+          "id": "lodash-4.17.21/_baseKeys.js#baseKeys@17",
+          "sameName": false
+        },
+        {
+          "id": "lodash-4.17.21/_baseKeysIn.js#baseKeysIn@18",
+          "sameName": false
+        },
+        {
+          "id": "lodash-4.17.21/_getAllKeys.js#getAllKeys@12",
+          "sameName": false
+        },
+        {
+          "id": "lodash-4.17.21/_getAllKeysIn.js#getAllKeysIn@13",
+          "sameName": false
+        },
+        {
+          "id": "lodash-4.17.21/keysIn.js#keysIn@28",
+          "sameName": false
+        },
+        {
+          "id": "lodash-4.17.21/keys.js#keys@33",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-36",
+      "name": "gen36",
+      "passesOwnExamples": true,
+      "target": "lru-cache-11.3.6/dist/esm/index.js#isPosInt@24",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 0.9945350000149725,
+        "storedMicros": 1.1946599999888956,
+        "ratio": 0.832483719237454
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "near", "different", "near", "different"]
+    },
+    {
+      "query": "gen-37",
+      "name": "gen37",
+      "passesOwnExamples": true,
+      "target": "ms-2.1.3/index.js#fmtLong@138",
+      "behaviorRank": 1,
+      "textRank": 2,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.023270000005141,
+        "storedMicros": 1.7754519999725744,
+        "ratio": 1.1395802308574912
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["near", "near", "near", "near", "equivalent"]
+    },
+    {
+      "query": "gen-38",
+      "name": "gen38",
+      "passesOwnExamples": false,
+      "target": "semver-7.8.0/classes/range.js#isSatisfiable@238",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "inconclusive",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-39",
+      "name": "gen39",
+      "passesOwnExamples": true,
+      "target": "toposort-2.0.2/index.js#makeOutgoingEdges@103",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-40",
+      "name": "gen40",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs/v1ToV6.js#_v1ToV6@11",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.0045446153157034,
+        "storedMicros": 2.407876923143004,
+        "ratio": 0.8324946329479205
+      },
+      "otherEquivalent": [
+        {
+          "id": "uuid-11.1.1/dist/cjs/v1ToV6.js#v1ToV6@5",
+          "sameName": false
+        },
+        {
+          "id": "uuid-11.1.1/dist/esm/v1ToV6.js#v1ToV6@3",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-41",
+      "name": "gen41",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/index.js#_interopRequireDefault@111",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 0.8223523076874419,
+        "storedMicros": 0.8912569230708939,
+        "ratio": 0.9226882691176908
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "equivalent"]
+    },
+    {
+      "query": "gen-42",
+      "name": "gen42",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v3/helpers/parseUtil.ts#DIRTY@163",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.2660484615480527,
+        "storedMicros": 0.7530992307539026,
+        "ratio": 1.6811177197467773
+      },
+      "otherEquivalent": [
+        {
+          "id": "zod-3.25.76/v3/helpers/parseUtil.cjs#DIRTY@113",
+          "sameName": true
+        },
+        {
+          "id": "zod-3.25.76/v3/helpers/parseUtil.js#DIRTY@104",
+          "sameName": true
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": []
+    },
+    {
+      "query": "gen-43",
+      "name": "gen43",
+      "passesOwnExamples": true,
+      "target": "base64-js-1.5.1/index.js#toByteArray@53",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-44",
+      "name": "gen44",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/differenceInMilliseconds.cjs#differenceInMilliseconds@27",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "near",
+      "targetTiming": {
+        "newMicros": 7.259659999981523,
+        "storedMicros": 2.613250666686023,
+        "ratio": 2.7780189985325108
+      },
+      "targetCounterexamples": [
+        {
+          "args": [-2, 2.5],
+          "a": -4.5,
+          "b": -4
+        },
+        {
+          "args": [2.5, 1000],
+          "a": -997.5,
+          "b": -998
+        }
+      ],
+      "otherEquivalent": [],
+      "topVerdict": "near",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-45",
+      "name": "gen45",
+      "passesOwnExamples": true,
+      "target": "fastest-levenshtein-1.0.16/esm/mod.js#closest@155",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 8.024525000073481,
+        "storedMicros": 2.9389349999837577,
+        "ratio": 2.7304193526287004
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-46",
+      "name": "gen46",
+      "passesOwnExamples": false,
+      "target": "lodash-4.17.21/_arrayMap.js#arrayMap@10",
+      "behaviorRank": null,
+      "textRank": 2,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": false,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-47",
+      "name": "gen47",
+      "passesOwnExamples": false,
+      "target": "lru-cache-11.3.6/dist/esm/index.js#getUintArray@34",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "inconclusive",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-48",
+      "name": "gen48",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/classes/range.js#parseComparator@257",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.3583099999814294,
+        "storedMicros": 5.577984999981709,
+        "ratio": 0.42278887447513086
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-49",
+      "name": "gen49",
+      "passesOwnExamples": true,
+      "target": "toposort-2.0.2/index.js#makeNodesHash@114",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.2710855999961495,
+        "storedMicros": 1.820299999974668,
+        "ratio": 0.6982835796373336
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "equivalent"]
+    },
+    {
+      "query": "gen-50",
+      "name": "gen50",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs/v35.js#stringToBytes@6",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.9606890909331427,
+        "storedMicros": 2.0239309090274302,
+        "ratio": 0.968752975799615
+      },
+      "otherEquivalent": [
+        {
+          "id": "uuid-11.1.1/dist/esm/v35.js#stringToBytes@3",
+          "sameName": true
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "equivalent", "equivalent", "equivalent", "different"]
+    },
+    {
+      "query": "gen-51",
+      "name": "gen51",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/blacklist.js#blacklist@9",
+      "behaviorRank": 1,
+      "textRank": 3,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.6451488888253354,
+        "storedMicros": 2.4243400000139244,
+        "ratio": 1.0910800006641572
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "equivalent", "different", "different"]
+    },
+    {
+      "query": "gen-52",
+      "name": "gen52",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v3/helpers/parseUtil.ts#isAborted@172",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.2719053846264545,
+        "storedMicros": 1.0428676923038438,
+        "ratio": 1.219622962733301
+      },
+      "otherEquivalent": [
+        {
+          "id": "zod-3.25.76/v3/helpers/parseUtil.cjs#isAborted@117",
+          "sameName": true
+        },
+        {
+          "id": "zod-3.25.76/v3/helpers/parseUtil.js#isAborted@106",
+          "sameName": true
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different"]
+    },
+    {
+      "query": "gen-53",
+      "name": "gen53",
+      "passesOwnExamples": true,
+      "target": "base64-js-1.5.1/index.js#tripletToBase64@99",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 0.7840488888582008,
+        "storedMicros": 0.8326000001074539,
+        "ratio": 0.9416873513776276
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-54",
+      "name": "gen54",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_arrayPush.js#arrayPush@9",
+      "behaviorRank": 1,
+      "textRank": 2,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.8317999999800867,
+        "storedMicros": 1.7627463636348362,
+        "ratio": 1.0391738923816922
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["near", "different", "different", "different", "near"]
+    },
+    {
+      "query": "gen-55",
+      "name": "gen55",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/classes/range.js#isX@271",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.2942183332052082,
+        "storedMicros": 1.3939683333349724,
+        "ratio": 0.928441702910769
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "equivalent"]
+    },
+    {
+      "query": "gen-56",
+      "name": "gen56",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs/v6ToV1.js#v6ToV1@5",
+      "behaviorRank": 1,
+      "textRank": 5,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-57",
+      "name": "gen57",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/contains.js#contains@15",
+      "behaviorRank": 6,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": ["different", "different", "different", "inconclusive", "different"]
+    },
+    {
+      "query": "gen-58",
+      "name": "gen58",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v3/helpers/parseUtil.ts#isDirty@173",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 3.110626666651418,
+        "storedMicros": 2.677683333555857,
+        "ratio": 1.1616857854960128
+      },
+      "otherEquivalent": [
+        {
+          "id": "zod-3.25.76/v3/helpers/parseUtil.cjs#isDirty@119",
+          "sameName": true
+        },
+        {
+          "id": "zod-3.25.76/v3/helpers/parseUtil.js#isDirty@107",
+          "sameName": true
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different"]
+    },
+    {
+      "query": "gen-59",
+      "name": "gen59",
+      "passesOwnExamples": true,
+      "target": "base64-js-1.5.1/index.js#encodeChunk@106",
+      "behaviorRank": 1,
+      "textRank": 2,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 49.92153799999505,
+        "storedMicros": 54.2580799999414,
+        "ratio": 0.9200756458770559
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "equivalent", "different", "different", "different"]
+    },
+    {
+      "query": "gen-60",
+      "name": "gen60",
+      "skipped": "new function: transpile: Unterminated template literal."
+    },
+    {
+      "query": "gen-61",
+      "name": "gen61",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_assocIndexOf.js#assocIndexOf@11",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.023381818191741,
+        "storedMicros": 1.2091609091095796,
+        "ratio": 0.8463570154160495
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-62",
+      "name": "gen62",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/classes/range.js#replaceTildes@280",
+      "behaviorRank": 2,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 5.629464999656193,
+        "storedMicros": 7.343054999946617,
+        "ratio": 0.7666380000826793
+      },
+      "otherEquivalent": [
+        {
+          "id": "semver-7.8.0/classes/range.js#parseComparator@257",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-63",
+      "name": "gen63",
+      "passesOwnExamples": false,
+      "target": "uuid-11.1.1/dist/cjs/v6ToV1.js#_v6ToV1@11",
+      "behaviorRank": 1,
+      "textRank": 2,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.238035000045784,
+        "storedMicros": 2.408483333322996,
+        "ratio": 0.9292300133785674
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-64",
+      "name": "gen64",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/equals.js#equals@9",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.23524285719863,
+        "storedMicros": 1.7750914286755557,
+        "ratio": 0.6958756249081088
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "inconclusive", "different"]
+    },
+    {
+      "query": "gen-65",
+      "name": "gen65",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v3/helpers/parseUtil.ts#isValid@174",
+      "behaviorRank": 1,
+      "textRank": 2,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.30114538460755,
+        "storedMicros": 1.3556392308181295,
+        "ratio": 0.9598021029697611
+      },
+      "otherEquivalent": [
+        {
+          "id": "zod-3.25.76/v3/helpers/parseUtil.cjs#isValid@121",
+          "sameName": true
+        },
+        {
+          "id": "zod-3.25.76/v3/helpers/parseUtil.js#isValid@108",
+          "sameName": true
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different"]
+    },
+    {
+      "query": "gen-66",
+      "name": "gen66",
+      "passesOwnExamples": true,
+      "target": "base64-js-1.5.1/index.js#fromByteArray@119",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.037672307700492,
+        "storedMicros": 1.4232592307962477,
+        "ratio": 1.431694426152085
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "near", "near", "different", "different"]
+    },
+    {
+      "query": "gen-67",
+      "name": "gen67",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/parseISO.cjs#splitDateString@103",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-68",
+      "name": "gen68",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_baseAssign.js#baseAssign@13",
+      "behaviorRank": 1,
+      "textRank": 105,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.3281399998813868,
+        "storedMicros": 2.260540000279434,
+        "ratio": 1.0299043589556462
+      },
+      "otherEquivalent": [
+        {
+          "id": "lodash-4.17.21/_baseAssignIn.js#baseAssignIn@13",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-69",
+      "name": "gen69",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/classes/range.js#replaceTilde@288",
+      "behaviorRank": 2,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.8640700003597885,
+        "storedMicros": 2.2342499997466803,
+        "ratio": 1.2818932530757603
+      },
+      "otherEquivalent": [
+        {
+          "id": "semver-7.8.0/classes/range.js#parseComparator@257",
+          "sameName": false
+        },
+        {
+          "id": "semver-7.8.0/classes/range.js#replaceTildes@280",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-70",
+      "name": "gen70",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs/validate.js#validate@4",
+      "behaviorRank": 1,
+      "textRank": 2,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.3772792308233106,
+        "storedMicros": 0.8603715385274532,
+        "ratio": 1.6007958993861624
+      },
+      "otherEquivalent": [
+        {
+          "id": "uuid-11.1.1/dist/esm/validate.js#validate@2",
+          "sameName": true
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "equivalent", "equivalent", "equivalent", "different"]
+    },
+    {
+      "query": "gen-71",
+      "name": "gen71",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/escape.js#escape@9",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.8071654544804583,
+        "storedMicros": 2.2037418180314656,
+        "ratio": 0.8200440903257639
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["near", "near", "different", "equivalent", "equivalent"]
+    },
+    {
+      "query": "gen-72",
+      "name": "gen72",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v3/helpers/parseUtil.ts#isAsync@175",
+      "behaviorRank": 18,
+      "textRank": 1,
+      "targetVerdict": "inconclusive",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": false,
+      "mutants": ["different", "different"]
+    },
+    {
+      "query": "gen-73",
+      "name": "gen73",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_baseAssignIn.js#baseAssignIn@13",
+      "behaviorRank": 2,
+      "textRank": 34,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.3555649999761954,
+        "storedMicros": 1.764359999797307,
+        "ratio": 0.7683040876759422
+      },
+      "otherEquivalent": [
+        {
+          "id": "lodash-4.17.21/_baseAssign.js#baseAssign@13",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-74",
+      "name": "gen74",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/classes/range.js#replaceCarets@324",
+      "behaviorRank": 2,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 3.1807999999728054,
+        "storedMicros": 3.0547400005161762,
+        "ratio": 1.0412670143564846
+      },
+      "otherEquivalent": [
+        {
+          "id": "semver-7.8.0/classes/range.js#parseComparator@257",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-75",
+      "name": "gen75",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs/version.js#version@4",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 5.32116000011394,
+        "storedMicros": 5.105814545373009,
+        "ratio": 1.042176513233541
+      },
+      "otherEquivalent": [
+        {
+          "id": "uuid-11.1.1/dist/esm/version.js#version@2",
+          "sameName": true
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-76",
+      "name": "gen76",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isAbaRouting.js#isAbaRouting@13",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.3878200001393755,
+        "storedMicros": 1.5989116666605696,
+        "ratio": 0.8679779058951563
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-77",
+      "name": "gen77",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v3/helpers/util.ts#getParsedType@175",
+      "behaviorRank": 2,
+      "textRank": 9,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.324257600028068,
+        "storedMicros": 0.9874631999991834,
+        "ratio": 1.3410703305491922
+      },
+      "otherEquivalent": [
+        {
+          "id": "validator-13.15.35/lib/util/typeOf.js#typeOf@11",
+          "sameName": false
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/util.ts#getParsedType@368",
+          "sameName": true
+        },
+        {
+          "id": "zod-3.25.76/v3/helpers/util.cjs#getParsedType@96",
+          "sameName": true
+        },
+        {
+          "id": "zod-3.25.76/v3/helpers/util.js#getParsedType@93",
+          "sameName": true
+        },
+        {
+          "id": "zod-3.25.76/v4/core/util.cjs#getParsedType@202",
+          "sameName": true
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": false,
+      "mutants": ["equivalent", "different", "different", "equivalent", "equivalent"]
+    },
+    {
+      "query": "gen-78",
+      "name": "gen78",
+      "passesOwnExamples": false,
+      "target": "date-fns-4.1.0/parseISO.cjs#parseDate@164",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "near",
+      "targetTiming": {
+        "newMicros": 1.7771600000560284,
+        "storedMicros": 2.2691422222285635,
+        "ratio": 0.7831858147307528
+      },
+      "targetCounterexamples": [
+        {
+          "args": ["", -2],
+          "a": {
+            "$date": "Invalid"
+          },
+          "b": {
+            "$date": "-000002-01-01T00:00:00.000Z"
+          }
+        }
+      ],
+      "otherEquivalent": [],
+      "topVerdict": "near",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-79",
+      "name": "gen79",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_baseGet.js#baseGet@12",
+      "behaviorRank": 1,
+      "textRank": 9,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-80",
+      "name": "gen80",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/classes/range.js#replaceCaret@332",
+      "behaviorRank": 2,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.272914999630302,
+        "storedMicros": 1.60973499994725,
+        "ratio": 1.4119808538081016
+      },
+      "otherEquivalent": [
+        {
+          "id": "semver-7.8.0/classes/range.js#parseComparator@257",
+          "sameName": false
+        },
+        {
+          "id": "semver-7.8.0/classes/range.js#replaceCarets@324",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-81",
+      "name": "gen81",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-82",
+      "name": "gen82",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isAfter.js#isAfter@10",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 3.426202222084006,
+        "storedMicros": 3.6634666666698954,
+        "ratio": 0.9352349929250036
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-83",
+      "name": "gen83",
+      "passesOwnExamples": false,
+      "target": "zod-3.25.76/src/v3/types.ts#processCreateParams@123",
+      "behaviorRank": 134,
+      "textRank": 61,
+      "targetVerdict": "not found",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-84",
+      "name": "gen84",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/parseISO.cjs#parseDateUnit@197",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.0863983333304834,
+        "storedMicros": 0.9588291665810781,
+        "ratio": 1.1330468150069757
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "near", "different", "near"]
+    },
+    {
+      "query": "gen-85",
+      "name": "gen85",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_baseIsArguments.js#baseIsArguments@14",
+      "behaviorRank": 3,
+      "textRank": 28,
+      "targetVerdict": "inconclusive",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": false,
+      "mutants": ["different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-86",
+      "name": "gen86",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs-browser/md5.js#uint32ToUint8@8",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.0175903999246656,
+        "storedMicros": 2.3349352000281214,
+        "ratio": 0.8640883909328045
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "equivalent", "equivalent", "different", "near"]
+    },
+    {
+      "query": "gen-87",
+      "name": "gen87",
+      "passesOwnExamples": true,
+      "target": null,
+      "skipped": "target not callable at this arity"
+    },
+    {
+      "query": "gen-88",
+      "name": "gen88",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v3/types.ts#timeRegexSource@652",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 0.9608181817880408,
+        "storedMicros": 1.3531763635745102,
+        "ratio": 0.7100465302615634
+      },
+      "otherEquivalent": [
+        {
+          "id": "zod-3.25.76/v3/types.cjs#timeRegexSource@417",
+          "sameName": true
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-89",
+      "name": "gen89",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/parseISO.cjs#parseTimeUnit@220",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 0.9642218180339445,
+        "storedMicros": 1.29778909094801,
+        "ratio": 0.7429726638629693
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "near"]
+    },
+    {
+      "query": "gen-90",
+      "name": "gen90",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_baseIsMap.js#baseIsMap@14",
+      "behaviorRank": 4,
+      "textRank": 2,
+      "targetVerdict": "inconclusive",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": false,
+      "mutants": ["different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-91",
+      "name": "gen91",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/classes/range.js#replaceXRange@393",
+      "behaviorRank": 2,
+      "textRank": 2,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.5757149999262765,
+        "storedMicros": 2.05068500014022,
+        "ratio": 0.768384710386302
+      },
+      "otherEquivalent": [
+        {
+          "id": "semver-7.8.0/classes/range.js#parseComparator@257",
+          "sameName": false
+        },
+        {
+          "id": "semver-7.8.0/ranges/valid.js#validRange@4",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-92",
+      "name": "gen92",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs-browser/md5.js#getOutputLength@15",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 0.7696422220518192,
+        "storedMicros": 0.719448888881339,
+        "ratio": 1.0697663641520458
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different"]
+    },
+    {
+      "query": "gen-93",
+      "name": "gen93",
+      "passesOwnExamples": true,
+      "target": null,
+      "skipped": "target not callable at this arity"
+    },
+    {
+      "query": "gen-94",
+      "name": "gen94",
+      "passesOwnExamples": false,
+      "target": "zod-3.25.76/src/v3/types.ts#timeRegex@664",
+      "behaviorRank": null,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-95",
+      "name": "gen95",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/parseISO.cjs#parseTimezone@224",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.4225783332949504,
+        "storedMicros": 0.9311416667575637,
+        "ratio": 1.5277786228261863
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-96",
+      "name": "gen96",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_baseIsNative.js#baseIsNative@39",
+      "behaviorRank": 5,
+      "textRank": 4,
+      "targetVerdict": "inconclusive",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": false,
+      "mutants": ["different", "different"]
+    },
+    {
+      "query": "gen-97",
+      "name": "gen97",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/classes/range.js#replaceStars@470",
+      "behaviorRank": 2,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.76528500020504,
+        "storedMicros": 5.0806800002465025,
+        "ratio": 0.5442745853056825
+      },
+      "otherEquivalent": [
+        {
+          "id": "semver-7.8.0/classes/range.js#parseComparator@257",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-98",
+      "name": "gen98",
+      "passesOwnExamples": false,
+      "target": "uuid-11.1.1/dist/cjs-browser/md5.js#wordsToMd5@18",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-99",
+      "name": "gen99",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isAscii.js#isAscii@13",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.18382545450533,
+        "storedMicros": 1.3625436362979764,
+        "ratio": 1.6027563421299091
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "equivalent", "different"]
+    },
+    {
+      "query": "gen-100",
+      "name": "gen100",
+      "passesOwnExamples": false,
+      "target": "zod-3.25.76/src/v3/types.ts#datetimeRegex@673",
+      "behaviorRank": null,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-101",
+      "name": "gen101",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-102",
+      "name": "gen102",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_baseIsSet.js#baseIsSet@14",
+      "behaviorRank": 6,
+      "textRank": 19,
+      "targetVerdict": "not found",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": false,
+      "mutants": ["different", "different", "different"]
+    },
+    {
+      "query": "gen-103",
+      "name": "gen103",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/classes/range.js#replaceGTE0@478",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 3.904529999708757,
+        "storedMicros": 4.450620000134222,
+        "ratio": 0.8773002412227967
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-104",
+      "name": "gen104",
+      "passesOwnExamples": false,
+      "target": "uuid-11.1.1/dist/cjs-browser/md5.js#uint8ToUint32@104",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.1486699999659322,
+        "storedMicros": 1.244543333305046,
+        "ratio": 0.922965050092302
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "different", "equivalent", "equivalent", "equivalent"]
+    },
+    {
+      "query": "gen-105",
+      "name": "gen105",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isBIC.js#isBIC@12",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 3.808441666769795,
+        "storedMicros": 1.5261783334426582,
+        "ratio": 2.495410649801946
+      },
+      "otherEquivalent": [
+        {
+          "id": "validator-13.15.35/lib/isBase32.js#isBase32@15",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-106",
+      "name": "gen106",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v3/types.ts#isValidIP@687",
+      "behaviorRank": 2,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-107",
+      "name": "gen107",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/parseISO.cjs#isLeapYearIndex@258",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.5108260000124574,
+        "storedMicros": 0.8687899999786168,
+        "ratio": 1.7390002187521065
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "equivalent", "near", "different", "different"]
+    },
+    {
+      "query": "gen-108",
+      "name": "gen108",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_baseIsTypedArray.js#baseIsTypedArray@55",
+      "behaviorRank": 1,
+      "textRank": 16,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 0.9405480000190437,
+        "storedMicros": 0.9655504000373185,
+        "ratio": 0.9741055464144508
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "different", "different", "different", "inconclusive"]
+    },
+    {
+      "query": "gen-109",
+      "name": "gen109",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/functions/clean.js#clean@4",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 3.649524999782443,
+        "storedMicros": 7.435314999893308,
+        "ratio": 0.49083663568185226
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-110",
+      "name": "gen110",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs-browser/md5.js#safeAdd@114",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.0073600000598364,
+        "storedMicros": 0.8794999999615053,
+        "ratio": 1.14537805583164
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "near", "near", "different", "different"]
+    },
+    {
+      "query": "gen-111",
+      "name": "gen111",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isBase32.js#isBase32@15",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 3.5615750000579283,
+        "storedMicros": 3.472759999567643,
+        "ratio": 1.0255747591256934
+      },
+      "otherEquivalent": [
+        {
+          "id": "validator-13.15.35/lib/isBase64.js#isBase64@14",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-112",
+      "name": "gen112",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v3/types.ts#isValidJWT@698",
+      "behaviorRank": 127,
+      "textRank": 2,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-113",
+      "name": "gen113",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/parseISO.cjs#validateDate@262",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.4423424997949041,
+        "storedMicros": 1.1082375000114553,
+        "ratio": 1.3014741874192088
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-114",
+      "name": "gen114",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_baseKeys.js#baseKeys@17",
+      "behaviorRank": 2,
+      "textRank": 22,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": ["different"]
+    },
+    {
+      "query": "gen-115",
+      "name": "gen115",
+      "passesOwnExamples": false,
+      "target": "semver-7.8.0/functions/coerce.js#coerce@7",
+      "behaviorRank": 3,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-116",
+      "name": "gen116",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs-browser/md5.js#bitRotateLeft@119",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.1971266666013334,
+        "storedMicros": 1.1912488888224795,
+        "ratio": 1.0049341307547106
+      },
+      "otherEquivalent": [
+        {
+          "id": "uuid-11.1.1/dist/cjs-browser/sha1.js#ROTL@15",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["near", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-117",
+      "name": "gen117",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isBase58.js#isBase58@11",
+      "behaviorRank": 4,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "near",
+      "topIsTarget": false,
+      "mutants": ["different", "near", "near", "near", "near"]
+    },
+    {
+      "query": "gen-118",
+      "name": "gen118",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v3/types.ts#isValidCidr@719",
+      "behaviorRank": 1,
+      "textRank": 9,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.755308889059557,
+        "storedMicros": 2.003648888785392,
+        "ratio": 1.3751455679092657
+      },
+      "otherEquivalent": [
+        {
+          "id": "zod-3.25.76/v3/types.cjs#isValidCidr@477",
+          "sameName": true
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-119",
+      "name": "gen119",
+      "passesOwnExamples": false,
+      "target": "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 0.967813333392971,
+        "storedMicros": 1.078688888810575,
+        "ratio": 0.897212665702099
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "equivalent", "equivalent", "equivalent", "equivalent"]
+    },
+    {
+      "query": "gen-120",
+      "name": "gen120",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_baseKeysIn.js#baseKeysIn@18",
+      "behaviorRank": 3,
+      "textRank": 20,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.9066376923225248,
+        "storedMicros": 2.0520153846770812,
+        "ratio": 0.9291537025306299
+      },
+      "otherEquivalent": [
+        {
+          "id": "lodash-4.17.21/_arrayLikeKeys.js#arrayLikeKeys@22",
+          "sameName": false
+        },
+        {
+          "id": "lodash-4.17.21/_baseKeys.js#baseKeys@17",
+          "sameName": false
+        },
+        {
+          "id": "lodash-4.17.21/_getAllKeys.js#getAllKeys@12",
+          "sameName": false
+        },
+        {
+          "id": "lodash-4.17.21/_getAllKeysIn.js#getAllKeysIn@13",
+          "sameName": false
+        },
+        {
+          "id": "lodash-4.17.21/keysIn.js#keysIn@28",
+          "sameName": false
+        },
+        {
+          "id": "lodash-4.17.21/keys.js#keys@33",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": false,
+      "mutants": ["different", "different", "equivalent", "equivalent", "equivalent"]
+    },
+    {
+      "query": "gen-121",
+      "name": "gen121",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/functions/inc.js#inc@5",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.502489999984391,
+        "storedMicros": 7.417321666531886,
+        "ratio": 0.20256503189875943
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-122",
+      "name": "gen122",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs-browser/md5.js#md5cmn@122",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-123",
+      "name": "gen123",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isBase64.js#isBase64@14",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 3.14443500014022,
+        "storedMicros": 4.461655000341125,
+        "ratio": 0.7047687461042608
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-124",
+      "name": "gen124",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/parseISO.cjs#validateWeekDate@275",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.1313525002333336,
+        "storedMicros": 1.015330000082031,
+        "ratio": 1.1142707298532781
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "different"]
+    },
+    {
+      "query": "gen-125",
+      "name": "gen125",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_baseSet.js#baseSet@17",
+      "behaviorRank": 1,
+      "textRank": 4,
+      "targetVerdict": "near",
+      "targetTiming": {
+        "newMicros": 2.6478374999715015,
+        "storedMicros": 2.915827499818988,
+        "ratio": 0.9080912708779504
+      },
+      "targetCounterexamples": [
+        {
+          "args": [
+            {
+              "a": 1,
+              "b": {
+                "c": 2
+              }
+            },
+            "",
+            "Hello World"
+          ],
+          "a": {
+            "a": 1,
+            "b": {
+              "c": 2
+            }
+          },
+          "b": {
+            "": "Hello World",
+            "a": 1,
+            "b": {
+              "c": 2
+            }
+          }
+        }
+      ],
+      "otherEquivalent": [],
+      "topVerdict": "near",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-126",
+      "name": "gen126",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/functions/prerelease.js#prerelease@4",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 3.4269750001840293,
+        "storedMicros": 4.657679999945685,
+        "ratio": 0.7357686659933684
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-127",
+      "name": "gen127",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs-browser/md5.js#md5ff@125",
+      "behaviorRank": 1,
+      "textRank": 2,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-128",
+      "name": "gen128",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isBefore.js#isBefore@10",
+      "behaviorRank": 1,
+      "textRank": 2,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 4.024366666821556,
+        "storedMicros": 6.97675777780306,
+        "ratio": 0.5768247651689012
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-129",
+      "name": "gen129",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v3/types.ts#deepPartialify@2422",
+      "behaviorRank": 6,
+      "textRank": 3,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": ["near", "equivalent", "equivalent", "near", "near"]
+    },
+    {
+      "query": "gen-130",
+      "name": "gen130",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/parseISO.cjs#validateTime@279",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.3365825000801124,
+        "storedMicros": 1.2592525000218302,
+        "ratio": 1.0614094473165163
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-131",
+      "name": "gen131",
+      "passesOwnExamples": false,
+      "target": "lodash-4.17.21/_baseTimes.js#baseTimes@10",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "inconclusive",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-132",
+      "name": "gen132",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/functions/rsort.js#rsort@4",
+      "behaviorRank": 1,
+      "textRank": 2,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 5.2972950000548735,
+        "storedMicros": 6.631354999844916,
+        "ratio": 0.7988254286158347
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-133",
+      "name": "gen133",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs-browser/md5.js#md5gg@128",
+      "behaviorRank": 1,
+      "textRank": 3,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-134",
+      "name": "gen134",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isBoolean.js#isBoolean@15",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.3434490910731256,
+        "storedMicros": 1.8702709092758596,
+        "ratio": 0.7183179102076119
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "different", "different", "different"]
+    },
+    {
+      "query": "gen-135",
+      "name": "gen135",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v3/types.ts#getDiscriminator@3065",
+      "behaviorRank": 6,
+      "textRank": 15,
+      "targetVerdict": "not found",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive", "different", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-136",
+      "name": "gen136",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/parseISO.cjs#validateTimezone@294",
+      "behaviorRank": 1,
+      "textRank": 2,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.020985909060321,
+        "storedMicros": 0.9241572727279906,
+        "ratio": 1.1047750628488862
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "different", "different"]
+    },
+    {
+      "query": "gen-137",
+      "name": "gen137",
+      "passesOwnExamples": false,
+      "target": "lodash-4.17.21/_baseToString.js#baseToString@21",
+      "behaviorRank": 1,
+      "textRank": 15,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.2072832000441849,
+        "storedMicros": 0.9632608000189066,
+        "ratio": 1.253329524071247
+      },
+      "otherEquivalent": [
+        {
+          "id": "lodash-4.17.21/_toKey.js#toKey@13",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "equivalent", "equivalent", "different", "different"]
+    },
+    {
+      "query": "gen-138",
+      "name": "gen138",
+      "skipped": "new function: transpile: Unterminated template literal."
+    },
+    {
+      "query": "gen-139",
+      "name": "gen139",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs-browser/md5.js#md5hh@131",
+      "behaviorRank": 1,
+      "textRank": 3,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-140",
+      "name": "gen140",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isBtcAddress.js#isBtcAddress@11",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.760659999933771,
+        "storedMicros": 1.786256363530728,
+        "ratio": 0.9856703863344884
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-141",
+      "name": "gen141",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v3/types.ts#mergeValues@3239",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 3.1662745454708454,
+        "storedMicros": 2.8010563636516137,
+        "ratio": 1.1303858739004855
+      },
+      "otherEquivalent": [
+        {
+          "id": "zod-3.25.76/v3/types.cjs#mergeValues@2519",
+          "sameName": true
+        },
+        {
+          "id": "zod-3.25.76/v3/types.js#mergeValues@2494",
+          "sameName": true
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "equivalent", "equivalent", "near", "equivalent"]
+    },
+    {
+      "query": "gen-142",
+      "name": "gen142",
+      "passesOwnExamples": true,
+      "target": "date-fns-4.1.0/toDate.cjs#toDate@43",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.5460231999866665,
+        "storedMicros": 1.5603944000788033,
+        "ratio": 0.9907900207207799
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different"]
+    },
+    {
+      "query": "gen-143",
+      "name": "gen143",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_baseTrim.js#baseTrim@13",
+      "behaviorRank": 1,
+      "textRank": 30,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.068881818262691,
+        "storedMicros": 1.2590745455500754,
+        "ratio": 0.8489424411290187
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["equivalent", "near", "different"]
+    },
+    {
+      "query": "gen-144",
+      "name": "gen144",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/functions/sort.js#sort@4",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 5.660885000252165,
+        "storedMicros": 7.630289999651723,
+        "ratio": 0.741896441748682
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-145",
+      "name": "gen145",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs-browser/md5.js#md5ii@134",
+      "behaviorRank": 1,
+      "textRank": 2,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-146",
+      "name": "gen146",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isByteLength.js#isByteLength@11",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.1211054546504537,
+        "storedMicros": 3.1743890908546746,
+        "ratio": 0.6681932787512718
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "equivalent", "different", "equivalent", "near"]
+    },
+    {
+      "query": "gen-147",
+      "name": "gen147",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v3/types.ts#cleanParams@4906",
+      "behaviorRank": 1,
+      "textRank": 33,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.1249090909471058,
+        "storedMicros": 1.0016386363316665,
+        "ratio": 1.1230687896254647
+      },
+      "otherEquivalent": [
+        {
+          "id": "zod-3.25.76/v3/types.cjs#cleanParams@3600",
+          "sameName": true
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different"]
+    },
+    {
+      "query": "gen-148",
+      "name": "gen148",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_castPath.js#castPath@14",
+      "behaviorRank": 1,
+      "textRank": 4,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.6162700002314523,
+        "storedMicros": 1.744254999794066,
+        "ratio": 0.9266248343403206
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-149",
+      "name": "gen149",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/functions/truncate.js#truncate@7",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.673150000278838,
+        "storedMicros": 4.588155000237748,
+        "ratio": 0.3646672791551591
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-150",
+      "name": "gen150",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs-browser/sha1.js#ROTL@15",
+      "behaviorRank": 2,
+      "textRank": 1,
+      "targetVerdict": "near",
+      "targetTiming": {
+        "newMicros": 0.9819377777684066,
+        "storedMicros": 0.9833866665657196,
+        "ratio": 0.998526633676687
+      },
+      "targetCounterexamples": [
+        {
+          "args": [-2, 2.5],
+          "a": -5,
+          "b": -1
+        }
+      ],
+      "otherEquivalent": [],
+      "topVerdict": "near",
+      "topIsTarget": false,
+      "mutants": ["near", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-151",
+      "name": "gen151",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isCreditCard.js#isCreditCard@30",
+      "behaviorRank": 1,
+      "textRank": 2,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.2813559998758137,
+        "storedMicros": 3.483864000067115,
+        "ratio": 0.6548349762883582
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-152",
+      "name": "gen152",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v4/classic/compat.ts#getErrorMap@53",
+      "behaviorRank": null,
+      "textRank": 7,
+      "targetVerdict": "not found",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": ["different"]
+    },
+    {
+      "query": "gen-153",
+      "name": "gen153",
+      "passesOwnExamples": false,
+      "target": "lodash-4.17.21/_cloneArrayBuffer.js#cloneArrayBuffer@10",
+      "behaviorRank": null,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-154",
+      "name": "gen154",
+      "passesOwnExamples": false,
+      "target": "semver-7.8.0/functions/truncate.js#cloneInputVersion@16",
+      "behaviorRank": 6,
+      "textRank": 5,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-155",
+      "name": "gen155",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-156",
+      "name": "gen156",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isCurrency.js#isCurrency@77",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 5.029670000076294,
+        "storedMicros": 6.072590000112541,
+        "ratio": 0.8282577944473579
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-157",
+      "name": "gen157",
+      "passesOwnExamples": false,
+      "target": "zod-3.25.76/src/v4/classic/schemas.ts#check@1940",
+      "behaviorRank": null,
+      "textRank": 5,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": []
+    },
+    {
+      "query": "gen-158",
+      "name": "gen158",
+      "passesOwnExamples": false,
+      "target": "lodash-4.17.21/_cloneBuffer.js#cloneBuffer@24",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "inconclusive",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-159",
+      "name": "gen159",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/functions/truncate.js#isPrerelease@44",
+      "behaviorRank": 1,
+      "textRank": 33,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 0.849695000021408,
+        "storedMicros": 0.845039999888589,
+        "ratio": 1.0055086151347068
+      },
+      "otherEquivalent": [],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["different", "different"]
+    },
+    {
+      "query": "gen-160",
+      "name": "gen160",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/esm/parse.js#parse@2",
+      "behaviorRank": 2,
+      "textRank": 2,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 6.282301666797139,
+        "storedMicros": 4.959094999940135,
+        "ratio": 1.266824222337539
+      },
+      "otherEquivalent": [
+        {
+          "id": "uuid-11.1.1/dist/cjs/parse.js#parse@4",
+          "sameName": true
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": false,
+      "mutants": ["different", "different", "inconclusive", "different", "inconclusive"]
+    },
+    {
+      "query": "gen-161",
+      "name": "gen161",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isDataURI.js#isDataURI@12",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 2.4109466666899,
+        "storedMicros": 1.6385916667059064,
+        "ratio": 1.471352940257944
+      },
+      "otherEquivalent": [
+        {
+          "id": "validator-13.15.35/lib/isStrongPassword.js#isStrongPassword@88",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": true,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-162",
+      "name": "gen162",
+      "passesOwnExamples": false,
+      "target": "zod-3.25.76/src/v4/classic/schemas.ts#superRefine@1965",
+      "behaviorRank": null,
+      "textRank": 3,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-163",
+      "name": "gen163",
+      "passesOwnExamples": false,
+      "target": "lodash-4.17.21/_cloneDataView.js#cloneDataView@11",
+      "behaviorRank": null,
+      "textRank": 1,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "inconclusive",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-164",
+      "name": "gen164",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/functions/valid.js#valid@4",
+      "behaviorRank": 2,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.2141649995464832,
+        "storedMicros": 5.359595000045374,
+        "ratio": 0.2265404381368749
+      },
+      "otherEquivalent": [
+        {
+          "id": "semver-7.8.0/functions/clean.js#clean@4",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-165",
+      "name": "gen165",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/esm/v1ToV6.js#v1ToV6@3",
+      "behaviorRank": 2,
+      "textRank": 6,
+      "targetVerdict": "near",
+      "targetTiming": {
+        "newMicros": 5.929944999904062,
+        "storedMicros": 5.431499999637405,
+        "ratio": 1.0917693087176528
+      },
+      "targetCounterexamples": [
+        {
+          "args": ["109156be-c4fb-41ea-b1b4-efe1671c5836"],
+          "a": {
+            "throws": "Error"
+          },
+          "b": "1eac4fb1-0915-66be-b1b4-efe1671c5836"
+        }
+      ],
+      "otherEquivalent": [],
+      "topVerdict": "near",
+      "topIsTarget": false,
+      "mutants": ["different", "different", "different", "different", "different"]
+    },
+    {
+      "query": "gen-166",
+      "name": "gen166",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isDate.js#_slicedToArray@9",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "near",
+      "targetTiming": {
+        "newMicros": 4.0023666666820645,
+        "storedMicros": 4.705629166564904,
+        "ratio": 0.8505486779791831
+      },
+      "targetCounterexamples": [
+        {
+          "args": ["Hello World", 2.5],
+          "a": ["H", "e", "l"],
+          "b": ["H", "e", "l", "l", "o", " ", "W", "o", "r", "l", "d"]
+        }
+      ],
+      "otherEquivalent": [],
+      "topVerdict": "near",
+      "topIsTarget": true,
+      "mutants": ["different", "different", "near", "different", "near"]
+    },
+    {
+      "query": "gen-167",
+      "name": "gen167",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v4/core/api.ts#_lt@785",
+      "behaviorRank": null,
+      "textRank": 4,
+      "targetVerdict": "different",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive", "inconclusive", "inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-168",
+      "name": "gen168",
+      "passesOwnExamples": true,
+      "target": "lodash-4.17.21/_cloneTypedArray.js#cloneTypedArray@11",
+      "behaviorRank": 3,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 11.885829999810085,
+        "storedMicros": 11.436104999156669,
+        "ratio": 1.0393250150017492
+      },
+      "otherEquivalent": [
+        {
+          "id": "lodash-4.17.21/_arrayPush.js#arrayPush@9",
+          "sameName": false
+        },
+        {
+          "id": "lodash-4.17.21/_cloneDataView.js#cloneDataView@11",
+          "sameName": false
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/schemas.ts#handleDefaultResult@3106",
+          "sameName": false
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive"]
+    },
+    {
+      "query": "gen-169",
+      "name": "gen169",
+      "passesOwnExamples": true,
+      "target": "semver-7.8.0/internal/identifiers.js#compareIdentifiers@4",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "near",
+      "targetTiming": {
+        "newMicros": 1.348257894676767,
+        "storedMicros": 0.8091863158992246,
+        "ratio": 1.6661896873261977
+      },
+      "targetCounterexamples": [
+        {
+          "args": [0, -2],
+          "a": -1,
+          "b": 1
+        },
+        {
+          "args": ["", -2],
+          "a": -1,
+          "b": 1
+        },
+        {
+          "args": [2.5, 1000],
+          "a": 1,
+          "b": -1
+        }
+      ],
+      "otherEquivalent": [],
+      "topVerdict": "near",
+      "topIsTarget": true,
+      "mutants": ["different", "near", "different", "different", "different"]
+    },
+    {
+      "query": "gen-170",
+      "name": "gen170",
+      "passesOwnExamples": true,
+      "target": "uuid-11.1.1/dist/esm/v35.js#stringToBytes@3",
+      "behaviorRank": 2,
+      "textRank": 1,
+      "targetVerdict": "equivalent",
+      "targetTiming": {
+        "newMicros": 1.7776381817053666,
+        "storedMicros": 2.0437400000677868,
+        "ratio": 0.8697966383426492
+      },
+      "otherEquivalent": [
+        {
+          "id": "uuid-11.1.1/dist/cjs/v35.js#stringToBytes@6",
+          "sameName": true
+        }
+      ],
+      "topVerdict": "equivalent",
+      "topIsTarget": false,
+      "mutants": ["equivalent", "equivalent", "equivalent", "equivalent", "equivalent"]
+    },
+    {
+      "query": "gen-171",
+      "name": "gen171",
+      "passesOwnExamples": true,
+      "target": "validator-13.15.35/lib/isDate.js#_iterableToArrayLimit@11",
+      "behaviorRank": 1,
+      "textRank": 1,
+      "targetVerdict": "near",
+      "targetTiming": {
+        "newMicros": 2.2661049999684715,
+        "storedMicros": 1.5923816666084651,
+        "ratio": 1.423091616468391
+      },
+      "targetCounterexamples": [
+        {
+          "args": ["Hello World", 2.5],
+          "a": ["H", "e", "l"],
+          "b": ["H", "e", "l", "l", "o", " ", "W", "o", "r", "l", "d"]
+        }
+      ],
+      "otherEquivalent": [],
+      "topVerdict": "near",
+      "topIsTarget": true,
+      "mutants": ["different", "near", "different", "different", "different"]
+    },
+    {
+      "query": "gen-172",
+      "name": "gen172",
+      "passesOwnExamples": true,
+      "target": "zod-3.25.76/src/v4/core/api.ts#_lte@797",
+      "behaviorRank": null,
+      "textRank": 13,
+      "targetVerdict": "not found",
+      "targetTiming": null,
+      "otherEquivalent": [],
+      "topVerdict": "different",
+      "topIsTarget": false,
+      "mutants": ["inconclusive", "inconclusive"]
+    }
+  ]
+}
