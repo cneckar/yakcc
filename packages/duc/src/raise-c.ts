@@ -1403,6 +1403,26 @@ function raiseBody(
             push(`let ${declName(d)} = 0n;`);
             continue;
           }
+          if (
+            isMem(d, t) &&
+            d.storageClass === "static" &&
+            /\bconst\b/.test(d.type?.qualType ?? "") &&
+            t.k === "arr" &&
+            t.of.k !== "arr" &&
+            t.of.k !== "rec" &&
+            init !== undefined &&
+            stripParens(init).kind === "InitListExpr" &&
+            !mems.has(d.id ?? "")
+          ) {
+            // A static constant array in memory: its elements laid out in constant memory, once
+            // (static storage: the same address every call), not a frame filled on each call.
+            const name = declName(d);
+            push(`let ${name} = ${expr(init)};`);
+            const addr = `${name}_d`;
+            push(`const ${addr} = __ykData("${dataKind(t.of)}", ${name});`);
+            mems.set(d.id ?? "", { k: "mem", addr, t });
+            continue;
+          }
           if (isMem(d, t)) {
             const p = memOf(d, t);
             for (const line of initialize(p.addr, t, init)) push(line);

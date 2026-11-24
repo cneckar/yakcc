@@ -70,6 +70,17 @@ int yk_local_array(int n) {
   return s + *a;
 }
 
+/* A static constant table whose address is taken: constant memory, the same every call. */
+static int yk_table_sum(const int *t, int n) {
+  int s = 0;
+  for (int i = 0; i < n; i++) s = s * 31 + t[i];
+  return s;
+}
+int yk_static_table(int n) {
+  static const int table[8] = {3, -1, 4, 1, -5, 9, 2};
+  return yk_table_sum(table, (n & 7) + 1) + table[n & 7];
+}
+
 /* Two addresses' distance, in elements. */
 long yk_ptr_diff(int n) {
   int buf[64];

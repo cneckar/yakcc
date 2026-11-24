@@ -212,7 +212,10 @@ const MEM_CACHE_DECLS = [
   "@yk_mcache_len = external global i64",
   "@yk_mcache_bytes = external global ptr",
   "@yk_mcache_writable = external global i64",
+  "@yk_mcache_epoch = external global i64",
 ];
+/** The access sites' own caches: each is named once per process (`@yk.msite.N`). */
+let memorySites = 0;
 /** A BigInt literal: its digits (any radix prefix kept), then n. */
 const BIGINT_LITERAL = /^(0[xXoObB][0-9a-fA-F_]+|[0-9_]+)n$/;
 const MATH1 = new Set(["floor", "ceil", "trunc", "sqrt", "abs", "sign", "round"]);
@@ -565,6 +568,24 @@ function lowerFunction(
   // --- Constant tables (#1369): an array literal of number literals whose every use reads an element
   // (never written, returned, passed or captured) is one constant array, read in place.
   const constTables = new Map<ValueId, { global: string; n: number }>();
+  const dataTables = new Map<ValueId, { global: string; n: number }>();
+  /** A number the graph fixes: a numeric literal, or the negation of one (`-0.5`). */
+  const literalNumber = (v: ValueId): number | undefined => {
+    const p = producer.get(resolve(v));
+    if (p?.kind === "literal-source") {
+      const t = (p.label ?? "").replace(/_/g, "");
+      if (t === "NaN") return Number.NaN;
+      if (t === "" || BIGINT_LITERAL.test(t) || t.startsWith('"') || t.startsWith("'"))
+        return undefined;
+      const x = Number(t);
+      return Number.isNaN(x) ? undefined : x;
+    }
+    if (p?.kind === "op" && p.label === "-" && p.inputs.length === 1) {
+      const x = literalNumber(p.inputs[0] as ValueId);
+      return x === undefined ? undefined : -x;
+    }
+    return undefined;
+  };
   {
     const uses = new Map<ValueId, DucNode[]>();
     for (const n of g.nodes)
@@ -579,16 +600,29 @@ function lowerFunction(
     for (const n of g.nodes) {
       if (n.kind !== "op" || n.label !== "ArrayLiteral" || n.inputs.length === 0) continue;
       const out = n.outputs[0] as ValueId;
-      const values = n.inputs.map((v) => {
-        const p = producer.get(resolve(v as ValueId));
-        const x =
-          p?.kind === "literal-source" ? Number((p.label ?? "").replace(/_/g, "")) : Number.NaN;
-        return p?.kind === "literal-source" && (!Number.isNaN(x) || p.label === "NaN")
-          ? x
-          : undefined;
-      });
+      const values = n.inputs.map((v) => literalNumber(v as ValueId));
       if (values.some((x) => x === undefined) || escaping.has(out)) continue;
       const consumers = uses.get(out) ?? [];
+      // Constant data's elements (`__ykData(kind, [..])`, raise-c's constant arrays): laid out
+      // once, at the first call (the address depends only on the content).
+      if (
+        consumers.length > 0 &&
+        consumers.every(
+          (c) =>
+            leafOf(c) === "__ykData" &&
+            c.inputs.length === 3 &&
+            resolve(c.inputs[2] as ValueId) === out &&
+            resolve(c.inputs[1] as ValueId) !== out &&
+            producer.get(resolve(c.inputs[1] as ValueId))?.kind === "literal-source",
+        )
+      ) {
+        const name = `@cdat${m.globals.length}`;
+        m.globals.push(
+          `${name} = private unnamed_addr constant [${values.length} x i64] [${values.map((x) => `i64 ${boxedNumber(x as number)}`).join(", ")}]`,
+        );
+        dataTables.set(out, { global: name, n: values.length });
+        continue;
+      }
       if (
         consumers.length === 0 ||
         !consumers.every(
@@ -608,6 +642,135 @@ function lowerFunction(
       constTables.set(out, { global: name, n: values.length });
     }
   }
+  // --- Proven numbers (#1369): a value the graph proves is a number (or never produced: its
+  // operation throws first) needs no tag check. Carries, joins and loop results are assumed numbers
+  // until one of their inputs is not (an optimistic fixpoint).
+  const NUMBER_LEAVES = new Set([
+    "__ykBigToI32",
+    "__ykBigToU32",
+    "__ykBigToF64",
+    "__ykI32Mul",
+    "__ykLoad8",
+    "__ykLoad16",
+    "__ykLoad32",
+    "__ykLoadF64",
+    "__ykLoadF32",
+    "__ykF64FromBits",
+    "__ykF64Hi",
+    "__ykF64Lo",
+    "__ykF64Make",
+    "__ykF32",
+  ]);
+  const provenNumber = new Set<ValueId>();
+  {
+    const loopOf = new Map<ValueId, { loop: DucNode; i: number; carry: boolean }>();
+    for (const n of g.nodes)
+      if (n.kind === "loop" && n.loop !== undefined) {
+        n.loop.carry.forEach((c, i) => loopOf.set(c, { loop: n, i, carry: true }));
+        n.outputs.forEach((o, i) => loopOf.set(o, { loop: n, i, carry: false }));
+      }
+    const assumed = new Set<ValueId>();
+    for (const n of g.nodes) {
+      if (n.kind === "sel") for (const o of n.outputs) assumed.add(o);
+      if (n.kind === "loop" && n.loop !== undefined) {
+        for (const c of n.loop.carry) assumed.add(c);
+        for (const o of n.outputs) assumed.add(o);
+      }
+    }
+    const isNumberLiteral = (p: DucNode): boolean => {
+      const t = (p.label ?? "").replace(/_/g, "");
+      return (
+        t === "NaN" ||
+        (t !== "" && !BIGINT_LITERAL.test(t) && !t.startsWith('"') && !Number.isNaN(Number(t)))
+      );
+    };
+    const compute = (): Set<ValueId> => {
+      const out = new Set<ValueId>();
+      const num = (v0: ValueId): boolean => {
+        const v = resolve(v0);
+        if (assumed.has(v)) return true;
+        if (out.has(v)) return true;
+        const p = producer.get(v);
+        if (p === undefined) return false;
+        if (p.kind === "literal-source") return isNumberLiteral(p);
+        return false;
+      };
+      for (let changed = true; changed; ) {
+        changed = false;
+        for (const n of g.nodes) {
+          if (n.kind !== "op") continue;
+          const o = n.outputs[0] as ValueId | undefined;
+          if (o === undefined || out.has(o)) continue;
+          const ins = n.inputs as readonly ValueId[];
+          const lbl = n.label ?? "";
+          const leaf = leafOf(n);
+          const callee = lbl === "CallExpression" ? memberOf(ins[0] as ValueId) : undefined;
+          let yes = false;
+          if (numRange.has(o)) yes = true;
+          else if (leaf !== undefined) yes = NUMBER_LEAVES.has(leaf);
+          else if (callee !== undefined && isMath(callee.node.inputs[0] as ValueId)) yes = true;
+          else if (ins.length === 2 && ["+", "-", "*", "/", "%"].includes(lbl))
+            yes = num(ins[0] as ValueId) && num(ins[1] as ValueId);
+          else if (ins.length === 1 && lbl === "+") yes = true;
+          else if (ins.length === 1 && ["-", "++", "--", "post++", "post--"].includes(lbl))
+            yes = num(ins[0] as ValueId);
+          if (yes) {
+            out.add(o);
+            changed = true;
+          }
+        }
+      }
+      return out;
+    };
+    for (;;) {
+      const proven = compute();
+      const holds = (v: ValueId): boolean => {
+        const r = resolve(v);
+        if (assumed.has(r) || proven.has(r)) return true;
+        const p = producer.get(r);
+        return p?.kind === "literal-source" && isNumberLiteral(p);
+      };
+      let removed = false;
+      for (const v of [...assumed]) {
+        let ok = true;
+        const p = producer.get(v);
+        if (p?.kind === "sel") ok = holds(p.inputs[1] as ValueId) && holds(p.inputs[2] as ValueId);
+        else {
+          const at = loopOf.get(v);
+          if (at === undefined) ok = false;
+          else {
+            const rec = at.loop.loop as DucLoop;
+            ok =
+              holds(at.loop.inputs[at.i] as ValueId) &&
+              holds(rec.next[at.i] as ValueId) &&
+              holds(rec.carry[at.i] as ValueId);
+          }
+        }
+        if (!ok) {
+          assumed.delete(v);
+          removed = true;
+        }
+      }
+      if (!removed) {
+        for (const v of proven) provenNumber.add(v);
+        for (const v of assumed) provenNumber.add(v);
+        break;
+      }
+    }
+  }
+  /** Whether every value is a proven number (or a number literal). */
+  const allNumbers = (vs: readonly ValueId[]): boolean =>
+    vs.every((v0) => {
+      const v = resolve(v0);
+      if (provenNumber.has(v)) return true;
+      const p = producer.get(v);
+      const t = (p?.label ?? "").replace(/_/g, "");
+      return (
+        p?.kind === "literal-source" &&
+        (t === "NaN" ||
+          (t !== "" && !BIGINT_LITERAL.test(t) && !t.startsWith('"') && !Number.isNaN(Number(t))))
+      );
+    });
   /** Whether a value is a typed BigInt: an i128 (a literal, or an operation the proof types). */
   const isTypedBig = (v: ValueId): boolean =>
     widthOf(v) !== undefined && (widthOf(v) as number) <= 127;
@@ -768,7 +931,18 @@ function lowerFunction(
     fast: (ds: readonly string[]) => string,
     slow: () => string,
     guard?: (ds: readonly string[]) => string,
+    proven = false,
   ): string => {
+    if (proven && guard === undefined) {
+      // Every operand a proven number: the double operation alone.
+      return fast(
+        args.map((a) => {
+          const d = fresh();
+          emit(`${d} = bitcast i64 ${a} to double`);
+          return d;
+        }),
+      );
+    }
     const fastLabel = freshLabel("fast");
     const slowLabel = freshLabel("slow");
     const join = freshLabel("joined");
@@ -889,38 +1063,89 @@ function lowerFunction(
     emit(`${back} = sitofp i64 ${i} to double`);
     const integral = fresh();
     emit(`${integral} = fcmp oeq double ${back}, ${d}`);
-    const base = fresh();
-    emit(`${base} = load i64, ptr @yk_mcache_base`);
-    const len = fresh();
-    emit(`${len} = load i64, ptr @yk_mcache_len`);
-    const off = fresh();
-    emit(`${off} = sub i64 ${i}, ${base}`);
-    const room = fresh();
-    emit(`${room} = icmp uge i64 ${len}, ${mem.size}`);
-    const lim = fresh();
-    emit(`${lim} = sub i64 ${len}, ${mem.size}`);
-    const inside = fresh();
-    emit(`${inside} = icmp ule i64 ${off}, ${lim}`);
-    let all = fresh();
-    emit(`${all} = and i1 ${integral}, ${room}`);
-    const all2 = fresh();
-    emit(`${all2} = and i1 ${all}, ${inside}`);
-    all = all2;
+    // Two caches, inline: the runtime's (the region last allocated or found: a new frame's) and
+    // this site's own (the region this access last hit: its base, length, bytes and the runtime's
+    // epoch then). A site's region is that region still while the 16 bytes before its bytes hold
+    // its base (a free clears them) and the epoch is the same (a large region's bytes going back to
+    // the C library changes it). A store site's cache is only ever filled by a store that
+    // succeeded, so its region is writable.
+    const within = (base: string, len: string): { off: string; ok: string } => {
+      const off = fresh();
+      emit(`${off} = sub i64 ${i}, ${base}`);
+      const room = fresh();
+      emit(`${room} = icmp uge i64 ${len}, ${mem.size}`);
+      const lim = fresh();
+      emit(`${lim} = sub i64 ${len}, ${mem.size}`);
+      const inside = fresh();
+      emit(`${inside} = icmp ule i64 ${off}, ${lim}`);
+      const a1 = fresh();
+      emit(`${a1} = and i1 ${integral}, ${room}`);
+      const ok = fresh();
+      emit(`${ok} = and i1 ${a1}, ${inside}`);
+      return { off, ok };
+    };
+    const gBase = fresh();
+    emit(`${gBase} = load i64, ptr @yk_mcache_base`);
+    const gLen = fresh();
+    emit(`${gLen} = load i64, ptr @yk_mcache_len`);
+    const g = within(gBase, gLen);
+    let gOk = g.ok;
     if (mem.store) {
       const w = fresh();
       emit(`${w} = load i64, ptr @yk_mcache_writable`);
       const wr = fresh();
       emit(`${wr} = icmp ne i64 ${w}, 0`);
-      const all3 = fresh();
-      emit(`${all3} = and i1 ${all}, ${wr}`);
-      all = all3;
+      const both = fresh();
+      emit(`${both} = and i1 ${gOk}, ${wr}`);
+      gOk = both;
     }
-    emit(`br i1 ${all}, label %${fast}, label %${slowLabel}`);
-    block(fast);
+    const gHit = freshLabel("mglobal");
+    const siteCheck = freshLabel("msite");
+    emit(`br i1 ${gOk}, label %${gHit}, label %${siteCheck}`);
+    block(gHit);
+    const gBytes = fresh();
+    emit(`${gBytes} = load ptr, ptr @yk_mcache_bytes`);
+    const gP = fresh();
+    emit(`${gP} = getelementptr i8, ptr ${gBytes}, i64 ${g.off}`);
+    emit(`br label %${fast}`);
+    block(siteCheck);
+    const site = `@yk.msite.${memorySites++}`;
+    m.intrinsics.add(`${site} = internal global [4 x i64] zeroinitializer`);
+    const siteField = (k: number): string => {
+      const q = fresh();
+      emit(`${q} = getelementptr [4 x i64], ptr ${site}, i64 0, i64 ${k}`);
+      return q;
+    };
+    const base = fresh();
+    emit(`${base} = load i64, ptr ${site}`);
+    const len = fresh();
+    emit(`${len} = load i64, ptr ${siteField(1)}`);
+    const siteEpoch = fresh();
+    emit(`${siteEpoch} = load i64, ptr ${siteField(3)}`);
+    const epoch = fresh();
+    emit(`${epoch} = load i64, ptr @yk_mcache_epoch`);
+    const current = fresh();
+    emit(`${current} = icmp eq i64 ${siteEpoch}, ${epoch}`);
+    const sc = within(base, len);
+    const all = fresh();
+    emit(`${all} = and i1 ${sc.ok}, ${current}`);
+    const live = freshLabel("mlive");
+    emit(`br i1 ${all}, label %${live}, label %${slowLabel}`);
+    block(live);
     const bytes = fresh();
-    emit(`${bytes} = load ptr, ptr @yk_mcache_bytes`);
+    emit(`${bytes} = load ptr, ptr ${siteField(2)}`);
+    const header = fresh();
+    emit(`${header} = getelementptr i8, ptr ${bytes}, i64 -16`);
+    const owner = fresh();
+    emit(`${owner} = load i64, ptr ${header}`);
+    const same = fresh();
+    emit(`${same} = icmp eq i64 ${owner}, ${base}`);
+    const sP = fresh();
+    emit(`${sP} = getelementptr i8, ptr ${bytes}, i64 ${sc.off}`);
+    emit(`br i1 ${same}, label %${fast}, label %${slowLabel}`);
+    block(fast);
     const p = fresh();
-    emit(`${p} = getelementptr i8, ptr ${bytes}, i64 ${off}`);
+    emit(`${p} = phi ptr [ ${gP}, %${gHit} ], [ ${sP}, %${live} ]`);
     let r1: string;
     if (mem.store) {
       if (mem.kind === "u") {
@@ -957,6 +1182,17 @@ function lowerFunction(
     emit(`br label %${join}`);
     block(slowLabel);
     const r2 = slow();
+    // The runtime found the region (or trapped) and cached it: this site's cache is it now.
+    for (const [k, from, ty] of [
+      [0, "@yk_mcache_base", "i64"],
+      [1, "@yk_mcache_len", "i64"],
+      [2, "@yk_mcache_bytes", "ptr"],
+      [3, "@yk_mcache_epoch", "i64"],
+    ] as const) {
+      const q = fresh();
+      emit(`${q} = load ${ty}, ptr ${from}`);
+      emit(`store ${ty} ${q}, ptr ${siteField(k)}`);
+    }
     const slowEnd = currentLabel();
     emit(`br label %${join}`);
     block(join);
@@ -972,6 +1208,14 @@ function lowerFunction(
   const truthy = (v: ValueId): string => {
     m.used.add("yk_truthy");
     const x = operand(v);
+    if (allNumbers([v])) {
+      // A proven number is falsy when it is 0, -0 or NaN.
+      const d = fresh();
+      emit(`${d} = bitcast i64 ${x} to double`);
+      const t = fresh();
+      emit(`${t} = fcmp one double ${d}, 0.0`);
+      return t;
+    }
     // true and false are themselves (a comparison's result, most often): no call.
     const isTrue = fresh();
     emit(`${isTrue} = icmp eq i64 ${x}, ${TRUE}`);
@@ -1605,6 +1849,32 @@ function lowerFunction(
       const [fn, arity] = LEAVES[leafName] as [string, number];
       if (ins.length - 1 !== arity)
         throw new LlvmEmitError(`the leaf ${fn} takes ${arity} arguments`);
+      const data = leafName === "__ykData" ? dataTables.get(resolve(ins[2] as ValueId)) : undefined;
+      if (data !== undefined) {
+        // Constant data of literal elements: laid out at the first call, its address kept.
+        const memo = `@ydata${m.globals.length}`;
+        m.globals.push(`${memo} = internal global i64 0`);
+        const known = fresh();
+        emit(`${known} = load i64, ptr ${memo}`);
+        const has = fresh();
+        emit(`${has} = icmp ne i64 ${known}, 0`);
+        const first = freshLabel("dfirst");
+        const join = freshLabel("djoin");
+        const before = currentLabel();
+        emit(`br i1 ${has}, label %${join}, label %${first}`);
+        block(first);
+        const kind = operand(ins[1] as ValueId);
+        const arr = call("yk_array_of", `i64 ${data.n}, ptr ${data.global}`);
+        const made = call(fn, `i64 ${kind}, i64 ${arr}`);
+        emit(`store i64 ${made}, ptr ${memo}`);
+        const firstEnd = currentLabel();
+        emit(`br label %${join}`);
+        block(join);
+        const r = fresh();
+        emit(`${r} = phi i64 [ ${known}, %${before} ], [ ${made}, %${firstEnd} ]`);
+        set(out, r);
+        return;
+      }
       const args = ins.slice(1).map(operand);
       const mem = MEM_INLINE[leafName];
       if (mem !== undefined) {
@@ -1646,6 +1916,8 @@ function lowerFunction(
                   return boxDouble(r);
                 },
                 slow,
+                undefined,
+                allNumbers([ins[1] as ValueId]),
               ),
             );
             return;
@@ -1783,6 +2055,8 @@ function lowerFunction(
               return boxDouble(r);
             },
             slow,
+            undefined,
+            allNumbers(ins as readonly ValueId[]),
           ),
         );
         return;
@@ -1798,6 +2072,8 @@ function lowerFunction(
               return boolBox(r);
             },
             slow,
+            undefined,
+            allNumbers(ins as readonly ValueId[]),
           ),
         );
         return;
@@ -1867,6 +2143,8 @@ function lowerFunction(
               return boxDouble(r);
             },
             slow,
+            undefined,
+            allNumbers([ins[0] as ValueId]),
           ),
         );
         return;
@@ -1909,7 +2187,7 @@ function lowerFunction(
       set(out, r);
       return;
     }
-    if (lbl === "ArrayLiteral" && constTables.has(out)) return; // read in place
+    if (lbl === "ArrayLiteral" && (constTables.has(out) || dataTables.has(out))) return; // in place
     if (lbl === "ArrayLiteral") {
       if (ins.some(isSpread)) {
         set(out, spreadList(ins));

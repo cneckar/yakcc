@@ -44,7 +44,13 @@ Raised C has a regular shape (`raise-c.ts`):
 - **`Number(i128)` (`__ykBigToF64`)** is LLVM `sitofp`, round to nearest even, as `Number(bigint)` is.
 
 ### Memory
-The leaves keep their traps (#1363). A load or store checks a **one-region cache**: the base, the length and the bytes of the last region it hit. The common case is an inline compare and a native `load`/`store` (`align 1`, little-endian). A miss calls the runtime, which finds the region or traps, and refills the cache. Addresses, allocation and the traps are the boxed lowering's own.
+The leaves keep their traps (#1363). A load or store checks two caches inline, then calls the runtime:
+- **the runtime's cache**: the region last allocated or found (a new frame's accesses hit it);
+- **the site's own cache**: the region this access last hit (a function reading its caller's buffer hits it).
+
+A site's cached region is still that region while the 16 bytes before its bytes hold its base: a free clears them, and a reused block holds its new region's base. A large block's bytes go back to the C library, so freeing one changes an epoch that every site's cache holds as well. A hit is an inline compare and a native `load`/`store` (`align 1`, little-endian). A miss calls the runtime, which finds the region or traps, and both caches take it. Addresses, allocation and the traps are the boxed lowering's own.
+
+**Constant data** (`__ykData` of literal elements) is laid out at its first evaluation, and its address kept at the site: the address depends only on the content. Raise-c lowers a `static const` array whose address is taken to constant data, as C's static storage is, rather than a frame filled on every call.
 
 ### Arrays of numbers
 A local array whose every use is an indexed read or write of a number, and whose reads flow only into numeric operations, is a stack array of doubles. A read out of range gives NaN, which is `ToNumber(undefined)`: exact, because every consumer is numeric. Any other array stays boxed.

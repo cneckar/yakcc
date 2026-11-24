@@ -4639,6 +4639,11 @@ uint64_t yk_mcache_base = 0;
 uint64_t yk_mcache_len = 0;
 uint8_t *yk_mcache_bytes = NULL;
 uint64_t yk_mcache_writable = 0;
+/* The lowered code's per-access-site caches (#1369) hold a region's base, length and bytes. The 16
+   bytes before a region's bytes hold its base while it lives (0 once freed, a new region's when the
+   bytes are reused), so a site that hit a freed region misses. Bytes handed back to the C library
+   (a large region's) change this epoch instead, which every site's cache holds. */
+uint64_t yk_mcache_epoch = 1;
 static void c_cache(c_region *r) {
   yk_mcache_base = r->base;
   yk_mcache_len = r->len;
@@ -4656,26 +4661,32 @@ static yk hex_of(double a) { return number_to_radix(a, 16); }
 /* Freed regions' bytes, by size (16 to 4096, in steps of 16), for the next region of that size: a
    region's addresses are never reused, but its bytes may be (zeroed again). */
 static uint8_t *c_free_bytes[257];
-static uint8_t *c_bytes(uint32_t len) {
+static uint8_t *c_bytes(uint32_t len, uint64_t base) {
+  uint8_t *p;
   if (len <= 4096 && c_free_bytes[len / 16] != NULL) {
-    uint8_t *p = c_free_bytes[len / 16];
+    p = c_free_bytes[len / 16];
     c_free_bytes[len / 16] = *(uint8_t **)p;
     memset(p, 0, len);
-    return p;
+  } else {
+    uint8_t *block = calloc((size_t)len + 16, 1);
+    if (block == NULL) {
+      fputs("out of memory\n", stderr);
+      exit(71);
+    }
+    p = block + 16;
   }
-  uint8_t *p = calloc(len, 1);
-  if (p == NULL) {
-    fputs("out of memory\n", stderr);
-    exit(71);
-  }
+  ((uint64_t *)p)[-2] = base;
   return p;
 }
 static void c_release(uint8_t *p, uint32_t len) {
+  ((uint64_t *)p)[-2] = 0;
   if (len <= 4096) {
     *(uint8_t **)p = c_free_bytes[len / 16];
     c_free_bytes[len / 16] = p;
-  } else
-    free(p);
+  } else {
+    yk_mcache_epoch++;
+    free(p - 16);
+  }
 }
 
 static uint64_t c_alloc(double size, double align, int constant) {
@@ -4690,7 +4701,7 @@ static uint64_t c_alloc(double size, double align, int constant) {
     if (c_nregions > 0) memcpy(grown, c_regions, (size_t)c_nregions * sizeof(c_region));
     c_regions = grown;
   }
-  uint8_t *bytes = c_bytes(len);
+  uint8_t *bytes = c_bytes(len, base);
   c_regions[c_nregions++] = (c_region){base, len, constant, 1, bytes};
   c_next = base + len + 16;
   /* A new region is the one its first accesses are to. */

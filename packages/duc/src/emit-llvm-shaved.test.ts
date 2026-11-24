@@ -351,6 +351,13 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
         "tQsort",
         "export function f(xs: number[]): unknown { const a = __ykAlloc(xs.length * 4, 16); for (let i = 0; i < xs.length; i++) __ykStore32(a + 4 * i, xs[i] as number); qsort(a, BigInt(xs.length), 4n, cmpInt); const out: number[] = []; for (let i = 0; i < xs.length; i++) out.push(__ykLoad32(a + 4 * i) | 0); return out; }",
       ],
+      ["readAt", "export function f(p: number): number { return __ykLoad32(p); }"],
+      [
+        // One access site, its cache holding a region that is freed and whose bytes are reused:
+        // the stale address still traps (#1369).
+        "tStale",
+        "export function f(n: number): unknown { const a = __ykAlloc(16, 8); __ykStore32(a, n); const d = __ykAlloc(16, 8); __ykStore32(d, n + 1); const x = readAt(a); const e = __ykAlloc(16, 8); const y = readAt(d) + readAt(a); __ykFree(a); const c = __ykAlloc(16, 8); __ykStore32(c, 7); try { return [x, y, e - d, readAt(a)]; } catch (err) { return [x, y, readAt(c), (err as Error).message]; } }",
+      ],
       [
         "tTrap",
         "export function f(n: number): unknown { const a = __ykAlloc(8, 8); __ykFree(a); try { return __ykLoad8(a + n); } catch (e) { return [(e as Error).name, (e as Error).message]; } }",
@@ -402,7 +409,7 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
         ],
       ]);
     }
-    calls.push(["tTrap", [0]], ["tTrap", [99]]);
+    calls.push(["tTrap", [0]], ["tTrap", [99]], ["tStale", [5]], ["tStale", [-3]]);
     const got = run(calls);
     const bad: string[] = [];
     calls.forEach(([fn, args], i) => {
