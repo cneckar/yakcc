@@ -23,7 +23,7 @@ import { liftAtom } from "./lift.js";
 import { bodyPathOf, joinOwners, sidePath } from "./line-form.js";
 import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
-import { paramIndex } from "./params.js";
+import { isRestParam, paramIndex } from "./params.js";
 import { type ScopeItem, scopePlanner } from "./scopes.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
 import {
@@ -120,6 +120,16 @@ export interface FnArg {
 /** A parameter's value types, as the function takes them: a function's are its captures'. */
 export const flatPT = (t: PT): WT[] => (typeof t === "string" ? [t] : t.caps.flatMap(flatPT));
 const paramCount = (g: DucGraph): number => g.nodes.filter((n) => n.kind === "param-source").length;
+/** Whether a function's last parameter is a rest parameter (`...xs`): an array of the rest. */
+const hasRest = (g: DucGraph): boolean =>
+  g.nodes.some((n) => n.kind === "param-source" && isRestParam(n.label));
+/** A function's parameter types as a value: its captures', then any (a rest parameter an array). */
+const valueSig = (g: DucGraph, capTypes: readonly WT[]): WT[] => {
+  const nargs = paramCount(g) - capTypes.length;
+  const sig: WT[] = [...capTypes, ...Array.from({ length: nargs }, () => "any" as const)];
+  if (hasRest(g)) sig[sig.length - 1] = "arr";
+  return sig;
+};
 
 /** The f64 operations: arithmetic, Math's native functions, and comparisons (to an i32). */
 export type F64Op =
@@ -214,6 +224,7 @@ const ARRAY_FN_METHODS: ReadonlySet<string> = new Set([
   "find",
   "findIndex",
   "reduce",
+  "sort",
 ]);
 /** The atom of an array method that takes a function, for the array's kind and arguments. */
 const arrayFnAtom = (kind: "nums" | "arr", method: string, nargs: number): string => {
@@ -547,15 +558,20 @@ export class StackProgram {
     this.trampolineIds.set(key, id);
     const at = this.primitive("arrAt").fn;
     const nargs = paramCount(graph) - capTypes.length;
-    const sig: WT[] = [...capTypes, ...Array.from({ length: nargs }, () => "any" as const)];
+    const sig = valueSig(graph, capTypes);
     const { fn, result } = this.closure(graph, sig, trusted, capTypes.length);
     const code: Ins[] = [];
     capTypes.forEach((t, i) => {
       code.push({ op: "get", i: 0 }, { op: "const.f64", x: i }, { op: "call", fn: at });
       if (t !== "any") code.push({ op: "from.any", to: t });
     });
-    for (let j = 0; j < nargs; j++)
-      code.push({ op: "get", i: 1 }, { op: "const.f64", x: j }, { op: "call", fn: at });
+    for (let j = 0; j < nargs; j++) {
+      code.push({ op: "get", i: 1 }, { op: "const.f64", x: j });
+      // A rest parameter: the arguments from there on.
+      if (j === nargs - 1 && hasRest(graph))
+        code.push({ op: "call", fn: this.atom("__ykRestFrom").fn });
+      else code.push({ op: "call", fn: at });
+    }
     code.push({ op: "call", fn });
     if (result !== "any") code.push({ op: "to.any", from: result });
     this.funcs.set(fkey, {
@@ -963,11 +979,32 @@ function lowerFunction(
     if (typeof pt === "string") push(v, pt);
     else (known(v) as Known).pushCaps();
   };
+  /**
+   * Whether a call of a known function has a spread argument before its rest parameter (or with
+   * none): how many arguments it gives is known only as it runs, so the call is the function
+   * value's, with its arguments as an array.
+   */
+  const spreadsBeforeRest = (k: Known, args: readonly ValueId[]): boolean => {
+    const count = paramCount(k.fn);
+    const rest = hasRest(k.fn) ? count - 1 : count;
+    return args.some((a, i) => spreadOf(a) !== undefined && i + k.caps.length < rest);
+  };
   /** A known function's signature for a call: its captures, then the arguments (missing: any). */
   const callSig = (k: Known, args: readonly ValueId[]): PT[] | "?" => {
     const count = paramCount(k.fn);
     const sig: PT[] = [...k.caps];
+    const rest = hasRest(k.fn) ? count - 1 : count;
+    // A spread argument: only into the rest parameter (where the count of arguments it gives
+    // does not matter).
+    args.forEach((a, i) => {
+      if (spreadOf(a) !== undefined && i + k.caps.length < rest)
+        throw new LoweringError("a spread argument to a known function is not in the subset yet");
+    });
     for (let i = k.caps.length; i < count; i++) {
+      if (i === rest) {
+        sig.push("arr");
+        break;
+      }
       const v = args[i - k.caps.length];
       if (v === undefined) {
         sig.push("any");
@@ -1040,14 +1077,29 @@ function lowerFunction(
     ) as PT[];
     const { fn, result } = mod.closure(k.fn, sig, trusted, k.caps.length);
     k.pushCaps();
+    const rest = hasRest(k.fn) ? sig.length - 1 : sig.length;
     for (let i = k.caps.length; i < sig.length; i++) {
       const a = args[i - k.caps.length];
+      if (i === rest) {
+        const more = args.slice(i - k.caps.length);
+        if (more.some((x) => typeof x === "number"))
+          throw new LoweringError(
+            "a rest parameter of a builtin's callback is not in the subset yet",
+          );
+        pushArgsArray(more as ValueId[]);
+        continue;
+      }
       if (a === undefined) emit({ op: "const.undef" });
       else if (typeof a === "number") emit({ op: "get", i: a });
       else pushArg(a, sig[i] as PT);
     }
     emit({ op: "call", fn });
     return result;
+  };
+  /** Whether a value is a spread element (`...x`): the `...` marker over x. */
+  const spreadOf = (v: ValueId): ValueId | undefined => {
+    const p = producer.get(resolve(v));
+    return p?.kind === "op" && p.label === "..." ? (p.inputs[0] as ValueId) : undefined;
   };
   /** The class an instanceof names: an error class, Object, Array or Function. */
   const instanceClass = (v: ValueId): string => {
@@ -1079,8 +1131,7 @@ function lowerFunction(
     const key = `${v}:${capTypes.join(",")}`;
     if (typedAsValue.has(key)) return;
     typedAsValue.add(key);
-    const nargs = paramCount(inner) - caps.length;
-    const sig: WT[] = [...capTypes, ...Array.from({ length: nargs }, () => "any" as const)];
+    const sig = valueSig(inner, capTypes);
     try {
       mod.closure(inner, sig, trusted, caps.length);
     } catch (e) {
@@ -1189,9 +1240,9 @@ function lowerFunction(
       if (typeof t0 === "object" && t0.call.k === "math")
         return MATH_CONSTANTS[member] !== undefined ? "f64" : { call: { k: "math", name: member } };
       if (typeof t0 === "object" && t0.call.k === "class-ref") {
-        if (t0.call.name !== "Array" || member !== "isArray")
+        if (t0.call.name !== "Array" || (member !== "isArray" && member !== "from"))
           throw new LoweringError(`${t0.call.name}.${member} is not in the subset yet`);
-        return { call: { k: "class-ref", name: "isArray" } };
+        return { call: { k: "class-ref", name: member } };
       }
       if (typeof t0 === "object" && t0.call.k === "json-ns") {
         if (member !== "stringify" && member !== "parse")
@@ -1228,6 +1279,17 @@ function lowerFunction(
       if (t0 === "?") return "?";
       // A call of a value of any kind: a function value's, else a TypeError.
       if (t0 === "any") return "any";
+      // A spread argument: to a call of a value of any kind (its arguments an array), to a method
+      // __ykInvoke calls, or to Math.max and Math.min; not yet to other known functions.
+      if (ins.slice(1).some((x) => spreadOf(x) !== undefined) && typeof t0 === "object") {
+        const c = t0.call;
+        const ok =
+          (c.k === "math" && (c.name === "max" || c.name === "min")) ||
+          c.k === "closure" ||
+          c.k === "fnparam";
+        if (!ok)
+          throw new LoweringError("a spread argument to a known function is not in the subset yet");
+      }
       if (typeof t0 !== "object")
         throw new LoweringError("a call of a value that is not a known function");
       const callee = t0.call;
@@ -1237,7 +1299,11 @@ function lowerFunction(
       if (callee.k === "number-of") return "f64";
       if (callee.k === "error-class") return "obj";
       if (callee.k === "object-ns") return "arr";
-      if (callee.k === "class-ref") return "i32";
+      if (callee.k === "class-ref") {
+        if (callee.name === "from" && ins.length > 2)
+          throw new LoweringError("Array.from with a function is not in the subset yet");
+        return callee.name === "from" ? "arr" : "i32";
+      }
       if (callee.k === "callwith") return "any";
       if (callee.k === "json-ns") {
         // A replacer or a reviver: not yet.
@@ -1278,6 +1344,7 @@ function lowerFunction(
       if (callee.k === "method" && callee.name === "arr.push") return "f64";
       if (callee.k === "method" && callee.name === "arr.pop") return "any";
       if (callee.k === "method" && callee.name === "toString") return "str";
+      if (callee.k === "method" && callee.name.endsWith(".sort") && ins.length === 1) return "any";
       if (callee.k === "method" && ARRAY_FN_METHODS.has(callee.name.split(".")[1] ?? "")) {
         const sig = arrayFnSig(callee, ins.slice(1));
         if (sig === "?") return "?";
@@ -1303,6 +1370,7 @@ function lowerFunction(
       if (callee.k === "closure" || callee.k === "fnparam") {
         const k = known(ins[0] as ValueId);
         if (k === "?" || k === undefined) return "?";
+        if (spreadsBeforeRest(k, ins.slice(1))) return "any";
         const sig = callSig(k, ins.slice(1));
         return sig === "?" ? "?" : knownResult(k, sig, ins.slice(1));
       }
@@ -1347,6 +1415,11 @@ function lowerFunction(
       throw new LoweringError(
         "new of other than an error class, Map or Set is not in the subset yet",
       );
+    }
+    if (label === "..." && ins.length === 1) return get(ins[0] as ValueId);
+    if (label === "ArrayLiteral" && ins.some((x) => spreadOf(x) !== undefined)) {
+      for (let i = 0; i < ins.length; i++) operand(i);
+      return "arr";
     }
     if (label === "ArrayLiteral") {
       // As TypeScript types it: numbers make an array of numbers; anything else, or nothing in a
@@ -1499,6 +1572,31 @@ function lowerFunction(
     else if (t === "obj") {
       emit({ op: "const.undef" }, { op: "call", fn: mod.primitive("__ykObjNew").fn });
     } else emit({ op: "const.str", s: "" });
+  };
+  /**
+   * Push arguments as an array of any values: each as it is, or, for a spread, each element its
+   * iterable gives.
+   */
+  const pushArgsArray = (args: readonly ValueId[]): void => {
+    if (!args.some((x) => spreadOf(x) !== undefined)) {
+      for (const x of args) push(x, "any");
+      emit({ op: "arr.of", n: args.length });
+      return;
+    }
+    const acc = temp("arr");
+    emit({ op: "arr.of", n: 0 }, { op: "set", i: acc });
+    for (const x of args) {
+      const src = spreadOf(x);
+      emit({ op: "get", i: acc });
+      if (src !== undefined) {
+        push(src, "any");
+        emit({ op: "call", fn: mod.atom("__ykAppendAll").fn }, { op: "drop", t: "any" });
+      } else {
+        push(x, "any");
+        emit({ op: "call", fn: mod.primitive("arrPush").fn }, { op: "drop", t: "f64" });
+      }
+    }
+    emit({ op: "get", i: acc });
   };
   /** An error of a class (new Error(m), or Error(m)): the runtime atom. */
   const makeError = (cls: string, message: ValueId | undefined): void => {
@@ -1834,11 +1932,17 @@ function lowerFunction(
     }
     if (label.startsWith("object:")) {
       // An empty object, then each property put in order (a later one replaces an earlier one).
-      const keys = JSON.parse(label.slice("object:".length)) as string[];
+      const keys = JSON.parse(label.slice("object:".length)) as (string | null)[];
       emit({ op: "const.undef" }, { op: "call", fn: mod.primitive("__ykObjNew").fn });
       set(out);
       keys.forEach((k, i) => {
         push(out);
+        // A spread (a null key): Object.assign's copy of the source's own enumerable keys.
+        if (k === null) {
+          push(ins[i] as ValueId, "any");
+          emit({ op: "call", fn: mod.atom("__ykAssign").fn }, { op: "drop", t: "any" });
+          return;
+        }
         emit({ op: "const.str", s: k });
         push(ins[i] as ValueId, "any");
         emit({ op: "call", fn: mod.atom("__ykPut").fn }, { op: "drop", t: "obj" });
@@ -1889,22 +1993,26 @@ function lowerFunction(
       ) {
         push(member.inputs[0] as ValueId, "any");
         emit({ op: "const.str", s: (member.label ?? "").slice(1) });
-        for (const x of ins.slice(1)) push(x, "any");
-        emit({ op: "arr.of", n: ins.length - 1 }, { op: "call", fn: mod.atom("__ykInvoke").fn });
+        pushArgsArray(ins.slice(1));
+        emit({ op: "call", fn: mod.atom("__ykInvoke").fn });
         set(out);
         return;
       }
       // A call of a value of any kind: its arguments as an array of any values, then __ykCall.
       push(ins[0] as ValueId, "any");
-      for (const x of ins.slice(1)) push(x, "any");
-      emit({ op: "arr.of", n: ins.length - 1 }, { op: "call", fn: mod.dynCall() });
+      pushArgsArray(ins.slice(1));
+      emit({ op: "call", fn: mod.dynCall() });
       set(out);
       return;
     }
     if (label === "CallExpression") {
       const callee = (ty(ins[0] as ValueId) as { call: Callee }).call;
       const args = ins.slice(1);
-      if (callee.k === "math") {
+      if (callee.k === "math" && args.some((x) => spreadOf(x) !== undefined)) {
+        pushArgsArray(args);
+        emit({ op: "const.i32", x: callee.name === "max" ? 1 : 0 });
+        emit({ op: "call", fn: mod.atom("__ykMaxMinOf").fn });
+      } else if (callee.k === "math") {
         const m = callee.name;
         if (NATIVE_MATH.has(m) && args.length === 1) {
           pushNumber(args[0] as ValueId);
@@ -1926,6 +2034,10 @@ function lowerFunction(
         push(args[0] as ValueId, "any");
         push(args[1] as ValueId, "arr");
         emit({ op: "call", fn: mod.dynCall() });
+      } else if (callee.k === "class-ref" && callee.name === "from") {
+        if (args[0] === undefined) emit({ op: "const.undef" });
+        else push(args[0], "any");
+        emit({ op: "call", fn: mod.atom("__ykArrayFrom").fn });
       } else if (callee.k === "class-ref") {
         // Array.isArray(x): x instanceof Array.
         if (args[0] === undefined) emit({ op: "const.undef" });
@@ -1973,6 +2085,10 @@ function lowerFunction(
         call(mod.primitive("arrPush"), [callee.recv, args[0] as ValueId], "push");
       } else if (callee.k === "method" && callee.name === "arr.pop") {
         call(mod.primitive("arrPop"), [callee.recv], "pop");
+      } else if (callee.k === "method" && callee.name.endsWith(".sort") && args.length === 0) {
+        push(callee.recv, "any");
+        emit({ op: "const.str", s: "sort" }, { op: "arr.of", n: 0 });
+        emit({ op: "call", fn: mod.atom("__ykInvoke").fn });
       } else if (callee.k === "method" && ARRAY_FN_METHODS.has(callee.name.split(".")[1] ?? "")) {
         const sig = arrayFnSig(callee, args) as Exclude<ReturnType<typeof arrayFnSig>, "?">;
         const { fn } = mod.atomWith(arrayFnAtom(sig.kind, sig.method, sig.args.length), sig.sig);
@@ -1981,7 +2097,14 @@ function lowerFunction(
         emit({ op: "call", fn });
       } else if (callee.k === "prim") call(mod.primitive(callee.name), args, callee.name);
       else if (callee.k === "atom") call(mod.atom(callee.name), args, callee.name);
-      else if (callee.k === "closure" || callee.k === "fnparam") {
+      else if (
+        (callee.k === "closure" || callee.k === "fnparam") &&
+        spreadsBeforeRest(known(ins[0] as ValueId) as Known, args)
+      ) {
+        materialize(ins[0] as ValueId);
+        pushArgsArray(args);
+        emit({ op: "call", fn: mod.dynCall() });
+      } else if (callee.k === "closure" || callee.k === "fnparam") {
         callKnown(ins[0] as ValueId, args);
       } else if (callee.k === "try") {
         emitTry(args);
@@ -2027,6 +2150,19 @@ function lowerFunction(
       pushString(ins[1] as ValueId);
       emit({ op: "call", fn: mod.primitive("__ykJoin").fn });
       set(out);
+      return;
+    }
+    if (label === "ArrayLiteral" && ins.some((x) => spreadOf(x) !== undefined)) {
+      pushArgsArray(ins);
+      set(out);
+      return;
+    }
+    if (label === "...") {
+      // A spread's marker: its value is the spread source's (the literal or call reads that).
+      if (typeof t === "string") {
+        push(ins[0] as ValueId, t);
+        set(out);
+      }
       return;
     }
     if (label === "ArrayLiteral") {

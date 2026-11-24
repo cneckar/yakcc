@@ -62,6 +62,7 @@ the format lacks, classified (a), (b) or (c) as in #1299, before the lock.
   - bitwise operators (ToInt32 by exact double arithmetic, then 32-bit integer operations);
   - `Map` and `Set` (SameValueZero, insertion order; `keys`/`values`/`entries` as snapshot arrays), and method calls of receivers of any kind through one dispatch atom (`__ykInvoke`);
   - string methods `split`, `repeat`, `padStart`/`padEnd`, `lastIndexOf`, `trimStart`/`trimEnd`, `at`, and `replace`/`replaceAll` with a string pattern (GetSubstitution's `$$`, `$&`, `` $` ``, `$'`, or a callback); array methods `slice`, `at`, `lastIndexOf`, `concat` and `reverse`;
+  - `sort`, by default (undefined last, the rest as strings) and with a comparator, stable; spread (`...`) in array literals, in calls of values of any kind and of methods, in `Math.max`/`Math.min`, and in object literals (`Object.assign`'s copy); `Array.from` of an iterable or an array-like; rest parameters (a call that spreads before one, or into a function with none, is the function value's call, its arguments an array). A comparator that is not consistent (one returning NaN) leaves the order to the implementation, as ECMA-262 does, so the tests do not compare it;
   - iteration: `for...in` (keys in ECMAScript's order: array indices ascending, then the others as made), `for...of` over arrays (read at each step, as the iterator does), strings (by code point) and values of any kind, and `Object.keys`, `values` and `entries`;
   - arrays of any values;
   - objects and errors;
