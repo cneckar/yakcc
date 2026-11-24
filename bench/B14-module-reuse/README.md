@@ -103,6 +103,65 @@ module, x = another module, - = none):
   the UUID layout (version and variant bits, formatting) itself. The library offers more
   than one valid level of reuse.
 
+## Routed arm: write small tasks at once, search for the rest
+
+The first run put break-even near 2,000 output tokens of from-scratch code. The `routed` arm
+acts on that in its first call. The prompt says: if you can write this correctly in about 60
+lines or fewer, write it now; otherwise, name the module to search for. A reply with code is
+the solution (one call, no search). A reply without code is the need, and the reuse path
+continues from it.
+
+### Results: three arms on Haiku 5.5 (3 seeds, `results/live-routed-claude-haiku-5-5.json`)
+
+199 calls, about $0.14 (102k input and 251k output tokens). All three arms passed every test
+in every seed.
+
+| | Scratch | Reuse | Routed |
+|---|---|---|---|
+| **All 13 tasks, dollars per passing task** | $0.00145 | $0.00105 (−28%) | **$0.00097 (−33%)** |
+| Large (8) | $0.00215 | $0.00129 | $0.00129 |
+| Medium (2) | $0.00022 | $0.00061 | $0.00042 |
+| Small (3) | $0.00041 | $0.00070 | $0.00050 |
+| Mean input tokens | 165 | 1,953 | 501 |
+| Mean output tokens | 2,875 | 1,707 | 1,842 |
+| Wrote at once (no search) | | | 87% |
+
+Mean output tokens per task (scratch → reuse → routed) and the routed arm's route (W = wrote
+at once, T = searched and reused the target):
+
+| Task | Scratch | Reuse | Routed | Route |
+|---|---|---|---|---|
+| best-compatible-version | 8,387 | 1,686 | 3,247 | WTT |
+| range-within-range | 11,298 | 972 | 1,064 | TTT |
+| sort-iso-timestamps | 3,733 | 3,495 | 4,078 | WWW |
+| deep-copy | 1,795 | 819 | 2,244 | WWW |
+| apply-path-updates | 1,395 | 1,082 | 1,363 | WWW |
+| keep-valid-urls | 789 | 2,422 | 803 | WWW |
+| name-based-uuid | 3,322 | 2,783 | 3,376 | WWW |
+| md5-hex | 3,481 | 3,571 | 3,325 | WWW |
+| canonical-emails | 427 | 1,208 | 947 | WWW |
+| spell-suggest | 392 | 810 | 622 | WWW |
+| build-order | 1,031 | 1,345 | 1,196 | WWW |
+| base64-decode | 732 | 981 | 1,223 | WWW |
+| iso-utc-string | 593 | 1,019 | 462 | WWW |
+
+### What it shows
+
+- **The router is the cheapest arm overall:** 33% cheaper than scratch and 8% cheaper than
+  always searching, at equal correctness. It searched only where the saving was largest:
+  the two semver range tasks, where scratch costs 8,000–11,000 output tokens. Everywhere
+  else it wrote at once, and the search turns cost nothing.
+- **On large tasks it ties always-search.** It loses the smaller savings it did not route
+  (deep-copy: 819 tokens with reuse against 2,244 written). It also avoids the cases where
+  reuse cost more (keep-valid-urls: 2,422 against 803).
+- **On small and medium tasks it beats always-search but not scratch.** Writing under the
+  routing prompt produced more output than the plain scratch prompt (the decision itself
+  costs some thinking). A caller that already knows a task is small should skip the router.
+- **The model routes conservatively.** It searched for the two tasks it judged too large to
+  write in 60 lines. A lower line threshold would route more of the large tasks to search,
+  with the risk of searching for things it could write. The threshold is a knob to tune,
+  not a constant.
+
 ## Running
 
 ```sh
@@ -113,6 +172,7 @@ node --test harness/b14.test.mjs
 node harness/run.mjs --dry-run --seeds 3
 node harness/run.mjs --client offline
 CLAUDE_API_KEY=... node harness/run.mjs --client anthropic --seeds 3   # after the go-ahead
+#   --arms scratch,reuse,routed (default all three)
 ```
 
 ## Limitations
