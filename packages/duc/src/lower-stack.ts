@@ -235,13 +235,18 @@ const arrayFnAtom = (kind: "nums" | "arr", method: string, nargs: number): strin
 
 /**
  * A builtin used as a function value, as the closure of the call it means: the source of that
- * closure, or undefined when the builtin is not one of these (a variadic Math function's meaning
- * depends on how many arguments it is given, so it is not).
+ * closure, or undefined when the builtin is not one of these.
  */
 function builtinSource(c: Callee): string | undefined {
   const one = (call: string): string => `export function f(x: unknown) { return ${call}; }`;
-  if (c.k === "string-of") return one("String(x)");
-  if (c.k === "number-of") return one("Number(x)");
+  // String() and Number() with no argument are "" and 0, not String(undefined) and NaN.
+  const noneOrOne = (none: string, call: string): string =>
+    `export function f(...a: unknown[]) { return a.length === 0 ? ${none} : ${call}; }`;
+  if (c.k === "string-of") return noneOrOne('""', "String(a[0])");
+  if (c.k === "number-of") return noneOrOne("0", "Number(a[0])");
+  // Math.max and Math.min of however many arguments they are given.
+  if (c.k === "math" && (c.name === "max" || c.name === "min"))
+    return `export function f(...a: unknown[]) { return Math.${c.name}(...(a as number[])); }`;
   if (c.k === "boolean-of") return one("Boolean(x)");
   if (c.k === "math" && (NATIVE_MATH.has(c.name) || UNARY_HOST_MATH.has(c.name)))
     return one(`Math.${c.name}(x as number)`);
@@ -2008,6 +2013,11 @@ function lowerFunction(
         if (NATIVE_MATH.has(m) && args.length === 1) {
           pushNumber(args[0] as ValueId);
           emit({ op: "f64", name: m as F64Op });
+        } else if ((m === "min" || m === "max") && args.length === 0) {
+          emit({
+            op: "const.f64",
+            x: m === "max" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
+          });
         } else if ((m === "min" || m === "max") && args.length >= 1) {
           pushNumber(args[0] as ValueId);
           for (const a of args.slice(1)) {

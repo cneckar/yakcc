@@ -333,6 +333,22 @@ export const numericText = fc.oneof(
 
 export const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
   [
+    "variadic builtins as function values (Math.max and Math.min with every argument they are given), and String and Number called with none",
+    "export function f(xs: unknown[], n: number): unknown { const mx: any = Math.max; const mn = Math.min; const s: any = String; const num: any = Number; const fs: unknown[] = [String, Number, Math.max, Math.min]; return [xs.map(Math.max), xs.map(mn), xs.reduce(Math.max, -Infinity), mx(), mx(...xs), mn(n, ...xs), s(), s(n), num(), num(xs[0]), xs.map(String), xs.map(Number), fs.map((g: any) => [g(), g(n)])]; }",
+    ["unknown[]", "number"],
+    "unknown",
+    fc.tuple(
+      fc.array(
+        fc.oneof(
+          fc.integer({ min: -9, max: 9 }),
+          fc.constantFrom(-0, Number.NaN, "3", "", null, "x"),
+        ),
+        { maxLength: 4 },
+      ),
+      fc.oneof(fc.integer({ min: -3, max: 3 }), fc.constantFrom(-0, Number.NaN)),
+    ),
+  ],
+  [
     "JSON.stringify with a replacer function or a property list, and JSON.parse with a reviver (a property revived to undefined deleted)",
     "export function f(x: unknown, names: unknown[], k: string, text: string): unknown { const r1 = JSON.stringify(x, (key: string, v: unknown) => (key === k ? undefined : typeof v === 'number' ? v * 2 : v)); const r2 = [JSON.stringify(x, names, 1), JSON.stringify({ y: x, z: [1, { w: k, y: 2 }], 1: k }, names)]; const seen: unknown[] = []; let p: unknown = 'bad'; try { p = JSON.parse(text, (key: string, v: unknown) => { seen.push(key); return key === k ? undefined : Array.isArray(v) ? v.length : v; }); } catch (e) { p = (e as Error).name; } return [r1, r2, p, seen]; }",
     ["unknown", "unknown[]", "string", "string"],
