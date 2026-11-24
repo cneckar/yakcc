@@ -14,7 +14,7 @@
 // lands in shave; then this builder should read shave's stored names instead.
 //
 //   node scripts/build-module-index.mjs --out <index.json>
-//     [--descriptions bench/B12-need-to-code/results/descriptions.json] [--min-nodes 400]
+//     [--descriptions bench/B12-need-to-code/results/descriptions.json] [--min-nodes 400] [--all-builds]
 // Needs packages/contracts built and the embedding model (downloaded once, then cached).
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -27,7 +27,14 @@ const imp = (p) => import(pathToFileURL(join(repo, p)).href);
 export const INDEX_VERSION = 1;
 
 /** Build the index data (vectors as arrays) from name records and an embedder. */
-export async function buildModuleIndex({ records, defsByKey, embed, model, descriptions = {}, minNodes = 400 }) {
+export async function buildModuleIndex({
+  records,
+  defsByKey,
+  embed,
+  model,
+  descriptions = {},
+  minNodes = 400,
+}) {
   const roots = records.filter((r) => (r.exported || r.fanIn >= 2) && r.closureNodes >= minNodes);
   const { renderName } = await imp("bench/B12-need-to-code/harness/names.mjs");
   const sources = {};
@@ -43,7 +50,10 @@ export async function buildModuleIndex({ records, defsByKey, embed, model, descr
       const d = defsByKey.get(id) ?? defsByKey.get(`id:${id}`);
       if (d) sources[id] = d.text;
     }
-    const text = [renderName(r), ...(descriptions[r.id] && !r.doc ? [descriptions[r.id]] : [])].join("\n");
+    const text = [
+      renderName(r),
+      ...(descriptions[r.id] && !r.doc ? [descriptions[r.id]] : []),
+    ].join("\n");
     entries.push({
       id: r.id,
       pkg: r.pkg,
@@ -64,20 +74,27 @@ async function main() {
     const i = argv.indexOf(`--${k}`);
     return i >= 0 ? argv[i + 1] : d;
   };
-  const out = resolve(arg("out", join(repo, "bench", "B13-module-discovery", ".cache", "module-index.json")));
+  const out = resolve(
+    arg("out", join(repo, "bench", "B13-module-discovery", ".cache", "module-index.json")),
+  );
   const descFile = arg("descriptions", null);
-  const descriptions = descFile ? JSON.parse(readFileSync(resolve(descFile), "utf8")).descriptions : {};
+  const descriptions = descFile
+    ? JSON.parse(readFileSync(resolve(descFile), "utf8")).descriptions
+    : {};
   const { corpusDefinitions } = await imp("bench/B11-reuse-economics/harness/retrieve.mjs");
   const { buildNames } = await imp("bench/B12-need-to-code/harness/names.mjs");
   const { createLocalEmbeddingProvider } = await imp("packages/contracts/dist/index.js");
-  const defs = corpusDefinitions();
+  // --all-builds keeps every copy of a definition that ships in several builds, so a consumer can
+  // pick the copy that runs in its runtime (bench/B14 filters to modules that load in its sandbox).
+  const defs = corpusDefinitions({ dedupe: !argv.includes("--all-builds") });
   const defsByKey = new Map();
   for (const d of defs) {
     const id = `${d.sourceFile}#${d.name}@${d.lineStart}`;
     const def = { ...d, id };
     defsByKey.set(`id:${id}`, def);
     // First definition wins for a "file#name" key (the top-level one comes first in source order).
-    if (!defsByKey.has(`${d.sourceFile}#${d.name}`)) defsByKey.set(`${d.sourceFile}#${d.name}`, def);
+    if (!defsByKey.has(`${d.sourceFile}#${d.name}`))
+      defsByKey.set(`${d.sourceFile}#${d.name}`, def);
   }
   const provider = createLocalEmbeddingProvider();
   const index = await buildModuleIndex({

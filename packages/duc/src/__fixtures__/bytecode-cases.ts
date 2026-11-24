@@ -231,6 +231,15 @@ export const anyValue = fc.oneof(
   fc.boolean(),
   fc.constantFrom(null, undefined),
   fc.array(fc.oneof(fc.integer({ min: -5, max: 5 }), fc.double()), { maxLength: 3 }),
+  // Arrays of any values: mixed, nested, holding undefined and null (which join as empty).
+  fc.array(
+    fc.oneof(
+      fc.integer({ min: -3, max: 3 }),
+      fc.constantFrom("", "a", "1", null, undefined, true),
+      fc.array(fc.constantFrom(1, "b", null), { maxLength: 2 }),
+    ),
+    { minLength: 1, maxLength: 3 },
+  ),
 );
 
 // biome-ignore lint/suspicious/noExplicitAny: the operators are ECMAScript's, over any values.
@@ -248,10 +257,10 @@ export const DYNAMIC_OPS: [string, string, (r: unknown) => unknown, Op][] = [
   ["String", "__ykToString", (r) => r, (a) => String(a)],
   ["Number", "__ykToNumber", (r) => r, (a) => Number(a)],
 ];
-/** The same value: by Object.is, an array element by element. */
+/** The same value: by Object.is, an array element by element (nested arrays too). */
 export const same = (a: unknown, b: unknown): boolean =>
   Array.isArray(a) && Array.isArray(b)
-    ? a.length === b.length && a.every((x, i) => Object.is(x, b[i]))
+    ? a.length === b.length && a.every((x, i) => same(x, b[i]))
     : Object.is(a, b);
 
 export const numericText = fc.oneof(
@@ -262,6 +271,27 @@ export const numericText = fc.oneof(
 );
 
 export const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
+  [
+    "arrays of any values: mixed literals, push and pop, reads in and out of range, join, ==, +, typeof",
+    "export function f(x: unknown, n: number, s: string): unknown { const a = [x, n, s]; const b = []; b.push(s); b.push(n); b.push(x); const p = b.pop(); const e = []; return [a.length, a[1], a[5], a[-0], a[1.5], b.length, p, e.pop(), String(a), a + '|' + b, a == s, a[0] === x, typeof a, b, [a, [n]], e]; }",
+    ["unknown", "number", "string"],
+    "unknown",
+    fc.tuple(anyValue, fc.oneof(fc.integer({ min: -3, max: 3 }), fc.double()), text),
+  ],
+  [
+    "a completion record, as a try lifts to: a choice of two arrays, read by element",
+    "export function f(n: number, s: string): unknown { const r = n > 0 ? [1, s] : [0, n]; return r[0] === 1 ? r[1] : r; }",
+    ["number", "string"],
+    "unknown",
+    fc.tuple(fc.oneof(fc.integer({ min: -2, max: 2 }), fc.double()), text),
+  ],
+  [
+    "a string's units by index, in and out of range",
+    "export function f(s: string, i: number): unknown { return [s[i], s[0], s[s.length], s[i + 0.5]]; }",
+    ["string", "number"],
+    "unknown",
+    fc.tuple(text, fc.oneof(fc.integer({ min: -2, max: 9 }), fc.constantFrom(Number.NaN, -0))),
+  ],
   [
     "closures called where they are made: captures, one closure at several argument types, a missing argument",
     "export function f(k: number, s: string, b: boolean): string { const add = (v: number) => v + k; const tag = (x: unknown) => s + ':' + x; let acc = 0; let i = 0; while (i < 3) { acc = add(acc) * 2; i = i + 1; } return tag(acc) + tag(add(0.5)) + tag(undefined) + tag(b) + tag(s) + tag(); }",

@@ -116,6 +116,44 @@ search for needs it expects to be small.
 
 **Spend:** about $0.07 on Haiku 5.5 for the README queries and all four confirm runs.
 
+### Balanced by package (`harness/balance.mjs`, no model calls)
+
+semver supplies 54 of the 78 needs, and it is the easy package: its target is in the top 5
+for 94% of them. The other three packages with no large-root targets score zero, because
+their targets are small or are methods and so are not in the pool by design:
+- jsonwebtoken's error classes are 29–52 AST nodes;
+- nanoid's `nanoid` is about 100;
+- for zod's `parse` and `refine`, the search returns the owning class or `custom`.
+
+Restricted to the 68 needs whose target is a large root (`--in-pool`), across four
+packages:
+
+| | All needs | Macro (each package equal) | Capped at 8 per package, macro |
+|---|---|---|---|
+| Search: target in top 5 | 0.94 | 0.94 | 0.89 |
+| Confirm: picked the target | 0.90 | 0.89 | 0.89 |
+| Confirm: reused something wrong | 0.07 | 0.06 | 0.03 |
+
+Over all 78 needs, the package-balanced top-5 is 0.49. The gap is exactly the needs for
+small or method targets.
+
+### APIs the names cannot resolve (`harness/api-resolution.mjs`, input for #1309)
+
+A second README run (`queries/readme-run2.json`, Haiku, about a cent) kept the needs whose
+documented API resolved to no named definition. There were 81:
+
+| Kind | Count | What would resolve it |
+|---|---|---|
+| Not an API: CLI flags, concept headings, options, types | 31 | nothing; README noise |
+| Anonymous default export of a same-named file (jsonwebtoken's `sign.js`, `verify.js`) | 21 | #1309: name a default export after its file |
+| Property-assigned function (bcryptjs's `bcrypt.genSaltSync = function …`) | 8 | #1309: name an assigned function after its property |
+| Member of an object a factory returns (`limit.activeCount`) | 7 | already covered by the factory's root |
+| Call signature in the API name (`pLimit(concurrency)`) | 6 | a parsing slip in the generator, now fixed |
+| Other (constants, the `^` operator, `simplifyRange`) | 8 | — |
+
+So 29 of the needs a README describes are blocked only by naming: anonymous default
+exports and property-assigned functions.
+
 ## Running
 
 ```sh
@@ -133,8 +171,8 @@ node harness/confirm-roots.mjs --dry-run --eval results/eval-seed-desc.json
 - **Leverage counts the whole closure as the cost of writing,** which assumes a writer
   would need all of it. A writer might need less, so leverage is an upper estimate on
   that side. The find side is measured.
-- **semver dominates the README set** (54 of 78 needs), and its many near-identical
-  comparison functions make top-1 hard.
+- **semver dominates the README set** (54 of 78 needs) and is the easy package. Use the
+  package-balanced numbers above.
 - **Names cannot see some definitions.** Anonymous default exports and functions inside
   IIFEs have no name to attach to: bcryptjs's `hash` and jsonwebtoken's `verify` are out
   of the pool for this reason, which is a gap for #1309.

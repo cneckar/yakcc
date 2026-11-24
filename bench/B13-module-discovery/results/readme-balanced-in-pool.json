@@ -1,0 +1,202 @@
+{
+  "cap": 8,
+  "inPoolOnly": true,
+  "targetsInPool": 68,
+  "packages": [
+    "jsonwebtoken-9.0.2",
+    "nanoid-3.3.12",
+    "p-limit-7.3.0",
+    "p-throttle-8.1.0",
+    "semver-7.8.0",
+    "uuid-11.1.1",
+    "zod-3.25.76"
+  ],
+  "all": {
+    "search top-1": {
+      "n": 68,
+      "overall": 0.5147058823529411,
+      "macro": 0.44722222222222224,
+      "perPackage": {
+        "p-limit-7.3.0": {
+          "n": 3,
+          "value": 0.6666666666666666
+        },
+        "p-throttle-8.1.0": {
+          "n": 5,
+          "value": 0.4
+        },
+        "semver-7.8.0": {
+          "n": 54,
+          "value": 0.5555555555555556
+        },
+        "uuid-11.1.1": {
+          "n": 6,
+          "value": 0.16666666666666666
+        }
+      }
+    },
+    "search top-5": {
+      "n": 68,
+      "overall": 0.9411764705882353,
+      "macro": 0.9361111111111111,
+      "perPackage": {
+        "p-limit-7.3.0": {
+          "n": 3,
+          "value": 1
+        },
+        "p-throttle-8.1.0": {
+          "n": 5,
+          "value": 0.8
+        },
+        "semver-7.8.0": {
+          "n": 54,
+          "value": 0.9444444444444444
+        },
+        "uuid-11.1.1": {
+          "n": 6,
+          "value": 1
+        }
+      }
+    },
+    "confirm picked the target": {
+      "n": 68,
+      "overall": 0.8970588235294118,
+      "macro": 0.8851851851851852,
+      "perPackage": {
+        "p-limit-7.3.0": {
+          "n": 3,
+          "value": 1
+        },
+        "p-throttle-8.1.0": {
+          "n": 5,
+          "value": 0.8
+        },
+        "semver-7.8.0": {
+          "n": 54,
+          "value": 0.9074074074074074
+        },
+        "uuid-11.1.1": {
+          "n": 6,
+          "value": 0.8333333333333334
+        }
+      }
+    },
+    "confirm reused something wrong": {
+      "n": 68,
+      "overall": 0.07352941176470588,
+      "macro": 0.06018518518518518,
+      "perPackage": {
+        "p-limit-7.3.0": {
+          "n": 3,
+          "value": 0
+        },
+        "p-throttle-8.1.0": {
+          "n": 5,
+          "value": 0
+        },
+        "semver-7.8.0": {
+          "n": 54,
+          "value": 0.07407407407407407
+        },
+        "uuid-11.1.1": {
+          "n": 6,
+          "value": 0.16666666666666666
+        }
+      }
+    }
+  },
+  "capped": {
+    "search top-1": {
+      "n": 21,
+      "overall": 0.38095238095238093,
+      "macro": 0.41041666666666665,
+      "perPackage": {
+        "p-limit-7.3.0": {
+          "n": 3,
+          "value": 0.6666666666666666
+        },
+        "p-throttle-8.1.0": {
+          "n": 5,
+          "value": 0.4
+        },
+        "semver-7.8.0": {
+          "n": 8,
+          "value": 0.375
+        },
+        "uuid-11.1.1": {
+          "n": 5,
+          "value": 0.2
+        }
+      }
+    },
+    "search top-5": {
+      "n": 21,
+      "overall": 0.8571428571428571,
+      "macro": 0.8875,
+      "perPackage": {
+        "p-limit-7.3.0": {
+          "n": 3,
+          "value": 1
+        },
+        "p-throttle-8.1.0": {
+          "n": 5,
+          "value": 0.8
+        },
+        "semver-7.8.0": {
+          "n": 8,
+          "value": 0.75
+        },
+        "uuid-11.1.1": {
+          "n": 5,
+          "value": 1
+        }
+      }
+    },
+    "confirm picked the target": {
+      "n": 21,
+      "overall": 0.8571428571428571,
+      "macro": 0.8875,
+      "perPackage": {
+        "p-limit-7.3.0": {
+          "n": 3,
+          "value": 1
+        },
+        "p-throttle-8.1.0": {
+          "n": 5,
+          "value": 0.8
+        },
+        "semver-7.8.0": {
+          "n": 8,
+          "value": 0.75
+        },
+        "uuid-11.1.1": {
+          "n": 5,
+          "value": 1
+        }
+      }
+    },
+    "confirm reused something wrong": {
+      "n": 21,
+      "overall": 0.047619047619047616,
+      "macro": 0.03125,
+      "perPackage": {
+        "p-limit-7.3.0": {
+          "n": 3,
+          "value": 0
+        },
+        "p-throttle-8.1.0": {
+          "n": 5,
+          "value": 0
+        },
+        "semver-7.8.0": {
+          "n": 8,
+          "value": 0.125
+        },
+        "uuid-11.1.1": {
+          "n": 5,
+          "value": 0
+        }
+      }
+    }
+  }
+}

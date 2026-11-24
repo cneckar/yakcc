@@ -1,0 +1,298 @@
+{
+  "cap": 8,
+  "inPoolOnly": false,
+  "targetsInPool": 68,
+  "packages": [
+    "jsonwebtoken-9.0.2",
+    "nanoid-3.3.12",
+    "p-limit-7.3.0",
+    "p-throttle-8.1.0",
+    "semver-7.8.0",
+    "uuid-11.1.1",
+    "zod-3.25.76"
+  ],
+  "all": {
+    "search top-1": {
+      "n": 78,
+      "overall": 0.44871794871794873,
+      "macro": 0.24761904761904763,
+      "perPackage": {
+        "jsonwebtoken-9.0.2": {
+          "n": 3,
+          "value": 0
+        },
+        "nanoid-3.3.12": {
+          "n": 1,
+          "value": 0
+        },
+        "p-limit-7.3.0": {
+          "n": 3,
+          "value": 0.6666666666666666
+        },
+        "p-throttle-8.1.0": {
+          "n": 5,
+          "value": 0.4
+        },
+        "semver-7.8.0": {
+          "n": 54,
+          "value": 0.5555555555555556
+        },
+        "uuid-11.1.1": {
+          "n": 9,
+          "value": 0.1111111111111111
+        },
+        "zod-3.25.76": {
+          "n": 3,
+          "value": 0
+        }
+      }
+    },
+    "search top-5": {
+      "n": 78,
+      "overall": 0.8205128205128205,
+      "macro": 0.4873015873015873,
+      "perPackage": {
+        "jsonwebtoken-9.0.2": {
+          "n": 3,
+          "value": 0
+        },
+        "nanoid-3.3.12": {
+          "n": 1,
+          "value": 0
+        },
+        "p-limit-7.3.0": {
+          "n": 3,
+          "value": 1
+        },
+        "p-throttle-8.1.0": {
+          "n": 5,
+          "value": 0.8
+        },
+        "semver-7.8.0": {
+          "n": 54,
+          "value": 0.9444444444444444
+        },
+        "uuid-11.1.1": {
+          "n": 9,
+          "value": 0.6666666666666666
+        },
+        "zod-3.25.76": {
+          "n": 3,
+          "value": 0
+        }
+      }
+    },
+    "confirm picked the target": {
+      "n": 78,
+      "overall": 0.782051282051282,
+      "macro": 0.4661375661375661,
+      "perPackage": {
+        "jsonwebtoken-9.0.2": {
+          "n": 3,
+          "value": 0
+        },
+        "nanoid-3.3.12": {
+          "n": 1,
+          "value": 0
+        },
+        "p-limit-7.3.0": {
+          "n": 3,
+          "value": 1
+        },
+        "p-throttle-8.1.0": {
+          "n": 5,
+          "value": 0.8
+        },
+        "semver-7.8.0": {
+          "n": 54,
+          "value": 0.9074074074074074
+        },
+        "uuid-11.1.1": {
+          "n": 9,
+          "value": 0.5555555555555556
+        },
+        "zod-3.25.76": {
+          "n": 3,
+          "value": 0
+        }
+      }
+    },
+    "confirm reused something wrong": {
+      "n": 78,
+      "overall": 0.11538461538461539,
+      "macro": 0.31216931216931215,
+      "perPackage": {
+        "jsonwebtoken-9.0.2": {
+          "n": 3,
+          "value": 0
+        },
+        "nanoid-3.3.12": {
+          "n": 1,
+          "value": 1
+        },
+        "p-limit-7.3.0": {
+          "n": 3,
+          "value": 0
+        },
+        "p-throttle-8.1.0": {
+          "n": 5,
+          "value": 0
+        },
+        "semver-7.8.0": {
+          "n": 54,
+          "value": 0.07407407407407407
+        },
+        "uuid-11.1.1": {
+          "n": 9,
+          "value": 0.1111111111111111
+        },
+        "zod-3.25.76": {
+          "n": 3,
+          "value": 1
+        }
+      }
+    }
+  },
+  "capped": {
+    "search top-1": {
+      "n": 31,
+      "overall": 0.25806451612903225,
+      "macro": 0.22380952380952382,
+      "perPackage": {
+        "jsonwebtoken-9.0.2": {
+          "n": 3,
+          "value": 0
+        },
+        "nanoid-3.3.12": {
+          "n": 1,
+          "value": 0
+        },
+        "p-limit-7.3.0": {
+          "n": 3,
+          "value": 0.6666666666666666
+        },
+        "p-throttle-8.1.0": {
+          "n": 5,
+          "value": 0.4
+        },
+        "semver-7.8.0": {
+          "n": 8,
+          "value": 0.375
+        },
+        "uuid-11.1.1": {
+          "n": 8,
+          "value": 0.125
+        },
+        "zod-3.25.76": {
+          "n": 3,
+          "value": 0
+        }
+      }
+    },
+    "search top-5": {
+      "n": 31,
+      "overall": 0.5806451612903226,
+      "macro": 0.45357142857142857,
+      "perPackage": {
+        "jsonwebtoken-9.0.2": {
+          "n": 3,
+          "value": 0
+        },
+        "nanoid-3.3.12": {
+          "n": 1,
+          "value": 0
+        },
+        "p-limit-7.3.0": {
+          "n": 3,
+          "value": 1
+        },
+        "p-throttle-8.1.0": {
+          "n": 5,
+          "value": 0.8
+        },
+        "semver-7.8.0": {
+          "n": 8,
+          "value": 0.75
+        },
+        "uuid-11.1.1": {
+          "n": 8,
+          "value": 0.625
+        },
+        "zod-3.25.76": {
+          "n": 3,
+          "value": 0
+        }
+      }
+    },
+    "confirm picked the target": {
+      "n": 31,
+      "overall": 0.5806451612903226,
+      "macro": 0.45357142857142857,
+      "perPackage": {
+        "jsonwebtoken-9.0.2": {
+          "n": 3,
+          "value": 0
+        },
+        "nanoid-3.3.12": {
+          "n": 1,
+          "value": 0
+        },
+        "p-limit-7.3.0": {
+          "n": 3,
+          "value": 1
+        },
+        "p-throttle-8.1.0": {
+          "n": 5,
+          "value": 0.8
+        },
+        "semver-7.8.0": {
+          "n": 8,
+          "value": 0.75
+        },
+        "uuid-11.1.1": {
+          "n": 8,
+          "value": 0.625
+        },
+        "zod-3.25.76": {
+          "n": 3,
+          "value": 0
+        }
+      }
+    },
+    "confirm reused something wrong": {
+      "n": 31,
+      "overall": 0.16129032258064516,
+      "macro": 0.30357142857142855,
+      "perPackage": {
+        "jsonwebtoken-9.0.2": {
+          "n": 3,
+          "value": 0
+        },
+        "nanoid-3.3.12": {
+          "n": 1,
+          "value": 1
+        },
+        "p-limit-7.3.0": {
+          "n": 3,
+          "value": 0
+        },
+        "p-throttle-8.1.0": {
+          "n": 5,
+          "value": 0
+        },
+        "semver-7.8.0": {
+          "n": 8,
+          "value": 0.125
+        },
+        "uuid-11.1.1": {
+          "n": 8,
+          "value": 0
+        },
+        "zod-3.25.76": {
+          "n": 3,
+          "value": 1
+        }
+      }
+    }
+  }
+}

@@ -106,6 +106,8 @@ async function main() {
   });
   const queries = [];
   const dropped = { leak: 0, unresolved: 0, malformed: 0 };
+  // Kept for diagnosis (which APIs a naming scheme would have to resolve): never graded.
+  const unresolved = [];
   for (const n of replies.flat()) {
     if (typeof n.need !== "string" || typeof n.api !== "string") {
       dropped.malformed++;
@@ -115,10 +117,12 @@ async function main() {
       dropped.leak++;
       continue;
     }
-    const name = n.api.split(/[.#(]/).filter(Boolean).pop();
+    // The last identifier of the API, without call arguments: "pLimit(concurrency)" -> pLimit.
+    const name = n.api.replace(/\(.*$/, "").split(/[.#]/).filter(Boolean).pop();
     const hits = records.filter((r) => r.pkg === n.pkg && r.name === name);
     if (hits.length === 0) {
       dropped.unresolved++;
+      unresolved.push({ pkg: n.pkg, api: n.api, need: n.need });
       continue;
     }
     queries.push({
@@ -130,7 +134,7 @@ async function main() {
   }
   writeFileSync(
     out,
-    `${JSON.stringify({ set: "readme", model, usage: client.usage, dropped, queries }, null, 2)}\n`,
+    `${JSON.stringify({ set: "readme", model, usage: client.usage, dropped, unresolved, queries }, null, 2)}\n`,
   );
   console.log(
     `wrote ${queries.length} queries; dropped ${JSON.stringify(dropped)}; usage ${JSON.stringify(client.usage)}`,
