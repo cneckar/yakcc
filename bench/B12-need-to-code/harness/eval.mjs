@@ -44,7 +44,7 @@ export function queryText(q, variant = "plain") {
   return parts.join("\n");
 }
 
-async function embedder() {
+export async function embedder() {
   const contracts = await import(dist("packages/contracts/dist/index.js"));
   const provider = contracts.createLocalEmbeddingProvider();
   mkdirSync(CACHE, { recursive: true });
@@ -96,7 +96,7 @@ const dot = (a, b) => {
   return s;
 };
 
-function denseRanking(qvec, vecs, ids) {
+export function denseRanking(qvec, vecs, ids) {
   return ids
     .map((id, i) => ({ id, s: vecs[i] ? dot(qvec, vecs[i]) : Number.NEGATIVE_INFINITY }))
     .filter((x) => Number.isFinite(x.s))
@@ -140,10 +140,32 @@ async function main() {
     ? JSON.parse(readFileSync(resolve(descFile), "utf8")).descriptions
     : {};
   const withDesc = (c) => (c.doc || !descriptions[c.id] ? c : { ...c, doc: descriptions[c.id] });
+  // --card-text names: index the deterministic names (harness/names.mjs, the #1309
+  // prototype) instead of the card text. --fields picks which name fields to render.
+  const cardTextSource = arg("card-text", "card");
+  let nameText = null;
+  if (cardTextSource === "names") {
+    const { buildNames, renderName, FIELDS } = await import("./names.mjs");
+    const fields = arg("fields", FIELDS.join(",")).split(",");
+    const records = buildNames(defs);
+    nameText = (c) => {
+      const r = records[c.id];
+      const desc = descriptions[c.id];
+      return [renderName(r, fields), ...(desc && !r.doc ? [desc] : [])].join("\n");
+    };
+  } else if (cardTextSource !== "card") throw new Error(`unknown --card-text ${cardTextSource}`);
+  const exampleLines = (c) =>
+    cardText({ ...c, doc: null, params: c.params, observed: null }, "card+examples")
+      .split("\n")
+      .slice(1);
   const texts = {
     spec: specs,
-    card: cards.map((c) => cardText(withDesc(c), "card")),
-    cardEx: cards.map((c) => cardText(withDesc(c), "card+examples")),
+    card: cards.map((c) => (nameText ? nameText(c) : cardText(withDesc(c), "card"))),
+    cardEx: cards.map((c) =>
+      nameText
+        ? [nameText(c), ...exampleLines(c)].join("\n")
+        : cardText(withDesc(c), "card+examples"),
+    ),
   };
   const vecs = {};
   for (const [k, list] of Object.entries(texts)) {
@@ -305,6 +327,8 @@ async function main() {
     negatives: queries.filter((q) => q.targets.length === 0).length,
     embeddingModel: emb.modelId,
     descriptions: descFile ? Object.keys(descriptions).length : 0,
+    cardText: cardTextSource,
+    fields: cardTextSource === "names" ? arg("fields", "all") : null,
     shortlist: SHORTLIST,
     corpus: {
       definitions: cards.length,

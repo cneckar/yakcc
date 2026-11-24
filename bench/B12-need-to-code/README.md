@@ -235,8 +235,13 @@ calling anything:
 | `harness/confirm.mjs` | The confirm step, on the seed set (or `--queries queries/generated.json`). | 46 at K = 5 | $0.34 / $0.17 / $0.01 |
 | `harness/describe-atoms.mjs` | A one-line behavior for each of the 2,754 definitions without JSDoc. The eval uses it via `--descriptions`. | 2,754 | $8.67 / $4.33 / $0.22 |
 
-Prices are first-party list prices as of 2026-11. The default model is Opus 5.5; `--model`
-picks another. Then:
+Prices are first-party list prices as of 2026-11. The default model is **Haiku 5.5**, and
+`--model` picks another. Every script estimates its cost first and refuses to run above
+`--max-dollars` (default $2). `describe-atoms.mjs --sample N` describes an even,
+deterministic subset, so a stronger model can be spot-checked on the same items.
+
+The held-out results below were produced with Opus 5.5, the default at the time. That cost
+about $14, where Haiku would have cost under $1. Bulk work now defaults to Haiku. Then:
 
 ```sh
 node harness/eval.mjs --queries queries/generated.json --out results/eval-generated.json \

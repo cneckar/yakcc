@@ -1,0 +1,2560 @@
+{
+  "set": "seed",
+  "k": 5,
+  "largeNodes": 400,
+  "descriptions": 2754,
+  "pools": {
+    "all": 2985,
+    "large roots": 253
+  },
+  "summary": {
+    "all": {
+      "positives": 30,
+      "negatives": 8,
+      "targetInPool": 1,
+      "top1": 0.5333333333333333,
+      "top5": 0.7666666666666667,
+      "top10": 0.9,
+      "mrr": 0.6571867946867946,
+      "auroc": 0.8352272727272727,
+      "medianWriteTokens": 1426,
+      "medianLeverage": {
+        "claude-opus-5-5": 7.470373746581586,
+        "claude-sonnet-5-5": 7.470373746581586,
+        "claude-haiku-5-5": 7.470373746581586
+      },
+      "foundAndPays": 0.7
+    },
+    "large roots": {
+      "positives": 30,
+      "negatives": 8,
+      "targetInPool": 0.9333333333333333,
+      "top1": 0.6333333333333333,
+      "top5": 0.9,
+      "top10": 0.9333333333333333,
+      "mrr": 0.7558730158730158,
+      "auroc": 0.7700831024930748,
+      "medianWriteTokens": 1426,
+      "medianLeverage": {
+        "claude-opus-5-5": 6.509134233518665,
+        "claude-sonnet-5-5": 6.509134233518665,
+        "claude-haiku-5-5": 6.509134233518665
+      },
+      "foundAndPays": 0.8333333333333334
+    }
+  },
+  "rows": {
+    "all": [
+      {
+        "id": "csv-to-records",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "csv-parse-6.2.1/lib/index.js#Parser@14",
+          "csv-parse-6.2.1/lib/sync.js#parse@3",
+          "csv-parse-6.2.1/lib/api/index.js#transform@28"
+        ],
+        "topK": [
+          "csv-parse-6.2.1/lib/index.js#Parser@14",
+          "csv-parse-6.2.1/lib/sync.js#parse@3",
+          "csv-parse-6.2.1/lib/api/index.js#transform@28",
+          "csv-parse-6.2.1/lib/index.js#parse@79",
+          "zod-3.25.76/v3/helpers/util.cjs#joinValues@54",
+          "csv-parse-6.2.1/lib/sync.js#push@9",
+          "csv-parse-6.2.1/lib/api/normalize_columns_array.js#normalize_columns_array@4",
+          "zod-3.25.76/src/v4/core/util.ts#esc@313",
+          "csv-parse-6.2.1/lib/api/normalize_options.js#normalize_options@5",
+          "csv-parse-6.2.1/lib/index.js#_transform@29"
+        ],
+        "topSimilarity": 0.7573268534168586,
+        "top1Correct": false,
+        "writeTokens": 15444,
+        "requestTokens": 53,
+        "confirmInputTokens": 698,
+        "leverage": {
+          "claude-opus-5-5": 61.14014251781472,
+          "claude-sonnet-5-5": 61.14014251781472,
+          "claude-haiku-5-5": 61.14014251781473
+        }
+      },
+      {
+        "id": "highest-version-in-range",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "semver-7.8.0/ranges/max-satisfying.js#maxSatisfying@6",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7"
+        ],
+        "topK": [
+          "semver-7.8.0/ranges/max-satisfying.js#maxSatisfying@6",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7",
+          "semver-7.8.0/classes/range.js#Range@6",
+          "semver-7.8.0/ranges/to-comparators.js#toComparators@6",
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/classes/range.js#parseRange@100",
+          "semver-7.8.0/ranges/valid.js#validRange@4",
+          "semver-7.8.0/ranges/subset.js#subset@45",
+          "semver-7.8.0/ranges/subset.js#simpleSubset@76"
+        ],
+        "topSimilarity": 0.7553810204906799,
+        "top1Correct": true,
+        "writeTokens": 6896,
+        "requestTokens": 43,
+        "confirmInputTokens": 751,
+        "leverage": {
+          "claude-opus-5-5": 27.235387045813585,
+          "claude-sonnet-5-5": 27.235387045813585,
+          "claude-haiku-5-5": 27.235387045813585
+        }
+      },
+      {
+        "id": "version-satisfies-range",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "semver-7.8.0/classes/range.js#Range@6",
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/intersects.js#intersects@4"
+        ],
+        "topK": [
+          "semver-7.8.0/classes/range.js#Range@6",
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "semver-7.8.0/ranges/valid.js#validRange@4",
+          "semver-7.8.0/ranges/subset.js#subset@45",
+          "semver-7.8.0/ranges/to-comparators.js#toComparators@6",
+          "semver-7.8.0/classes/range.js#parseRange@100",
+          "semver-7.8.0/classes/range.js#intersects@170",
+          "semver-7.8.0/ranges/subset.js#simpleSubset@76",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5"
+        ],
+        "topSimilarity": 0.7701434251065967,
+        "top1Correct": false,
+        "writeTokens": 6822,
+        "requestTokens": 43,
+        "confirmInputTokens": 722,
+        "leverage": {
+          "claude-opus-5-5": 27.57477768795473,
+          "claude-sonnet-5-5": 27.57477768795473,
+          "claude-haiku-5-5": 27.57477768795473
+        }
+      },
+      {
+        "id": "lowest-version-of-range",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "semver-7.8.0/ranges/min-version.js#minVersion@7",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/classes/range.js#isNullSet@233"
+        ],
+        "topK": [
+          "semver-7.8.0/ranges/min-version.js#minVersion@7",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/classes/range.js#isNullSet@233",
+          "semver-7.8.0/classes/range.js#Range@6",
+          "semver-7.8.0/ranges/ltr.js#ltr@5",
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "semver-7.8.0/ranges/gtr.js#gtr@5",
+          "semver-7.8.0/classes/range.js#parseRange@100",
+          "semver-7.8.0/ranges/to-comparators.js#toComparators@6",
+          "semver-7.8.0/ranges/valid.js#validRange@4"
+        ],
+        "topSimilarity": 0.7546328448968008,
+        "top1Correct": true,
+        "writeTokens": 7118,
+        "requestTokens": 20,
+        "confirmInputTokens": 656,
+        "leverage": {
+          "claude-opus-5-5": 33.702651515151516,
+          "claude-sonnet-5-5": 33.702651515151516,
+          "claude-haiku-5-5": 33.702651515151516
+        }
+      },
+      {
+        "id": "range-within-range",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 11,
+        "top3": [
+          "semver-7.8.0/classes/range.js#intersects@170",
+          "semver-7.8.0/functions/compare.js#compare@4",
+          "semver-7.8.0/ranges/ltr.js#ltr@5"
+        ],
+        "topK": [
+          "semver-7.8.0/classes/range.js#intersects@170",
+          "semver-7.8.0/functions/compare.js#compare@4",
+          "semver-7.8.0/ranges/ltr.js#ltr@5",
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "semver-7.8.0/classes/comparator.js#intersects@79",
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/gtr.js#gtr@5",
+          "semver-7.8.0/classes/comparator.js#Comparator@5",
+          "semver-7.8.0/classes/semver.js#compare@93",
+          "semver-7.8.0/classes/range.js#isSatisfiable@238"
+        ],
+        "topSimilarity": 0.6642739848815372,
+        "top1Correct": false,
+        "writeTokens": 8144,
+        "requestTokens": 25,
+        "confirmInputTokens": 674,
+        "leverage": {
+          "claude-opus-5-5": 37.05186533212011,
+          "claude-sonnet-5-5": 37.05186533212011,
+          "claude-haiku-5-5": 37.05186533212011
+        }
+      },
+      {
+        "id": "parse-iso8601",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "date-fns-4.1.0/parseISO.cjs#parseDate@164",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45"
+        ],
+        "topK": [
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "date-fns-4.1.0/parseISO.cjs#parseDate@164",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+          "validator-13.15.35/lib/isISO8601.js#isValidDate@15",
+          "zod-3.25.76/v4/core/api.cjs#_isoDate@375",
+          "validator-13.15.35/lib/isISO8601.js#isISO8601@42",
+          "zod-3.25.76/v3/types.cjs#datetimeRegex@432",
+          "zod-3.25.76/src/v4/mini/iso.ts#datetime@15",
+          "zod-3.25.76/src/v4/mini/iso.ts#date@30"
+        ],
+        "topSimilarity": 0.7778032828052639,
+        "top1Correct": true,
+        "writeTokens": 1639,
+        "requestTokens": 50,
+        "confirmInputTokens": 547,
+        "leverage": {
+          "claude-opus-5-5": 7.470373746581586,
+          "claude-sonnet-5-5": 7.470373746581586,
+          "claude-haiku-5-5": 7.470373746581586
+        }
+      },
+      {
+        "id": "format-iso8601",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "zod-3.25.76/v3/types.cjs#datetime@873",
+          "zod-3.25.76/v4/core/api.cjs#_isoDateTime@364"
+        ],
+        "topK": [
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "zod-3.25.76/v3/types.cjs#datetime@873",
+          "zod-3.25.76/v4/core/api.cjs#_isoDateTime@364",
+          "zod-3.25.76/v3/types.js#datetime@864",
+          "zod-3.25.76/src/v3/types.ts#datetime@1106",
+          "zod-3.25.76/v3/types.cjs#datetimeRegex@432",
+          "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+          "zod-3.25.76/v4/mini/iso.cjs#datetime@37",
+          "zod-3.25.76/src/v3/types.ts#datetimeRegex@673",
+          "zod-3.25.76/src/v4/core/regexes.ts#datetime@104"
+        ],
+        "topSimilarity": 0.8012382457686333,
+        "top1Correct": true,
+        "writeTokens": 682,
+        "requestTokens": 43,
+        "confirmInputTokens": 468,
+        "leverage": {
+          "claude-opus-5-5": 3.468972533062055,
+          "claude-sonnet-5-5": 3.468972533062055,
+          "claude-haiku-5-5": 3.4689725330620544
+        }
+      },
+      {
+        "id": "deep-copy",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 3,
+        "top3": [
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "zod-3.25.76/src/v3/types.ts#deepPartial@2807",
+          "lodash-4.17.21/_baseClone.js#baseClone@90"
+        ],
+        "topK": [
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "zod-3.25.76/src/v3/types.ts#deepPartial@2807",
+          "lodash-4.17.21/_baseClone.js#baseClone@90",
+          "zod-3.25.76/src/v3/types.ts#mergeValues@3239",
+          "lodash-4.17.21/_cloneTypedArray.js#cloneTypedArray@11",
+          "validator-13.15.35/lib/isDate.js#_unsupportedIterableToArray@14",
+          "zod-3.25.76/src/v3/types.ts#deepPartialify@2422",
+          "lodash-4.17.21/_copyArray.js#copyArray@9",
+          "zod-3.25.76/v3/types.cjs#deepPartialify@1870",
+          "zod-3.25.76/v3/types.js#mergeValues@2494"
+        ],
+        "topSimilarity": 0.626402581103852,
+        "top1Correct": false,
+        "writeTokens": 2859,
+        "requestTokens": 45,
+        "confirmInputTokens": 597,
+        "leverage": {
+          "claude-opus-5-5": 12.740641711229946,
+          "claude-sonnet-5-5": 12.740641711229946,
+          "claude-haiku-5-5": 12.740641711229946
+        }
+      },
+      {
+        "id": "deep-merge-objects",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 8,
+        "top3": [
+          "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139",
+          "zod-3.25.76/src/v3/helpers/util.ts#mergeShapes@113",
+          "zod-3.25.76/v3/types.js#mergeValues@2494"
+        ],
+        "topK": [
+          "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139",
+          "zod-3.25.76/src/v3/helpers/util.ts#mergeShapes@113",
+          "zod-3.25.76/v3/types.js#mergeValues@2494",
+          "zod-3.25.76/src/v3/types.ts#mergeValues@3239",
+          "zod-3.25.76/v4/core/schemas.cjs#mergeValues@1044",
+          "zod-3.25.76/v3/types.cjs#mergeValues@2519",
+          "zod-3.25.76/v3/helpers/parseUtil.cjs#mergeObjectSync@90",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "lodash-4.17.21/_copyObject.js#copyObject@14",
+          "lodash-4.17.21/_baseMerge.js#baseMerge@20"
+        ],
+        "topSimilarity": 0.6996969865925544,
+        "top1Correct": false,
+        "writeTokens": 2372,
+        "requestTokens": 37,
+        "confirmInputTokens": 549,
+        "leverage": {
+          "claude-opus-5-5": 11.470019342359768,
+          "claude-sonnet-5-5": 11.470019342359768,
+          "claude-haiku-5-5": 11.470019342359768
+        }
+      },
+      {
+        "id": "rate-limit-calls",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "lodash-4.17.21/debounce.js#flush@158",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "lodash-4.17.21/debounce.js#leadingEdge@99"
+        ],
+        "topK": [
+          "lodash-4.17.21/debounce.js#flush@158",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "lodash-4.17.21/debounce.js#leadingEdge@99",
+          "lodash-4.17.21/debounce.js#trailingEdge@138",
+          "p-limit-7.3.0/index.js#limitFunction@117",
+          "lodash-4.17.21/debounce.js#timerExpired@129",
+          "lodash-4.17.21/debounce.js#shouldInvoke@118",
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "p-throttle-8.1.0/index.js#throttled@174"
+        ],
+        "topSimilarity": 0.6969958939106524,
+        "top1Correct": false,
+        "writeTokens": 1426,
+        "requestTokens": 33,
+        "confirmInputTokens": 467,
+        "leverage": {
+          "claude-opus-5-5": 7.650214592274678,
+          "claude-sonnet-5-5": 7.650214592274678,
+          "claude-haiku-5-5": 7.650214592274678
+        }
+      },
+      {
+        "id": "delay-until-quiet",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "lodash-4.17.21/debounce.js#trailingEdge@138",
+          "lodash-4.17.21/debounce.js#shouldInvoke@118"
+        ],
+        "topK": [
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "lodash-4.17.21/debounce.js#trailingEdge@138",
+          "lodash-4.17.21/debounce.js#shouldInvoke@118",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "lodash-4.17.21/debounce.js#flush@158",
+          "lodash-4.17.21/debounce.js#cancel@150",
+          "lodash-4.17.21/debounce.js#leadingEdge@99",
+          "lodash-4.17.21/debounce.js#remainingWait@108",
+          "lodash-4.17.21/debounce.js#invokeFunc@89",
+          "lodash-4.17.21/debounce.js#timerExpired@129"
+        ],
+        "topSimilarity": 0.6964699245453532,
+        "top1Correct": true,
+        "writeTokens": 1315,
+        "requestTokens": 48,
+        "confirmInputTokens": 518,
+        "leverage": {
+          "claude-opus-5-5": 6.214555765595463,
+          "claude-sonnet-5-5": 6.214555765595463,
+          "claude-haiku-5-5": 6.214555765595462
+        }
+      },
+      {
+        "id": "set-at-deep-path",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "lodash-4.17.21/set.js#set@31",
+          "jsonpointer-5.0.1/jsonpointer.js#setter@16",
+          "zod-3.25.76/src/v4/core/util.ts#getElementAtPath@286"
+        ],
+        "topK": [
+          "lodash-4.17.21/set.js#set@31",
+          "jsonpointer-5.0.1/jsonpointer.js#setter@16",
+          "zod-3.25.76/src/v4/core/util.ts#getElementAtPath@286",
+          "zod-3.25.76/src/v3/helpers/util.ts#objectValues@33",
+          "zod-3.25.76/v4/core/util.js#getElementAtPath@86",
+          "zod-3.25.76/v4/core/util.cjs#getElementAtPath@130",
+          "zod-3.25.76/v4/core/util.js#prefixIssues@424",
+          "zod-3.25.76/v4/core/util.cjs#prefixIssues@469",
+          "lodash-4.17.21/_baseSet.js#baseSet@17",
+          "lodash-4.17.21/get.js#get@28"
+        ],
+        "topSimilarity": 0.7852549350917998,
+        "top1Correct": true,
+        "writeTokens": 1100,
+        "requestTokens": 31,
+        "confirmInputTokens": 527,
+        "leverage": {
+          "claude-opus-5-5": 5.6008146639511205,
+          "claude-sonnet-5-5": 5.6008146639511205,
+          "claude-haiku-5-5": 5.60081466395112
+        }
+      },
+      {
+        "id": "bounded-cache-with-ttl",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 18,
+        "top3": [
+          "semver-7.8.0/internal/lrucache.js#LRUCache@3",
+          "lru-cache-11.3.6/dist/esm/index.js##rindexes@569",
+          "lru-cache-11.3.6/dist/esm/index.js##indexes@554"
+        ],
+        "topK": [
+          "semver-7.8.0/internal/lrucache.js#LRUCache@3",
+          "lru-cache-11.3.6/dist/esm/index.js##rindexes@569",
+          "lru-cache-11.3.6/dist/esm/index.js##indexes@554",
+          "lru-cache-11.3.6/dist/esm/index.js##get@1486",
+          "lru-cache-11.3.6/dist/esm/index.js#entries@592",
+          "lru-cache-11.3.6/dist/esm/index.js#pop@999",
+          "semver-7.8.0/internal/lrucache.js#get@9",
+          "lru-cache-11.3.6/dist/esm/index.js##peek@1138",
+          "lru-cache-11.3.6/dist/esm/index.js##fetch@1315",
+          "lru-cache-11.3.6/dist/esm/index.js#dump@794"
+        ],
+        "topSimilarity": 0.7517543392717642,
+        "top1Correct": false,
+        "writeTokens": 14728,
+        "requestTokens": 50,
+        "confirmInputTokens": 359,
+        "leverage": {
+          "claude-opus-5-5": 81.01210121012102,
+          "claude-sonnet-5-5": 81.01210121012102,
+          "claude-haiku-5-5": 81.012101210121
+        }
+      },
+      {
+        "id": "limit-concurrent-promises",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 3,
+        "top3": [
+          "p-limit-7.3.0/index.js#resumeNext@19",
+          "p-limit-7.3.0/index.js#next@27",
+          "p-limit-7.3.0/index.js#pLimit@3"
+        ],
+        "topK": [
+          "p-limit-7.3.0/index.js#resumeNext@19",
+          "p-limit-7.3.0/index.js#next@27",
+          "p-limit-7.3.0/index.js#pLimit@3",
+          "p-limit-7.3.0/index.js#limitFunction@117",
+          "p-limit-7.3.0/index.js#enqueue@50",
+          "p-limit-7.3.0/index.js#set@94",
+          "p-throttle-8.1.0/index.js#get@296",
+          "p-limit-7.3.0/index.js#run@32",
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "bcryptjs-2.4.3/src/bcrypt/prng/accum.js#step@20"
+        ],
+        "topSimilarity": 0.7556631162971893,
+        "top1Correct": false,
+        "writeTokens": 780,
+        "requestTokens": 39,
+        "confirmInputTokens": 438,
+        "leverage": {
+          "claude-opus-5-5": 4.180064308681672,
+          "claude-sonnet-5-5": 4.180064308681672,
+          "claude-haiku-5-5": 4.180064308681671
+        }
+      },
+      {
+        "id": "throttle-async-calls",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "p-throttle-8.1.0/index.js#throttled@174"
+        ],
+        "topK": [
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "p-throttle-8.1.0/index.js#throttled@174",
+          "p-throttle-8.1.0/index.js#execute@207",
+          "p-throttle-8.1.0/index.js#strictDelay@94",
+          "p-throttle-8.1.0/index.js#windowedDelay@75",
+          "p-throttle-8.1.0/index.js#weightInWindowAt@109",
+          "p-limit-7.3.0/index.js#pLimit@3",
+          "lodash-4.17.21/debounce.js#invokeFunc@89",
+          "p-throttle-8.1.0/index.js#insertTickSorted@64"
+        ],
+        "topSimilarity": 0.7817901261606442,
+        "top1Correct": true,
+        "writeTokens": 2124,
+        "requestTokens": 39,
+        "confirmInputTokens": 505,
+        "leverage": {
+          "claude-opus-5-5": 10.62,
+          "claude-sonnet-5-5": 10.62,
+          "claude-haiku-5-5": 10.62
+        }
+      },
+      {
+        "id": "validate-email",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "validator-13.15.35/lib/isEmail.js#validateDisplayName@42"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "validator-13.15.35/lib/isEmail.js#validateDisplayName@42",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "validator-13.15.35/lib/isFQDN.js#isFQDN@18",
+          "zod-3.25.76/v3/types.cjs#email@830",
+          "zod-3.25.76/v4/classic/schemas.js#email@147",
+          "zod-3.25.76/src/v3/types.ts#ip@1098",
+          "zod-3.25.76/src/v3/types.ts#isValidCidr@719",
+          "zod-3.25.76/v3/types.js#email@821"
+        ],
+        "topSimilarity": 0.7145181196507745,
+        "top1Correct": true,
+        "writeTokens": 2323,
+        "requestTokens": 43,
+        "confirmInputTokens": 624,
+        "leverage": {
+          "claude-opus-5-5": 10.197541703248463,
+          "claude-sonnet-5-5": 10.197541703248463,
+          "claude-haiku-5-5": 10.197541703248463
+        }
+      },
+      {
+        "id": "validate-url",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "validator-13.15.35/lib/isFQDN.js#isFQDN@18",
+          "validator-13.15.35/lib/isURL.js#isURL@64",
+          "zod-3.25.76/src/v3/types.ts#ip@1098"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isFQDN.js#isFQDN@18",
+          "validator-13.15.35/lib/isURL.js#isURL@64",
+          "zod-3.25.76/src/v3/types.ts#ip@1098",
+          "validator-13.15.35/lib/isURL.js#cleanUpProtocol@94",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "zod-3.25.76/v4/core/schemas.js#isValidBase64URL@348",
+          "zod-3.25.76/v3/types.cjs#isValidIP@441",
+          "validator-13.15.35/lib/isIP.js#isIP@44",
+          "zod-3.25.76/src/v3/types.ts#isValidIP@687",
+          "zod-3.25.76/v3/types.cjs#ip@867"
+        ],
+        "topSimilarity": 0.7363589308148973,
+        "top1Correct": false,
+        "writeTokens": 2993,
+        "requestTokens": 47,
+        "confirmInputTokens": 550,
+        "leverage": {
+          "claude-opus-5-5": 13.7926267281106,
+          "claude-sonnet-5-5": 13.7926267281106,
+          "claude-haiku-5-5": 13.7926267281106
+        }
+      },
+      {
+        "id": "canonical-email",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "zod-3.25.76/v4/classic/schemas.js#email@147",
+          "zod-3.25.76/v4/mini/schemas.cjs#email@159",
+          "zod-3.25.76/src/v4/mini/schemas.ts#email@120",
+          "zod-3.25.76/src/v4/classic/schemas.ts#email@395",
+          "zod-3.25.76/v4/mini/schemas.js#email@46",
+          "zod-3.25.76/v3/types.js#email@821",
+          "zod-3.25.76/v3/types.cjs#email@830"
+        ],
+        "topSimilarity": 0.8078426012940937,
+        "top1Correct": true,
+        "writeTokens": 806,
+        "requestTokens": 39,
+        "confirmInputTokens": 571,
+        "leverage": {
+          "claude-opus-5-5": 3.7804878048780486,
+          "claude-sonnet-5-5": 3.7804878048780486,
+          "claude-haiku-5-5": 3.780487804878049
+        }
+      },
+      {
+        "id": "password-strength",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 3,
+        "top3": [
+          "validator-13.15.35/lib/isStrongPassword.js#scorePassword@70",
+          "validator-13.15.35/lib/isStrongPassword.js#analyzePassword@46",
+          "validator-13.15.35/lib/isStrongPassword.js#isStrongPassword@88"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isStrongPassword.js#scorePassword@70",
+          "validator-13.15.35/lib/isStrongPassword.js#analyzePassword@46",
+          "validator-13.15.35/lib/isStrongPassword.js#isStrongPassword@88",
+          "zod-3.25.76/v4/core/api.cjs#_minLength@646",
+          "zod-3.25.76/v4/core/api.js#_minLength@513",
+          "validator-13.15.35/lib/isIBAN.js#hasValidIbanFormat@126",
+          "zod-3.25.76/src/v4/core/api.ts#_minLength@921",
+          "zod-3.25.76/v4/core/util.cjs#randomString@146",
+          "zod-3.25.76/v4/core/util.js#randomString@102",
+          "validator-13.15.35/lib/isNumeric.js#isNumeric@11"
+        ],
+        "topSimilarity": 0.7603250899048117,
+        "top1Correct": false,
+        "writeTokens": 780,
+        "requestTokens": 44,
+        "confirmInputTokens": 520,
+        "leverage": {
+          "claude-opus-5-5": 3.75,
+          "claude-sonnet-5-5": 3.75,
+          "claude-haiku-5-5": 3.75
+        }
+      },
+      {
+        "id": "time-ordered-id",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 6,
+        "top3": [
+          "uuid-11.1.1/dist/cjs/v1.js#updateV1State@27",
+          "uuid-11.1.1/dist/cjs/v7.js#updateV7State@20",
+          "uuid-11.1.1/dist/esm/v7.js#updateV7State@17"
+        ],
+        "topK": [
+          "uuid-11.1.1/dist/cjs/v1.js#updateV1State@27",
+          "uuid-11.1.1/dist/cjs/v7.js#updateV7State@20",
+          "uuid-11.1.1/dist/esm/v7.js#updateV7State@17",
+          "uuid-11.1.1/dist/esm/v1.js#updateV1State@24",
+          "nanoid-3.3.12/async/index.js#customAlphabet@13",
+          "uuid-11.1.1/dist/esm/v7.js#v7@4",
+          "nanoid-3.3.12/async/index.js#tick@16",
+          "uuid-11.1.1/dist/cjs/v1.js#v1Bytes@52",
+          "bcryptjs-2.4.3/src/bcrypt/prng/accum.js#init@9",
+          "nanoid-3.3.12/async/index.cjs#tick@41"
+        ],
+        "topSimilarity": 0.7132322538284106,
+        "top1Correct": false,
+        "writeTokens": 742,
+        "requestTokens": 43,
+        "confirmInputTokens": 483,
+        "leverage": {
+          "claude-opus-5-5": 3.717434869739479,
+          "claude-sonnet-5-5": 3.717434869739479,
+          "claude-haiku-5-5": 3.7174348697394786
+        }
+      },
+      {
+        "id": "name-based-id",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "uuid-11.1.1/dist/cjs/v5.js#v5@9",
+          "uuid-11.1.1/dist/esm/v3.js#v3@4",
+          "uuid-11.1.1/dist/esm/v5.js#v5@4"
+        ],
+        "topK": [
+          "uuid-11.1.1/dist/cjs/v5.js#v5@9",
+          "uuid-11.1.1/dist/esm/v3.js#v3@4",
+          "uuid-11.1.1/dist/esm/v5.js#v5@4",
+          "uuid-11.1.1/dist/cjs/v3.js#v3@9",
+          "uuid-11.1.1/dist/esm/v35.js#v35@13",
+          "uuid-11.1.1/dist/cjs/v35.js#v35@17",
+          "uuid-11.1.1/dist/esm/sha1.js#sha1@2",
+          "validator-13.15.35/lib/isHash.js#isHash@24",
+          "zod-3.25.76/v4/core/schemas.cjs#generateFastpass@752",
+          "uuid-11.1.1/dist/esm/version.js#version@2"
+        ],
+        "topSimilarity": 0.7492962948183466,
+        "top1Correct": true,
+        "writeTokens": 682,
+        "requestTokens": 39,
+        "confirmInputTokens": 580,
+        "leverage": {
+          "claude-opus-5-5": 3.172093023255814,
+          "claude-sonnet-5-5": 3.172093023255814,
+          "claude-haiku-5-5": 3.172093023255814
+        }
+      },
+      {
+        "id": "md5-digest",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "uuid-11.1.1/dist/cjs/md5.js#md5@4",
+          "uuid-11.1.1/dist/esm/md5.js#md5@2",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3"
+        ],
+        "topK": [
+          "uuid-11.1.1/dist/cjs/md5.js#md5@4",
+          "uuid-11.1.1/dist/esm/md5.js#md5@2",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#wordsToMd5@18",
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+          "uuid-11.1.1/dist/cjs/v3.js#v3@9",
+          "uuid-11.1.1/dist/cjs/sha1.js#sha1@4",
+          "uuid-11.1.1/dist/esm/v3.js#v3@4",
+          "uuid-11.1.1/dist/esm/sha1.js#sha1@2",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5ff@125"
+        ],
+        "topSimilarity": 0.7677049347960307,
+        "top1Correct": true,
+        "writeTokens": 64,
+        "requestTokens": 12,
+        "confirmInputTokens": 407,
+        "leverage": {
+          "claude-opus-5-5": 0.4172099087353325,
+          "claude-sonnet-5-5": 0.4172099087353325,
+          "claude-haiku-5-5": 0.4172099087353324
+        }
+      },
+      {
+        "id": "sha1-digest",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+          "uuid-11.1.1/dist/esm/sha1.js#sha1@2",
+          "uuid-11.1.1/dist/cjs/sha1.js#sha1@4"
+        ],
+        "topK": [
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+          "uuid-11.1.1/dist/esm/sha1.js#sha1@2",
+          "uuid-11.1.1/dist/cjs/sha1.js#sha1@4",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+          "uuid-11.1.1/dist/esm/md5.js#md5@2",
+          "uuid-11.1.1/dist/cjs/md5.js#md5@4",
+          "uuid-11.1.1/dist/cjs/v1.js#v1Bytes@52",
+          "uuid-11.1.1/dist/esm/v5.js#v5@4",
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#f@3",
+          "uuid-11.1.1/dist/cjs/v5.js#v5@9"
+        ],
+        "topSimilarity": 0.7547089218403265,
+        "top1Correct": true,
+        "writeTokens": 65,
+        "requestTokens": 12,
+        "confirmInputTokens": 387,
+        "leverage": {
+          "claude-opus-5-5": 0.4350736278447122,
+          "claude-sonnet-5-5": 0.4350736278447122,
+          "claude-haiku-5-5": 0.43507362784471215
+        }
+      },
+      {
+        "id": "closest-by-edits",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 8,
+        "top3": [
+          "fastest-levenshtein-1.0.16/esm/mod.js#myers_32@31",
+          "fastest-levenshtein-1.0.16/esm/mod.js#myers_x@64",
+          "fastest-levenshtein-1.0.16/esm/mod.js#distance@141"
+        ],
+        "topK": [
+          "fastest-levenshtein-1.0.16/esm/mod.js#myers_32@31",
+          "fastest-levenshtein-1.0.16/esm/mod.js#myers_x@64",
+          "fastest-levenshtein-1.0.16/esm/mod.js#distance@141",
+          "validator-13.15.35/lib/normalizeEmail.js#dotsReplacer@63",
+          "nanoid-3.3.12/async/index.cjs#tick@41",
+          "semver-7.8.0/functions/rsort.js#rsort@4",
+          "zod-3.25.76/src/v4/locales/ru.ts#getRussianPlural@5",
+          "fastest-levenshtein-1.0.16/esm/mod.js#closest@155",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#getOutputLength@15",
+          "validator-13.15.35/lib/isLength.js#isLength@11"
+        ],
+        "topSimilarity": 0.6742149852301434,
+        "top1Correct": false,
+        "writeTokens": 892,
+        "requestTokens": 31,
+        "confirmInputTokens": 781,
+        "leverage": {
+          "claude-opus-5-5": 3.6084142394822005,
+          "claude-sonnet-5-5": 3.6084142394822005,
+          "claude-haiku-5-5": 3.6084142394822005
+        }
+      },
+      {
+        "id": "object-schema-validation",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "zod-3.25.76/v3/types.js#ZodObject@1879",
+          "zod-3.25.76/v3/types.cjs#_parse@1956",
+          "zod-3.25.76/v3/types.js#required@2216"
+        ],
+        "topK": [
+          "zod-3.25.76/v3/types.js#ZodObject@1879",
+          "zod-3.25.76/v3/types.cjs#_parse@1956",
+          "zod-3.25.76/v3/types.js#required@2216",
+          "zod-3.25.76/v3/types.cjs#partial@2222",
+          "zod-3.25.76/v3/types.js#_parse@2416",
+          "zod-3.25.76/src/v3/types.ts#\"~validate\"@247",
+          "zod-3.25.76/v3/types.js#_parse@1934",
+          "zod-3.25.76/v3/types.js#partial@2200",
+          "zod-3.25.76/v3/types.cjs#ZodObject@1901",
+          "zod-3.25.76/v4/core/schemas.cjs#generateFastpass@752"
+        ],
+        "topSimilarity": 0.7393311204608586,
+        "top1Correct": true,
+        "writeTokens": 17590,
+        "requestTokens": 57,
+        "confirmInputTokens": 622,
+        "leverage": {
+          "claude-opus-5-5": 72.86661143330572,
+          "claude-sonnet-5-5": 72.86661143330572,
+          "claude-haiku-5-5": 72.86661143330572
+        }
+      },
+      {
+        "id": "string-schema-rules",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 104,
+        "top3": [
+          "zod-3.25.76/v4/core/regexes.js#string@80",
+          "zod-3.25.76/v4/core/regexes.cjs#string@87",
+          "zod-3.25.76/src/v4/core/regexes.ts#string@118"
+        ],
+        "topK": [
+          "zod-3.25.76/v4/core/regexes.js#string@80",
+          "zod-3.25.76/v4/core/regexes.cjs#string@87",
+          "zod-3.25.76/src/v4/core/regexes.ts#string@118",
+          "zod-3.25.76/v4/core/api.cjs#_stringFormat@1024",
+          "zod-3.25.76/src/v4/core/api.ts#_stringFormat@1573",
+          "zod-3.25.76/v4/core/api.js#_stringFormat@891",
+          "zod-3.25.76/v3/types.cjs#size@2881",
+          "zod-3.25.76/v4/core/api.js#_regex@527",
+          "zod-3.25.76/src/v4/core/api.ts#_isoDateTime@467",
+          "zod-3.25.76/src/v4/core/api.ts#_isoDate@485"
+        ],
+        "topSimilarity": 0.7170753938602134,
+        "top1Correct": false,
+        "writeTokens": 17694,
+        "requestTokens": 47,
+        "confirmInputTokens": 498,
+        "leverage": {
+          "claude-opus-5-5": 85.64375605033882,
+          "claude-sonnet-5-5": 85.64375605033882,
+          "claude-haiku-5-5": 85.64375605033881
+        }
+      },
+      {
+        "id": "base64-decode",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 7,
+        "top3": [
+          "base64-js-1.5.1/index.js#getLens@22",
+          "bcryptjs-2.4.3/dist/bcrypt.js#base64_decode@447",
+          "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_decode@75"
+        ],
+        "topK": [
+          "base64-js-1.5.1/index.js#getLens@22",
+          "bcryptjs-2.4.3/dist/bcrypt.js#base64_decode@447",
+          "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_decode@75",
+          "base64-js-1.5.1/index.js#_byteLength@49",
+          "base64-js-1.5.1/index.js#byteLength@42",
+          "zod-3.25.76/v4/core/schemas.cjs#isValidBase64@347",
+          "base64-js-1.5.1/index.js#toByteArray@53",
+          "zod-3.25.76/src/v4/core/schemas.ts#isValidBase64@800",
+          "zod-3.25.76/src/v4/classic/tests/custom.test.ts#fn@19",
+          "base64-js-1.5.1/index.js#encodeChunk@106"
+        ],
+        "topSimilarity": 0.7569639590402037,
+        "top1Correct": false,
+        "writeTokens": 427,
+        "requestTokens": 27,
+        "confirmInputTokens": 337,
+        "leverage": {
+          "claude-opus-5-5": 2.7655440414507773,
+          "claude-sonnet-5-5": 2.7655440414507773,
+          "claude-haiku-5-5": 2.7655440414507773
+        }
+      },
+      {
+        "id": "dependency-order",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "toposort-2.0.2/index.js#toposort@37",
+          "toposort-2.0.2/index.js#visit@59",
+          "toposort-2.0.2/index.js#makeOutgoingEdges@103"
+        ],
+        "topK": [
+          "toposort-2.0.2/index.js#toposort@37",
+          "toposort-2.0.2/index.js#visit@59",
+          "toposort-2.0.2/index.js#makeOutgoingEdges@103",
+          "toposort-2.0.2/index.js#uniqueNodes@93",
+          "semver-7.8.0/functions/sort.js#sort@4",
+          "lru-cache-11.3.6/dist/esm/index.js##connect@1536",
+          "semver-7.8.0/classes/range.js#intersects@170",
+          "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+          "zod-3.25.76/v4/core/errors.js#prettifyError@183",
+          "zod-3.25.76/v4/core/api.cjs#_intersection@768"
+        ],
+        "topSimilarity": 0.7046342377397552,
+        "top1Correct": true,
+        "writeTokens": 466,
+        "requestTokens": 33,
+        "confirmInputTokens": 523,
+        "leverage": {
+          "claude-opus-5-5": 2.3582995951417005,
+          "claude-sonnet-5-5": 2.3582995951417005,
+          "claude-haiku-5-5": 2.3582995951417
+        }
+      },
+      {
+        "id": "compiled-json-pointer",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+          "jsonpointer-5.0.1/jsonpointer.js#set@79",
+          "jsonpointer-5.0.1/jsonpointer.js#get@66"
+        ],
+        "topK": [
+          "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+          "jsonpointer-5.0.1/jsonpointer.js#set@79",
+          "jsonpointer-5.0.1/jsonpointer.js#get@66",
+          "jsonpointer-5.0.1/jsonpointer.js#compilePointer@49",
+          "jsonpointer-5.0.1/jsonpointer.js#setter@16",
+          "zod-3.25.76/v4/core/to-json-schema.js#process@13",
+          "zod-3.25.76/v4/core/to-json-schema.cjs#JSONSchemaGenerator@7",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@829",
+          "zod-3.25.76/v4/core/to-json-schema.js#JSONSchemaGenerator@3",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#JSONSchemaGenerator@72"
+        ],
+        "topSimilarity": 0.7941303764246279,
+        "top1Correct": true,
+        "writeTokens": 617,
+        "requestTokens": 26,
+        "confirmInputTokens": 629,
+        "leverage": {
+          "claude-opus-5-5": 2.9131255901794146,
+          "claude-sonnet-5-5": 2.9131255901794146,
+          "claude-haiku-5-5": 2.913125590179414
+        }
+      },
+      {
+        "id": "custom-alphabet-ids",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "nanoid-3.3.12/index.browser.cjs#customAlphabet@47",
+          "nanoid-3.3.12/index.browser.cjs#customRandom@8",
+          "nanoid-3.3.12/index.cjs#customRandom@32"
+        ],
+        "topK": [
+          "nanoid-3.3.12/index.browser.cjs#customAlphabet@47",
+          "nanoid-3.3.12/index.browser.cjs#customRandom@8",
+          "nanoid-3.3.12/index.cjs#customRandom@32",
+          "nanoid-3.3.12/async/index.browser.js#customAlphabet@2",
+          "nanoid-3.3.12/index.browser.js#customRandom@3",
+          "nanoid-3.3.12/index.js#customRandom@21",
+          "nanoid-3.3.12/non-secure/index.cjs#customAlphabet@10",
+          "nanoid-3.3.12/async/index.browser.cjs#customAlphabet@3",
+          "nanoid-3.3.12/async/index.js#customAlphabet@13",
+          "nanoid-3.3.12/non-secure/index.js#nanoid@13"
+        ],
+        "topSimilarity": 0.7843977937644708,
+        "top1Correct": true,
+        "writeTokens": 433,
+        "requestTokens": 29,
+        "confirmInputTokens": 475,
+        "leverage": {
+          "claude-opus-5-5": 2.3532608695652173,
+          "claude-sonnet-5-5": 2.3532608695652173,
+          "claude-haiku-5-5": 2.3532608695652173
+        }
+      },
+      {
+        "id": "yaml-parse",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "validator-13.15.35/lib/isDate.js#_unsupportedIterableToArray@14",
+          "zod-3.25.76/v4/core/errors.cjs#prettifyError@214",
+          "zod-3.25.76/src/v4/core/errors.ts#prettifyError@411"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isDate.js#_unsupportedIterableToArray@14",
+          "zod-3.25.76/v4/core/errors.cjs#prettifyError@214",
+          "zod-3.25.76/src/v4/core/errors.ts#prettifyError@411",
+          "zod-3.25.76/v4/core/errors.js#prettifyError@183",
+          "zod-3.25.76/src/v4/locales/ur.ts#parsedType@17",
+          "zod-3.25.76/v3/types.js#_parse@2668",
+          "zod-3.25.76/v3/types.js#mergeValues@2494",
+          "validator-13.15.35/lib/util/multilineRegex.js#multilineRegexp@15",
+          "zod-3.25.76/v3/types.cjs#_parse@3017",
+          "zod-3.25.76/v3/types.cjs#mergeValues@2519"
+        ],
+        "topSimilarity": 0.6241515882540409,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 26,
+        "confirmInputTokens": 532,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "markdown-render",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "validator-13.15.35/lib/unescape.js#unescape@9",
+          "zod-3.25.76/v4/core/util.cjs#esc@154",
+          "zod-3.25.76/v4/core/doc.cjs#Doc@4"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/unescape.js#unescape@9",
+          "zod-3.25.76/v4/core/util.cjs#esc@154",
+          "zod-3.25.76/v4/core/doc.cjs#Doc@4",
+          "validator-13.15.35/lib/escape.js#escape@9",
+          "semver-7.8.0/classes/range.js#toString@96",
+          "lodash-4.17.21/_toSource.js#toSource@14",
+          "zod-3.25.76/v3/ZodError.cjs#toString@106",
+          "zod-3.25.76/v3/types.cjs#toLowerCase@973",
+          "zod-3.25.76/v4/core/api.cjs#_toLowerCase@736",
+          "validator-13.15.35/lib/isEmail.js#validateDisplayName@42"
+        ],
+        "topSimilarity": 0.5413109346883542,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 24,
+        "confirmInputTokens": 447,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "deflate-compress",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "csv-parse-6.2.1/lib/utils/ResizeableBuffer.js#ResizeableBuffer@1",
+          "base64-js-1.5.1/index.js#toByteArray@53",
+          "bcryptjs-2.4.3/dist/bcrypt.js#base64_encode@410"
+        ],
+        "topK": [
+          "csv-parse-6.2.1/lib/utils/ResizeableBuffer.js#ResizeableBuffer@1",
+          "base64-js-1.5.1/index.js#toByteArray@53",
+          "bcryptjs-2.4.3/dist/bcrypt.js#base64_encode@410",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+          "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_encode@38",
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+          "bcryptjs-2.4.3/dist/bcrypt.min.js#t@11",
+          "base64-js-1.5.1/index.js#_byteLength@49",
+          "base64-js-1.5.1/index.js#fromByteArray@119",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#uint32ToUint8@8"
+        ],
+        "topSimilarity": 0.631492032283203,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 19,
+        "confirmInputTokens": 376,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "cron-next-run",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "bcryptjs-2.4.3/dist/bcrypt.js#next@1210",
+          "zod-3.25.76/src/v3/types.ts#ZodDate@1875",
+          "zod-3.25.76/v3/types.js#_parse@1504"
+        ],
+        "topK": [
+          "bcryptjs-2.4.3/dist/bcrypt.js#next@1210",
+          "zod-3.25.76/src/v3/types.ts#ZodDate@1875",
+          "zod-3.25.76/v3/types.js#_parse@1504",
+          "zod-3.25.76/src/v3/types.ts#_parse@1876",
+          "zod-3.25.76/v3/types.cjs#_parse@1517",
+          "zod-3.25.76/v4/core/regexes.js#datetime@70",
+          "date-fns-4.1.0/parseISO.cjs#parseYear@141",
+          "ms-2.1.3/index.js#parse@48",
+          "zod-3.25.76/src/v3/tests/primitive.test.ts#f@254",
+          "zod-3.25.76/src/v4/core/regexes.ts#datetime@104"
+        ],
+        "topSimilarity": 0.649064541178826,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 20,
+        "confirmInputTokens": 494,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "text-line-diff",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "zod-3.25.76/v4/core/doc.cjs#write@16",
+          "zod-3.25.76/src/v4/core/doc.ts#write@20",
+          "validator-13.15.35/lib/stripLow.js#stripLow@10"
+        ],
+        "topK": [
+          "zod-3.25.76/v4/core/doc.cjs#write@16",
+          "zod-3.25.76/src/v4/core/doc.ts#write@20",
+          "validator-13.15.35/lib/stripLow.js#stripLow@10",
+          "zod-3.25.76/v4/core/doc.cjs#compile@30",
+          "zod-3.25.76/v4/core/doc.cjs#Doc@4",
+          "zod-3.25.76/src/v4/core/doc.ts#compile@36",
+          "zod-3.25.76/src/v4/core/doc.ts#Doc@3",
+          "semver-7.8.0/functions/diff.js#diff@5",
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "zod-3.25.76/v4/core/doc.js#Doc@1"
+        ],
+        "topSimilarity": 0.6141901795205208,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 25,
+        "confirmInputTokens": 471,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "route-matching",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "zod-3.25.76/v4/core/api.cjs#_url@213",
+          "zod-3.25.76/v4/mini/schemas.js#url@78",
+          "zod-3.25.76/v4/classic/schemas.js#url@182"
+        ],
+        "topK": [
+          "zod-3.25.76/v4/core/api.cjs#_url@213",
+          "zod-3.25.76/v4/mini/schemas.js#url@78",
+          "zod-3.25.76/v4/classic/schemas.js#url@182",
+          "zod-3.25.76/src/v4/core/api.ts#_url@188",
+          "validator-13.15.35/lib/isURL.js#cleanUpProtocol@94",
+          "zod-3.25.76/v4/mini/schemas.cjs#base64url@282",
+          "zod-3.25.76/v4/classic/schemas.js#base64url@284",
+          "zod-3.25.76/src/v4/classic/schemas.ts#url@453",
+          "zod-3.25.76/src/v4/classic/tests/to-json-schema.test.ts#override@1271",
+          "zod-3.25.76/v4/core/to-json-schema.cjs#extractToDef@570"
+        ],
+        "topSimilarity": 0.6313203338491639,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 27,
+        "confirmInputTokens": 420,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "currency-formatting",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "validator-13.15.35/lib/isCurrency.js#currencyRegex@10",
+          "validator-13.15.35/lib/isDecimal.js#decimalRegExp@12",
+          "validator-13.15.35/lib/isCurrency.js#isCurrency@77"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isCurrency.js#currencyRegex@10",
+          "validator-13.15.35/lib/isDecimal.js#decimalRegExp@12",
+          "validator-13.15.35/lib/isCurrency.js#isCurrency@77",
+          "validator-13.15.35/lib/isDecimal.js#isDecimal@22",
+          "validator-13.15.35/lib/isVAT.js#PT@44",
+          "validator-13.15.35/lib/isISIN.js#isISIN@18",
+          "validator-13.15.35/lib/isTaxID.js#isTaxID@1396",
+          "date-fns-4.1.0/parseISO.cjs#parseTimeUnit@220",
+          "zod-3.25.76/v4/core/api.cjs#_uint32@451",
+          "zod-3.25.76/src/v4/core/util.ts#floatSafeRemainder@242"
+        ],
+        "topSimilarity": 0.7059794934287567,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 30,
+        "confirmInputTokens": 568,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "image-resize",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "csv-parse-6.2.1/lib/utils/ResizeableBuffer.js#ResizeableBuffer@1",
+          "csv-parse-6.2.1/lib/utils/ResizeableBuffer.js#prepend@7",
+          "csv-parse-6.2.1/lib/utils/ResizeableBuffer.js#resize@41"
+        ],
+        "topK": [
+          "csv-parse-6.2.1/lib/utils/ResizeableBuffer.js#ResizeableBuffer@1",
+          "csv-parse-6.2.1/lib/utils/ResizeableBuffer.js#prepend@7",
+          "csv-parse-6.2.1/lib/utils/ResizeableBuffer.js#resize@41",
+          "csv-parse-6.2.1/lib/api/init_state.js#init_state@13",
+          "csv-parse-6.2.1/lib/utils/ResizeableBuffer.js#append@31",
+          "lodash-4.17.21/_cloneArrayBuffer.js#cloneArrayBuffer@10",
+          "lodash-4.17.21/_cloneBuffer.js#cloneBuffer@24",
+          "uuid-11.1.1/dist/esm/rng.js#rng@4",
+          "uuid-11.1.1/dist/cjs/rng.js#rng@6",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32"
+        ],
+        "topSimilarity": 0.6180914673821275,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 19,
+        "confirmInputTokens": 407,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      }
+    ],
+    "large roots": [
+      {
+        "id": "csv-to-records",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 3,
+        "top3": [
+          "csv-parse-6.2.1/lib/index.js#Parser@14",
+          "csv-parse-6.2.1/lib/api/index.js#transform@28",
+          "csv-parse-6.2.1/lib/sync.js#parse@3"
+        ],
+        "topK": [
+          "csv-parse-6.2.1/lib/index.js#Parser@14",
+          "csv-parse-6.2.1/lib/api/index.js#transform@28",
+          "csv-parse-6.2.1/lib/sync.js#parse@3",
+          "csv-parse-6.2.1/lib/index.js#parse@79",
+          "csv-parse-6.2.1/lib/api/normalize_options.js#normalize_options@5",
+          "zod-3.25.76/v4/core/api.js#_stringbool@834",
+          "csv-parse-6.2.1/lib/api/init_state.js#init_state@13",
+          "zod-3.25.76/src/v3/types.ts#ZodPipeline@4775",
+          "zod-3.25.76/src/v3/types.ts#ZodBigInt@1633",
+          "zod-3.25.76/src/v4/core/api.ts#_stringbool@1501"
+        ],
+        "topSimilarity": 0.7573268534168586,
+        "top1Correct": false,
+        "writeTokens": 15444,
+        "requestTokens": 53,
+        "confirmInputTokens": 781,
+        "leverage": {
+          "claude-opus-5-5": 57.36998514115899,
+          "claude-sonnet-5-5": 57.36998514115899,
+          "claude-haiku-5-5": 57.36998514115898
+        }
+      },
+      {
+        "id": "highest-version-in-range",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "semver-7.8.0/ranges/max-satisfying.js#maxSatisfying@6",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7"
+        ],
+        "topK": [
+          "semver-7.8.0/ranges/max-satisfying.js#maxSatisfying@6",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7",
+          "semver-7.8.0/ranges/valid.js#validRange@4",
+          "semver-7.8.0/classes/range.js#Range@6",
+          "semver-7.8.0/ranges/to-comparators.js#toComparators@6",
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/subset.js#subset@45",
+          "semver-7.8.0/classes/comparator.js#Comparator@5",
+          "semver-7.8.0/functions/coerce.js#coerce@7"
+        ],
+        "topSimilarity": 0.7553810204906799,
+        "top1Correct": true,
+        "writeTokens": 6896,
+        "requestTokens": 43,
+        "confirmInputTokens": 740,
+        "leverage": {
+          "claude-opus-5-5": 27.47410358565737,
+          "claude-sonnet-5-5": 27.47410358565737,
+          "claude-haiku-5-5": 27.47410358565737
+        }
+      },
+      {
+        "id": "version-satisfies-range",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "semver-7.8.0/classes/range.js#Range@6",
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/intersects.js#intersects@4"
+        ],
+        "topK": [
+          "semver-7.8.0/classes/range.js#Range@6",
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "semver-7.8.0/ranges/valid.js#validRange@4",
+          "semver-7.8.0/ranges/subset.js#subset@45",
+          "semver-7.8.0/ranges/to-comparators.js#toComparators@6",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/classes/comparator.js#Comparator@5",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7",
+          "semver-7.8.0/ranges/ltr.js#ltr@5"
+        ],
+        "topSimilarity": 0.7701434251065967,
+        "top1Correct": false,
+        "writeTokens": 6822,
+        "requestTokens": 43,
+        "confirmInputTokens": 722,
+        "leverage": {
+          "claude-opus-5-5": 27.57477768795473,
+          "claude-sonnet-5-5": 27.57477768795473,
+          "claude-haiku-5-5": 27.57477768795473
+        }
+      },
+      {
+        "id": "lowest-version-of-range",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7",
+          "semver-7.8.0/ranges/ltr.js#ltr@5"
+        ],
+        "topK": [
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7",
+          "semver-7.8.0/ranges/ltr.js#ltr@5",
+          "semver-7.8.0/classes/range.js#Range@6",
+          "semver-7.8.0/ranges/gtr.js#gtr@5",
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "semver-7.8.0/ranges/to-comparators.js#toComparators@6",
+          "semver-7.8.0/ranges/valid.js#validRange@4",
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/subset.js#subset@45"
+        ],
+        "topSimilarity": 0.749805580284355,
+        "top1Correct": false,
+        "writeTokens": 7118,
+        "requestTokens": 20,
+        "confirmInputTokens": 724,
+        "leverage": {
+          "claude-opus-5-5": 31.66370106761566,
+          "claude-sonnet-5-5": 31.66370106761566,
+          "claude-haiku-5-5": 31.66370106761566
+        }
+      },
+      {
+        "id": "range-within-range",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 7,
+        "top3": [
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/functions/compare.js#compare@4",
+          "semver-7.8.0/ranges/intersects.js#intersects@4"
+        ],
+        "topK": [
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/functions/compare.js#compare@4",
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "semver-7.8.0/ranges/ltr.js#ltr@5",
+          "semver-7.8.0/ranges/gtr.js#gtr@5",
+          "semver-7.8.0/classes/comparator.js#Comparator@5",
+          "semver-7.8.0/ranges/subset.js#subset@45",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/classes/range.js#Range@6",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7"
+        ],
+        "topSimilarity": 0.7005124844057733,
+        "top1Correct": false,
+        "writeTokens": 8144,
+        "requestTokens": 25,
+        "confirmInputTokens": 661,
+        "leverage": {
+          "claude-opus-5-5": 37.49539594843462,
+          "claude-sonnet-5-5": 37.49539594843462,
+          "claude-haiku-5-5": 37.49539594843462
+        }
+      },
+      {
+        "id": "parse-iso8601",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "validator-13.15.35/lib/isDate.js#isDate@32"
+        ],
+        "topK": [
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "validator-13.15.35/lib/isDate.js#isDate@32",
+          "zod-3.25.76/src/v3/types.ts#ZodDate@1875",
+          "zod-3.25.76/v3/types.cjs#ZodDate@1516",
+          "zod-3.25.76/v3/types.js#ZodDate@1503",
+          "uuid-11.1.1/dist/esm/v6.js#v6@4",
+          "uuid-11.1.1/dist/cjs/v6.js#v6@6",
+          "zod-3.25.76/src/v3/types.ts#ZodUnknown@2135",
+          "uuid-11.1.1/dist/cjs/v35.js#v35@17"
+        ],
+        "topSimilarity": 0.7778032828052639,
+        "top1Correct": true,
+        "writeTokens": 1639,
+        "requestTokens": 50,
+        "confirmInputTokens": 709,
+        "leverage": {
+          "claude-opus-5-5": 6.509134233518665,
+          "claude-sonnet-5-5": 6.509134233518665,
+          "claude-haiku-5-5": 6.509134233518665
+        }
+      },
+      {
+        "id": "format-iso8601",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "validator-13.15.35/lib/isDate.js#isDate@32"
+        ],
+        "topK": [
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "validator-13.15.35/lib/isDate.js#isDate@32",
+          "uuid-11.1.1/dist/cjs/v1.js#v1@7",
+          "uuid-11.1.1/dist/cjs/v7.js#v7@7",
+          "uuid-11.1.1/dist/cjs/v6.js#v6@6",
+          "zod-3.25.76/src/v3/types.ts#ZodDate@1875",
+          "uuid-11.1.1/dist/cjs/v1ToV6.js#v1ToV6@5",
+          "uuid-11.1.1/dist/cjs/v6ToV1.js#v6ToV1@5",
+          "uuid-11.1.1/dist/esm/v1ToV6.js#v1ToV6@3"
+        ],
+        "topSimilarity": 0.8012382457686333,
+        "top1Correct": true,
+        "writeTokens": 682,
+        "requestTokens": 43,
+        "confirmInputTokens": 614,
+        "leverage": {
+          "claude-opus-5-5": 3.020372010628875,
+          "claude-sonnet-5-5": 3.020372010628875,
+          "claude-haiku-5-5": 3.020372010628875
+        }
+      },
+      {
+        "id": "deep-copy",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "lodash-4.17.21/_baseClone.js#baseClone@90",
+          "lodash-4.17.21/set.js#set@31"
+        ],
+        "topK": [
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "lodash-4.17.21/_baseClone.js#baseClone@90",
+          "lodash-4.17.21/set.js#set@31",
+          "zod-3.25.76/src/v3/types.ts#ZodEnum@4077",
+          "zod-3.25.76/v3/types.js#ZodDate@1503",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "csv-parse-6.2.1/lib/api/init_state.js#init_state@13",
+          "semver-7.8.0/ranges/to-comparators.js#toComparators@6",
+          "zod-3.25.76/v3/types.js#ZodReadonly@3526",
+          "zod-3.25.76/src/v3/types.ts#ZodReadonly@4870"
+        ],
+        "topSimilarity": 0.626402581103852,
+        "top1Correct": false,
+        "writeTokens": 2859,
+        "requestTokens": 45,
+        "confirmInputTokens": 735,
+        "leverage": {
+          "claude-opus-5-5": 11.345238095238095,
+          "claude-sonnet-5-5": 11.345238095238095,
+          "claude-haiku-5-5": 11.345238095238095
+        }
+      },
+      {
+        "id": "deep-merge-objects",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "lodash-4.17.21/_baseMerge.js#baseMerge@20",
+          "lodash-4.17.21/toPlainObject.js#toPlainObject@28"
+        ],
+        "topK": [
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "lodash-4.17.21/_baseMerge.js#baseMerge@20",
+          "lodash-4.17.21/toPlainObject.js#toPlainObject@28",
+          "lodash-4.17.21/_baseClone.js#baseClone@90",
+          "lodash-4.17.21/set.js#set@31",
+          "lodash-4.17.21/_baseAssignIn.js#baseAssignIn@13",
+          "lodash-4.17.21/_baseAssign.js#baseAssign@13",
+          "lodash-4.17.21/keysIn.js#keysIn@28",
+          "zod-3.25.76/v4/core/to-json-schema.js#JSONSchemaGenerator@3",
+          "lodash-4.17.21/keys.js#keys@33"
+        ],
+        "topSimilarity": 0.6400579532126118,
+        "top1Correct": true,
+        "writeTokens": 2372,
+        "requestTokens": 37,
+        "confirmInputTokens": 644,
+        "leverage": {
+          "claude-opus-5-5": 10.504871567759078,
+          "claude-sonnet-5-5": 10.504871567759078,
+          "claude-haiku-5-5": 10.504871567759078
+        }
+      },
+      {
+        "id": "rate-limit-calls",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "p-limit-7.3.0/index.js#limitFunction@117",
+          "lodash-4.17.21/debounce.js#debounce@66"
+        ],
+        "topK": [
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "p-limit-7.3.0/index.js#limitFunction@117",
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "fastest-levenshtein-1.0.16/esm/mod.js#closest@155",
+          "p-limit-7.3.0/index.js#pLimit@3",
+          "zod-3.25.76/src/v3/types.ts#ZodFunction@3815",
+          "zod-3.25.76/src/v3/types.ts#ZodCatch@4612",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "semver-7.8.0/functions/compare.js#compare@4"
+        ],
+        "topSimilarity": 0.6578722844376421,
+        "top1Correct": true,
+        "writeTokens": 1426,
+        "requestTokens": 33,
+        "confirmInputTokens": 625,
+        "leverage": {
+          "claude-opus-5-5": 6.541284403669724,
+          "claude-sonnet-5-5": 6.541284403669724,
+          "claude-haiku-5-5": 6.541284403669724
+        }
+      },
+      {
+        "id": "delay-until-quiet",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45"
+        ],
+        "topK": [
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "p-limit-7.3.0/index.js#pLimit@3",
+          "lru-cache-11.3.6/dist/esm/index.js#LRUCache@94",
+          "lodash-4.17.21/_isIterateeCall.js#isIterateeCall@16",
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "p-limit-7.3.0/index.js#limitFunction@117",
+          "zod-3.25.76/src/v3/types.ts#ZodFunction@3815",
+          "zod-3.25.76/v3/types.js#ZodFunction@2868"
+        ],
+        "topSimilarity": 0.6964699245453532,
+        "top1Correct": true,
+        "writeTokens": 1315,
+        "requestTokens": 48,
+        "confirmInputTokens": 727,
+        "leverage": {
+          "claude-opus-5-5": 5.189423835832676,
+          "claude-sonnet-5-5": 5.189423835832676,
+          "claude-haiku-5-5": 5.189423835832676
+        }
+      },
+      {
+        "id": "set-at-deep-path",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "lodash-4.17.21/set.js#set@31",
+          "lodash-4.17.21/_baseSet.js#baseSet@17",
+          "lodash-4.17.21/get.js#get@28"
+        ],
+        "topK": [
+          "lodash-4.17.21/set.js#set@31",
+          "lodash-4.17.21/_baseSet.js#baseSet@17",
+          "lodash-4.17.21/get.js#get@28",
+          "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+          "zod-3.25.76/v3/types.js#ZodSet@2782",
+          "lodash-4.17.21/keysIn.js#keysIn@28",
+          "zod-3.25.76/src/v3/types.ts#ZodObject@2450",
+          "zod-3.25.76/v3/types.js#ZodObject@1879",
+          "zod-3.25.76/v3/types.cjs#ZodObject@1901",
+          "lodash-4.17.21/keys.js#keys@33"
+        ],
+        "topSimilarity": 0.7852549350917998,
+        "top1Correct": true,
+        "writeTokens": 1100,
+        "requestTokens": 31,
+        "confirmInputTokens": 611,
+        "leverage": {
+          "claude-opus-5-5": 5.159474671669794,
+          "claude-sonnet-5-5": 5.159474671669794,
+          "claude-haiku-5-5": 5.159474671669794
+        }
+      },
+      {
+        "id": "bounded-cache-with-ttl",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "lru-cache-11.3.6/dist/esm/index.js#LRUCache@94",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "lodash-4.17.21/debounce.js#debounce@66"
+        ],
+        "topK": [
+          "lru-cache-11.3.6/dist/esm/index.js#LRUCache@94",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "p-limit-7.3.0/index.js#pLimit@3",
+          "p-limit-7.3.0/index.js#limitFunction@117",
+          "zod-3.25.76/src/v3/types.ts#ZodSet@3684",
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "bcryptjs-2.4.3/src/bcrypt/impl.js#_encipher@272",
+          "zod-3.25.76/v3/types.js#ZodMap@2715",
+          "zod-3.25.76/v3/types.js#ZodString@477"
+        ],
+        "topSimilarity": 0.6223221377108106,
+        "top1Correct": true,
+        "writeTokens": 14728,
+        "requestTokens": 50,
+        "confirmInputTokens": 713,
+        "leverage": {
+          "claude-opus-5-5": 58.305621536025335,
+          "claude-sonnet-5-5": 58.305621536025335,
+          "claude-haiku-5-5": 58.305621536025335
+        }
+      },
+      {
+        "id": "limit-concurrent-promises",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "p-limit-7.3.0/index.js#pLimit@3",
+          "p-limit-7.3.0/index.js#limitFunction@117",
+          "p-throttle-8.1.0/index.js#pThrottle@21"
+        ],
+        "topK": [
+          "p-limit-7.3.0/index.js#pLimit@3",
+          "p-limit-7.3.0/index.js#limitFunction@117",
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "lodash-4.17.21/_createAssigner.js#createAssigner@11",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "uuid-11.1.1/dist/cjs/v1ToV6.js#v1ToV6@5",
+          "zod-3.25.76/v3/types.js#ZodPromise@3133",
+          "csv-parse-6.2.1/lib/index.js#Parser@14",
+          "semver-7.8.0/ranges/max-satisfying.js#maxSatisfying@6",
+          "zod-3.25.76/v3/types.cjs#ZodUnion@2290"
+        ],
+        "topSimilarity": 0.6567536616271156,
+        "top1Correct": true,
+        "writeTokens": 780,
+        "requestTokens": 39,
+        "confirmInputTokens": 571,
+        "leverage": {
+          "claude-opus-5-5": 3.658536585365854,
+          "claude-sonnet-5-5": 3.658536585365854,
+          "claude-haiku-5-5": 3.658536585365854
+        }
+      },
+      {
+        "id": "throttle-async-calls",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "p-limit-7.3.0/index.js#pLimit@3"
+        ],
+        "topK": [
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "p-limit-7.3.0/index.js#pLimit@3",
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "p-limit-7.3.0/index.js#limitFunction@117",
+          "uuid-11.1.1/dist/esm/v1.js#v1@4",
+          "zod-3.25.76/src/v3/types.ts#ZodCatch@4612",
+          "zod-3.25.76/src/v4/core/function.ts#$ZodFunction@44",
+          "uuid-11.1.1/dist/esm/v7.js#v7@4",
+          "zod-3.25.76/v3/types.js#ZodType@69"
+        ],
+        "topSimilarity": 0.7817901261606442,
+        "top1Correct": true,
+        "writeTokens": 2124,
+        "requestTokens": 39,
+        "confirmInputTokens": 644,
+        "leverage": {
+          "claude-opus-5-5": 9.32396839332748,
+          "claude-sonnet-5-5": 9.32396839332748,
+          "claude-haiku-5-5": 9.32396839332748
+        }
+      },
+      {
+        "id": "validate-email",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "validator-13.15.35/lib/isFQDN.js#isFQDN@18"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "validator-13.15.35/lib/isFQDN.js#isFQDN@18",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+          "validator-13.15.35/lib/isURL.js#isURL@64",
+          "zod-3.25.76/v3/types.js#ZodString@477",
+          "zod-3.25.76/v3/types.cjs#ZodRecord@2688",
+          "zod-3.25.76/v3/types.cjs#ZodString@486",
+          "semver-7.8.0/functions/truncate.js#truncate@7"
+        ],
+        "topSimilarity": 0.7145181196507745,
+        "top1Correct": true,
+        "writeTokens": 2323,
+        "requestTokens": 43,
+        "confirmInputTokens": 672,
+        "leverage": {
+          "claude-opus-5-5": 9.785172704296546,
+          "claude-sonnet-5-5": 9.785172704296546,
+          "claude-haiku-5-5": 9.785172704296546
+        }
+      },
+      {
+        "id": "validate-url",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "validator-13.15.35/lib/isFQDN.js#isFQDN@18",
+          "validator-13.15.35/lib/isURL.js#isURL@64",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isFQDN.js#isFQDN@18",
+          "validator-13.15.35/lib/isURL.js#isURL@64",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "validator-13.15.35/lib/isJWT.js#isJWT@10",
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "validator-13.15.35/lib/isCurrency.js#isCurrency@77",
+          "zod-3.25.76/v3/types.cjs#ZodEnum@3063",
+          "semver-7.8.0/functions/lte.js#lte@4"
+        ],
+        "topSimilarity": 0.7363589308148973,
+        "top1Correct": false,
+        "writeTokens": 2993,
+        "requestTokens": 47,
+        "confirmInputTokens": 653,
+        "leverage": {
+          "claude-opus-5-5": 12.596801346801346,
+          "claude-sonnet-5-5": 12.596801346801346,
+          "claude-haiku-5-5": 12.596801346801348
+        }
+      },
+      {
+        "id": "canonical-email",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "semver-7.8.0/functions/cmp.js#cmp@10",
+          "zod-3.25.76/v3/types.js#ZodString@477",
+          "zod-3.25.76/v3/types.cjs#ZodString@486",
+          "zod-3.25.76/v4/core/api.js#_stringbool@834",
+          "semver-7.8.0/functions/diff.js#diff@5",
+          "semver-7.8.0/functions/compare.js#compare@4",
+          "semver-7.8.0/functions/clean.js#clean@4"
+        ],
+        "topSimilarity": 0.8078426012940937,
+        "top1Correct": true,
+        "writeTokens": 806,
+        "requestTokens": 39,
+        "confirmInputTokens": 733,
+        "leverage": {
+          "claude-opus-5-5": 3.281758957654723,
+          "claude-sonnet-5-5": 3.281758957654723,
+          "claude-haiku-5-5": 3.281758957654723
+        }
+      },
+      {
+        "id": "password-strength",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "validator-13.15.35/lib/isStrongPassword.js#isStrongPassword@88",
+          "zod-3.25.76/v4/core/api.js#_stringbool@834",
+          "validator-13.15.35/lib/contains.js#contains@15"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isStrongPassword.js#isStrongPassword@88",
+          "zod-3.25.76/v4/core/api.js#_stringbool@834",
+          "validator-13.15.35/lib/contains.js#contains@15",
+          "validator-13.15.35/lib/isFQDN.js#isFQDN@18",
+          "zod-3.25.76/v3/types.js#ZodString@477",
+          "zod-3.25.76/v3/types.cjs#ZodSet@2811",
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "zod-3.25.76/v3/types.js#ZodNumber@1063",
+          "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+          "zod-3.25.76/v3/types.cjs#ZodRecord@2688"
+        ],
+        "topSimilarity": 0.7561209183095605,
+        "top1Correct": true,
+        "writeTokens": 780,
+        "requestTokens": 44,
+        "confirmInputTokens": 687,
+        "leverage": {
+          "claude-opus-5-5": 3.2311516155758078,
+          "claude-sonnet-5-5": 3.2311516155758078,
+          "claude-haiku-5-5": 3.2311516155758078
+        }
+      },
+      {
+        "id": "time-ordered-id",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "uuid-11.1.1/dist/esm/v7.js#v7@4",
+          "uuid-11.1.1/dist/esm/v6.js#v6@4",
+          "uuid-11.1.1/dist/cjs/v7.js#v7@7"
+        ],
+        "topK": [
+          "uuid-11.1.1/dist/esm/v7.js#v7@4",
+          "uuid-11.1.1/dist/esm/v6.js#v6@4",
+          "uuid-11.1.1/dist/cjs/v7.js#v7@7",
+          "uuid-11.1.1/dist/cjs/v1.js#v1@7",
+          "uuid-11.1.1/dist/esm/v3.js#v3@4",
+          "uuid-11.1.1/dist/cjs/v4.js#v4@6",
+          "uuid-11.1.1/dist/cjs/v6.js#v6@6",
+          "uuid-11.1.1/dist/esm/v1.js#v1@4",
+          "uuid-11.1.1/dist/esm/v1ToV6.js#v1ToV6@3",
+          "zod-3.25.76/src/v3/types.ts#ZodDate@1875"
+        ],
+        "topSimilarity": 0.6654507883375629,
+        "top1Correct": true,
+        "writeTokens": 742,
+        "requestTokens": 43,
+        "confirmInputTokens": 554,
+        "leverage": {
+          "claude-opus-5-5": 3.470533208606174,
+          "claude-sonnet-5-5": 3.470533208606174,
+          "claude-haiku-5-5": 3.4705332086061738
+        }
+      },
+      {
+        "id": "name-based-id",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "uuid-11.1.1/dist/esm/v3.js#v3@4",
+          "uuid-11.1.1/dist/cjs/v5.js#v5@9",
+          "uuid-11.1.1/dist/esm/v5.js#v5@4"
+        ],
+        "topK": [
+          "uuid-11.1.1/dist/esm/v3.js#v3@4",
+          "uuid-11.1.1/dist/cjs/v5.js#v5@9",
+          "uuid-11.1.1/dist/esm/v5.js#v5@4",
+          "uuid-11.1.1/dist/esm/v35.js#v35@13",
+          "uuid-11.1.1/dist/cjs/v3.js#v3@9",
+          "uuid-11.1.1/dist/cjs/v35.js#v35@17",
+          "uuid-11.1.1/dist/esm/v1ToV6.js#v1ToV6@3",
+          "uuid-11.1.1/dist/esm/v6.js#v6@4",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@829",
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18"
+        ],
+        "topSimilarity": 0.7737430894142131,
+        "top1Correct": false,
+        "writeTokens": 682,
+        "requestTokens": 39,
+        "confirmInputTokens": 580,
+        "leverage": {
+          "claude-opus-5-5": 3.172093023255814,
+          "claude-sonnet-5-5": 3.172093023255814,
+          "claude-haiku-5-5": 3.172093023255814
+        }
+      },
+      {
+        "id": "md5-digest",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+          "uuid-11.1.1/dist/cjs/v3.js#v3@9"
+        ],
+        "topK": [
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+          "uuid-11.1.1/dist/cjs/v3.js#v3@9",
+          "uuid-11.1.1/dist/esm/v3.js#v3@4",
+          "uuid-11.1.1/dist/cjs/v35.js#v35@17",
+          "uuid-11.1.1/dist/esm/v7.js#v7@4",
+          "uuid-11.1.1/dist/esm/v35.js#v35@13",
+          "uuid-11.1.1/dist/esm/v5.js#v5@4",
+          "uuid-11.1.1/dist/cjs/v5.js#v5@9",
+          "uuid-11.1.1/dist/cjs/v7.js#v7@7"
+        ],
+        "topSimilarity": 0.7538704908766014,
+        "top1Correct": true,
+        "writeTokens": 64,
+        "requestTokens": 12,
+        "confirmInputTokens": 523,
+        "leverage": {
+          "claude-opus-5-5": 0.362400906002265,
+          "claude-sonnet-5-5": 0.362400906002265,
+          "claude-haiku-5-5": 0.36240090600226493
+        }
+      },
+      {
+        "id": "sha1-digest",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+          "uuid-11.1.1/dist/esm/v5.js#v5@4"
+        ],
+        "topK": [
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+          "uuid-11.1.1/dist/esm/v5.js#v5@4",
+          "uuid-11.1.1/dist/cjs/v5.js#v5@9",
+          "uuid-11.1.1/dist/cjs/v35.js#v35@17",
+          "uuid-11.1.1/dist/esm/v35.js#v35@13",
+          "uuid-11.1.1/dist/esm/v1ToV6.js#v1ToV6@3",
+          "uuid-11.1.1/dist/esm/v7.js#v7@4",
+          "uuid-11.1.1/dist/cjs/v1ToV6.js#v1ToV6@5",
+          "uuid-11.1.1/dist/cjs/v1.js#v1@7"
+        ],
+        "topSimilarity": 0.7547089218403265,
+        "top1Correct": true,
+        "writeTokens": 65,
+        "requestTokens": 12,
+        "confirmInputTokens": 528,
+        "leverage": {
+          "claude-opus-5-5": 0.36599099099099097,
+          "claude-sonnet-5-5": 0.36599099099099097,
+          "claude-haiku-5-5": 0.3659909909909909
+        }
+      },
+      {
+        "id": "closest-by-edits",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 5,
+        "top3": [
+          "fastest-levenshtein-1.0.16/esm/mod.js#distance@141",
+          "semver-7.8.0/functions/rsort.js#rsort@4",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5"
+        ],
+        "topK": [
+          "fastest-levenshtein-1.0.16/esm/mod.js#distance@141",
+          "semver-7.8.0/functions/rsort.js#rsort@4",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/functions/sort.js#sort@4",
+          "fastest-levenshtein-1.0.16/esm/mod.js#closest@155",
+          "semver-7.8.0/ranges/max-satisfying.js#maxSatisfying@6",
+          "semver-7.8.0/ranges/to-comparators.js#toComparators@6",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7",
+          "semver-7.8.0/functions/rcompare.js#rcompare@4",
+          "semver-7.8.0/functions/compare-loose.js#compareLoose@4"
+        ],
+        "topSimilarity": 0.6832238098378327,
+        "top1Correct": false,
+        "writeTokens": 892,
+        "requestTokens": 31,
+        "confirmInputTokens": 605,
+        "leverage": {
+          "claude-opus-5-5": 4.2075471698113205,
+          "claude-sonnet-5-5": 4.2075471698113205,
+          "claude-haiku-5-5": 4.2075471698113205
+        }
+      },
+      {
+        "id": "object-schema-validation",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "zod-3.25.76/v3/types.js#ZodObject@1879",
+          "zod-3.25.76/src/v3/types.ts#ZodType@158",
+          "zod-3.25.76/v3/types.cjs#ZodObject@1901"
+        ],
+        "topK": [
+          "zod-3.25.76/v3/types.js#ZodObject@1879",
+          "zod-3.25.76/src/v3/types.ts#ZodType@158",
+          "zod-3.25.76/v3/types.cjs#ZodObject@1901",
+          "zod-3.25.76/src/v3/types.ts#ZodObject@2450",
+          "zod-3.25.76/src/v3/types.ts#ZodRecord@3501",
+          "zod-3.25.76/v3/types.js#ZodType@69",
+          "zod-3.25.76/v3/types.js#ZodDiscriminatedUnion@2415",
+          "zod-3.25.76/v3/types.js#ZodSet@2782",
+          "zod-3.25.76/v3/types.js#ZodUnknown@1693",
+          "zod-3.25.76/v3/types.cjs#ZodTuple@2617"
+        ],
+        "topSimilarity": 0.7393311204608586,
+        "top1Correct": true,
+        "writeTokens": 17590,
+        "requestTokens": 57,
+        "confirmInputTokens": 835,
+        "leverage": {
+          "claude-opus-5-5": 61.936619718309856,
+          "claude-sonnet-5-5": 61.936619718309856,
+          "claude-haiku-5-5": 61.936619718309856
+        }
+      },
+      {
+        "id": "string-schema-rules",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "zod-3.25.76/v3/types.js#ZodString@477",
+          "zod-3.25.76/v3/types.js#ZodDate@1503"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "zod-3.25.76/v3/types.js#ZodString@477",
+          "zod-3.25.76/v3/types.js#ZodDate@1503",
+          "zod-3.25.76/v3/types.cjs#ZodString@486",
+          "validator-13.15.35/lib/isFQDN.js#isFQDN@18",
+          "zod-3.25.76/v3/types.js#ZodRecord@2661",
+          "zod-3.25.76/v3/types.cjs#ZodDate@1516",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "zod-3.25.76/v3/types.cjs#ZodRecord@2688"
+        ],
+        "topSimilarity": 0.6663976841840732,
+        "top1Correct": false,
+        "writeTokens": 17694,
+        "requestTokens": 47,
+        "confirmInputTokens": 740,
+        "leverage": {
+          "claude-opus-5-5": 69.38823529411765,
+          "claude-sonnet-5-5": 69.38823529411765,
+          "claude-haiku-5-5": 69.38823529411765
+        }
+      },
+      {
+        "id": "base64-decode",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "base64-js-1.5.1/index.js#toByteArray@53",
+          "validator-13.15.35/lib/isJWT.js#isJWT@10",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3"
+        ],
+        "topK": [
+          "base64-js-1.5.1/index.js#toByteArray@53",
+          "validator-13.15.35/lib/isJWT.js#isJWT@10",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+          "uuid-11.1.1/dist/esm/v1ToV6.js#v1ToV6@3",
+          "zod-3.25.76/v3/types.js#ZodString@477",
+          "uuid-11.1.1/dist/esm/v35.js#v35@13",
+          "uuid-11.1.1/dist/esm/v6ToV1.js#v6ToV1@3",
+          "uuid-11.1.1/dist/cjs/v4.js#v4@6",
+          "uuid-11.1.1/dist/cjs/v1ToV6.js#v1ToV6@5",
+          "zod-3.25.76/src/v3/types.ts#ZodString@730"
+        ],
+        "topSimilarity": 0.6983661201253101,
+        "top1Correct": true,
+        "writeTokens": 427,
+        "requestTokens": 27,
+        "confirmInputTokens": 558,
+        "leverage": {
+          "claude-opus-5-5": 2.1500503524672707,
+          "claude-sonnet-5-5": 2.1500503524672707,
+          "claude-haiku-5-5": 2.1500503524672707
+        }
+      },
+      {
+        "id": "dependency-order",
+        "positive": true,
+        "targetInPool": false,
+        "targetRank": null,
+        "top3": [
+          "semver-7.8.0/functions/sort.js#sort@4",
+          "p-limit-7.3.0/index.js#pLimit@3",
+          "zod-3.25.76/src/v3/types.ts#ZodSet@3684"
+        ],
+        "topK": [
+          "semver-7.8.0/functions/sort.js#sort@4",
+          "p-limit-7.3.0/index.js#pLimit@3",
+          "zod-3.25.76/src/v3/types.ts#ZodSet@3684",
+          "zod-3.25.76/v3/types.js#ZodNaN@3432",
+          "zod-3.25.76/v3/types.js#ZodLazy@2982",
+          "semver-7.8.0/ranges/to-comparators.js#toComparators@6",
+          "zod-3.25.76/v3/types.js#ZodUnion@2267",
+          "zod-3.25.76/v3/types.js#ZodBigInt@1302",
+          "zod-3.25.76/v3/types.js#ZodSet@2782",
+          "zod-3.25.76/src/v3/types.ts#ZodArray@2234"
+        ],
+        "topSimilarity": 0.6101751633041083,
+        "top1Correct": false,
+        "writeTokens": 466,
+        "requestTokens": 33,
+        "confirmInputTokens": 641,
+        "leverage": {
+          "claude-opus-5-5": 2.1066907775768535,
+          "claude-sonnet-5-5": 2.1066907775768535,
+          "claude-haiku-5-5": 2.1066907775768535
+        }
+      },
+      {
+        "id": "compiled-json-pointer",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@829",
+          "zod-3.25.76/v4/core/to-json-schema.cjs#JSONSchemaGenerator@7"
+        ],
+        "topK": [
+          "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@829",
+          "zod-3.25.76/v4/core/to-json-schema.cjs#JSONSchemaGenerator@7",
+          "zod-3.25.76/v4/core/to-json-schema.js#JSONSchemaGenerator@3",
+          "zod-3.25.76/v4/core/to-json-schema.js#toJSONSchema@718",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#JSONSchemaGenerator@72",
+          "zod-3.25.76/v4/core/to-json-schema.cjs#toJSONSchema@723",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@828",
+          "zod-3.25.76/src/v3/types.ts#ZodDiscriminatedUnion@3114",
+          "zod-3.25.76/v3/types.js#ZodDiscriminatedUnion@2415"
+        ],
+        "topSimilarity": 0.7941303764246279,
+        "top1Correct": true,
+        "writeTokens": 617,
+        "requestTokens": 26,
+        "confirmInputTokens": 695,
+        "leverage": {
+          "claude-opus-5-5": 2.7422222222222223,
+          "claude-sonnet-5-5": 2.7422222222222223,
+          "claude-haiku-5-5": 2.7422222222222223
+        }
+      },
+      {
+        "id": "custom-alphabet-ids",
+        "positive": true,
+        "targetInPool": false,
+        "targetRank": null,
+        "top3": [
+          "uuid-11.1.1/dist/cjs/v4.js#v4@6",
+          "uuid-11.1.1/dist/esm/v7.js#v7@4",
+          "zod-3.25.76/src/v3/types.ts#custom@4913"
+        ],
+        "topK": [
+          "uuid-11.1.1/dist/cjs/v4.js#v4@6",
+          "uuid-11.1.1/dist/esm/v7.js#v7@4",
+          "zod-3.25.76/src/v3/types.ts#custom@4913",
+          "uuid-11.1.1/dist/esm/v1.js#v1@4",
+          "uuid-11.1.1/dist/esm/v3.js#v3@4",
+          "bcryptjs-2.4.3/src/bcrypt/impl.js#_encipher@272",
+          "semver-7.8.0/functions/rsort.js#rsort@4",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@833",
+          "zod-3.25.76/v3/types.js#custom@3560",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3"
+        ],
+        "topSimilarity": 0.5982484997792703,
+        "top1Correct": false,
+        "writeTokens": 433,
+        "requestTokens": 29,
+        "confirmInputTokens": 602,
+        "leverage": {
+          "claude-opus-5-5": 2.067812798471824,
+          "claude-sonnet-5-5": 2.067812798471824,
+          "claude-haiku-5-5": 2.067812798471824
+        }
+      },
+      {
+        "id": "yaml-parse",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "lodash-4.17.21/toPlainObject.js#toPlainObject@28",
+          "zod-3.25.76/v4/core/api.js#_stringbool@834",
+          "csv-parse-6.2.1/lib/index.js#Parser@14"
+        ],
+        "topK": [
+          "lodash-4.17.21/toPlainObject.js#toPlainObject@28",
+          "zod-3.25.76/v4/core/api.js#_stringbool@834",
+          "csv-parse-6.2.1/lib/index.js#Parser@14",
+          "csv-parse-6.2.1/lib/sync.js#parse@3",
+          "zod-3.25.76/v4/core/to-json-schema.js#toJSONSchema@718",
+          "lodash-4.17.21/keys.js#keys@33",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "uuid-11.1.1/dist/esm/v35.js#v35@13",
+          "semver-7.8.0/functions/diff.js#diff@5",
+          "lodash-4.17.21/keysIn.js#keysIn@28"
+        ],
+        "topSimilarity": 0.5907502743831083,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 26,
+        "confirmInputTokens": 654,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "markdown-render",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "csv-parse-6.2.1/lib/index.js#Parser@14",
+          "csv-parse-6.2.1/lib/sync.js#parse@3",
+          "zod-3.25.76/src/v4/core/api.ts#_stringbool@1501"
+        ],
+        "topK": [
+          "csv-parse-6.2.1/lib/index.js#Parser@14",
+          "csv-parse-6.2.1/lib/sync.js#parse@3",
+          "zod-3.25.76/src/v4/core/api.ts#_stringbool@1501",
+          "zod-3.25.76/v3/locales/en.cjs#errorMap@5",
+          "zod-3.25.76/src/v3/locales/en.ts#errorMap@4",
+          "csv-parse-6.2.1/lib/index.js#parse@79",
+          "zod-3.25.76/v3/types.js#ZodString@477",
+          "zod-3.25.76/v3/locales/en.js#errorMap@3",
+          "zod-3.25.76/v3/ZodError.js#ZodError@24",
+          "zod-3.25.76/v3/helpers/parseUtil.js#addIssueToContext@32"
+        ],
+        "topSimilarity": 0.520152880739909,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 24,
+        "confirmInputTokens": 668,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "deflate-compress",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "base64-js-1.5.1/index.js#toByteArray@53",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18"
+        ],
+        "topK": [
+          "base64-js-1.5.1/index.js#toByteArray@53",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+          "bcryptjs-2.4.3/src/bcrypt/impl.js#_encipher@272",
+          "uuid-11.1.1/dist/cjs/v35.js#v35@17",
+          "csv-parse-6.2.1/lib/api/index.js#transform@28",
+          "uuid-11.1.1/dist/esm/v35.js#v35@13",
+          "uuid-11.1.1/dist/cjs/v1ToV6.js#v1ToV6@5",
+          "uuid-11.1.1/dist/cjs/v7.js#v7@7",
+          "zod-3.25.76/v3/types.js#ZodTuple@2591"
+        ],
+        "topSimilarity": 0.6103610889238654,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 19,
+        "confirmInputTokens": 462,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "cron-next-run",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "zod-3.25.76/src/v3/types.ts#ZodDate@1875",
+          "zod-3.25.76/v3/types.cjs#ZodDate@1516",
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45"
+        ],
+        "topK": [
+          "zod-3.25.76/src/v3/types.ts#ZodDate@1875",
+          "zod-3.25.76/v3/types.cjs#ZodDate@1516",
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "zod-3.25.76/src/v3/types.ts#ZodArray@2234",
+          "zod-3.25.76/v3/types.js#ZodDate@1503",
+          "zod-3.25.76/src/v3/types.ts#ZodPipeline@4775",
+          "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "csv-parse-6.2.1/lib/index.js#parse@79",
+          "validator-13.15.35/lib/isDate.js#isDate@32"
+        ],
+        "topSimilarity": 0.6593512119493118,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 20,
+        "confirmInputTokens": 757,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "text-line-diff",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "semver-7.8.0/functions/diff.js#diff@5",
+          "semver-7.8.0/functions/sort.js#sort@4"
+        ],
+        "topK": [
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "semver-7.8.0/functions/diff.js#diff@5",
+          "semver-7.8.0/functions/sort.js#sort@4",
+          "semver-7.8.0/functions/rsort.js#rsort@4",
+          "semver-7.8.0/ranges/subset.js#subset@45",
+          "semver-7.8.0/ranges/to-comparators.js#toComparators@6",
+          "semver-7.8.0/functions/compare.js#compare@4",
+          "semver-7.8.0/functions/rcompare.js#rcompare@4",
+          "semver-7.8.0/functions/gt.js#gt@4",
+          "semver-7.8.0/functions/compare-loose.js#compareLoose@4"
+        ],
+        "topSimilarity": 0.593596791817492,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 25,
+        "confirmInputTokens": 669,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "route-matching",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "validator-13.15.35/lib/isURL.js#isURL@64",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@833",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isURL.js#isURL@64",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@833",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "semver-7.8.0/functions/coerce.js#coerce@7",
+          "zod-3.25.76/v3/types.js#ZodTuple@2591",
+          "zod-3.25.76/v4/core/to-json-schema.js#JSONSchemaGenerator@3",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@829",
+          "zod-3.25.76/v4/core/to-json-schema.cjs#JSONSchemaGenerator@7",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@828",
+          "zod-3.25.76/src/v4/core/function.ts#_function@140"
+        ],
+        "topSimilarity": 0.5956321856624907,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 27,
+        "confirmInputTokens": 711,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "currency-formatting",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "validator-13.15.35/lib/isCurrency.js#isCurrency@77",
+          "zod-3.25.76/v3/types.cjs#ZodString@486",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isCurrency.js#isCurrency@77",
+          "zod-3.25.76/v3/types.cjs#ZodString@486",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "validator-13.15.35/lib/isJWT.js#isJWT@10",
+          "zod-3.25.76/v3/types.cjs#ZodSymbol@1628",
+          "validator-13.15.35/lib/isDate.js#isDate@32",
+          "zod-3.25.76/src/v3/types.ts#ZodSymbol@2007",
+          "validator-13.15.35/lib/isStrongPassword.js#isStrongPassword@88",
+          "zod-3.25.76/v3/types.js#ZodNativeEnum@3095",
+          "zod-3.25.76/v3/types.js#ZodSymbol@1614"
+        ],
+        "topSimilarity": 0.6771116784196949,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 30,
+        "confirmInputTokens": 647,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "image-resize",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "csv-parse-6.2.1/lib/api/init_state.js#init_state@13",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "uuid-11.1.1/dist/cjs/v7.js#v7@7"
+        ],
+        "topK": [
+          "csv-parse-6.2.1/lib/api/init_state.js#init_state@13",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "uuid-11.1.1/dist/cjs/v7.js#v7@7",
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+          "uuid-11.1.1/dist/esm/v1.js#v1@4",
+          "uuid-11.1.1/dist/esm/v7.js#v7@4",
+          "uuid-11.1.1/dist/esm/v6.js#v6@4",
+          "uuid-11.1.1/dist/cjs/v4.js#v4@6",
+          "uuid-11.1.1/dist/cjs/v1.js#v1@7",
+          "lodash-4.17.21/_baseClone.js#baseClone@90"
+        ],
+        "topSimilarity": 0.5713617919466146,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 19,
+        "confirmInputTokens": 561,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      }
+    ]
+  }
+}

@@ -14,7 +14,15 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { corpusDefinitions } from "../../B11-reuse-economics/harness/retrieve.mjs";
 import { buildCard } from "./cards.mjs";
-import { DEFAULT_MODEL, estimateCost, mapLimit, modelClient } from "./model.mjs";
+import {
+  DEFAULT_MAX_DOLLARS,
+  DEFAULT_MODEL,
+  checkBudget,
+  estimateCost,
+  evenSample,
+  mapLimit,
+  modelClient,
+} from "./model.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const benchDir = resolve(here, "..");
@@ -35,24 +43,22 @@ async function main() {
     ? JSON.parse(readFileSync(cacheFile, "utf8"))
     : defs.map(buildCard);
   const textOf = new Map(defs.map((d) => [`${d.sourceFile}#${d.name}@${d.lineStart}`, d.text]));
-  const todo = cards.filter((c) => !c.doc).slice(0, Number(arg("limit", String(cards.length))));
+  let todo = cards.filter((c) => !c.doc).slice(0, Number(arg("limit", String(cards.length))));
+  // --sample N: an even, deterministic subset, the same for every model (for spot checks).
+  if (arg("sample", null)) todo = evenSample(todo, Number(arg("sample")));
+  // Long definitions are cut to 6,000 characters for the description.
+  const chars = todo.reduce(
+    (n, c) => n + SYSTEM.length + Math.min(6000, textOf.get(c.id)?.length ?? 0),
+    0,
+  );
+  const estimate = estimateCost(chars, todo.length * 120, todo.length);
 
   if (argv.includes("--dry-run")) {
-    // Long definitions are cut to 6,000 characters for the description.
-    const chars = todo.reduce(
-      (n, c) => n + SYSTEM.length + Math.min(6000, textOf.get(c.id)?.length ?? 0),
-      0,
-    );
-    console.log(
-      JSON.stringify(
-        { definitions: todo.length, estimate: estimateCost(chars, todo.length * 120, todo.length) },
-        null,
-        2,
-      ),
-    );
+    console.log(JSON.stringify({ definitions: todo.length, estimate }, null, 2));
     return;
   }
   const model = arg("model", DEFAULT_MODEL);
+  checkBudget(estimate, model, Number(arg("max-dollars", String(DEFAULT_MAX_DOLLARS))));
   const client = await modelClient({ model, maxTokens: 1000 });
   const descriptions = {};
   await mapLimit(todo, Number(arg("concurrency", "8")), async (c) => {
