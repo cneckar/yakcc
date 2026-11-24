@@ -55,6 +55,7 @@ const FIXTURE_FNS = [
   "yk_char_array",
   "yk_goto",
   "yk_state",
+  "yk_varargs",
   "yk_cmp_int",
   "yk_cmp_bytes",
 ];
@@ -187,6 +188,7 @@ ${["yk_local_struct", "yk_string_sum", "yk_local_array", "yk_swap", "yk_char_arr
 long yk_ptr_diff(int);
 int yk_goto(int, int);
 int yk_state(int);
+int yk_varargs(int, int);
 static char h[1 << 16];
 static unsigned char *buf(size_t n) { unsigned char *p = aligned_alloc(16, (n + 31) / 16 * 16); memset(p, 0, (n + 31) / 16 * 16); return p; }
 static void fill(unsigned char *p) { for (size_t i = 0; h[2 * i]; i++) { unsigned v; sscanf(h + 2 * i, "%2x", &v); p[i] = (unsigned char)v; } }
@@ -228,6 +230,7 @@ int main(void) {
       if (!strcmp(op, "yk_char_array")) r = yk_char_array(a);
       if (!strcmp(op, "yk_goto")) r = yk_goto(a, b);
       if (!strcmp(op, "yk_state")) r = yk_state(a);
+      if (!strcmp(op, "yk_varargs")) r = yk_varargs(a, b);
       printf("%ld\\n", r);
     }
   }
@@ -356,6 +359,7 @@ int main(void) {
       "yk_char_array",
       "yk_goto",
       "yk_state",
+      "yk_varargs",
     ])
       xs.forEach((x, k) => {
         const y = xs[(k * 7 + 3) % xs.length] as number;

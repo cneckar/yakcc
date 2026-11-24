@@ -233,13 +233,25 @@ function parseType(spelled: string, depth = 0): CType {
   if (/^(struct|union) /.test(raw)) return { k: "rec", name: raw };
   if (/\)$/.test(raw)) return { k: "fn" };
   if (raw === "long double") throw new RaiseCError(`the C type "${raw}" is not raised yet`);
+  if (raw === "__builtin_va_list") return parseType("struct __va_list_tag[1]", depth + 1);
   const named = localTypedefs.get(raw) ?? unitTypedef(raw) ?? LP64_TYPEDEFS[raw];
   if (named !== undefined) return parseType(named, depth + 1);
   throw new RaiseCError(`the C type "${raw}" is not raised yet`);
 }
 
+/**
+ * x86-64's `va_list` element (`struct __va_list_tag`, 24 bytes). The raised code keeps one thing
+ * in it: at offset 0, the address of the next variable argument (see `__va` below).
+ */
+const VA_LIST_TAG: RecordLayout = {
+  size: 24,
+  align: 8,
+  fields: new Map([["cursor", { offset: 0, type: "unsigned long" }]]),
+};
+
 const layoutOf = (t: CType): RecordLayout => {
   if (t.k !== "rec") throw new RaiseCError(`${t.k} is not a record`);
+  if (t.name === "struct __va_list_tag") return VA_LIST_TAG;
   const l = unitLayout(recordKey(t.name));
   if (l === undefined) throw new RaiseCError(`no layout from clang for "${t.name}"`);
   return l;
@@ -687,6 +699,8 @@ function raiseBody(
   const globalDecls = new Map<string, ClangNode>(); // decl id -> its declaration (initializer)
   const globalData = new Map<string, string>(); // decl id -> its constant memory's name
   const params = (fn.inner ?? []).filter((c) => c.kind === "ParmVarDecl");
+  // A variadic function takes its variable arguments' address as a last parameter, `__va`.
+  const variadic = variadicParams(fn.type?.qualType ?? "") !== undefined;
   const result = ctype({ qualType: (fn.type?.qualType ?? "").replace(/\(.*$/, "").trim() });
   const vars = new Map<string, CType>();
   const names = new Map<string, string>();
@@ -1199,10 +1213,52 @@ function raiseBody(
           throw new RaiseCError(`a call of ${callee.kind}`);
         const leaf = Object.hasOwn(LEAF_CALLS, name) ? LEAF_CALLS[name] : undefined;
         if (leaf !== undefined) return leaf(args);
+        // Variable arguments: va_start sets the list's cursor to this function's `__va`; va_copy
+        // copies a cursor; va_end does nothing.
+        if (name === "__builtin_va_start" || name === "__builtin_c23_va_start") {
+          if (!variadic) throw new RaiseCError("va_start outside a variadic function");
+          return `__ykStore64(${args[0]}, __ykNumToBig(__va))`;
+        }
+        if (name === "__builtin_va_end") return "undefined";
+        if (name === "__builtin_va_copy") return `__ykStore64(${args[0]}, __ykLoad64(${args[1]}))`;
+        // A call of a variadic function: the arguments past its parameters (promoted by clang)
+        // are packed into 8-byte slots, and the slots' address is its last argument, `__va`.
+        const fixed = variadicParams(d.type?.qualType ?? "");
+        let callArgs = args;
+        let pack: string[] = [];
+        let area = "";
+        if (fixed !== undefined) {
+          area = temp({ k: "f64" });
+          const extras = kids.slice(1 + fixed);
+          pack = [
+            `(${area} = __ykAlloc(${Math.max(8, 8 * extras.length)}, 8))`,
+            ...extras.map((x, i) => {
+              const xt = typeOf(x);
+              const slot = i === 0 ? area : `(${area} + ${8 * i})`;
+              const v = args[1 + fixed + i - 1] as string;
+              if (xt.k === "f64") return `__ykStoreF64(${slot}, ${v})`;
+              if (wide(xt)) return `__ykStore64(${slot}, ${v})`;
+              if (xt.k === "ptr" || xt.k === "i32" || xt.k === "u32")
+                return `__ykStore64(${slot}, __ykNumToBig(${v}))`;
+              throw new RaiseCError(`a variable argument of ${xt.k}`);
+            }),
+          ];
+          callArgs = [...args.slice(0, fixed), area];
+        }
         const key = resolve({ name, kind: d.kind, type: normType(d.type?.qualType ?? "") });
-        if (key !== undefined) return `${key}(${args.join(", ")})`;
-        externals.add(name);
-        return `${ident(name)}(${args.join(", ")})`;
+        const target = key ?? ident(name);
+        if (key === undefined) externals.add(name);
+        const call = `${target}(${callArgs.join(", ")})`;
+        if (fixed === undefined) return call;
+        const r = temp(typeOf(e).k === "void" ? { k: "i32" } : typeOf(e));
+        return `(${pack.join(", ")}, (${r} = ${call}), __ykFree(${area}), ${r})`;
+      }
+      case "VAArgExpr": {
+        // The next variable argument: read at the list's cursor, which moves 8 bytes on.
+        const t = typeOf(e);
+        const list = temp({ k: "f64" });
+        const at = temp({ k: "f64" });
+        return `((${list} = ${expr(k0)}), (${at} = __ykBigToF64(__ykLoad64(${list}))), __ykStore64(${list}, __ykNumToBig(${at} + 8)), ${loadAt(at, t)})`;
       }
       case "InitListExpr": {
         const t = typeOf(e);
@@ -1583,7 +1639,10 @@ function raiseBody(
     stmt(s);
   };
 
-  const sig = params.map((p) => `${declName(p)}: ${tsType(ctype(p.type))}`).join(", ");
+  const sig = [
+    ...params.map((p) => `${declName(p)}: ${tsType(ctype(p.type))}`),
+    ...(variadic ? ["__va: number"] : []),
+  ].join(", ");
   // C passes arguments by value: a parameter assigned in the body is a local. A parameter whose
   // address is taken is copied into its slot.
   const entry: string[] = [];
@@ -1610,6 +1669,23 @@ const tsType = (t: CType): string =>
         : t.k === "arr"
           ? `${tsType(t.of)}[]`
           : "void";
+
+/**
+ * A variadic function type's number of named parameters (`int (const char *, ...)` has 1), or
+ * undefined when the type is not variadic.
+ */
+function variadicParams(type: string): number | undefined {
+  const m = /\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*$/.exec(type.replace(/\s*noexcept\b.*$/, ""));
+  if (m === null || !/\.\.\.\s*$/.test(m[1] as string)) return undefined;
+  let depth = 0;
+  let count = 0;
+  for (const c of (m[1] as string).replace(/,?\s*\.\.\.\s*$/, "")) {
+    if (c === "(") depth++;
+    else if (c === ")") depth--;
+    else if (c === "," && depth === 0) count++;
+  }
+  return (m[1] as string).replace(/,?\s*\.\.\.\s*$/, "").trim() === "" ? 0 : count + 1;
+}
 
 function stripParens(e: ClangNode): ClangNode {
   let n = e;

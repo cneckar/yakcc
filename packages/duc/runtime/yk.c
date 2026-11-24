@@ -1983,6 +1983,37 @@ yk yk_leaf_f64_to_i64(yk x) {
   yk b = big_from_double(trunc(to_number(x)));
   return big_from_i64((int64_t)big_low64(big(b)));
 }
+/* The memory leaves (DEC-DUC-OPERATIONS-AS-ATOMS-001, #1363; raise-c.ts's createCMemory is their
+ * definition): one flat byte memory, an address a number. A region is zeroed, aligned to at least
+ * 16, its size rounded up to 16. Loads and stores are little-endian (the targets are). Unlike the
+ * reference, a bound is not checked here yet. */
+#define YK_MEM(a) ((unsigned char *)(uintptr_t)to_number(a))
+yk yk_leaf_alloc(yk size, yk align) {
+  size_t n = (size_t)to_number(size), a = (size_t)to_number(align);
+  if (a < 16) a = 16;
+  size_t r = n < 16 ? 16 : (n + 15) / 16 * 16;
+  void *p = NULL;
+  if (posix_memalign(&p, a, r) != 0) abort();
+  memset(p, 0, r);
+  return yk_number((double)(uintptr_t)p);
+}
+yk yk_leaf_free(yk a) {
+  free(YK_MEM(a));
+  return YK_UNDEFINED;
+}
+yk yk_leaf_load8(yk a) { return yk_number(*YK_MEM(a)); }
+yk yk_leaf_load16(yk a) { uint16_t v; memcpy(&v, YK_MEM(a), 2); return yk_number(v); }
+yk yk_leaf_load32(yk a) { uint32_t v; memcpy(&v, YK_MEM(a), 4); return yk_number(v); }
+yk yk_leaf_load64(yk a) { uint64_t v; memcpy(&v, YK_MEM(a), 8); return big_from_u64(v, 0); }
+yk yk_leaf_load_f64(yk a) { double v; memcpy(&v, YK_MEM(a), 8); return yk_number(v); }
+yk yk_leaf_load_f32(yk a) { float v; memcpy(&v, YK_MEM(a), 4); return yk_number(v); }
+yk yk_leaf_store8(yk a, yk x) { *YK_MEM(a) = (uint8_t)to_uint32(x); return x; }
+yk yk_leaf_store16(yk a, yk x) { uint16_t v = (uint16_t)to_uint32(x); memcpy(YK_MEM(a), &v, 2); return x; }
+yk yk_leaf_store32(yk a, yk x) { uint32_t v = to_uint32(x); memcpy(YK_MEM(a), &v, 4); return x; }
+yk yk_leaf_store64(yk a, yk x) { uint64_t v = big_low64(want_big(x)); memcpy(YK_MEM(a), &v, 8); return x; }
+yk yk_leaf_store_f64(yk a, yk x) { double v = to_number(x); memcpy(YK_MEM(a), &v, 8); return x; }
+yk yk_leaf_store_f32(yk a, yk x) { float v = (float)to_number(x); memcpy(YK_MEM(a), &v, 4); return x; }
+yk yk_leaf_f32(yk x) { return yk_number((double)(float)to_number(x)); }
 yk yk_leaf_f64_bits(yk x) {
   double d = to_number(x);
   uint64_t u;

@@ -120,6 +120,22 @@ const LEAVES: Readonly<Record<string, [string, number]>> = {
   __ykF64Hi: ["yk_leaf_f64_hi", 1],
   __ykF64Lo: ["yk_leaf_f64_lo", 1],
   __ykF64Make: ["yk_leaf_f64_make", 2],
+  __ykF32: ["yk_leaf_f32", 1],
+  // The memory leaves (#1363), as raise-c's createCMemory defines them.
+  __ykAlloc: ["yk_leaf_alloc", 2],
+  __ykFree: ["yk_leaf_free", 1],
+  __ykLoad8: ["yk_leaf_load8", 1],
+  __ykLoad16: ["yk_leaf_load16", 1],
+  __ykLoad32: ["yk_leaf_load32", 1],
+  __ykLoad64: ["yk_leaf_load64", 1],
+  __ykLoadF64: ["yk_leaf_load_f64", 1],
+  __ykLoadF32: ["yk_leaf_load_f32", 1],
+  __ykStore8: ["yk_leaf_store8", 2],
+  __ykStore16: ["yk_leaf_store16", 2],
+  __ykStore32: ["yk_leaf_store32", 2],
+  __ykStore64: ["yk_leaf_store64", 2],
+  __ykStoreF64: ["yk_leaf_store_f64", 2],
+  __ykStoreF32: ["yk_leaf_store_f32", 2],
 };
 /** A BigInt literal: its digits (any radix prefix kept), then n. */
 const BIGINT_LITERAL = /^(0[xXoObB][0-9a-fA-F_]+|[0-9_]+)n$/;

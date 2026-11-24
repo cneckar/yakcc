@@ -1,5 +1,6 @@
 /* C's memory, for the C front end (#1363): pointers, &, *, [], ->, structs, arrays and unions by
  * clang's layout, string literals. Compiled natively with -fwrapv and shaved; both must agree. */
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -135,4 +136,42 @@ int yk_state(int a) {
   counter += a;
   yk_global_table[a & 3] += counter;
   return counter * 100 + *ptrs[0] + *ptrs[1] + calls * 7 + cmp(&a, &counter) + greeting[1];
+}
+
+/* Variable arguments: int, long and double through va_arg, a va_list passed on, and va_copy. */
+static long yk_sum_va(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  long t = 0;
+  for (int i = 0; i < n; i++) {
+    if (i % 3 == 2) t += (long)(va_arg(ap, double) * 10);
+    else if (i % 3 == 1) t += va_arg(ap, long);
+    else t += va_arg(ap, int);
+  }
+  va_end(ap);
+  return t;
+}
+static int yk_vcount(const char *fmt, va_list ap) {
+  int t = 0;
+  for (; *fmt; fmt++) {
+    if (*fmt == 'd') t += va_arg(ap, int);
+    else if (*fmt == 's') {
+      const char *s = va_arg(ap, const char *);
+      while (*s) t += *s++;
+    }
+  }
+  return t;
+}
+static int yk_count(const char *fmt, ...) {
+  va_list ap, aq;
+  va_start(ap, fmt);
+  va_copy(aq, ap);
+  int a = yk_vcount(fmt, ap);
+  int b = yk_vcount(fmt, aq);
+  va_end(aq);
+  va_end(ap);
+  return a * 1000 + b;
+}
+int yk_varargs(int a, int b) {
+  return (int)yk_sum_va(5, a, (long)b * 1000000000L, 2.5, b, (long)a) + yk_count("dsd", a, "hey", b);
 }
