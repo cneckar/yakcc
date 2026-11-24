@@ -125,6 +125,7 @@ const body = (fn: ClangNode): ClangNode | undefined =>
  */
 type CType =
   | { readonly k: "f64" }
+  | { readonly k: "f32" }
   | { readonly k: "i8" }
   | { readonly k: "u8" }
   | { readonly k: "i16" }
@@ -199,6 +200,7 @@ const BUILTIN: Readonly<Record<string, CType>> = {
   "unsigned long long": { k: "u64" },
   "unsigned long long int": { k: "u64" },
   double: F64,
+  float: { k: "f32" },
   bool: { k: "bool" },
   _Bool: { k: "bool" },
   void: { k: "void" },
@@ -229,8 +231,7 @@ function parseType(spelled: string, depth = 0): CType {
   if (builtin !== undefined) return builtin;
   if (/^(struct|union) /.test(raw)) return { k: "rec", name: raw };
   if (/\)$/.test(raw)) return { k: "fn" };
-  if (raw === "float" || raw === "long double")
-    throw new RaiseCError(`the C type "${raw}" is not raised yet`);
+  if (raw === "long double") throw new RaiseCError(`the C type "${raw}" is not raised yet`);
   const named = localTypedefs.get(raw) ?? unitTypedef(raw) ?? LP64_TYPEDEFS[raw];
   if (named !== undefined) return parseType(named, depth + 1);
   throw new RaiseCError(`the C type "${raw}" is not raised yet`);
@@ -255,6 +256,7 @@ function sizeOf(t: CType): number {
       return 2;
     case "i32":
     case "u32":
+    case "f32":
       return 4;
     case "i64":
     case "u64":
@@ -279,7 +281,7 @@ const narrow = (t: CType): boolean =>
 const integral = (t: CType): boolean =>
   narrow(t) || t.k === "i32" || t.k === "u32" || wide(t) || t.k === "bool";
 const zeroOf = (t: CType): string =>
-  t.k === "f64" || t.k === "i32" || t.k === "u32" || narrow(t) || t.k === "ptr"
+  t.k === "f64" || t.k === "f32" || t.k === "i32" || t.k === "u32" || narrow(t) || t.k === "ptr"
     ? "0"
     : wide(t)
       ? "0n"
@@ -308,6 +310,15 @@ function toNarrow(e: string, to: CType): string {
 /** C's conversion of a value of type `from` to type `to`. */
 function convert(e: string, from: CType, to: CType): string {
   if (from.k === to.k || to.k === "void") return e;
+  // float (binary32): a number rounded to binary32 by its leaf. To double, exact; from double or
+  // from a 32-bit integer, one rounding; from a 64-bit integer, refused (two roundings can differ).
+  if (to.k === "f32") {
+    if (from.k === "f64" || narrow(from) || from.k === "i32" || from.k === "u32")
+      return `__ykF32(${e})`;
+    if (from.k === "bool") return `(${e} ? 1 : 0)`;
+    throw new RaiseCError(`a conversion from ${from.k} to float`);
+  }
+  if (from.k === "f32") return convert(e, F64, to);
   if (to.k === "bool") return wide(from) ? `(${e} !== 0n)` : `(${e} !== 0)`;
   if (from.k === "bool") return wide(to) ? `(${e} ? 1n : 0n)` : `(${e} ? 1 : 0)`;
   if (to.k === "f64") {
@@ -353,6 +364,11 @@ function arith(op: string, a: string, b: string, t: CType, rhs: CType): string {
   if (t.k === "f64") {
     if (!["+", "-", "*", "/"].includes(op)) throw new RaiseCError(`"${op}" on double`);
     return `(${a} ${op} ${b})`;
+  }
+  // float arithmetic: computed in double and rounded once to binary32, which is exact for these.
+  if (t.k === "f32") {
+    if (!["+", "-", "*", "/"].includes(op)) throw new RaiseCError(`"${op}" on float`);
+    return `__ykF32(${a} ${op} ${b})`;
   }
   if (t.k === "bool") throw new RaiseCError(`"${op}" on bool`);
   // C promotes 8- and 16-bit operands to int; an operation in a narrow type (++ on a char) is
@@ -425,6 +441,9 @@ const LEAF_CALLS: Readonly<Record<string, (args: readonly string[]) => string>> 
   trunc: (a) => `Math.trunc(${a[0]})`,
   __builtin_trunc: (a) => `Math.trunc(${a[0]})`,
   __builtin_huge_val: () => "Infinity",
+  __builtin_huge_valf: () => "Infinity",
+  __builtin_inff: () => "Infinity",
+  __builtin_nanf: () => "NaN",
   __builtin_inf: () => "Infinity",
   __builtin_nan: () => "NaN",
   __builtin_nans: () => "NaN",
@@ -541,6 +560,8 @@ function loadAt(a: string, t: CType): string {
       return `__ykI64(__ykLoad64(${a}))`;
     case "f64":
       return `__ykLoadF64(${a})`;
+    case "f32":
+      return `__ykLoadF32(${a})`;
     case "bool":
       return `(__ykLoad8(${a}) !== 0)`;
     case "ptr":
@@ -568,6 +589,8 @@ function storeAt(a: string, t: CType, v: string): string {
       return `__ykStore64(${a}, ${v})`;
     case "f64":
       return `__ykStoreF64(${a}, ${v})`;
+    case "f32":
+      return `__ykStoreF32(${a}, ${v})`;
     case "bool":
       return `(__ykStore8(${a}, (${v}) ? 1 : 0) !== 0)`;
     case "ptr":
@@ -810,7 +833,8 @@ function raiseBody(
         const t = typeOf(e);
         const mem = mems.get(d.id ?? "");
         if (mem !== undefined) return mem;
-        if (d.kind === "VarDecl" && !vars.has(d.id ?? "")) return { k: "reg", e: globalRef(d), t };
+        if (d.kind === "VarDecl" && (globalNames.has(d.id ?? "") || !vars.has(d.id ?? "")))
+          return { k: "reg", e: globalRef(d), t };
         return { k: "reg", e: declName(d), t };
       }
       case "UnaryOperator": {
@@ -892,7 +916,8 @@ function raiseBody(
     if (target.kind !== "DeclRefExpr") return undefined;
     const d = target.referencedDecl as ClangNode;
     if (mems.has(d.id ?? "") || inMemory.has(d.id ?? "")) return undefined;
-    if (d.kind === "VarDecl" && !vars.has(d.id ?? "")) return globalRef(d);
+    if (d.kind === "VarDecl" && (globalNames.has(d.id ?? "") || !vars.has(d.id ?? "")))
+      return globalRef(d);
     return declName(d);
   };
   const read = (p: Place): string => (p.k === "reg" ? p.e : loadAt(p.addr, p.t));
@@ -980,7 +1005,8 @@ function raiseBody(
             const d = target.referencedDecl as ClangNode;
             const mem = mems.get(d.id ?? "");
             if (mem !== undefined) return mem.addr;
-            const global = d.kind === "VarDecl" && !vars.has(d.id ?? "");
+            const global =
+              d.kind === "VarDecl" && (globalNames.has(d.id ?? "") || !vars.has(d.id ?? ""));
             if (global || /\bconst\b/.test(d.type?.qualType ?? "")) return constData(d, global);
           }
           const p = place(k0);
@@ -1004,11 +1030,7 @@ function raiseBody(
           ].includes(ck)
         )
           return convert(expr(k0), typeOf(k0), typeOf(e));
-        if (ck === "FloatingCast") {
-          if (typeOf(e).k !== "f64" || typeOf(k0).k !== "f64")
-            throw new RaiseCError("a conversion between floating types other than double");
-          return expr(k0);
-        }
+        if (ck === "FloatingCast") return convert(expr(k0), typeOf(k0), typeOf(e));
         throw new RaiseCError(`the cast ${ck} is not raised yet`);
       }
       case "ArraySubscriptExpr":
@@ -1035,7 +1057,7 @@ function raiseBody(
           return modify(p, next, e.isPostfix === true);
         }
         if (op === "-")
-          return t.k === "f64"
+          return t.k === "f64" || t.k === "f32"
             ? `(-${expr(k0)})`
             : arith("-", wide(t) ? "0n" : "0", expr(k0), t, t);
         if (op === "+") return expr(k0);
@@ -1204,6 +1226,7 @@ function raiseBody(
   const lines: string[] = [];
   const continueLabels = new Set<string>();
   const forwardLabels = new Map<string, string>(); // label decl id -> its block's JavaScript label
+  const enterLabels = new Map<string, string>(); // label decl id -> the flag a goto into it sets
   // A union of 64-bit members (`union { double f; uint64_t i; }`) not in memory: one 64-bit word,
   // its members views of it through the float64-bits leaf. By the variable's id: its members.
   const puns = new Map<string, Map<string, CType>>();
@@ -1318,6 +1341,11 @@ function raiseBody(
       }
       case "GotoStmt": {
         const target = (s as { targetLabelDeclId?: string }).targetLabelDeclId ?? "";
+        const enter = enterLabels.get(target);
+        if (enter !== undefined) {
+          push(`${enter} = true;`);
+          return;
+        }
         const fwd = forwardLabels.get(target);
         if (fwd !== undefined) {
           push(`break ${fwd};`);
@@ -1388,6 +1416,34 @@ function raiseBody(
         return;
       case "IfStmt": {
         const [c, then, otherwise] = kids as [ClangNode, ClangNode, ClangNode?];
+        // A goto from the else branch into the start of the then branch (`if (a) { L: .. } else
+        // { .. goto L; }`), each the last thing its branch does: the condition, or the goto, sets
+        // a flag, and the then branch runs when it is set.
+        const first = then.kind === "CompoundStmt" ? (then.inner ?? [])[0] : undefined;
+        const entry =
+          first?.kind === "LabelStmt" ? ((first as { declId?: string }).declId ?? "") : "";
+        if (
+          entry !== "" &&
+          otherwise !== undefined &&
+          gotosTo(otherwise, entry) &&
+          !gotosTo(then, entry) &&
+          gotosInTail(otherwise, entry)
+        ) {
+          const flag = `__enter${temps++}`;
+          top.push(`let ${flag} = false;`);
+          push(`${flag} = false;`);
+          push(`if (${cond(c)}) {`);
+          push(`${flag} = true;`);
+          push("} else {");
+          enterLabels.set(entry, flag);
+          stmt(otherwise);
+          enterLabels.delete(entry);
+          push("}");
+          push(`if (${flag}) {`);
+          stmt(then);
+          push("}");
+          return;
+        }
         push(`if (${cond(c)}) {`);
         stmt(then);
         if (otherwise !== undefined) {
@@ -1498,7 +1554,7 @@ function raiseBody(
 const tsType = (t: CType): string =>
   t.k === "ptr" && t.to.k === "fn"
     ? "any"
-    : t.k === "f64" || t.k === "i32" || t.k === "u32" || narrow(t) || t.k === "ptr"
+    : t.k === "f64" || t.k === "f32" || t.k === "i32" || t.k === "u32" || narrow(t) || t.k === "ptr"
       ? "number"
       : wide(t)
         ? "bigint"
@@ -1544,6 +1600,31 @@ function gotoInLoop(s: ClangNode, label: string, inLoop: boolean): boolean {
 }
 
 const normType = (t: string): string => t.replace(/\s+/g, " ").trim();
+
+/**
+ * Whether every goto to `label` inside `s` is the last thing `s` does when it runs: the last
+ * statement of each block it is in, through ifs, never inside a loop or switch.
+ */
+function gotosInTail(s: ClangNode, label: string): boolean {
+  if (s.kind === "GotoStmt") return true;
+  if (!gotosTo(s, label)) return true;
+  const kids = s.inner ?? [];
+  switch (s.kind) {
+    case "CompoundStmt":
+      return (
+        kids.slice(0, -1).every((k) => !gotosTo(k, label)) &&
+        gotosInTail(kids[kids.length - 1] as ClangNode, label)
+      );
+    case "IfStmt":
+      return (
+        !gotosTo(kids[0] as ClangNode, label) && kids.slice(1).every((k) => gotosInTail(k, label))
+      );
+    case "LabelStmt":
+      return gotosInTail(kids[0] as ClangNode, label);
+    default:
+      return false;
+  }
+}
 
 /** Whether `s` has a break or continue that leaves it (not one of a loop or switch inside it). */
 function escapingJump(s: ClangNode, inSwitch = false): boolean {
@@ -1758,6 +1839,8 @@ export const C_LEAVES_JS = {
   __ykBigToU32: (x: bigint): number => Number(BigInt.asUintN(32, x)),
   __ykBigToF64: (x: bigint): number => Number(x),
   __ykF64ToI64: (x: number): bigint => BigInt.asIntN(64, BigInt(Math.trunc(x))),
+  /** A number rounded to IEEE 754 binary32 (C's float), round to nearest even. */
+  __ykF32: (x: number): number => Math.fround(x),
   __ykF64Bits: (x: number): bigint => {
     const v = new DataView(new ArrayBuffer(8));
     v.setFloat64(0, x);
@@ -1832,6 +1915,7 @@ export function createCMemory() {
     i64: [8, (v, o, x) => v.setBigInt64(o, BigInt(x), true)],
     u64: [8, (v, o, x) => v.setBigUint64(o, BigInt(x), true)],
     f64: [8, (v, o, x) => v.setFloat64(o, x, true)],
+    f32: [4, (v, o, x) => v.setFloat32(o, x, true)],
   };
   const leaves = {
     __ykAlloc: (size: number, align: number): number => alloc(size, align),
@@ -1875,6 +1959,10 @@ export function createCMemory() {
       const [v, o] = at(a, 8);
       return v.getFloat64(o, true);
     },
+    __ykLoadF32: (a: number): number => {
+      const [v, o] = at(a, 4);
+      return v.getFloat32(o, true);
+    },
     __ykStore8: (a: number, x: number): number => {
       const [v, o] = at(a, 1, true);
       v.setUint8(o, x & 255);
@@ -1898,6 +1986,11 @@ export function createCMemory() {
     __ykStoreF64: (a: number, x: number): number => {
       const [v, o] = at(a, 8, true);
       v.setFloat64(o, x, true);
+      return x;
+    },
+    __ykStoreF32: (a: number, x: number): number => {
+      const [v, o] = at(a, 4, true);
+      v.setFloat32(o, x, true);
       return x;
     },
   };
