@@ -99,6 +99,7 @@ const FIXTURE_FNS = [
   "yk_ptr_diff",
   "yk_swap",
   "yk_char_array",
+  "yk_goto",
   "yk_cmp_int",
   "yk_cmp_bytes",
 ];
@@ -229,6 +230,7 @@ int yk_cmp_bytes(const void *, const void *, void *);
 double yk_struct_walk(struct pt *, int);
 ${["yk_local_struct", "yk_string_sum", "yk_local_array", "yk_swap", "yk_char_array"].map((n) => `int ${n}(int${n === "yk_swap" ? ", int" : ""});`).join("\n")}
 long yk_ptr_diff(int);
+int yk_goto(int, int);
 static char h[1 << 16];
 static unsigned char *buf(size_t n) { unsigned char *p = aligned_alloc(16, (n + 31) / 16 * 16); memset(p, 0, (n + 31) / 16 * 16); return p; }
 static void fill(unsigned char *p) { for (size_t i = 0; h[2 * i]; i++) { unsigned v; sscanf(h + 2 * i, "%2x", &v); p[i] = (unsigned char)v; } }
@@ -268,6 +270,7 @@ int main(void) {
       if (!strcmp(op, "yk_ptr_diff")) r = yk_ptr_diff(a);
       if (!strcmp(op, "yk_swap")) r = yk_swap(a, b);
       if (!strcmp(op, "yk_char_array")) r = yk_char_array(a);
+      if (!strcmp(op, "yk_goto")) r = yk_goto(a, b);
       printf("%ld\\n", r);
     }
   }
@@ -399,6 +402,7 @@ int main(void) {
       "yk_ptr_diff",
       "yk_swap",
       "yk_char_array",
+      "yk_goto",
     ])
       xs.forEach((x, k) => {
         const y = xs[(k * 7 + 3) % xs.length] as number;

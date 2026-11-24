@@ -1203,6 +1203,7 @@ function raiseBody(
 
   const lines: string[] = [];
   const continueLabels = new Set<string>();
+  const forwardLabels = new Map<string, string>(); // label decl id -> its block's JavaScript label
   // A union of 64-bit members (`union { double f; uint64_t i; }`) not in memory: one 64-bit word,
   // its members views of it through the float64-bits leaf. By the variable's id: its members.
   const puns = new Map<string, Map<string, CType>>();
@@ -1247,15 +1248,48 @@ function raiseBody(
     switch (s.kind) {
       case "CompoundStmt": {
         push("{");
-        // A backward goto to a label of this block, from a statement after it and in no loop or
-        // switch of its own: the statements from the label through that one are a loop the goto
-        // continues, left at its end.
+        // A forward goto to a label of this block, from inside a statement before it: the
+        // statements from that one up to the label are a labelled block the goto breaks out of,
+        // written `L: do { .. } while (false)` (the lifter's form of a block left by a jump).
+        // Blocks that would overlap are widened to nest (starting earlier changes nothing).
+        const forward = new Map<number, { label: string; start: number; js: string }>();
+        kids.forEach((c, j) => {
+          if (c.kind !== "LabelStmt") return;
+          const label = (c as { declId?: string }).declId ?? "";
+          const start = kids.slice(0, j).findIndex((k) => gotosTo(k, label));
+          if (start < 0) return;
+          const name = ident((c as { name?: string }).name ?? "L");
+          forward.set(j, { label, start, js: `${name}_${forwardLabels.size + forward.size}` });
+        });
+        for (let changed = true; changed; ) {
+          changed = false;
+          for (const [j, a] of forward)
+            for (const [k, b] of forward)
+              if (k < j && b.start < a.start && a.start < k) {
+                a.start = b.start;
+                changed = true;
+              }
+        }
+        const opensAt = (i: number): [number, { label: string; start: number; js: string }][] =>
+          [...forward].filter(([, f]) => f.start === i).sort(([a], [b]) => b - a);
         for (let i = 0; i < kids.length; i++) {
+          // The block a label ends closes before any block that starts at the label opens.
+          if (forward.has(i)) push("} while (false);");
+          for (const [j, f] of opensAt(i)) {
+            // An unlabelled break or continue of an enclosing loop would end the block instead.
+            if (kids.slice(i, j).some((k) => escapingJump(k)))
+              throw new RaiseCError("a break or continue of an outer loop inside a goto's block");
+            forwardLabels.set(f.label, f.js);
+            push(`${f.js}: do {`);
+          }
           const c = kids[i] as ClangNode;
           if (c.kind !== "LabelStmt") {
             stmt(c);
             continue;
           }
+          // A backward goto to a label of this block, from a statement after it and in no loop or
+          // switch of its own: the statements from the label through that one are a loop the
+          // goto continues, left at its end.
           const label = (c as { declId?: string }).declId ?? "";
           let last = i;
           for (let j = i; j < kids.length; j++) if (gotosTo(kids[j] as ClangNode, label)) last = j;
@@ -1263,6 +1297,11 @@ function raiseBody(
             stmt((c.inner as ClangNode[])[0] as ClangNode);
             continue;
           }
+          if (forward.has(i))
+            throw new RaiseCError("a label reached by gotos both forward and back");
+          for (const [j, f] of forward)
+            if ((f.start > i && f.start <= last) || (j > i && j <= last && f.start < i))
+              throw new RaiseCError("a backward goto's loop across a forward goto's block");
           for (let j = i; j <= last; j++)
             if (gotoInLoop(kids[j] as ClangNode, label, false))
               throw new RaiseCError("a goto inside a loop or switch of its own");
@@ -1279,8 +1318,12 @@ function raiseBody(
       }
       case "GotoStmt": {
         const target = (s as { targetLabelDeclId?: string }).targetLabelDeclId ?? "";
-        if (!continueLabels.has(target))
-          throw new RaiseCError("a goto forward, or out of its block");
+        const fwd = forwardLabels.get(target);
+        if (fwd !== undefined) {
+          push(`break ${fwd};`);
+          return;
+        }
+        if (!continueLabels.has(target)) throw new RaiseCError("a goto into a block, or out of it");
         push("continue;");
         return;
       }
@@ -1501,6 +1544,15 @@ function gotoInLoop(s: ClangNode, label: string, inLoop: boolean): boolean {
 }
 
 const normType = (t: string): string => t.replace(/\s+/g, " ").trim();
+
+/** Whether `s` has a break or continue that leaves it (not one of a loop or switch inside it). */
+function escapingJump(s: ClangNode, inSwitch = false): boolean {
+  if (s.kind === "ContinueStmt") return true;
+  if (s.kind === "BreakStmt") return !inSwitch;
+  if (["ForStmt", "WhileStmt", "DoStmt"].includes(s.kind)) return false;
+  const sw = inSwitch || s.kind === "SwitchStmt";
+  return (s.inner ?? []).some((c) => escapingJump(c, sw));
+}
 
 function hasJump(s: ClangNode): boolean {
   if (s.kind === "BreakStmt" || s.kind === "ContinueStmt") return true;

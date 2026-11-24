@@ -98,3 +98,25 @@ int yk_char_array(int k) {
   for (int i = 0; i < 16; i++) t = t * 7 + u[i];
   return t;
 }
+
+/* Forward gotos: out of loops, to a cleanup label, to labels that nest and overlap. */
+int yk_goto(int a, int b) {
+  int t = 0;
+  if (a < 0) goto negative;
+  for (int i = 0; i < a % 50; i++) {
+    t += i * b;
+    if (t > 1000) goto big;
+    if ((t & 7) == 3) goto odd;
+  }
+  t += 1;
+odd:
+  t = t * 3 + 1;
+big:
+  if (b == 7) goto done;
+  t ^= 0x55;
+  goto done;
+negative:
+  t = -a;
+done:
+  return t;
+}
