@@ -154,7 +154,7 @@ describe("fallback arm, confirm gate (default)", () => {
     assert.match(client.prompts[1], /Kept work/);
     assert.equal(
       client.prompts[1].includes(
-        strong.slice[0].citation.sourceFile + ":" + strong.slice[0].citation.lineStart,
+        `${strong.slice[0].citation.sourceFile}:${strong.slice[0].citation.lineStart}`,
       ),
       false,
     );
