@@ -69,6 +69,41 @@ const BINARY: Readonly<Record<string, string>> = {
   "<=": "yk_le",
   ">=": "yk_ge",
 };
+/**
+ * The operators a number's own operation computes when both operands are numbers (#1369): the
+ * double operation inline, behind a check of the operands' tags, and the runtime's otherwise. A
+ * boxed number is its double's bits, so no conversion is needed; a NaN result is made canonical, as
+ * the runtime's numbers are.
+ */
+const FAST_ARITH: Readonly<Record<string, string>> = {
+  "+": "fadd",
+  "-": "fsub",
+  "*": "fmul",
+  "/": "fdiv",
+  "%": "frem",
+};
+const FAST_COMPARE: Readonly<Record<string, string>> = {
+  "<": "olt",
+  ">": "ogt",
+  "<=": "ole",
+  ">=": "oge",
+  "===": "oeq",
+  "!==": "une",
+  "==": "oeq",
+  "!=": "une",
+};
+/** The bitwise operators on ToInt32 (ToUint32 for >>>), inline for a number below 2^63. */
+const FAST_BITWISE: Readonly<Record<string, string>> = {
+  "|": "or",
+  "&": "and",
+  "^": "xor",
+  "<<": "shl",
+  ">>": "ashr",
+  ">>>": "lshr",
+};
+/** Every boxed value at or above this (unsigned) is tagged: below it, a double. */
+const NUMBER_LIMIT = "-1970324836974592"; // 0xFFF9000000000000
+const CANONICAL_NAN = "9221120237041090560"; // 0x7FF8000000000000
 const UNARY: Readonly<Record<string, string>> = {
   "-": "yk_neg",
   "+": "yk_pos",
@@ -266,6 +301,8 @@ function slotsOf(label: string): Slot[] {
 class ModuleBuilder {
   readonly globals: string[] = [];
   readonly used = new Set<string>();
+  /** The LLVM intrinsics the functions call, declared once. */
+  readonly intrinsics = new Set<string>();
   readonly functions: string[] = [];
   /** Each regex literal's matcher, lowered once: its function's name. */
   readonly matchers = new Map<string, string>();
@@ -392,7 +429,13 @@ function lowerFunction(
   const fresh = (): string => `%t${temp++}`;
   const freshLabel = (what: string): string => `${what}${label++}`;
   const emit = (line: string): void => void body.push(`  ${line}`);
-  const block = (lbl: string): void => void body.push(`${lbl}:`);
+  // The block being written: the entry block until the first label.
+  let current = "entry";
+  const block = (lbl: string): void => {
+    body.push(`${lbl}:`);
+    current = lbl;
+  };
+  const currentLabel = (): string => current;
   const slotOf = (v: ValueId): string => {
     let s = slots.get(v);
     if (s === undefined) {
@@ -474,12 +517,105 @@ function lowerFunction(
     return r;
   };
   const set = (v: ValueId, r: string): void => emit(`store i64 ${r}, ptr ${slotOf(v)}`);
+  /**
+   * An operation with a number's fast path: `fast` (given the operands as doubles) inline when every
+   * operand is a number (and `guard` holds), else `slow` (the runtime's). The value, boxed.
+   */
+  const numberFast = (
+    args: readonly string[],
+    fast: (ds: readonly string[]) => string,
+    slow: () => string,
+    guard?: (ds: readonly string[]) => string,
+  ): string => {
+    const fastLabel = freshLabel("fast");
+    const slowLabel = freshLabel("slow");
+    const join = freshLabel("joined");
+    let all = "";
+    for (const a of args) {
+      const n = fresh();
+      emit(`${n} = icmp ult i64 ${a}, ${NUMBER_LIMIT}`);
+      if (all === "") all = n;
+      else {
+        const both = fresh();
+        emit(`${both} = and i1 ${all}, ${n}`);
+        all = both;
+      }
+    }
+    const check = freshLabel("check");
+    emit(`br i1 ${all}, label %${check}, label %${slowLabel}`);
+    block(check);
+    const ds = args.map((a) => {
+      const d = fresh();
+      emit(`${d} = bitcast i64 ${a} to double`);
+      return d;
+    });
+    if (guard !== undefined) emit(`br i1 ${guard(ds)}, label %${fastLabel}, label %${slowLabel}`);
+    else emit(`br label %${fastLabel}`);
+    block(fastLabel);
+    const r1 = fast(ds);
+    const fastEnd = currentLabel();
+    emit(`br label %${join}`);
+    block(slowLabel);
+    const r2 = slow();
+    const slowEnd = currentLabel();
+    emit(`br label %${join}`);
+    block(join);
+    const r = fresh();
+    emit(`${r} = phi i64 [ ${r1}, %${fastEnd} ], [ ${r2}, %${slowEnd} ]`);
+    return r;
+  };
+  /** A double as a boxed number, NaN made canonical. */
+  const boxDouble = (d: string): string => {
+    const bits = fresh();
+    emit(`${bits} = bitcast double ${d} to i64`);
+    const nan = fresh();
+    emit(`${nan} = fcmp uno double ${d}, ${d}`);
+    const r = fresh();
+    emit(`${r} = select i1 ${nan}, i64 ${CANONICAL_NAN}, i64 ${bits}`);
+    return r;
+  };
+  /** Whether a double is below 2^63 in magnitude: its int64 conversion is ToInt32's modulo. */
+  const smallDouble = (d: string): string => {
+    const abs = fresh();
+    emit(`${abs} = call double @llvm.fabs.f64(double ${d})`);
+    m.intrinsics.add("declare double @llvm.fabs.f64(double)");
+    const ok = fresh();
+    emit(`${ok} = fcmp olt double ${abs}, 9.2e18`);
+    return ok;
+  };
+  const toInt32 = (d: string): string => {
+    const w = fresh();
+    emit(`${w} = fptosi double ${d} to i64`);
+    const i = fresh();
+    emit(`${i} = trunc i64 ${w} to i32`);
+    return i;
+  };
+  const boolBox = (b: string): string => {
+    const r = fresh();
+    emit(`${r} = select i1 ${b}, i64 ${TRUE}, i64 ${FALSE}`);
+    return r;
+  };
   const truthy = (v: ValueId): string => {
     m.used.add("yk_truthy");
-    const i = fresh();
-    emit(`${i} = call i32 @yk_truthy(i64 ${operand(v)})`);
+    const x = operand(v);
+    // A number is falsy when it is 0, -0 or NaN; true and false are themselves; else the runtime's.
+    const r = numberFast(
+      [x],
+      ([d]) => {
+        const t = fresh();
+        emit(`${t} = fcmp one double ${d}, 0.0`);
+        return boolBox(t);
+      },
+      () => {
+        const i = fresh();
+        emit(`${i} = call i32 @yk_truthy(i64 ${x})`);
+        const t = fresh();
+        emit(`${t} = icmp ne i32 ${i}, 0`);
+        return boolBox(t);
+      },
+    );
     const b = fresh();
-    emit(`${b} = icmp ne i32 ${i}, 0`);
+    emit(`${b} = icmp eq i64 ${r}, ${TRUE}`);
     return b;
   };
 
@@ -991,13 +1127,73 @@ function lowerFunction(
       return;
     }
     if (ins.length === 2 && BINARY[lbl] !== undefined) {
-      set(
-        out,
-        call(
-          BINARY[lbl] as string,
-          `i64 ${operand(ins[0] as ValueId)}, i64 ${operand(ins[1] as ValueId)}`,
-        ),
-      );
+      const a = operand(ins[0] as ValueId);
+      const b = operand(ins[1] as ValueId);
+      const slow = (): string => call(BINARY[lbl] as string, `i64 ${a}, i64 ${b}`);
+      const arith = FAST_ARITH[lbl];
+      const compare = FAST_COMPARE[lbl];
+      const bitwise = FAST_BITWISE[lbl];
+      if (arith !== undefined) {
+        set(
+          out,
+          numberFast(
+            [a, b],
+            ([x, y]) => {
+              const r = fresh();
+              emit(`${r} = ${arith} double ${x}, ${y}`);
+              return boxDouble(r);
+            },
+            slow,
+          ),
+        );
+        return;
+      }
+      if (compare !== undefined) {
+        set(
+          out,
+          numberFast(
+            [a, b],
+            ([x, y]) => {
+              const r = fresh();
+              emit(`${r} = fcmp ${compare} double ${x}, ${y}`);
+              return boolBox(r);
+            },
+            slow,
+          ),
+        );
+        return;
+      }
+      if (bitwise !== undefined) {
+        set(
+          out,
+          numberFast(
+            [a, b],
+            ([x, y]) => {
+              const i = toInt32(x as string);
+              const j = toInt32(y as string);
+              const count = fresh();
+              if (bitwise === "or" || bitwise === "and" || bitwise === "xor")
+                emit(`${count} = add i32 ${j}, 0`);
+              else emit(`${count} = and i32 ${j}, 31`);
+              const r = fresh();
+              emit(`${r} = ${bitwise} i32 ${i}, ${count}`);
+              const d = fresh();
+              emit(`${d} = ${bitwise === "lshr" ? "uitofp" : "sitofp"} i32 ${r} to double`);
+              const bits = fresh();
+              emit(`${bits} = bitcast double ${d} to i64`);
+              return bits;
+            },
+            slow,
+            ([x, y]) => {
+              const both = fresh();
+              emit(`${both} = and i1 ${smallDouble(x as string)}, ${smallDouble(y as string)}`);
+              return both;
+            },
+          ),
+        );
+        return;
+      }
+      set(out, slow());
       return;
     }
     if (ins.length === 2 && lbl === "**") {
@@ -1327,6 +1523,7 @@ export function emitLlvmBoxed(input: DucGraph, symbol = "f"): LlvmModule {
     "",
     ...m.functions,
     ...[...m.used].sort().map((f) => RUNTIME_DECLS[f] as string),
+    ...m.intrinsics,
     "",
   ].join("\n");
   return { ir, symbol, params: Array(params).fill("i64"), result: "i64" };
@@ -1614,6 +1811,7 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     "",
     ...m.functions,
     ...[...m.used].sort().map((f) => RUNTIME_DECLS[f] as string),
+    ...m.intrinsics,
     "",
   ].join("\n");
   return { ir, symbols };
