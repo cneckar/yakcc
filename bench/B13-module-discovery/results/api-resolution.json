@@ -1,0 +1,503 @@
+{
+  "file": "readme-run2.json",
+  "unresolved": 81,
+  "counts": {
+    "call signature: the name without its arguments exists (a parsing slip, now fixed in the generator)": 6,
+    "case-insensitive name": 0,
+    "factory → class (z.object → ZodObject)": 0,
+    "method → its class (Range.test → Range)": 0,
+    "property-assigned function (obj.name = function …; needs #1309 to name it)": 8,
+    "anonymous default export of a same-named file (needs #1309 to name it)": 21,
+    "member of an object a factory returns (the factory's root covers it)": 7,
+    "not an API: a CLI flag, a concept heading, an option or a type": 31,
+    "not resolvable by these rules": 8
+  },
+  "rows": [
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "bcrypt",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "bcrypt → bin/bcrypt (default export)"
+    },
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "setRandomFallback",
+      "by": "property-assigned function (obj.name = function …; needs #1309 to name it)",
+      "how": "setRandomFallback → assigned property setRandomFallback"
+    },
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "genSaltSync",
+      "by": "property-assigned function (obj.name = function …; needs #1309 to name it)",
+      "how": "genSaltSync → assigned property genSaltSync"
+    },
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "genSalt",
+      "by": "property-assigned function (obj.name = function …; needs #1309 to name it)",
+      "how": "genSalt → assigned property genSalt"
+    },
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "hashSync",
+      "by": "property-assigned function (obj.name = function …; needs #1309 to name it)",
+      "how": "hashSync → assigned property hashSync"
+    },
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "compareSync",
+      "by": "property-assigned function (obj.name = function …; needs #1309 to name it)",
+      "how": "compareSync → assigned property compareSync"
+    },
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "compare",
+      "by": "property-assigned function (obj.name = function …; needs #1309 to name it)",
+      "how": "compare → assigned property compare"
+    },
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "getRounds",
+      "by": "property-assigned function (obj.name = function …; needs #1309 to name it)",
+      "how": "getRounds → assigned property getRounds"
+    },
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "getSalt",
+      "by": "property-assigned function (obj.name = function …; needs #1309 to name it)",
+      "how": "getSalt → assigned property getSalt"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.sign → sign.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.sign → sign.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.sign → sign.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.sign → sign.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.sign → sign.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.sign → sign.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.sign → sign.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.sign → sign.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.sign → sign.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.sign → sign.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.sign → sign.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.sign → sign.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.verify",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.verify → verify.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.verify",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.verify → verify.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.verify",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.verify → verify.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.verify",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.verify → verify.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.verify",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.verify → verify.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.verify",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.verify → verify.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.verify",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.verify → verify.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.verify",
+      "by": "anonymous default export of a same-named file (needs #1309 to name it)",
+      "how": "jwt.verify → verify.js (default export)"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "alg",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "alg"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "alg",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "alg"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "alg",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "alg"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "alg",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "alg"
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "alg",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "alg"
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "pLimit(concurrency)",
+      "by": "call signature: the name without its arguments exists (a parsing slip, now fixed in the generator)",
+      "how": "pLimit(concurrency) → pLimit"
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "pLimit(concurrency)",
+      "by": "call signature: the name without its arguments exists (a parsing slip, now fixed in the generator)",
+      "how": "pLimit(concurrency) → pLimit"
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "rejectOnClear",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "rejectOnClear"
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "limit(fn, ...args)",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "limit(fn, ...args)"
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "limit.map(iterable, mapperFunction)",
+      "by": "member of an object a factory returns (the factory's root covers it)",
+      "how": "limit.map(iterable, mapperFunction) → member of limit"
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "limit.activeCount",
+      "by": "member of an object a factory returns (the factory's root covers it)",
+      "how": "limit.activeCount → member of limit"
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "limit.pendingCount",
+      "by": "member of an object a factory returns (the factory's root covers it)",
+      "how": "limit.pendingCount → member of limit"
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "limit.clearQueue()",
+      "by": "member of an object a factory returns (the factory's root covers it)",
+      "how": "limit.clearQueue() → member of limit"
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "limit.concurrency",
+      "by": "member of an object a factory returns (the factory's root covers it)",
+      "how": "limit.concurrency → member of limit"
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "limitFunction(fn, options)",
+      "by": "call signature: the name without its arguments exists (a parsing slip, now fixed in the generator)",
+      "how": "limitFunction(fn, options) → limitFunction"
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "rejectOnClear",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "rejectOnClear"
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "pThrottle(options)",
+      "by": "call signature: the name without its arguments exists (a parsing slip, now fixed in the generator)",
+      "how": "pThrottle(options) → pThrottle"
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "options",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "options"
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "options",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "options"
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "options",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "options"
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "options",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "options"
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "options",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "options"
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "throttle(function_)",
+      "by": "not resolvable by these rules",
+      "how": null
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "throttledFn.isEnabled",
+      "by": "member of an object a factory returns (the factory's root covers it)",
+      "how": "throttledFn.isEnabled → member of throttledFn"
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "throttledFn.queueSize",
+      "by": "member of an object a factory returns (the factory's root covers it)",
+      "how": "throttledFn.queueSize → member of throttledFn"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "-r --range",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "-r --range"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "-i --increment",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "-i --increment"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "--preid",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "--preid"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "-n",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "-n"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "-l --loose",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "-l --loose"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "-p --include-prerelease",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "-p --include-prerelease"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "Versions",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "Versions"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "Ranges",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "Ranges"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "Comparators",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "Comparators"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "Ranges",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "Ranges"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "Prerelease Tags",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "Prerelease Tags"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "includePrerelease",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "includePrerelease"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "hyphen ranges",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "hyphen ranges"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "X-Ranges",
+      "by": "not resolvable by these rules",
+      "how": null
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "Tilde Ranges",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "Tilde Ranges"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "^",
+      "by": "not resolvable by these rules",
+      "how": null
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "^",
+      "by": "not resolvable by these rules",
+      "how": null
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "^",
+      "by": "not resolvable by these rules",
+      "how": null
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "range grammar",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "range grammar"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "includePrerelease",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "includePrerelease"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "simplifyRange",
+      "by": "not resolvable by these rules",
+      "how": null
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "coerce(version, options)",
+      "by": "call signature: the name without its arguments exists (a parsing slip, now fixed in the generator)",
+      "how": "coerce(version, options) → coerce"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "clean(version)",
+      "by": "call signature: the name without its arguments exists (a parsing slip, now fixed in the generator)",
+      "how": "clean(version) → clean"
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "RELEASE_TYPES",
+      "by": "not resolvable by these rules",
+      "how": null
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "SEMVER_SPEC_VERSION",
+      "by": "not resolvable by these rules",
+      "how": null
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "main export with lazy getter functions",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "main export with lazy getter functions"
+    },
+    {
+      "pkg": "zod-3.25.76",
+      "api": "infer",
+      "by": "not an API: a CLI flag, a concept heading, an option or a type",
+      "how": "infer"
+    }
+  ]
+}

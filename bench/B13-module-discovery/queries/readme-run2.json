@@ -1,0 +1,871 @@
+{
+  "set": "readme",
+  "model": "claude-haiku-5-5",
+  "usage": {
+    "inputTokens": 41626,
+    "outputTokens": 14367,
+    "calls": 33
+  },
+  "dropped": {
+    "leak": 31,
+    "unresolved": 81,
+    "malformed": 0
+  },
+  "unresolved": [
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "bcrypt",
+      "need": "I want to store user passwords safely by hashing them with a random salt, producing a fixed-length hash of about 60 characters. The cost should be adjustable so I can make hashing slower as computers get faster. Inputs longer than 72 bytes will not be fully used, so I need to know that limit."
+    },
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "setRandomFallback",
+      "need": "I want to provide my own source of random bytes for a password hashing library when the environment has no built-in secure randomness, so I need a way to register a function that returns an array of cryptographically secure random byte values of a requested length."
+    },
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "genSaltSync",
+      "need": "I want to synchronously generate a salt for hashing passwords, choosing a cost factor such as 10 (or a default if I leave it out), and get back a salt string I can use for hashing."
+    },
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "genSalt",
+      "need": "I want to generate a salt asynchronously with a chosen work factor, defaulting to 10 rounds if I don't specify one, and receive it via a callback or a promise."
+    },
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "hashSync",
+      "need": "I need to synchronously turn a plain string into a one-way hash, either by generating a fresh salt of a given cost or by supplying my own salt."
+    },
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "compareSync",
+      "need": "I need to check synchronously whether a plain string matches a previously stored hash, getting a true or false answer and an error if the inputs are invalid."
+    },
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "compare",
+      "need": "I want to asynchronously check whether a plain string matches a stored hash, receiving the boolean result in a callback or promise, with optional progress reporting for long computations."
+    },
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "getRounds",
+      "need": "Given a stored hash, I want to find out how many rounds of processing were used to create it, so I can decide whether it needs upgrading."
+    },
+    {
+      "pkg": "bcryptjs-2.4.3",
+      "api": "getSalt",
+      "need": "I have a stored password hash and want to pull out the random salt portion that was embedded in it, without checking whether the hash is well formed. I expect an error if the input isn't a string."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "need": "I want to create a signed token from a plain object using a shared secret string, with no extra configuration, and get the token string back right away."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "need": "I want to create a signed token without blocking, passing a callback that receives either an error or the finished token."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "need": "I want the token to expire after a set period, either given as a number of seconds or as a readable span like '2 days' or '10h'."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "need": "I want the token to be invalid until a specific future time, specified in seconds or as a readable time span."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "need": "I want to create a token whose issued-at time is backdated, for example 30 seconds in the past, so it appears older than it is."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "need": "I need to use an RSA key shorter than 2048 bits and want an explicit opt-in so the signing does not reject it."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "need": "I want to set standard claims such as audience, issuer, subject, and token ID through options rather than writing them into the payload, without duplicating them in both places."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "need": "I want to omit the automatically added issued-at timestamp from the token."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "need": "I want to customize the token header fields and set a key ID in the header."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "need": "I want my original payload object to be updated with the claims that get added during signing, so I can read them afterward."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "need": "I want to create a signed token that expires one hour from now, and I'd like to set the expiry by putting a timestamp in seconds since the epoch directly into the payload."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.sign",
+      "need": "I want to create a signed token that expires after a set duration, such as one hour or '1h', without having to compute the expiry timestamp myself."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.verify",
+      "need": "I have a signed token string and a shared secret, and I want to check that the signature is valid and the token hasn't expired, getting back the decoded payload immediately or an exception if it fails."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.verify",
+      "need": "When verifying asynchronously, I want to look up the signing key dynamically (for example based on the token's key identifier) by providing a function that fetches the secret or public key."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.verify",
+      "need": "I need to confirm that a token was issued for a specific audience, issuer, subject, or token ID, and reject it if those claims don't match what I expect."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.verify",
+      "need": "I want to reject tokens that were issued too long ago, by setting a maximum age such as seconds, '2 days', or '10h', and optionally allow a few seconds of clock drift between servers."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.verify",
+      "need": "I want to check a token against a fixed reference time instead of the current clock, which is useful for testing or replaying past events."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.verify",
+      "need": "I need to get back the header and signature alongside the payload when verifying a token, not just the claims."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.verify",
+      "need": "I need to validate an OpenID Connect ID token by checking that its nonce claim matches the value I sent in the request."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "jwt.verify",
+      "need": "My secret is distributed as base64-encoded random bytes and I need the verifier to decode it correctly before checking signatures."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "alg",
+      "need": "I want to sign a token with a shared secret using HMAC over SHA-256, SHA-384, or SHA-512, so that the receiver can verify it with the same key."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "alg",
+      "need": "I want to sign a token with an RSA private key using RSASSA-PKCS1-v1_5 with SHA-256, SHA-384, or SHA-512, so that others can verify it with my public key."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "alg",
+      "need": "I want to sign a token with an RSA private key using RSASSA-PSS with SHA-256, SHA-384, or SHA-512. This needs a recent Node.js version (6.12 or later in the 6.x line, or 8.0 and later)."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "alg",
+      "need": "I want to sign a token with an elliptic curve key using ECDSA on P-256, P-384, or P-521 with the matching SHA-2 hash, so I can produce compact signatures with public-key verification."
+    },
+    {
+      "pkg": "jsonwebtoken-9.0.2",
+      "api": "alg",
+      "need": "I want to create an unsigned token with no signature or MAC, for cases where integrity checking is not needed."
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "pLimit(concurrency)",
+      "need": "I want to run a bunch of promise-returning tasks but only a fixed number of them at once, queuing the rest, and get all results back together once they finish."
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "pLimit(concurrency)",
+      "need": "I want to set a cap on how many of my async operations run simultaneously, and be able to pass a configuration object instead of a bare number."
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "rejectOnClear",
+      "need": "I want the option that when I clear out the waiting tasks, any promises still waiting get rejected with an abort error, so my Promise.all calls don't hang forever."
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "limit(fn, ...args)",
+      "need": "I want to schedule an async function call with some arguments through a shared concurrency limiter, without wrapping each call in its own closure."
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "limit.map(iterable, mapperFunction)",
+      "need": "I want to process a list of inputs with a mapper function under a concurrency cap, getting back a single promise for all the results in order."
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "limit.activeCount",
+      "need": "I want to check how many tasks are currently executing and how many are still waiting in the queue, so I can monitor load."
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "limit.pendingCount",
+      "need": "I want to know how many queued tasks have not started yet."
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "limit.clearQueue()",
+      "need": "I want to throw away all tasks that are still waiting to start, for example when the app is shutting down or the state they relate to is stale, without interrupting ones already running."
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "limit.concurrency",
+      "need": "I want to read or change the maximum number of concurrent tasks on an existing limiter while it is in use."
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "limitFunction(fn, options)",
+      "need": "I want to wrap a single async function so that every time it is called, no more than a set number of its invocations run at the same time, even if I call it many times in a loop."
+    },
+    {
+      "pkg": "p-limit-7.3.0",
+      "api": "rejectOnClear",
+      "need": "When I clear my pending work queue, I want any tasks still waiting to run to reject with an abort error instead of staying unresolved, so that a Promise.all over them doesn't hang forever."
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "pThrottle(options)",
+      "need": "I want to create a rate limiter that I can reuse across several functions, configured once with a maximum number of calls allowed per fixed interval in milliseconds."
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "options",
+      "need": "I want to cap how many times a function runs within a rolling time window, such as at most 2 calls per second, with extra calls waiting their turn instead of failing."
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "options",
+      "need": "I need a stricter limit that spaces out every individual call so that no time window of the given length ever contains more calls than allowed, even if the default windowed approach would allow bursts at window boundaries."
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "options",
+      "need": "I want to cancel all calls that are still waiting in the queue when I abort a controller, with those pending calls rejecting using the abort reason I supply."
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "options",
+      "need": "I want to be told whenever a call has to wait because the limit for the current interval is used up, receiving that call's arguments so I can log or monitor how often this happens."
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "options",
+      "need": "I need some calls to count against the limit more heavily than others, for example a request that fetches more records should consume more of the quota based on its arguments, as with point-based APIs."
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "throttle(function_)",
+      "need": "I want to wrap an existing async or normal function so that calling the wrapper automatically respects the rate limit and returns a promise for the result."
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "throttledFn.isEnabled",
+      "need": "I want to switch rate limiting on or off for a wrapped function at runtime, so that calls either go through the limiter or run immediately without counting toward the limit."
+    },
+    {
+      "pkg": "p-throttle-8.1.0",
+      "api": "throttledFn.queueSize",
+      "need": "I want to see how many calls are currently waiting in line so I can route work to a fallback source when the backlog gets too long."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "-r --range",
+      "need": "From the command line, I want to pass a list of versions and get them printed back in sorted order, or only those matching a given range."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "-i --increment",
+      "need": "From the command line, I want to bump a version by a chosen level such as major, minor, patch, or a pre-release variant, defaulting to patch when no level is given."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "--preid",
+      "need": "When bumping a version into a pre-release, I want to choose the identifier that prefixes the pre-release tag, such as 'beta' or 'alpha'."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "-n",
+      "need": "I want to control whether pre-release numbering starts at zero, starts at one, or omits the number entirely."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "-l --loose",
+      "need": "I want to parse slightly malformed version or range strings leniently instead of rejecting them outright."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "-p --include-prerelease",
+      "need": "I want version range matching to include pre-release versions instead of silently skipping them."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "Versions",
+      "need": "I want to write a version string that may have a leading '=' or 'v' and have that prefix ignored so the version is still read correctly. I'm working with older tags that sometimes include a 'v'."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "Ranges",
+      "need": "I want to check whether a given version falls inside a range like 'at least 1.2.7' or 'below 2.0.0', using operators for less than, less or equal, greater, greater or equal, and equal, with equality assumed when no operator is written."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "Comparators",
+      "need": "I want to combine several conditions separated by spaces, such as a lower and an upper bound, and only accept versions that satisfy all of them at once."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "Ranges",
+      "need": "I want to accept a version if it satisfies any one of several alternative conditions separated by '||', for example allowing either exactly 1.2.7 or anything from 1.2.9 up to but not including 2.0.0."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "Prerelease Tags",
+      "need": "I want prerelease versions like 1.2.3-alpha.7 to match a range only when the range itself names a prerelease on the same major.minor.patch, so that prereleases of other versions are excluded by default."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "includePrerelease",
+      "need": "I want an option to let prerelease versions match ranges normally, treating them like ordinary versions during range checks."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "hyphen ranges",
+      "need": "I want to check whether a version falls within an inclusive span written as two versions separated by a dash, where a partial version on the left is padded with zeros and a partial version on the right accepts everything under that prefix."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "X-Ranges",
+      "need": "I want to match versions using wildcard placeholders like 1.2.x, 1, or * where any missing or starred part accepts any value, with a bare star accepting any stable release unless prereleases are explicitly included."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "Tilde Ranges",
+      "need": "I want to match versions that allow only patch-level updates when a minor version is given, or minor-level updates when only a major version is given, with prerelease versions of the same base tuple allowed when they are at or above the specified prerelease."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "^",
+      "need": "I want to accept any later version that keeps the same leftmost non-zero part of a version number, so a version like 1.2.3 accepts newer minor and patch releases but not a new major, while 0.2.5 accepts only later patch releases and 0.0.4 accepts only that exact version."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "^",
+      "need": "I want the caret comparison to handle prerelease versions correctly, so a range starting at a prerelease like 1.2.3-beta.2 includes later prereleases of 1.2.3 and newer, but excludes prereleases of a higher patch version."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "^",
+      "need": "I want to write a caret range with missing parts, such as 1.2.x, 0.0.x, 0.0, or 1.x, and have the missing parts treated as zero but still flexible, so I can express a broad compatibility window without spelling out every component."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "range grammar",
+      "need": "I want to check whether a range string is syntactically valid according to a formal grammar, including alternatives separated by a logical or, hyphenated ranges, comparison operators, tilde and caret forms, and the rules for prerelease and build qualifiers."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "includePrerelease",
+      "need": "When checking whether a version satisfies a range, I want prerelease versions like 2.0.0-beta to count as matches even though they normally get excluded."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "simplifyRange",
+      "need": "I have a long range expression built from many joined versions and want a shorter equivalent that matches the same versions in my specific list, returning the shorter one if it is actually shorter."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "coerce(version, options)",
+      "need": "I have a messy version string with a leading prefix, extra text, or a missing patch number, and I want the closest valid version extracted from it, with the option to keep the right-most version when several are embedded or to keep prerelease and build tags."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "clean(version)",
+      "need": "I want to take a version string that has stray whitespace, an equals sign, or a 'v' prefix and turn it into a plain valid version, returning nothing if it cannot be made valid, with an option to accept loose prerelease formatting."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "RELEASE_TYPES",
+      "need": "I need the list of valid release type keywords so I can check whether user-supplied input is an accepted release type."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "SEMVER_SPEC_VERSION",
+      "need": "I want to find out which version of the semantic versioning specification the library implements so I can display or log it."
+    },
+    {
+      "pkg": "semver-7.8.0",
+      "api": "main export with lazy getter functions",
+      "need": "I want to load only the specific pieces of this version-comparison toolkit that my code uses, so my bundle stays small and unused parts get tree-shaken out instead of being pulled in whole."
+    },
+    {
+      "pkg": "zod-3.25.76",
+      "api": "infer",
+      "need": "I want to derive a static type from my validation schema so I don't have to write the same type definition by hand."
+    }
+  ],
+  "queries": [
+    {
+      "id": "readme-1",
+      "need": "When checking a JWT, I want to know specifically when it has expired, so I can tell the user to log in again. The error should expose the expiry time so I can show or log it.",
+      "api": "TokenExpiredError",
+      "targets": [
+        "jsonwebtoken-9.0.2:*#TokenExpiredError"
+      ]
+    },
+    {
+      "id": "readme-2",
+      "need": "When verifying a JWT, I want to distinguish malformed tokens, bad signatures, and audience, issuer, subject, or ID mismatches from other failures, so I can respond to each case differently.",
+      "api": "JsonWebTokenError",
+      "targets": [
+        "jsonwebtoken-9.0.2:*#JsonWebTokenError"
+      ]
+    },
+    {
+      "id": "readme-3",
+      "need": "I want to reject a JWT that is not yet valid because the current time is earlier than its not-before time, and I want the error to tell me what that activation time is.",
+      "api": "NotBeforeError",
+      "targets": [
+        "jsonwebtoken-9.0.2:*#NotBeforeError"
+      ]
+    },
+    {
+      "id": "readme-4",
+      "need": "I need to generate a short, unique string identifier for each new record I create, something URL-safe and compact enough to put in links, without pulling in heavy dependencies.",
+      "api": "nanoid",
+      "targets": [
+        "nanoid-3.3.12:*#nanoid"
+      ]
+    },
+    {
+      "id": "readme-5",
+      "need": "I want to wrap an async or promise-returning function so that it can be called at most a set number of times per time window, but I don't want any calls dropped; every call should eventually run, with its own arguments and context kept intact.",
+      "api": "pThrottle",
+      "targets": [
+        "p-throttle-8.1.0:*#pThrottle"
+      ]
+    },
+    {
+      "id": "readme-6",
+      "need": "I have a version string with stray spaces, a leading equals sign, or a leading 'v', and I want it cleaned up into a plain version number.",
+      "api": "clean",
+      "targets": [
+        "semver-7.8.0:*#clean"
+      ]
+    },
+    {
+      "id": "readme-7",
+      "need": "I want to check whether a given version falls within a range expression that combines alternatives like '1.x', '>=2.5.0', and hyphen spans.",
+      "api": "satisfies",
+      "targets": [
+        "semver-7.8.0:*#satisfies"
+      ]
+    },
+    {
+      "id": "readme-8",
+      "need": "I need to test whether one version is strictly newer than another.",
+      "api": "gt",
+      "targets": [
+        "semver-7.8.0:*#gt"
+      ]
+    },
+    {
+      "id": "readme-9",
+      "need": "I need to test whether one version is strictly older than another.",
+      "api": "lt",
+      "targets": [
+        "semver-7.8.0:*#lt"
+      ]
+    },
+    {
+      "id": "readme-10",
+      "need": "I have a range such as '>=1.0.0' and want the lowest version that would satisfy it.",
+      "api": "minVersion",
+      "targets": [
+        "semver-7.8.0:*#minVersion"
+      ]
+    },
+    {
+      "id": "readme-11",
+      "need": "I have a loose or partial version like 'v2' or a long dotted string with extra segments and want it converted into a proper three-part version.",
+      "api": "coerce",
+      "targets": [
+        "semver-7.8.0:*#coerce"
+      ]
+    },
+    {
+      "id": "readme-12",
+      "need": "I want to test equality, inequality, or the greater-or-equal and less-or-equal relationship between two versions using a comparison operator given as a string.",
+      "api": "cmp",
+      "targets": [
+        "semver-7.8.0:*#cmp"
+      ]
+    },
+    {
+      "id": "readme-13",
+      "need": "I want to bump a version to the next patch and attach a prerelease label such as 'beta', so 1.2.3 becomes 1.2.4-beta.0, and then step the prerelease counter forward on later bumps.",
+      "api": "inc",
+      "targets": [
+        "semver-7.8.0:*#inc"
+      ]
+    },
+    {
+      "id": "readme-14",
+      "need": "I want to bump a version from the command line with a prerelease identifier, and later drop the prerelease part to get the final release number, such as going from 1.2.4-beta.1 to 1.2.4.",
+      "api": "inc",
+      "targets": [
+        "semver-7.8.0:*#inc"
+      ]
+    },
+    {
+      "id": "readme-15",
+      "need": "I want to bump a version string to a new prerelease tag like beta, and choose whether the prerelease counter starts at zero or one, or leave the number off entirely.",
+      "api": "inc",
+      "targets": [
+        "semver-7.8.0:*#inc"
+      ]
+    },
+    {
+      "id": "readme-16",
+      "need": "Given a version and a release type such as major, minor, patch, or a prerelease variant, I want the next version computed, optionally with a custom prefix label and base number for prerelease tags.",
+      "api": "inc",
+      "targets": [
+        "semver-7.8.0:*#inc"
+      ]
+    },
+    {
+      "id": "readme-17",
+      "need": "I want to know whether two version ranges or comparators overlap, meaning some version satisfies both.",
+      "api": "intersects",
+      "targets": [
+        "semver-7.8.0:*#intersects"
+      ]
+    },
+    {
+      "id": "readme-18",
+      "need": "I want to convert a string into a version object I can inspect and work with, or get nothing back if the string is not a valid version.",
+      "api": "parse",
+      "targets": [
+        "semver-7.8.0:*#parse"
+      ]
+    },
+    {
+      "id": "readme-19",
+      "need": "I want to cut a version down to a given precision, such as keeping only major, or major and minor, dropping lower parts and any prerelease or build info.",
+      "api": "truncate",
+      "targets": [
+        "semver-7.8.0:*#truncate"
+      ]
+    },
+    {
+      "id": "readme-20",
+      "need": "I want to check whether one version is greater than another, using standard version precedence rather than string comparison.",
+      "api": "gt",
+      "targets": [
+        "semver-7.8.0:*#gt"
+      ]
+    },
+    {
+      "id": "readme-21",
+      "need": "I want to check whether one version is greater than or equal to another by version precedence.",
+      "api": "gte",
+      "targets": [
+        "semver-7.8.0:*#gte"
+      ]
+    },
+    {
+      "id": "readme-22",
+      "need": "I want to check whether one version is less than another by version precedence.",
+      "api": "lt",
+      "targets": [
+        "semver-7.8.0:*#lt"
+      ]
+    },
+    {
+      "id": "readme-23",
+      "need": "I want to check whether one version is less than or equal to another by version precedence.",
+      "api": "lte",
+      "targets": [
+        "semver-7.8.0:*#lte"
+      ]
+    },
+    {
+      "id": "readme-24",
+      "need": "I want to check whether two version strings refer to the same version logically, even if their text differs.",
+      "api": "eq",
+      "targets": [
+        "semver-7.8.0:*#eq"
+      ]
+    },
+    {
+      "id": "readme-25",
+      "need": "I want to check whether two versions are logically different, the opposite of checking for equality.",
+      "api": "neq",
+      "targets": [
+        "semver-7.8.0:*#neq"
+      ]
+    },
+    {
+      "id": "readme-26",
+      "need": "I have an operator as a string such as greater than, equal, or not equal, and I want to apply it to two versions without writing a branch for each operator. It should reject unknown operators with an error, and plain text equality operators should compare the raw strings.",
+      "api": "cmp",
+      "targets": [
+        "semver-7.8.0:*#cmp"
+      ]
+    },
+    {
+      "id": "readme-27",
+      "need": "I want a three-way comparison of two versions returning 0, 1, or -1 so I can sort a list of versions in ascending order.",
+      "api": "compare",
+      "targets": [
+        "semver-7.8.0:*#compare"
+      ]
+    },
+    {
+      "id": "readme-28",
+      "need": "I want a three-way comparison of two versions that sorts a list in descending order, newest first.",
+      "api": "rcompare",
+      "targets": [
+        "semver-7.8.0:*#rcompare"
+      ]
+    },
+    {
+      "id": "readme-29",
+      "need": "I want to compare versions in ascending order where build metadata breaks ties when the main versions are equal.",
+      "api": "compareBuild",
+      "targets": [
+        "semver-7.8.0:*#compareBuild"
+      ]
+    },
+    {
+      "id": "readme-30",
+      "need": "I want a quick way to compare two versions in ascending order while being forgiving about slightly malformed strings.",
+      "api": "compareLoose",
+      "targets": [
+        "semver-7.8.0:*#compareLoose"
+      ]
+    },
+    {
+      "id": "readme-31",
+      "need": "I want to know what kind of change separates two versions, such as major, minor, patch, or a prerelease level, or nothing if they are the same.",
+      "api": "diff",
+      "targets": [
+        "semver-7.8.0:*#diff"
+      ]
+    },
+    {
+      "id": "readme-32",
+      "need": "I have a list of version strings and want them ordered from lowest to highest, taking build metadata into account when comparing.",
+      "api": "sort",
+      "targets": [
+        "semver-7.8.0:*#sort"
+      ]
+    },
+    {
+      "id": "readme-33",
+      "need": "I have a list of version strings and want them ordered from highest to lowest, with build metadata considered in the comparison.",
+      "api": "rsort",
+      "targets": [
+        "semver-7.8.0:*#rsort"
+      ]
+    },
+    {
+      "id": "readme-34",
+      "need": "I have two comparator clauses and want to know whether there is any version that satisfies both of them.",
+      "api": "intersects",
+      "targets": [
+        "semver-7.8.0:*#intersects"
+      ]
+    },
+    {
+      "id": "readme-35",
+      "need": "I have a version range string from a user and want to check whether it is well-formed, getting back a normalized form or nothing if it is invalid.",
+      "api": "validRange",
+      "targets": [
+        "semver-7.8.0:*#validRange"
+      ]
+    },
+    {
+      "id": "readme-36",
+      "need": "I want to check whether a single version string falls within a given range expression.",
+      "api": "satisfies",
+      "targets": [
+        "semver-7.8.0:*#satisfies"
+      ]
+    },
+    {
+      "id": "readme-37",
+      "need": "I have a list of versions and a range, and I want the highest version in the list that falls within the range, or nothing if none do.",
+      "api": "maxSatisfying",
+      "targets": [
+        "semver-7.8.0:*#maxSatisfying"
+      ]
+    },
+    {
+      "id": "readme-38",
+      "need": "I have a list of versions and a range, and I want the lowest version in the list that falls within the range, or nothing if none do.",
+      "api": "minSatisfying",
+      "targets": [
+        "semver-7.8.0:*#minSatisfying"
+      ]
+    },
+    {
+      "id": "readme-39",
+      "need": "I want to know the smallest version that could ever match a given range expression.",
+      "api": "minVersion",
+      "targets": [
+        "semver-7.8.0:*#minVersion"
+      ]
+    },
+    {
+      "id": "readme-40",
+      "need": "I want to know whether a version is above every version a range could match, so I can tell if it is simply too new for that range.",
+      "api": "gtr",
+      "targets": [
+        "semver-7.8.0:*#gtr"
+      ]
+    },
+    {
+      "id": "readme-41",
+      "need": "I want to know whether a version is below every version a range could match, so I can tell if it is simply too old for that range.",
+      "api": "ltr",
+      "targets": [
+        "semver-7.8.0:*#ltr"
+      ]
+    },
+    {
+      "id": "readme-42",
+      "need": "I want to check whether a version lies entirely above or entirely below a range, choosing the direction explicitly with a greater-than or less-than marker.",
+      "api": "outside",
+      "targets": [
+        "semver-7.8.0:*#outside"
+      ]
+    },
+    {
+      "id": "readme-43",
+      "need": "I have two ranges and want to know whether any version matches both of them.",
+      "api": "intersects",
+      "targets": [
+        "semver-7.8.0:*#intersects"
+      ]
+    },
+    {
+      "id": "readme-44",
+      "need": "I want to know whether every version allowed by one range is also allowed by another range.",
+      "api": "subset",
+      "targets": [
+        "semver-7.8.0:*#subset"
+      ]
+    },
+    {
+      "id": "readme-45",
+      "need": "I want to generate a time-based unique identifier, and optionally control the node field, clock sequence, timestamp (in milliseconds and extra nanoseconds), or the random bytes used, so that I can reproduce a specific identifier or write it directly into a byte buffer at a given offset.",
+      "api": "uuid.v1",
+      "targets": [
+        "uuid-11.1.1:*#v1"
+      ]
+    },
+    {
+      "id": "readme-46",
+      "need": "I already have version 1 time-based identifiers stored as strings and need them converted to the version 6 format, which sorts lexicographically by time, without losing the original node and clock data.",
+      "api": "uuid.v1ToV6",
+      "targets": [
+        "uuid-11.1.1:*#v1ToV6"
+      ]
+    },
+    {
+      "id": "readme-47",
+      "need": "I need a deterministic identifier derived from a name and a namespace using MD5 hashing, optionally written into a byte buffer at a given offset, for backward compatibility with existing systems.",
+      "api": "uuid.v3",
+      "targets": [
+        "uuid-11.1.1:*#v3"
+      ]
+    },
+    {
+      "id": "readme-48",
+      "need": "I want a random unique identifier as a string, and I want to supply my own random bytes or a random-number function so I can get a predictable result in tests, optionally writing the bytes into a buffer at an offset.",
+      "api": "uuid.v4",
+      "targets": [
+        "uuid-11.1.1:*#v4"
+      ]
+    },
+    {
+      "id": "readme-49",
+      "need": "I need a predefined namespace identifier for DNS names and another for URLs, so I can derive deterministic UUIDs for domain names or web addresses without inventing my own namespace.",
+      "api": "uuid.v5",
+      "targets": [
+        "uuid-11.1.1:*#v5"
+      ]
+    },
+    {
+      "id": "readme-50",
+      "need": "I want to check that some untrusted input matches an object shape I define, with a field for a name string and a field for a numeric score, and get back a fully typed copy of the data I can rely on.",
+      "api": "parse",
+      "targets": [
+        "zod-3.25.76:*#parse"
+      ]
+    },
+    {
+      "id": "readme-51",
+      "need": "I need to validate data where one of my checks or transformations is asynchronous, such as a rule that waits on a lookup, and get the validated result without blocking on a synchronous call.",
+      "api": "parseAsync",
+      "targets": [
+        "zod-3.25.76:*#parseAsync"
+      ]
+    },
+    {
+      "id": "readme-52",
+      "need": "I want to add a custom validation rule to a string schema that can be an async check, for example confirming the string is no longer than a limit by awaiting a result.",
+      "api": "refine",
+      "targets": [
+        "zod-3.25.76:*#refine"
+      ]
+    },
+    {
+      "id": "readme-53",
+      "need": "I want to define a schema and then have it convert incoming values into a different shape as part of validation, so the output differs from the input.",
+      "api": "transform",
+      "targets": [
+        "zod-3.25.76:*#transform"
+      ]
+    },
+    {
+      "id": "readme-54",
+      "need": "I want my data validation to throw an error describing every field that failed, including the path to each bad field and a message for each, so I can report exactly what was wrong.",
+      "api": "ZodError",
+      "targets": [
+        "zod-3.25.76:*#ZodError"
+      ]
+    },
+    {
+      "id": "readme-55",
+      "need": "I want to validate incoming data and get back either the cleaned result or the error without wrapping the call in a try/catch block, and I want to tell the two cases apart cleanly.",
+      "api": "safeParse",
+      "targets": [
+        "zod-3.25.76:*#safeParse"
+      ]
+    },
+    {
+      "id": "readme-56",
+      "need": "My validation includes asynchronous checks, so I need a way to validate data that waits for those checks to finish and returns a success or failure result.",
+      "api": "safeParseAsync",
+      "targets": [
+        "zod-3.25.76:*#safeParseAsync"
+      ]
+    }
+  ]
+}
