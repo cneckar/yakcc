@@ -55,18 +55,66 @@ resizing). It is a development set, so read it for direction only.
   `Parser` and `transform` also implement "parse CSV". The seed targets are strict, so
   these numbers are lower bounds.
 
-## Held-out set and the confirm step (built, not run)
+## Held-out results: needs from READMEs (Haiku 5.5)
 
-- `harness/needs-from-readme.mjs` reads each corpus package's README, one section at a
-  time, never the code. A model writes the needs a programmer would have, in their words,
-  plus the documented API name, which is used only to grade. A need that names the API or
-  the package is dropped. 8 READMEs, 33 sections.
-- `harness/confirm-roots.mjs`: the model sees only its need and the top K root names, and
-  picks one or none. It records the real tokens, so leverage uses the measured cost of
-  finding instead of the estimate.
+`harness/needs-from-readme.mjs` had Haiku read the 8 corpus READMEs (33 sections), never the
+code, and write the needs a programmer would have, plus the documented API name, which is
+used only to grade.
+- 78 needs graded, across 7 packages. semver's README dominates, with 54 of them.
+- 31 needs were dropped because they named the API or the package.
+- 93 were dropped because the API does not resolve to a named root. Examples are zod's
+  `z.object()` (a factory, not the class) and jsonwebtoken's `sign` and `verify`, which
+  are anonymous default exports. That second case is the gap noted on #1309.
 
-Both default to Haiku 5.5 and refuse to run above `--max-dollars` (default $2). On Haiku
-each costs about a cent. Neither has run: the API account is out of credit.
+### Search (`results/eval-readme*.json`)
+
+| Pool, text | Top-1 | Top-5 | Top-10 | Median tokens to write the target |
+|---|---|---|---|---|
+| All definitions, names | 0.17 | 0.45 | 0.55 | 2,444 |
+| Large roots, names | 0.14 | 0.45 | 0.62 | 2,444 |
+| All definitions, names + descriptions | 0.44 | 0.77 | 0.88 | 2,444 |
+| **Large roots, names + descriptions** | **0.45** | **0.82** | 0.85 | 2,444 |
+
+Needs written from documentation describe behavior in prose, so names alone match them
+poorly. The one-line descriptions are what make these searches work: they triple top-1.
+
+### Confirm step (`results/confirm-*-desc-k*.json`)
+
+The model (Haiku 5.5, effort low) sees only its need and the top K root names with
+descriptions, and picks one or none.
+
+| | README needs (78), K = 5 | README, K = 10 | Seed (30 + 8 none), K = 5 | Seed, K = 10 |
+|---|---|---|---|---|
+| Target among those shown | 0.82 | 0.85 | 0.90 | 0.93 |
+| Picked the target | 0.78 | 0.77 | 0.90 | 0.93 |
+| Picked it when it was shown | 0.95 | 0.91 | 1.00 | 1.00 |
+| Reuse precision | 0.87 | 0.85 | 1.00 | 1.00 |
+| Needs with no answer, answered "none" | – | – | 8 of 8 | 8 of 8 |
+
+- **When the target was not shown, the model answered "none"** in all 8 such README cases
+  rather than reusing something wrong.
+- **Most of the 9 wrong reuses (K = 5) are close siblings.** Examples: semver's `cmp` for
+  `neq` (`cmp(a, '!=', b)` calls `neq`), `sort` for `compareBuild`, and zod's `ZodObject`
+  for `parse`. Two are real mismatches: uuid v6 for nanoid, and v7 for v1.
+- **K = 10 adds little reach and slightly lowers accuracy,** so K = 5 is the better
+  default.
+
+### Measured leverage
+
+These use real tokens from the confirm runs. A README need's request averages 41 tokens.
+The confirm turn reads about 1,160 tokens and writes about 147 (the pick, a reason, and
+thinking).
+
+| | Median | 10th percentile | 90th percentile |
+|---|---|---|---|
+| README needs | **6.4×** | 0.3× | 21.7× |
+| Seed needs | 3.9× | – | min 0.2× |
+
+At module scale, finding and confirming is usually several times cheaper than writing. The
+low tail is small targets such as `neq`, which are cheaper to write. A router could skip
+search for needs it expects to be small.
+
+**Spend:** about $0.07 on Haiku 5.5 for the README queries and all four confirm runs.
 
 ## Running
 
@@ -82,9 +130,11 @@ node harness/confirm-roots.mjs --dry-run --eval results/eval-seed-desc.json
 ## Limitations
 
 - **The seed needs are author-written,** and their targets are strict.
-- **Leverage uses estimated tokens** (characters / 4) until `confirm-roots.mjs` runs. It
-  also counts the whole closure as the cost of writing, which assumes a writer would need
-  all of it.
+- **Leverage counts the whole closure as the cost of writing,** which assumes a writer
+  would need all of it. A writer might need less, so leverage is an upper estimate on
+  that side. The find side is measured.
+- **semver dominates the README set** (54 of 78 needs), and its many near-identical
+  comparison functions make top-1 hard.
 - **Names cannot see some definitions.** Anonymous default exports and functions inside
   IIFEs have no name to attach to: bcryptjs's `hash` and jsonwebtoken's `verify` are out
   of the pool for this reason, which is a gap for #1309.
