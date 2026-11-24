@@ -29,7 +29,9 @@ import type { DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js"
 import {
   ARRAY_FN_ATOMS,
   BIGNUM_ATOMS,
+  COLLECTION_ATOMS,
   DYNAMIC_ATOMS,
+  JSON_ATOMS,
   RUNTIME_ATOMS,
   type RuntimeAtom,
 } from "./wasm-runtime-atoms.js";
@@ -93,6 +95,8 @@ export const ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   ...BIGNUM_ATOMS,
   ...DYNAMIC_ATOMS,
   ...ARRAY_FN_ATOMS,
+  ...JSON_ATOMS,
+  ...COLLECTION_ATOMS,
 };
 
 /**
@@ -154,7 +158,13 @@ export type Ins =
   | { readonly op: "set"; readonly i: number }
   | { readonly op: "call"; readonly fn: string }
   | { readonly op: "f64"; readonly name: F64Op }
-  | { readonly op: "i32"; readonly name: "eqz" | "and" | "eq" }
+  | {
+      readonly op: "i32";
+      readonly name: "eqz" | "and" | "eq" | "or" | "xor" | "shl" | "shr_s" | "shr_u";
+    }
+  /** A number that is a 32-bit integer, as one; and a 32-bit integer read as unsigned. */
+  | { readonly op: "i32.of.f64" }
+  | { readonly op: "f64.of.u32" }
   | { readonly op: "f64.of.i32" }
   | { readonly op: "str.len" }
   | { readonly op: "nums.len" }
@@ -180,6 +190,9 @@ export type Ins =
   | { readonly op: "try" }
   | { readonly op: "catch" };
 
+/** The array methods called through __ykInvoke when not lowered directly. */
+const INVOKED_ARRAY_METHODS: ReadonlySet<string> = new Set(["indexOf", "includes", "join"]);
+
 /** The array methods that take a function: each a runtime atom, lowered once per callback. */
 const ARRAY_FN_METHODS: ReadonlySet<string> = new Set([
   "map",
@@ -197,6 +210,64 @@ const arrayFnAtom = (kind: "nums" | "arr", method: string, nargs: number): strin
   const init = method === "reduce" && nargs >= 2 ? "Init" : "";
   return `__yk${name}${init}${kind === "nums" ? "Nums" : "Any"}`;
 };
+
+/**
+ * A builtin used as a function value, as the closure of the call it means: the source of that
+ * closure, or undefined when the builtin is not one of these (a variadic Math function's meaning
+ * depends on how many arguments it is given, so it is not).
+ */
+function builtinSource(c: Callee): string | undefined {
+  const one = (call: string): string => `export function f(x: unknown) { return ${call}; }`;
+  if (c.k === "string-of") return one("String(x)");
+  if (c.k === "number-of") return one("Number(x)");
+  if (c.k === "boolean-of") return one("Boolean(x)");
+  if (c.k === "math" && (NATIVE_MATH.has(c.name) || UNARY_HOST_MATH.has(c.name)))
+    return one(`Math.${c.name}(x as number)`);
+  // A primitive or a runtime atom (an atom's closure captures it): the call of it, at its arity.
+  if (c.k === "prim" || c.k === "atom") {
+    const arity =
+      c.k === "prim"
+        ? ((PRIMITIVES[c.name] ?? ARRAY_PRIMITIVES[c.name]) as { params: WT[] }).params.length
+        : (ATOMS[c.name] as RuntimeAtom).inputs.length;
+    const ps = Array.from({ length: arity }, (_, i) => `a${i}`);
+    return `export function f(${ps.join(", ")}) { return ${c.name}(${ps.join(", ")}); }`;
+  }
+  return undefined;
+}
+const UNARY_HOST_MATH: ReadonlySet<string> = new Set([
+  "round",
+  "sign",
+  "exp",
+  "expm1",
+  "log",
+  "log1p",
+  "log2",
+  "log10",
+  "sin",
+  "cos",
+  "tan",
+  "asin",
+  "acos",
+  "atan",
+  "sinh",
+  "cosh",
+  "tanh",
+  "asinh",
+  "acosh",
+  "atanh",
+  "cbrt",
+  "fround",
+]);
+const builtinGraphs = new Map<string, DucGraph>();
+/** A builtin's closure graph, lifted once (its operations as ECMAScript's). */
+function builtinGraph(source: string): DucGraph {
+  let g = builtinGraphs.get(source);
+  if (g === undefined) {
+    g = ecmaScriptView(liftAtom(source));
+    builtinGraphs.set(source, g);
+  }
+  return g;
+}
 
 /** The error classes `new` makes: an object of that class, whose name it inherits. */
 const ERROR_CLASSES: ReadonlySet<string> = new Set([
@@ -219,6 +290,15 @@ export const MATH_CONSTANTS: Readonly<Record<string, number>> = {
   LOG10E: Math.LOG10E,
   SQRT2: Math.SQRT2,
   SQRT1_2: Math.SQRT1_2,
+};
+/** The bitwise operators: their operands are ToInt32's (a shift's count ToUint32's, mod 32). */
+const BITWISE: Readonly<Record<string, "and" | "or" | "xor" | "shl" | "shr_s" | "shr_u">> = {
+  "&": "and",
+  "|": "or",
+  "^": "xor",
+  "<<": "shl",
+  ">>": "shr_s",
+  ">>>": "shr_u",
 };
 const F64_BINARY: Readonly<Record<string, F64Op>> = {
   "+": "add",
@@ -605,9 +685,16 @@ type Callee =
   | { readonly k: "math"; readonly name: string }
   | { readonly k: "string-of" }
   | { readonly k: "number-of" }
+  | { readonly k: "boolean-of" }
   | { readonly k: "error-class"; readonly name: string }
   /** Object, and its keys, values and entries. */
   | { readonly k: "object-ns"; readonly name: string }
+  /** JSON, and its stringify and parse. */
+  | { readonly k: "json-ns"; readonly name: string }
+  /** Array, Function, Map or Set: a class instanceof names; Array.isArray; new Map, new Set. */
+  | { readonly k: "class-ref"; readonly name: string }
+  /** __ykCallWith(f, args): the call of a function value with an array of arguments (atoms'). */
+  | { readonly k: "callwith" }
   /** `__yakccTry(body, handler, finalizer)`: a try statement (#1276). */
   | { readonly k: "try" }
   | { readonly k: "method"; readonly recv: ValueId; readonly name: string }
@@ -803,6 +890,11 @@ function lowerFunction(
         pushCaps: () => types.forEach((_, i) => emit({ op: "get", i: base + i })),
       };
     }
+    // A builtin used as a function: a closure of the call it means (String, Number, Boolean, and
+    // Math's one-argument functions), lifted once.
+    const builtin = builtinSource(c);
+    if (builtin !== undefined)
+      return { fn: builtinGraph(builtin), caps: [], capValues: [], pushCaps: () => {} };
     if (c.k !== "closure") return undefined;
     if (knowing.has(v))
       throw new LoweringError("a closure that calls itself is not in the subset yet");
@@ -928,6 +1020,51 @@ function lowerFunction(
     emit({ op: "call", fn });
     return result;
   };
+  /** The class an instanceof names: an error class, Object, Array or Function. */
+  const instanceClass = (v: ValueId): string => {
+    const t = get(v);
+    if (typeof t === "object") {
+      const c = t.call;
+      if (c.k === "error-class") return c.name;
+      if (c.k === "object-ns" && c.name === "") return "Object";
+      if (c.k === "class-ref" && c.name !== "isArray") return c.name;
+    }
+    throw new LoweringError("instanceof of other than a builtin class is not in the subset yet");
+  };
+  /**
+   * A closure as a function value calls its function with its captures (a captured function a
+   * function value too) and arguments of any kind. Typed now, so that arrays it stores other than
+   * numbers in grow where they were made; a closure it cannot lower so may never be a value, and
+   * is refused only if it becomes one.
+   */
+  const typedAsValue = new Set<string>();
+  const typeAsValue = (v: ValueId, node: DucNode): void => {
+    const inner = node.closure as DucGraph;
+    const caps = node.inputs as readonly ValueId[];
+    const capTypes: WT[] = [];
+    for (const c of caps) {
+      const t = get(c);
+      if (t === "?") return;
+      capTypes.push(typeof t === "string" ? (t === "undef" ? "any" : t) : "any");
+    }
+    const key = `${v}:${capTypes.join(",")}`;
+    if (typedAsValue.has(key)) return;
+    typedAsValue.add(key);
+    const nargs = paramCount(inner) - caps.length;
+    const sig: WT[] = [...capTypes, ...Array.from({ length: nargs }, () => "any" as const)];
+    try {
+      mod.closure(inner, sig, trusted, caps.length);
+    } catch (e) {
+      if (e instanceof GrowParams) {
+        typedAsValue.delete(key);
+        for (const path of e.paths) {
+          const [i, ...rest] = path as [number, ...number[]];
+          const c = caps[i];
+          if (c !== undefined && rest.length === 0) stored(c, "any");
+        }
+      } else if (!(e instanceof LoweringError)) throw e;
+    }
+  };
   const computeType = (v: ValueId): VT | "?" => {
     const iterating = elementOf.get(v);
     if (iterating !== undefined) {
@@ -973,8 +1110,13 @@ function lowerFunction(
       if (AMBIENT_NUMBERS[sym] !== undefined) return "f64";
       if (sym === "Math") return { call: { k: "math", name: "" } };
       if (sym === "Object") return { call: { k: "object-ns", name: "" } };
+      if (sym === "JSON") return { call: { k: "json-ns", name: "" } };
+      if (sym === "Array" || sym === "Function" || sym === "Map" || sym === "Set")
+        return { call: { k: "class-ref", name: sym } };
+      if (sym === "__ykCallWith") return { call: { k: "callwith" } };
       if (sym === "String") return { call: { k: "string-of" } };
       if (sym === "Number") return { call: { k: "number-of" } };
+      if (sym === "Boolean") return { call: { k: "boolean-of" } };
       if (ERROR_CLASSES.has(sym)) return { call: { k: "error-class", name: sym } };
       if (sym === "__yakccTry") return { call: { k: "try" } };
       if (PRIMITIVES[sym] !== undefined) return { call: { k: "prim", name: sym } };
@@ -1000,6 +1142,7 @@ function lowerFunction(
     if (p.closure !== undefined) {
       if (p.label !== "closure")
         throw new LoweringError(`a "${p.label}" with a body is not in the subset`);
+      typeAsValue(v, p);
       return { call: { k: "closure", node: p } };
     }
     const label = p.label ?? "";
@@ -1016,6 +1159,16 @@ function lowerFunction(
       if (t0 === "?") return "?";
       if (typeof t0 === "object" && t0.call.k === "math")
         return MATH_CONSTANTS[member] !== undefined ? "f64" : { call: { k: "math", name: member } };
+      if (typeof t0 === "object" && t0.call.k === "class-ref") {
+        if (t0.call.name !== "Array" || member !== "isArray")
+          throw new LoweringError(`${t0.call.name}.${member} is not in the subset yet`);
+        return { call: { k: "class-ref", name: "isArray" } };
+      }
+      if (typeof t0 === "object" && t0.call.k === "json-ns") {
+        if (member !== "stringify" && member !== "parse")
+          throw new LoweringError(`JSON.${member} is not in the subset yet`);
+        return { call: { k: "json-ns", name: member } };
+      }
       if (typeof t0 === "object" && t0.call.k === "object-ns") {
         if (member !== "keys" && member !== "values" && member !== "entries")
           throw new LoweringError(`Object.${member} is not in the subset yet`);
@@ -1025,6 +1178,8 @@ function lowerFunction(
         if (member === "length") return "f64";
         if (member === "push" || member === "pop" || ARRAY_FN_METHODS.has(member))
           return { call: { k: "method", recv: ins[0] as ValueId, name: `${t0}.${member}` } };
+        // The methods __ykInvoke implements for an array (called through it).
+        if (INVOKED_ARRAY_METHODS.has(member)) return "any";
         throw new LoweringError(`the array method ${member} is not in the subset yet`);
       }
       // A property of an object, or of a value of any kind: the runtime atoms.
@@ -1049,9 +1204,25 @@ function lowerFunction(
       const callee = t0.call;
       if (callee.k === "math") return "f64";
       if (callee.k === "string-of") return "str";
+      if (callee.k === "boolean-of") return "i32";
       if (callee.k === "number-of") return "f64";
       if (callee.k === "error-class") return "obj";
       if (callee.k === "object-ns") return "arr";
+      if (callee.k === "class-ref") return "i32";
+      if (callee.k === "callwith") return "any";
+      if (callee.k === "json-ns") {
+        // A replacer or a reviver: not yet.
+        const extra = ins[2];
+        if (callee.name === "stringify" && extra !== undefined) {
+          const te = get(extra);
+          const p2 = producer.get(resolve(extra));
+          if (te !== "undef" && p2?.label !== "null")
+            throw new LoweringError("JSON.stringify with a replacer is not in the subset yet");
+        }
+        if (callee.name === "parse" && extra !== undefined)
+          throw new LoweringError("JSON.parse with a reviver is not in the subset yet");
+        return "any";
+      }
       if (callee.k === "try") {
         // Its closures are called with what they capture (and the handler with what was thrown);
         // its result is a completion record or undefined: a value of any kind.
@@ -1138,7 +1309,15 @@ function lowerFunction(
       const t0 = operand(0);
       if (t0 === "?") return "?";
       if (typeof t0 === "object" && t0.call.k === "error-class") return "obj";
-      throw new LoweringError("new of other than an error class is not in the subset yet");
+      if (
+        typeof t0 === "object" &&
+        t0.call.k === "class-ref" &&
+        (t0.call.name === "Map" || t0.call.name === "Set")
+      )
+        return "obj";
+      throw new LoweringError(
+        "new of other than an error class, Map or Set is not in the subset yet",
+      );
     }
     if (label === "ArrayLiteral") {
       // As TypeScript types it: numbers make an array of numbers; anything else, or nothing in a
@@ -1185,6 +1364,13 @@ function lowerFunction(
       return "str";
     }
     if (label === "TypeOfExpression") return "str";
+    if (label === "instanceof" && ins.length === 2) {
+      if (get(ins[1] as ValueId) === "?") return "?";
+      instanceClass(ins[1] as ValueId);
+      return "i32";
+    }
+    // The comma operator: its last operand's value (the others are computed for their effects).
+    if (label === "," && ins.length >= 1) return get(ins[ins.length - 1] as ValueId);
     // A throw has no value: what follows it does not run.
     if (label === "throw") return "undef";
     if (label === "??" && ins.length === 2) {
@@ -1200,6 +1386,8 @@ function lowerFunction(
       return "f64";
     if (ins.length === 2 && F64_COMPARE[label] !== undefined) return "i32";
     if (ins.length === 1 && (label === "-" || label === "+")) return "f64";
+    if ((ins.length === 2 && BITWISE[label] !== undefined) || (ins.length === 1 && label === "~"))
+      return "f64";
     if (ins.length === 1 && label === "!") return "i32";
     if (ins.length === 2 && (label === "&&" || label === "||"))
       return unify(get(ins[0] as ValueId), get(ins[1] as ValueId), `"${label}"`);
@@ -1605,8 +1793,8 @@ function lowerFunction(
         set(out);
         return;
       }
-      if (t0 === "obj" || t0 === "any" || t0 === "undef") {
-        // A property of an object or any value: its own, else what an error inherits; lengths;
+      if (t0 === "obj" || t0 === "any" || t0 === "undef" || t0 === "nums" || t0 === "arr") {
+        // A property of an object or any value (or an array's method, read for __ykInvoke): its own, else what an error inherits; lengths;
         // a TypeError for undefined and null.
         push(ins[0] as ValueId, "any");
         emit({ op: "const.str", s: label.slice(1) });
@@ -1637,12 +1825,46 @@ function lowerFunction(
       return;
     }
     if (label === "NewExpression") {
-      const callee = (ty(ins[0] as ValueId) as { call: Callee }).call as { name: string };
+      const callee = (ty(ins[0] as ValueId) as { call: Callee }).call as {
+        k: string;
+        name: string;
+      };
+      if (callee.k === "class-ref") {
+        // new Map(iterable), new Set(iterable).
+        emit({ op: "const.str", s: callee.name });
+        if (ins[1] === undefined) emit({ op: "const.undef" });
+        else push(ins[1], "any");
+        emit({ op: "call", fn: mod.atom("__ykCollNew").fn });
+        set(out);
+        return;
+      }
       makeError(callee.name, ins[1]);
       set(out);
       return;
     }
     if (label === "CallExpression" && typeof opType(ins[0] as ValueId) === "string") {
+      // A method of a receiver of any kind (or an object): __ykInvoke, which calls an own function
+      // property, or the builtin method of the receiver's kind.
+      const member = producer.get(resolve(ins[0] as ValueId));
+      const recvT =
+        member?.kind === "op" && /^\.\w+$/.test(member.label ?? "")
+          ? opType(member.inputs[0] as ValueId)
+          : undefined;
+      if (
+        member !== undefined &&
+        (recvT === "any" ||
+          recvT === "obj" ||
+          recvT === "undef" ||
+          recvT === "nums" ||
+          recvT === "arr")
+      ) {
+        push(member.inputs[0] as ValueId, "any");
+        emit({ op: "const.str", s: (member.label ?? "").slice(1) });
+        for (const x of ins.slice(1)) push(x, "any");
+        emit({ op: "arr.of", n: ins.length - 1 }, { op: "call", fn: mod.atom("__ykInvoke").fn });
+        set(out);
+        return;
+      }
       // A call of a value of any kind: its arguments as an array of any values, then __ykCall.
       push(ins[0] as ValueId, "any");
       for (const x of ins.slice(1)) push(x, "any");
@@ -1671,6 +1893,25 @@ function lowerFunction(
         }
       } else if (callee.k === "error-class") {
         makeError(callee.name, args[0]);
+      } else if (callee.k === "callwith") {
+        push(args[0] as ValueId, "any");
+        push(args[1] as ValueId, "arr");
+        emit({ op: "call", fn: mod.dynCall() });
+      } else if (callee.k === "class-ref") {
+        // Array.isArray(x): x instanceof Array.
+        if (args[0] === undefined) emit({ op: "const.undef" });
+        else push(args[0], "any");
+        emit({ op: "const.str", s: "Array" }, { op: "call", fn: mod.atom("__ykInstanceOf").fn });
+      } else if (callee.k === "json-ns") {
+        const pushOrUndef = (v: ValueId | undefined): void => {
+          if (v === undefined) emit({ op: "const.undef" });
+          else push(v, "any");
+        };
+        pushOrUndef(args[0]);
+        if (callee.name === "stringify") {
+          pushOrUndef(args[2]);
+          emit({ op: "call", fn: mod.atom("__ykJsonStringify").fn });
+        } else emit({ op: "call", fn: mod.atom("__ykJsonParse").fn });
       } else if (callee.k === "object-ns") {
         // Object.keys (__ykKeysOf, not for-in), Object.values and Object.entries (__ykValuesOf).
         if (args[0] === undefined) emit({ op: "const.undef" });
@@ -1684,6 +1925,9 @@ function lowerFunction(
       } else if (callee.k === "string-of") {
         if (args.length === 0) pushText("");
         else pushString(args[0] as ValueId);
+      } else if (callee.k === "boolean-of") {
+        if (args.length === 0) emit({ op: "const.i32", x: 0 });
+        else truthy(args[0] as ValueId);
       } else if (callee.k === "method" && callee.name === "toString") {
         if (args.length > 0)
           throw new LoweringError("toString with a radix is not in the subset yet");
@@ -1889,6 +2133,26 @@ function lowerFunction(
       set(out);
       return;
     }
+    if ((ins.length === 2 && BITWISE[label] !== undefined) || (ins.length === 1 && label === "~")) {
+      // Each operand ToInt32 (exact in a double), then a 32-bit integer.
+      const int32 = (v: ValueId): void => {
+        pushNumber(v);
+        emit({ op: "call", fn: mod.atom("__ykToInt32").fn }, { op: "i32.of.f64" });
+      };
+      int32(ins[0] as ValueId);
+      if (label === "~") emit({ op: "const.i32", x: -1 }, { op: "i32", name: "xor" });
+      else {
+        int32(ins[1] as ValueId);
+        const name = BITWISE[label] as "and" | "or" | "xor" | "shl" | "shr_s" | "shr_u";
+        // A shift's count is its low five bits.
+        if (name === "shl" || name === "shr_s" || name === "shr_u")
+          emit({ op: "const.i32", x: 31 }, { op: "i32", name: "and" });
+        emit({ op: "i32", name });
+      }
+      emit({ op: label === ">>>" ? "f64.of.u32" : "f64.of.i32" });
+      set(out);
+      return;
+    }
     if (ins.length === 1 && label === "-") {
       pushNumber(ins[0] as ValueId);
       emit({ op: "f64", name: "neg" });
@@ -1897,6 +2161,18 @@ function lowerFunction(
     }
     if (ins.length === 1 && label === "+") {
       pushNumber(ins[0] as ValueId);
+      set(out);
+      return;
+    }
+    if (label === "instanceof" && ins.length === 2) {
+      push(ins[0] as ValueId, "any");
+      emit({ op: "const.str", s: instanceClass(ins[1] as ValueId) });
+      emit({ op: "call", fn: mod.atom("__ykInstanceOf").fn });
+      set(out);
+      return;
+    }
+    if (label === "," && ins.length >= 1) {
+      push(ins[ins.length - 1] as ValueId, t as WT);
       set(out);
       return;
     }

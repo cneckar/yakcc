@@ -470,43 +470,28 @@ function descDelta(desc: string, receiver: boolean): number {
 // --- the IR encoded ---
 
 /**
- * The `Math` functions `StrictMath` computes as V8 does, to the last place (checked on generated
- * arguments, `emit-jvm.test.ts`). `exp`, `cosh`, `cbrt`, `atan2` and `hypot` are not among them:
- * V8's differ from StrictMath's fdlibm in the last place (V8's `Math.exp(1)` is `Math.E`, fdlibm's is
- * one unit above it).
+ * ECMAScript's host functions on the JVM: only those whose result is exact by definition (`%`,
+ * `Math.round`, `Math.sign`, `Math.fround`). V8 computes exp, log, log1p, log2, log10, expm1, cbrt,
+ * cosh, sin, cos, tan, atan and atan2 with llvm-libc (correctly rounded), and pow, tanh, sinh,
+ * asin, acos, asinh, acosh and atanh with its own fdlibm ports (some calling those); StrictMath's
+ * fdlibm differs from them in the last place (on 200000 arguments each: pow 3226, tanh 221, atan2
+ * 23827, cbrt 16551, log2 31871; exp(1) is one unit above V8's). A sample's agreement proves
+ * nothing for the rest, so none of them is mapped to StrictMath: they are refused until they are
+ * runtime atoms that compute exactly what V8 does.
  */
-const STRICT_MATH = new Set([
-  "sin",
-  "cos",
-  "tan",
-  "asin",
-  "acos",
-  "atan",
-  "sinh",
-  "tanh",
-  "expm1",
-  "log",
-  "log1p",
-  "log10",
-  "pow",
-]);
-
 function encodeHost(a: Asm, name: string, arity: number): void {
   const fn = name.replace(/^Math\./, "");
   const desc = `(${"D".repeat(arity)})D`;
   if (name === "%") a.op([OP.drem], -2);
-  else if (name === "**") a.invokestatic("java/lang/StrictMath", "pow", "(DD)D");
   else if (name === "Math.fround") a.op([OP.d2f, OP.f2d], 0);
   else if (name === "Math.round" || name === "Math.sign")
     a.invokestatic(MAIN, methodName(`host:${name}`), desc);
-  else if (STRICT_MATH.has(fn)) {
-    if (arity !== (fn === "pow" ? 2 : 1))
-      throw new JvmEmitError(`Math.${fn} with ${arity} arguments is not in the subset yet`);
-    a.invokestatic("java/lang/StrictMath", fn, desc);
-  }
   // Classified (b): no JVM function computes these exactly as V8 does; they become runtime atoms
-  // (ports of V8's algorithms), which every target then shares.
-  else throw new JvmEmitError(`${name} has no exact counterpart on the JVM yet`);
+  // (V8's algorithms, correctly rounded where V8's are), which every target then shares.
+  else
+    throw new JvmEmitError(
+      `${name === "**" ? "**" : `Math.${fn}`} has no exact counterpart on the JVM yet`,
+    );
 }
 
 /** A lowered function's code: the IR as bytecode, its locals in slots. */
@@ -685,9 +670,23 @@ function encodeFunction(
         }
         break;
       case "i32":
-        if (x.name === "and") a.op([OP.iand], -1);
-        else if (x.name === "eqz") a.bool(OP.ifeq, 1);
-        else a.bool(OP.if_icmpeq, 2);
+        if (x.name === "eqz") a.bool(OP.ifeq, 1);
+        else if (x.name === "eq") a.bool(OP.if_icmpeq, 2);
+        else
+          a.op(
+            [{ and: OP.iand, or: 0x80, xor: 0x82, shl: OP.ishl, shr_s: 0x7a, shr_u: 0x7c }[x.name]],
+            -1,
+          );
+        break;
+      case "i32.of.f64":
+        a.op([OP.d2i], -1);
+        break;
+      case "f64.of.u32":
+        // i2l, mask to the low 32 bits, l2d.
+        a.op([0x85], 1);
+        a.op([OP.ldc2_w, ...u2(pool.longConst(0xffffffff))], 2);
+        a.op([OP.land], -2);
+        a.op([OP.l2d], 0);
         break;
       case "f64.of.i32":
         a.op([OP.i2d], 1);

@@ -10,6 +10,7 @@ import { liftAtom } from "../lift.js";
 import { Thrown } from "../lower-stack.js";
 import {
   BIGNUM_ATOMS,
+  COLLECTION_ATOMS,
   DYNAMIC_ATOMS,
   RUNTIME_ATOMS,
   RUNTIME_PRIMITIVES_JS,
@@ -60,10 +61,12 @@ export const position = fc.oneof(
   fc.double(),
 );
 
-export const ALL_ATOMS = { ...RUNTIME_ATOMS, ...BIGNUM_ATOMS, ...DYNAMIC_ATOMS } as Record<
-  string,
-  { source: string; inputs: readonly string[]; output: string }
->;
+export const ALL_ATOMS = {
+  ...RUNTIME_ATOMS,
+  ...BIGNUM_ATOMS,
+  ...DYNAMIC_ATOMS,
+  ...COLLECTION_ATOMS,
+} as Record<string, { source: string; inputs: readonly string[]; output: string }>;
 
 /**
  * The runtime atoms as JavaScript: each lifted and written back by `emitTypeScript`, run with the
@@ -222,6 +225,15 @@ export const NUMERIC_STRINGS: string[] = (() => {
   return out;
 })();
 
+/** Numbers for the bitwise operators: ToInt32's edges, fractions, and every range. */
+export const bitArg = fc.oneof(
+  fc.integer(),
+  fc.integer({ min: -40, max: 40 }),
+  fc.double(),
+  fc.constantFrom(2 ** 31, -(2 ** 31), 2 ** 31 - 1, 2 ** 32, 2 ** 32 + 5, -(2 ** 32) - 3, 2 ** 53),
+  fc.constantFrom(1e20, -1e20, -1.5, 4294967295.7, -0, Number.NaN, Number.POSITIVE_INFINITY, 0.5),
+);
+
 /** Every kind of value the WasmGC lowering represents. */
 export const anyValue = fc.oneof(
   fc.double(),
@@ -318,6 +330,74 @@ export const numericText = fc.oneof(
 );
 
 export const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
+  [
+    "Map and Set (SameValueZero keys, -0, NaN, iteration, forEach, delete, size), and methods of receivers of any kind (arrays, strings)",
+    "export function f(xs: unknown[], k: unknown, s: string): unknown { const m = new Map(); m.set('a', 1); m.set(k, s); m.set(NaN, 'nan'); m.set(-0, 'zero'); const st = new Set([1, 2, 2, s, NaN, NaN]); const out: unknown[] = []; m.forEach((v: unknown, key: unknown) => out.push([key, v])); const entries: unknown[] = []; for (const e of m) entries.push(e); const vals: unknown[] = []; for (const v of st) vals.push(v); const ks: unknown[] = []; for (const q of m.keys()) ks.push(q); const anyArr: any = xs; anyArr.push(s); const popped = anyArr.pop(); const sAny: any = s; return [m.get('a'), m.get(k), m.get(NaN), m.get(0), m.has(k), m.size, m.delete('a'), m.delete('zz'), m.size, st.size, st.has(NaN), st.has('x'), out, entries, vals, ks, String(m), JSON.stringify(m), Object.keys(st), m instanceof Map, st instanceof Set, m instanceof Error, popped, anyArr.length, anyArr.indexOf(s), anyArr.includes(NaN), anyArr.join('-'), anyArr.map((x: unknown) => typeof x), sAny.slice(1), sAny.indexOf('a'), sAny.trim(), sAny.charCodeAt(0)]; }",
+    ["unknown[]", "unknown", "string"],
+    "unknown",
+    fc.tuple(
+      fc.array(
+        fc.oneof(fc.integer({ min: -2, max: 2 }), fc.constantFrom("a", "", null, Number.NaN)),
+        { maxLength: 4 },
+      ),
+      anyValue,
+      text,
+    ),
+  ],
+  [
+    "bitwise operators: &, |, ^, <<, >>, >>>, ~ on every kind of number (ToInt32's modulo, a shift's count mod 32)",
+    "export function f(a: number, b: number): unknown { return [a & b, a | b, a ^ b, a << b, a >> b, a >>> b, ~a, ~~a, a | 0, a >>> 0, -1 >>> 0, 1 << 31, (a & 0xff) << 8, b >>> 32, a << -1]; }",
+    ["number", "number"],
+    "unknown",
+    fc.tuple(bitArg, bitArg),
+  ],
+  [
+    "builtins as functions: filter(Boolean), map(String), map(Number), Math's one-argument functions, stored and called",
+    "export function f(xs: unknown[], n: number): unknown { const nums = [n, -n, 2.5, -0.5]; const fs: unknown[] = [String, Math.abs]; return [xs.filter(Boolean), xs.map(String), xs.map(Number), nums.map(Math.abs), nums.map(Math.floor), nums.map(Math.sqrt), nums.map(Math.round), Boolean(n), Boolean(), (fs[0] as any)(n), (fs[1] as any)(-3), typeof fs[0]]; }",
+    ["unknown[]", "number"],
+    "unknown",
+    fc.tuple(
+      fc.array(
+        fc.oneof(
+          fc.integer({ min: -2, max: 2 }),
+          fc.constantFrom("", "a", "1", null, undefined, true, false),
+        ),
+        {
+          maxLength: 5,
+        },
+      ),
+      fc.oneof(fc.integer({ min: -5, max: 5 }), fc.double()),
+    ),
+  ],
+  [
+    "instanceof Error and its subclasses, Array, Object and Function; Array.isArray; in a catch",
+    "export function f(x: unknown, n: number): unknown { const errs: unknown[] = [new Error('a'), new TypeError('b'), new RangeError('c'), x]; const out: unknown[] = []; for (const e of errs) out.push([e instanceof Error, e instanceof TypeError, e instanceof RangeError, e instanceof Object, e instanceof Array, Array.isArray(e)]); const g = (k: number) => k; let caught = ''; try { if (n > 0) (x as any).boom(); else throw new RangeError('r'); } catch (e) { caught = e instanceof TypeError ? 'type' : e instanceof RangeError ? 'range' : 'other'; } return [out, g instanceof Function, g instanceof Object, [1] instanceof Array, x instanceof Function, Array.isArray(x), caught]; }",
+    ["unknown", "number"],
+    "unknown",
+    fc.tuple(anyValue, fc.integer({ min: -1, max: 1 })),
+  ],
+  [
+    "closures that call each other: const arrows through a cell, read with the comma operator",
+    "export function f(n: number): unknown { const isEven = (k: number): boolean => (k === 0 ? true : isOdd(k - 1)); const isOdd = (k: number): boolean => (k === 0 ? false : isEven(k - 1)); const ping = (k: number, acc: string): string => (k <= 0 ? acc : pong(k - 1, acc + 'i')); const pong = (k: number, acc: string): string => (k <= 0 ? acc : ping(k - 1, acc + 'o')); return [isEven(n), isOdd(n), ping(n, '')]; }",
+    ["number"],
+    "unknown",
+    fc.tuple(fc.integer({ min: 0, max: 15 })),
+  ],
+  [
+    "JSON: stringify (key order, undefined and functions, errors, NaN, space, toJSON, a cycle's TypeError), parse (duplicates, escapes, a SyntaxError), and their round trip",
+    "export function f(x: unknown, s: string, n: number): unknown { const o: any = { a: [1, 'two', null, undefined, true], b: { c: x, 2: 'i', 1: s }, d: undefined, f: () => 1, e: new Error('m'), n: n }; const cyc: any = { z: 1 }; cyc.self = cyc; let circ = ''; try { JSON.stringify(cyc); } catch (e) { circ = (e as Error).name; } let parsed: unknown = 'none'; try { parsed = JSON.parse(s); } catch (e) { parsed = (e as Error).name; } const withTo = { v: 1, toJSON: () => 'custom' }; return [JSON.stringify(o), JSON.stringify(o, null, 2), JSON.stringify(x), JSON.stringify([x, s]), JSON.stringify(s), JSON.stringify(withTo), JSON.stringify({ k: withTo }), circ, parsed, JSON.parse(JSON.stringify(o)), JSON.parse('[1,\"a\\\\u0041\",{\"x\":-1.5e3,\"x\":2},true,null]'), JSON.stringify(o, undefined, '--')]; }",
+    ["unknown", "string", "number"],
+    "unknown",
+    fc.tuple(
+      anyValue,
+      fc.oneof(
+        text,
+        numericText,
+        fc.constantFrom('{"a":1}', "[1, 2]", '"x"', "nul", "{", "[1,]", "01", "-0", "1.", " true "),
+      ),
+      fc.oneof(fc.double(), fc.integer()),
+    ),
+  ],
   [
     "iteration: for-in keys in ECMAScript's order, for-of over arrays (one growing), strings by code point, mixed arrays, with break; Object.keys, values, entries",
     "export function f(o: any, xs: number[], s: string): unknown { const keys: unknown[] = []; for (const k in o) keys.push(k); let sum = 0; for (const x of xs) sum = sum + x; const cps: unknown[] = []; for (const c of s) cps.push(c); const grow = [1, 2]; let seen = 0; for (const g of grow) { if (grow.length < 5) grow.push(g * 10); seen = seen + 1; } let found = -1; for (const x of xs) { if (x > 2) { found = x; break; } } const mixed: unknown[] = [s, 1, true]; const kinds: unknown[] = []; for (const m of mixed) kinds.push(typeof m); const ordered = { b: 1, 2: 'two', a: 3, 1: 'one' }; return [keys, sum, cps, seen, grow, found, kinds, Object.keys(ordered), Object.values(ordered), Object.keys(xs), Object.keys(s), Object.entries(o)]; }",

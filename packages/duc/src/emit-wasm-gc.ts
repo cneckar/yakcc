@@ -227,7 +227,16 @@ const F64_OPS: Readonly<Record<string, number>> = {
   eq: 0x61,
   ne: 0x62,
 };
-const I32_OPS: Readonly<Record<string, number>> = { eqz: 0x45, and: 0x71, eq: 0x46 };
+const I32_OPS: Readonly<Record<string, number>> = {
+  eqz: 0x45,
+  and: 0x71,
+  eq: 0x46,
+  or: 0x72,
+  xor: 0x73,
+  shl: 0x74,
+  shr_s: 0x75,
+  shr_u: 0x76,
+};
 
 /** An array of numbers made from its storage: `nums.of` pushes the numbers, then this. */
 const NUMS_WRAP = "wasm:numsWrap";
@@ -289,6 +298,12 @@ function encode(code: readonly Ins[], index: (fn: string) => number): number[] {
         break;
       case "f64.of.i32":
         out.push(I.f64fromI32);
+        break;
+      case "f64.of.u32":
+        out.push(I.f64fromU32);
+        break;
+      case "i32.of.f64":
+        out.push(...GC.truncSat);
         break;
       case "str.len":
         out.push(...GC.arrayLen);

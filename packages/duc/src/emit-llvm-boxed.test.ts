@@ -179,6 +179,31 @@ const PROGRAMS: [string, string, number][] = [
     "export function f(a, b) { class Bad extends Error { constructor(m, code) { super(m); this.name = 'Bad'; this.code = code; } } class Worse extends Bad {} try { if (typeof a === 'number' && a > 0) throw new Worse('too big: ' + a, b); throw new Bad(String(a), 1); } catch (e) { return [e.message, e.name, e.code, e instanceof Bad, e instanceof Worse, e instanceof Error, e instanceof TypeError, String(e)]; } }",
     2,
   ],
+  [
+    "class fields, static fields and blocks, computed names, field order in a derived class (#1330)",
+    "export function f(a, b) { const k = 'm' + typeof a; class P { base = 'p'; constructor(n) { this.n = n; } } class A extends P { x = 1; y = this.x + this.n; static z = 3; static { this.z = this.z + 10; } static after = A.z * 2; [k]() { return this.y; } get ['g' + 1]() { return this.base; } static ['s' + 1] = 4; ['a-b'] = 5; 7() { return 7; } constructor(n) { super(n === undefined ? 0 : String(n).length); this.c = this.y + 1; } } class B extends A { d = this.c * 10; } const o = new A(a); const q = new B(b); return [o[k](), o.g1, A.z, A.after, A.s1, o['a-b'], o[7](), Object.keys(o), Object.keys(q), q.d]; }",
+    2,
+  ],
+  [
+    "keys are evaluated at definition, in member order; initializers when an instance is made (#1330)",
+    "export function f(a) { const log = []; class G { [(log.push('a'), 'a')] = log.push('init' + typeof a); static [(log.push('b'), 'b')] = log.push('static'); } const before = [...log]; new G(); return [before, log]; }",
+    1,
+  ],
+  [
+    "super[key], read and called, and o[k](..) with o as its receiver (#1330)",
+    "export function f(a, b) { const kA = 'k' + typeof a; class P { [kA](n) { return n + this.base; } get g() { return 'pk' + this.base; } } class C extends P { constructor() { super(); this.base = typeof b; } [kA](n) { return super[kA](n) + '!'; } read(k) { return [super[k], (() => super[kA](1))()]; } } const c = new C(); const o = { base: 5, m(n) { return n + this.base; } }; const m = 'm'; return [c[kA](1), c.read('g'), o[m](1), o?.[m](2)]; }",
+    2,
+  ],
+  [
+    "a spread is copied where it is in order, before what follows writes the array (#1330)",
+    "export function f(a, b) { const log = [a]; const before = [...log]; log.push(b); const after = [...log]; log.push(3); function* g() { yield a; yield b; } return [before, after, log.length, [0, ...g()], [...'ab']]; }",
+    2,
+  ],
+  [
+    "a try that yields, in a generator: next, throw and return reach its blocks, yield* passes them on (#1330)",
+    "export function f(a, b) { const log = []; function* g(n) { try { for (let i = 0; i < n; i++) { const got = yield i; log.push('got ' + got); if (i === 2) throw new Error('two'); } } catch (e) { log.push('caught ' + e.message); yield -1; } finally { log.push('finally'); } return 'end'; } const k = typeof a === 'number' && a >= 0 && a < 6 ? Math.floor(a) : 4; const it = g(k); const out = []; let r = it.next(); while (!r.done) { out.push(r.value); r = it.next(b); } function* h() { try { yield 1; return 'early'; } catch (e) { yield 'c:' + e; } } const t = h(); const thrown = [t.next(), t.throw(b), t.next()]; function* inner() { try { yield 1; yield 2; } finally { log.push('inner done'); } } function* outer() { try { yield* inner(); } finally { log.push('outer done'); } } const o = outer(); o.next(); const ret = o.return(b); const brk = []; for (const x of outer()) { brk.push(x); break; } return [out, r.value, log, thrown, ret, brk]; }",
+    2,
+  ],
 ];
 
 describe.skipIf(!canRun("x86_64-linux"))("boxed values, natively on this host (#1292)", () => {
@@ -209,6 +234,11 @@ const ASYNC_PROGRAMS: [string, string, number][] = [
     "a rejection: thrown in an async function, before and after an await",
     "export async function f(a) { const early = async () => { throw new RangeError('early ' + a); }; const late = async () => { await 1; throw new Error('late ' + typeof a); }; const r1 = await early().catch((e) => 'caught ' + e.message); if (typeof a === 'number' && a > 0) await late(); return r1; }",
     1,
+  ],
+  [
+    "for await over a sync iterable: each element awaited; a rejection caught; a break closes a generator (#1330)",
+    "export async function f(a, b) { const log = []; Promise.resolve().then(() => log.push('tick')); for await (const x of [Promise.resolve(a), b, new Promise((r) => r('three'))]) log.push(x); try { for await (const x of [1, Promise.reject(new Error('no ' + typeof a))]) log.push(x); } catch (e) { log.push(e.message); } function* g() { try { yield 1; yield Promise.resolve(2); yield 3; } finally { log.push('closed'); } } let n = 0; for await (const x of g()) { if (x === 3) break; n += x; } return [log, n]; }",
+    2,
   ],
   [
     "a limiter in the style of p-limit: tasks queued past the concurrency, started as others finish",
@@ -304,7 +334,7 @@ describe("what the boxed lowering refuses, for now (#1292)", () => {
     }
     return "lowered";
   };
-  it("free names, new, async generators, class fields, approximated Math", () => {
+  it("free names, new, async generators, private names, array holes, approximated Math", () => {
     expect(refusal("export function f(x) { return helper(x); }")).toMatch(
       /"helper" is not in the native base set/,
     );
@@ -314,9 +344,12 @@ describe("what the boxed lowering refuses, for now (#1292)", () => {
     expect(refusal("export function f(x) { async function* g() { yield x; } return g; }")).toMatch(
       /not in the subset/,
     );
-    expect(refusal("export function f(x) { class A { y = 1; } return new A().y + x; }")).toMatch(
-      /a class with a field|not in the subset/,
-    );
+    expect(
+      refusal(
+        "export function f(x) { class A { #y = 1; get y() { return this.#y; } } return new A().y + x; }",
+      ),
+    ).toMatch(/private name.*#y.*is not in the native subset yet/);
+    expect(refusal("export function f(x) { return [, x]; }")).toMatch(/an array with holes/);
     expect(refusal("export function f(x) { return Math.sin(x); }")).toMatch(
       /implementation-approximated/,
     );
