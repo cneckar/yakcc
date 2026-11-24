@@ -159,6 +159,55 @@ describe("a try with a return inside a loop (#1330)", () => {
   });
 });
 
+describe("closures over a for loop's per-pass binding, and destructuring in a try (#1330)", () => {
+  const CASES: [string, string, unknown][] = [
+    [
+      "each closure holds its own pass's value",
+      "export function f(t) { const fs = []; for (let i = 0; i < t; i++) { fs.push(() => i); } return fs.map((g) => g()); }",
+      3,
+    ],
+    [
+      "a callback in the body, as Node's SafePromiseAllReturnArrayLike writes it",
+      "export function f(xs) { const out = []; for (let i = 0; i < xs.length; i++) { const x = xs[i]; xs.forEach((y) => { out[i] = (out[i] ?? 0) + x * y; }); } return out; }",
+      [1, 2],
+    ],
+    [
+      "two header bindings, and a continue",
+      "export function f(t) { const fs = []; for (let i = 0, j = 10; i < t; i++, j--) { if (i === 1) continue; fs.push(() => [i, j]); } return fs.map((g) => g()); }",
+      4,
+    ],
+    [
+      "a destructuring assignment of an outer name inside a try",
+      "export function f(o) { let s; try { ({ source: s } = o); } catch { s = 'none'; } return s; }",
+      { source: "v" },
+    ],
+  ];
+  for (const [name, source, input] of CASES) {
+    it(name, () => {
+      const g = liftAtom(source);
+      expect(opaque(g)).toEqual([]);
+      const code = emitTypeScript(g);
+      const go = (c: string): unknown =>
+        (
+          new Function(`${runnable(c).replace(/^export /m, "")}; return f;`)() as (
+            x: unknown,
+          ) => unknown
+        )(input);
+      expect(go(code), code).toEqual(go(source));
+      expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    });
+  }
+
+  it("a write to the binding in the body, a var header, or a write in the closure stays a summary", () => {
+    for (const source of [
+      "export function f(t) { const fs = []; for (let i = 0; i < t; i++) { fs.push(() => i); i++; } return fs; }",
+      "export function f(t) { const fs = []; for (var i = 0; i < t; i++) { fs.push(() => i); } return fs; }",
+      "export function f(t) { const fs = []; for (let i = 0; i < t; i++) { fs.push(() => i++); } return fs; }",
+    ])
+      expect(opaque(liftAtom(source)).length, source).toBeGreaterThan(0);
+  });
+});
+
 describe("for await (#1330)", () => {
   const ASYNC: [string, string][] = [
     [

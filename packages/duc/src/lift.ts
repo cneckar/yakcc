@@ -1559,7 +1559,12 @@ class Lifter {
         !this.cells.has(id.getText()) &&
         !this.bindings.has(id.getText());
       if (Node.isIdentifier(t)) return outer(t);
-      return t.getDescendantsOfKind(SyntaxKind.Identifier).some(outer);
+      // A destructuring rebinds the names it assigns, not its property names (#1330).
+      const names = assignedNames(t);
+      return t
+        .getDescendantsOfKind(SyntaxKind.Identifier)
+        .filter((id) => names.includes(id.getText()) && !isPropertyKey(id))
+        .some(outer);
     };
     if (assignmentTargets(fn).some(rebindsOutside)) return undefined;
     const outerReads: string[] = [];
@@ -1640,7 +1645,25 @@ class Lifter {
       if (base === undefined || !captures.includes(base)) return false;
       if (!Node.isIdentifier(t)) return false;
       if (shared(base)) return false;
+      if (perPass(t, base)) return false;
       return !doneBefore(t);
+    };
+    // A `for (let i ..; ..; i++)` header's write, to a name the closure in the loop's body captures
+    // (#1330): each pass has its own binding, copied from the last before the incrementor writes the
+    // copy, so the closure holds the value of the pass it was made in: a value, as a capture is. A
+    // write in the body is another target, and is judged as any other.
+    const perPass = (t: Node, name: string): boolean => {
+      const loop = t.getAncestors().find((a) => Node.isForStatement(a));
+      if (loop === undefined || !Node.isForStatement(loop)) return false;
+      const inc = loop.getIncrementor();
+      if (inc === undefined || !inc.getDescendants().some((d) => d.compilerNode === t.compilerNode))
+        return false;
+      const init = loop.getInitializer();
+      if (init === undefined || !Node.isVariableDeclarationList(init)) return false;
+      if (init.getDeclarationKind() === "var") return false;
+      if (!init.getDeclarations().some((d) => patternNames(d.getNameNode()).includes(name)))
+        return false;
+      return fn.getAncestors().some((a) => a.compilerNode === loop.getStatement().compilerNode);
     };
     // Only the closure's own enclosing function can change a capture under it: an assignment in a
     // scope further out was settled there (a cell, or a value captured by the closure in between).
@@ -3955,6 +3978,12 @@ function writtenFreeNames(file: Node): string[] {
       if (!declared.has(name) && !written.includes(name)) written.push(name);
   }
   return written;
+}
+
+/** Whether an identifier is the key of a property assignment (`k` in `{ k: v }`), not a name. */
+function isPropertyKey(id: Node): boolean {
+  const p = id.getParent();
+  return Node.isPropertyAssignment(p) && p.getNameNode() === id;
 }
 
 /** The names an assignment target rebinds: a name, or the names in a destructuring pattern. */
