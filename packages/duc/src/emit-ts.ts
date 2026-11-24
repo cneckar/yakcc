@@ -707,7 +707,7 @@ function emitFunction(
     const guarded = guardLoops.has(loop.id);
     const header =
       rec.iterate !== undefined
-        ? `for (const ${nameOf(rec.iterate.element)} ${rec.iterate.of === "values" ? "of" : "in"} ${ref(loop.inputs[count] as ValueId)}) {`
+        ? `for ${rec.iterate.of === "async values" ? "await " : ""}(const ${nameOf(rec.iterate.element)} ${rec.iterate.of === "keys" ? "in" : "of"} ${ref(loop.inputs[count] as ValueId)}) {`
         : guarded
           ? "while (true) {"
           : `while (${ref(rec.cond as ValueId)}) {`;

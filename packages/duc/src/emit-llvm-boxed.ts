@@ -948,6 +948,8 @@ function lowerFunction(
     const exit = freshLabel("exit");
     // An iteration: an iterator over the input after the carries, asked for the next element first.
     let iterator: string | undefined;
+    if (rec.iterate?.of === "async values")
+      throw new LlvmEmitError("for await is not in the subset yet");
     if (rec.iterate !== undefined) {
       m.used.add("yk_iter_new");
       const iterable = operand(loop.inputs[rec.carry.length] as ValueId);
