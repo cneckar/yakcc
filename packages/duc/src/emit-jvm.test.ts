@@ -231,18 +231,19 @@ describe("what the JVM lowering refuses, with the reason (#1311)", () => {
         ["number"],
         "number",
       ),
-    ).toMatch(/Math.asinh has no exact counterpart on the JVM yet/);
-    // V8's exp, sin and pow (and so **) are not StrictMath's: refused, not approximated.
-    for (const [src, name] of [
-      ["export function f(x: number): number { return Math.sin(x); }", "Math.sin"],
-      ["export function f(x: number): number { return x ** 2; }", "\\*\\*"],
-    ])
-      expect(refusal(src as string, ["number"], "number")).toMatch(
-        new RegExp(`${name} has no exact counterpart on the JVM yet`),
-      );
+    ).toMatch(/"Math.asinh" is not in the subset/);
+    // V8's exp, sin and pow (and so **) are not StrictMath's: refused, not approximated. Math.sin
+    // and Math.exp are references to V8's shaved atoms (#1362), which this lowering does not lower
+    // yet; ** is refused as before.
+    expect(
+      refusal("export function f(x: number): number { return Math.sin(x); }", ["number"], "number"),
+    ).toMatch(/"Math.sin" is not in the subset/);
+    expect(
+      refusal("export function f(x: number): number { return x ** 2; }", ["number"], "number"),
+    ).toMatch(/\*\* has no exact counterpart on the JVM yet/);
     expect(
       refusal("export function f(x: number): number { return Math.exp(x); }", ["number"], "number"),
-    ).toMatch(/Math.exp has no exact counterpart on the JVM yet/);
+    ).toMatch(/"Math.exp" is not in the subset/);
     expect(
       refusal(
         "export function f(s: string): string { return s.toUpperCase(); }",

@@ -1469,6 +1469,10 @@ function pyFunction(
       const texts = JSON.parse(label.slice("template:".length)) as string[];
       return `_template([${texts.map((t) => JSON.stringify(t)).join(", ")}]${ins.map((v) => `, ${ref(v)}`).join("")})`;
     }
+    // An operation reference (#1362), as the member call it is written as.
+    const opRef = /^Math\.(\w+)$/.exec(label)?.[1];
+    const opFn = opRef !== undefined ? AMBIENT_MEMBERS.Math?.[opRef] : undefined;
+    if (opFn !== undefined) return `${opFn}(${ins.map((v) => ref(v)).join(", ")})`;
     throw new PyEmitError(`the operation "${label}" has no Python form`);
   };
 

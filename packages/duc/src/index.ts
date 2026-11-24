@@ -168,3 +168,25 @@ export {
   namedOperations,
 } from "./ops.js";
 export { byMeaning, contractSignature } from "./by-meaning.js";
+export type { LeafFunction, LeafImpl, LeafType } from "./leaves.js";
+export {
+  LEAF_FUNCTIONS,
+  LEAF_OPERATIONS,
+  MATH_LEAVES,
+  MEMORY_LEAF_NAMES,
+  isLeafFunction,
+  leafFunctionsJs,
+} from "./leaves.js";
+export type { OperationReference } from "./operations.js";
+export {
+  OPERATION_REFERENCES,
+  atomCallees,
+  atomGraph,
+  atomNames,
+  atomRoot,
+  atomSource,
+  linkedAtomGraph,
+  mathOperation,
+  operationReference,
+  operationRoot,
+} from "./operations.js";

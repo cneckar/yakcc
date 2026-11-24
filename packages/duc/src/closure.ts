@@ -9,6 +9,8 @@
  */
 import type { BaseSet } from "./base-set.js";
 import { graphIdentity } from "./canonical.js";
+import { isLeafFunction } from "./leaves.js";
+import { operationReference } from "./operations.js";
 import type { DiamondLabel, DucGraph } from "./types.js";
 
 export interface ClosureReport {
@@ -18,8 +20,13 @@ export interface ClosureReport {
   readonly unlinked: readonly string[];
   /** Names the graph references that are platform primitives (ambient reads). */
   readonly primitives: readonly string[];
-  /** Names the graph references that are linked to atoms by spec id. */
+  /**
+   * Names the graph references that are linked: to atoms by spec id, and the operations that are
+   * references to atoms (`Math.sin`, #1362), which the operation library always links.
+   */
   readonly linked: readonly string[];
+  /** Leaf functions the graph calls by their reserved names (`__ykF64Bits`, `leaves.ts`). */
+  readonly leaves: readonly string[];
 }
 
 export interface ClosureOptions {
@@ -35,9 +42,22 @@ export function closureOf(g: DucGraph, options: ClosureOptions = {}): ClosureRep
   const unlinked = new Set<string>();
   const primitives = new Set<string>();
   const linkedUsed = new Set<string>();
+  const leaves = new Set<string>();
+  const visit = (graph: DucGraph): void => {
+    for (const node of graph.nodes) {
+      const op = node.kind === "op" ? operationReference(node.label) : undefined;
+      if (op !== undefined) linkedUsed.add(op.label);
+      if (node.closure !== undefined) visit(node.closure);
+    }
+  };
+  visit(g);
   for (const node of g.nodes) {
     const d = node.diamond;
     if (d === undefined) continue;
+    if (d.reason === "free-identifier" && isLeafFunction(d.symbol)) {
+      leaves.add(d.symbol);
+      continue;
+    }
     if (
       d.reason === "platform-primitive" &&
       (options.baseSet === undefined || d.symbol in options.baseSet.primitives)
@@ -55,6 +75,7 @@ export function closureOf(g: DucGraph, options: ClosureOptions = {}): ClosureRep
     unlinked: sorted(unlinked),
     primitives: sorted(primitives),
     linked: sorted(linkedUsed),
+    leaves: sorted(leaves),
   };
 }
 
