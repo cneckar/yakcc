@@ -15,6 +15,7 @@ import { describe, expect, it } from "vitest";
 import { runnable } from "./__fixtures__/runnable.js";
 import { graphIdentity } from "./canonical.js";
 import { emitTypeScript } from "./emit-ts.js";
+import { liftFidelity } from "./fidelity.js";
 import { liftAtom } from "./lift.js";
 import type { DucGraph } from "./types.js";
 
@@ -186,5 +187,20 @@ describe("hoisting over a let or const (#1330)", () => {
 }`,
       [[true], [false]],
     );
+  });
+});
+
+describe("a write to an outer name that a function expression of the same name shadows (#1330)", () => {
+  it("`transcode = function transcode(..) {..}` keeps the write", () => {
+    for (const source of [
+      "transcode = function transcode(x) { return x; };",
+      "if (c) { transcode = function transcode(x) { return transcode; }; }",
+    ]) {
+      const g = liftAtom(source);
+      expect(liftFidelity(source, g), source).toEqual({ holds: true, missing: [], extra: [] });
+      const code = emitTypeScript(g);
+      expect(code, source).toMatch(/\btranscode = /);
+      expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    }
   });
 });

@@ -4445,26 +4445,20 @@ function assignmentTargets(node: Node): Node[] {
  * anywhere in the atom is not one, though a shadowed declaration may be another binding.
  */
 function writtenFreeNames(file: Node): string[] {
-  const declared = new Set<string>();
-  for (const d of file.getDescendantsOfKind(SyntaxKind.VariableDeclaration))
-    for (const name of patternNames(d.getNameNode())) declared.add(name);
-  for (const p of file.getDescendantsOfKind(SyntaxKind.Parameter))
-    for (const name of patternNames(p.getNameNode())) declared.add(name);
-  for (const kind of [
-    SyntaxKind.FunctionDeclaration,
-    SyntaxKind.FunctionExpression,
-    SyntaxKind.ClassDeclaration,
-    SyntaxKind.ClassExpression,
-  ]) {
-    for (const d of file.getDescendantsOfKind(kind)) {
-      const name = (d as import("ts-morph").FunctionDeclaration).getName();
-      if (name !== undefined) declared.add(name);
-    }
-  }
+  // A name is free where it is written when no scope around the write, up to `file`, declares it: a
+  // function or class expression's own name, or a parameter, binds only inside it (#1330).
   const written: string[] = [];
   for (const t of assignmentTargets(file)) {
-    for (const name of assignedNames(t))
-      if (!declared.has(name) && !written.includes(name)) written.push(name);
+    const names = assignedNames(t);
+    const ids = Node.isIdentifier(t)
+      ? [t]
+      : t
+          .getDescendantsOfKind(SyntaxKind.Identifier)
+          .filter((id) => names.includes(id.getText()) && !isPropertyKey(id));
+    for (const id of ids) {
+      const name = id.getText();
+      if (!declaredWithin(id, file) && !written.includes(name)) written.push(name);
+    }
   }
   return written;
 }
