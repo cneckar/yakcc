@@ -10,12 +10,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import fc from "fast-check";
-import { ts } from "ts-morph";
 import { afterAll, describe, expect, it } from "vitest";
-import { emitTypeScript } from "./emit-ts.js";
-import { liftAtom } from "./lift.js";
+import { type Fn, type CMemory as Mem, hex, link } from "./__fixtures__/c-link.js";
 import { CMemoryTrap, C_LEAVES_JS, createCMemory, recordLayouts, shaveCUnit } from "./raise-c.js";
-import type { DucGraph } from "./types.js";
 
 const here = (p: string): string => fileURLToPath(new URL(p, import.meta.url));
 const MUSL = here("../vendor/musl/");
@@ -46,49 +43,6 @@ const hasClang = (() => {
 const work = mkdtempSync(join(tmpdir(), "yakcc-raise-c-memory-"));
 afterAll(() => rmSync(work, { recursive: true, force: true }));
 
-type Fn = (...a: unknown[]) => unknown;
-
-const opaque = (g: DucGraph): string[] =>
-  g.nodes.flatMap((n) => [
-    ...(/#[0-9a-f]{16}$/.test(n.label ?? "") ? [n.label as string] : []),
-    ...(n.closure !== undefined ? opaque(n.closure) : []),
-  ]);
-
-/** The atoms as functions over one memory, calling one another by name; raised or lowered. */
-function link(
-  atoms: ReadonlyMap<string, { source: string }>,
-  lowered: boolean,
-  memory: ReturnType<typeof createCMemory>,
-): Record<string, Fn> {
-  const leaves = {
-    ...(C_LEAVES_JS as unknown as Record<string, Fn>),
-    ...(memory.leaves as unknown as Record<string, Fn>),
-  };
-  const env: Record<string, Fn> = { ...leaves };
-  const names = [...Object.keys(leaves), ...atoms.keys()];
-  for (const [key, atom] of atoms) {
-    let source = atom.source;
-    if (lowered) {
-      const g = liftAtom(source);
-      expect(opaque(g), key).toEqual([]);
-      source = emitTypeScript(g);
-    }
-    const js = ts
-      .transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } })
-      .outputText.replace(/^export /m, "");
-    env[key] = new Function(...names, `${js}; return f;`)(
-      ...names.map(
-        (n) =>
-          (...x: unknown[]) =>
-            env[n]?.(...x),
-      ),
-    ) as Fn;
-  }
-  return env;
-}
-
-const hex = (b: Uint8Array | readonly number[]): string =>
-  Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 const unhex = (s: string): number[] => (s.match(/../g) ?? []).map((x) => Number.parseInt(x, 16));
 
 const FIXTURE_FNS = [
@@ -100,6 +54,7 @@ const FIXTURE_FNS = [
   "yk_swap",
   "yk_char_array",
   "yk_goto",
+  "yk_state",
   "yk_cmp_int",
   "yk_cmp_bytes",
 ];
@@ -231,6 +186,7 @@ double yk_struct_walk(struct pt *, int);
 ${["yk_local_struct", "yk_string_sum", "yk_local_array", "yk_swap", "yk_char_array"].map((n) => `int ${n}(int${n === "yk_swap" ? ", int" : ""});`).join("\n")}
 long yk_ptr_diff(int);
 int yk_goto(int, int);
+int yk_state(int);
 static char h[1 << 16];
 static unsigned char *buf(size_t n) { unsigned char *p = aligned_alloc(16, (n + 31) / 16 * 16); memset(p, 0, (n + 31) / 16 * 16); return p; }
 static void fill(unsigned char *p) { for (size_t i = 0; h[2 * i]; i++) { unsigned v; sscanf(h + 2 * i, "%2x", &v); p[i] = (unsigned char)v; } }
@@ -271,6 +227,7 @@ int main(void) {
       if (!strcmp(op, "yk_swap")) r = yk_swap(a, b);
       if (!strcmp(op, "yk_char_array")) r = yk_char_array(a);
       if (!strcmp(op, "yk_goto")) r = yk_goto(a, b);
+      if (!strcmp(op, "yk_state")) r = yk_state(a);
       printf("%ld\\n", r);
     }
   }
@@ -282,13 +239,8 @@ int main(void) {
   };
 
   /** The cases: [the driver's line, a function that runs it on the atoms and prints the same]. */
-  const cases = (
-    seed: number,
-  ): [string, (env: Record<string, Fn>, m: ReturnType<typeof createCMemory>) => string][] => {
-    const out: [
-      string,
-      (env: Record<string, Fn>, m: ReturnType<typeof createCMemory>) => string,
-    ][] = [];
+  const cases = (seed: number): [string, (env: Record<string, Fn>, m: Mem) => string][] => {
+    const out: [string, (env: Record<string, Fn>, m: Mem) => string][] = [];
     const bytes = (n: number, s: number, nonzero = false): number[] =>
       fc.sample(fc.integer({ min: nonzero ? 1 : 0, max: 255 }), { numRuns: n, seed: s });
     const ints = (n: number, s: number, min: number, max: number): number[] =>
@@ -352,12 +304,12 @@ int main(void) {
         `qsort ${w} ${n} ${mode} ${hex(data.length ? data : [0])}`,
         (env, m) => {
           const p = m.put(data.length ? data : [0]);
-          if (mode === 0) env.qsort?.(p, BigInt(n), BigInt(w), env.yk_cmp_int);
+          if (mode === 0) env.qsort?.(p, BigInt(n), BigInt(w), m.leaves.__ykFnAddr(env.yk_cmp_int));
           else {
             const pw = m.put(
               Array.from({ length: 8 }, (_, k) => Number((BigInt(w) >> BigInt(8 * k)) & 255n)),
             );
-            env.__qsort_r?.(p, BigInt(n), BigInt(w), env.yk_cmp_bytes, pw);
+            env.__qsort_r?.(p, BigInt(n), BigInt(w), m.leaves.__ykFnAddr(env.yk_cmp_bytes), pw);
           }
           return hex(m.get(p, w * n));
         },
@@ -403,6 +355,7 @@ int main(void) {
       "yk_swap",
       "yk_char_array",
       "yk_goto",
+      "yk_state",
     ])
       xs.forEach((x, k) => {
         const y = xs[(k * 7 + 3) % xs.length] as number;
@@ -423,7 +376,7 @@ int main(void) {
         .trim()
         .split("\n");
       const memory = createCMemory();
-      const env = link(atoms, lowered, memory);
+      const env = link(atoms, lowered, memory, units);
       const bad: string[] = [];
       cs.forEach(([line, run], i) => {
         let got: string;

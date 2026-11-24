@@ -10,12 +10,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import fc from "fast-check";
-import { ts } from "ts-morph";
 import { afterAll, describe, expect, it } from "vitest";
-import { emitTypeScript } from "./emit-ts.js";
-import { liftAtom } from "./lift.js";
+import { type Fn, type CMemory as Mem, hex, link } from "./__fixtures__/c-link.js";
 import { C_LEAVES_JS, createCMemory, shaveCUnit } from "./raise-c.js";
-import type { DucGraph } from "./types.js";
 
 const MUSL = fileURLToPath(new URL("../vendor/musl/", import.meta.url));
 const MUSL_ARGS = [
@@ -44,49 +41,6 @@ const hasClang = (() => {
 
 const work = mkdtempSync(join(tmpdir(), "yakcc-raise-c-musl-"));
 afterAll(() => rmSync(work, { recursive: true, force: true }));
-
-type Fn = (...a: unknown[]) => unknown;
-type Mem = ReturnType<typeof createCMemory>;
-const opaque = (g: DucGraph): string[] =>
-  g.nodes.flatMap((n) => [
-    ...(/#[0-9a-f]{16}$/.test(n.label ?? "") ? [n.label as string] : []),
-    ...(n.closure !== undefined ? opaque(n.closure) : []),
-  ]);
-
-function link(
-  atoms: ReadonlyMap<string, { source: string }>,
-  lowered: boolean,
-  memory: Mem,
-): Record<string, Fn> {
-  const leaves = {
-    ...(C_LEAVES_JS as unknown as Record<string, Fn>),
-    ...(memory.leaves as unknown as Record<string, Fn>),
-  };
-  const env: Record<string, Fn> = { ...leaves };
-  const names = [...Object.keys(leaves), ...atoms.keys()];
-  for (const [key, atom] of atoms) {
-    let source = atom.source;
-    if (lowered) {
-      const g = liftAtom(source);
-      expect(opaque(g), key).toEqual([]);
-      source = emitTypeScript(g);
-    }
-    const js = ts
-      .transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } })
-      .outputText.replace(/^export /m, "");
-    env[key] = new Function(...names, `${js}; return f;`)(
-      ...names.map(
-        (n) =>
-          (...x: unknown[]) =>
-            env[n]?.(...x),
-      ),
-    ) as Fn;
-  }
-  return env;
-}
-
-const hex = (b: Uint8Array | readonly number[]): string =>
-  Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 
 /** A musl function's source file: `src/<dir>/<name>.c`. */
 function sourceOf(name: string): string | undefined {

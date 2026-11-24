@@ -120,3 +120,19 @@ negative:
 done:
   return t;
 }
+
+/* Module state: a file-scope static, a global table, pointers into them and a function pointer in
+ * static initializers, and a static local; each call changes them, so a sequence of calls checks
+ * that the state persists. */
+static int counter = 5;
+int yk_global_table[4] = {1, 2, 3, 4};
+static int *ptrs[2] = {&yk_global_table[1], &counter};
+static int (*cmp)(const void *, const void *) = yk_cmp_int;
+static const char *greeting = "hi";
+int yk_state(int a) {
+  static int calls;
+  calls++;
+  counter += a;
+  yk_global_table[a & 3] += counter;
+  return counter * 100 + *ptrs[0] + *ptrs[1] + calls * 7 + cmp(&a, &counter) + greeting[1];
+}

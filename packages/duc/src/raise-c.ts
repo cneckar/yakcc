@@ -217,6 +217,7 @@ function parseType(spelled: string, depth = 0): CType {
   const raw = spelled
     .replace(/__attribute__\(\(.*?\)\)\s*/g, "")
     .replace(/\b(const|volatile|restrict|__restrict)\b/g, "")
+    .replace(/\s*\bnoexcept\b(\([^)]*\))?/g, "")
     .replace(/\s+/g, " ")
     .trim();
   if (/\(\*\)\s*\(.*\)$/.test(raw)) return { k: "ptr", to: { k: "fn" } };
@@ -528,6 +529,12 @@ const ident = (name: string): string => (RESERVED.has(name) ? `${name}_` : name)
 export interface UnitTypes {
   readonly typedef?: TypedefResolver;
   readonly layout?: LayoutResolver;
+  /**
+   * A variable with static storage that the function writes or takes the address of (module
+   * state): its key for `__ykStatic`, its definition recorded by the unit. `fn` names the function
+   * for a static local. Undefined when the unit cannot define it (then it is refused).
+   */
+  readonly static?: (decl: ClangNode, fn?: string) => string | undefined;
 }
 
 /**
@@ -565,7 +572,6 @@ function loadAt(a: string, t: CType): string {
     case "bool":
       return `(__ykLoad8(${a}) !== 0)`;
     case "ptr":
-      if (t.to.k === "fn") throw new RaiseCError("a function pointer stored in memory");
       return `__ykBigToF64(__ykLoad64(${a}))`;
     default:
       throw new RaiseCError(`a load of ${t.k} (a ${t.k === "rec" ? "struct by value" : t.k})`);
@@ -594,7 +600,6 @@ function storeAt(a: string, t: CType, v: string): string {
     case "bool":
       return `(__ykStore8(${a}, (${v}) ? 1 : 0) !== 0)`;
     case "ptr":
-      if (t.to.k === "fn") throw new RaiseCError("a function pointer stored in memory");
       return `__ykBigToF64(__ykStore64(${a}, __ykNumToBig(${v})))`;
     default:
       throw new RaiseCError(`a store of ${t.k}`);
@@ -662,7 +667,7 @@ export function raiseCFunction(
   unitLayout = types.layout ?? (() => undefined);
   localTypedefs.clear();
   try {
-    return raiseBody(fn, resolve, externals, resolveGlobal);
+    return raiseBody(fn, resolve, externals, resolveGlobal, types.static);
   } finally {
     [unitTypedef, unitLayout] = saved;
     localTypedefs.clear();
@@ -674,6 +679,7 @@ function raiseBody(
   resolve: CalleeResolver,
   externals: Set<string>,
   resolveGlobal: GlobalResolver,
+  unitStatic: UnitTypes["static"],
 ): string {
   // The constants at namespace or file scope the function reads: each a const at its top.
   const globals = new Map<string, string>(); // decl id -> its const's line
@@ -813,6 +819,25 @@ function raiseBody(
     if (e.type === undefined) throw new RaiseCError(`the ${e.kind} node has no type`);
     return ctype(e.type);
   };
+  const isGlobal = (d: ClangNode): boolean =>
+    d.kind === "VarDecl" && (globalNames.has(d.id ?? "") || !vars.has(d.id ?? ""));
+  /** Whether a global is a constant read as a value (not module state, its address not taken). */
+  const constGlobal = (d: ClangNode): boolean => {
+    if (inMemory.has(d.id ?? "")) return false;
+    const decl = resolveGlobal(d.name ?? "", normType(d.type?.qualType ?? ""));
+    return (
+      decl?.inner?.[0] !== undefined &&
+      (/\bconst\b/.test(decl.type?.qualType ?? "") ||
+        /\bconstexpr\b/.test(decl.type?.qualType ?? ""))
+    );
+  };
+  /** A global that is module state: its static memory. */
+  const staticPlace = (d: ClangNode, t: CType): (Place & { k: "mem" }) | undefined => {
+    const key = unitStatic?.(d);
+    return key === undefined
+      ? undefined
+      : { k: "mem", addr: `__ykStatic(${JSON.stringify(key)})`, t };
+  };
 
   /** Where an lvalue expression's object is. */
   const place = (e: ClangNode): Place => {
@@ -833,8 +858,12 @@ function raiseBody(
         const t = typeOf(e);
         const mem = mems.get(d.id ?? "");
         if (mem !== undefined) return mem;
-        if (d.kind === "VarDecl" && (globalNames.has(d.id ?? "") || !vars.has(d.id ?? "")))
+        if (isGlobal(d)) {
+          if (constGlobal(d)) return { k: "reg", e: globalRef(d), t };
+          const sp = staticPlace(d, t);
+          if (sp !== undefined) return sp;
           return { k: "reg", e: globalRef(d), t };
+        }
         return { k: "reg", e: declName(d), t };
       }
       case "UnaryOperator": {
@@ -916,8 +945,7 @@ function raiseBody(
     if (target.kind !== "DeclRefExpr") return undefined;
     const d = target.referencedDecl as ClangNode;
     if (mems.has(d.id ?? "") || inMemory.has(d.id ?? "")) return undefined;
-    if (d.kind === "VarDecl" && (globalNames.has(d.id ?? "") || !vars.has(d.id ?? "")))
-      return globalRef(d);
+    if (isGlobal(d)) return constGlobal(d) ? globalRef(d) : undefined;
     return declName(d);
   };
   const read = (p: Place): string => (p.k === "reg" ? p.e : loadAt(p.addr, p.t));
@@ -981,9 +1009,9 @@ function raiseBody(
             kind: d.kind,
             type: normType(d.type?.qualType ?? ""),
           });
-          if (key !== undefined) return key;
+          if (key !== undefined) return `__ykFnAddr(${key})`;
           externals.add(d.name ?? "");
-          return ident(d.name ?? "");
+          return `__ykFnAddr(${ident(d.name ?? "")})`;
         }
         if (d.kind === "EnumConstantDecl")
           throw new RaiseCError("an enumeration constant is not raised yet");
@@ -1005,8 +1033,11 @@ function raiseBody(
             const d = target.referencedDecl as ClangNode;
             const mem = mems.get(d.id ?? "");
             if (mem !== undefined) return mem.addr;
-            const global =
-              d.kind === "VarDecl" && (globalNames.has(d.id ?? "") || !vars.has(d.id ?? ""));
+            const global = isGlobal(d);
+            if (global && !/\bconst\b/.test(d.type?.qualType ?? "")) {
+              const sp = staticPlace(d, typeOf(target));
+              if (sp !== undefined) return sp.addr;
+            }
             if (global || /\bconst\b/.test(d.type?.qualType ?? "")) return constData(d, global);
           }
           const p = place(k0);
@@ -1150,12 +1181,22 @@ function raiseBody(
           if (to.k === "f64" && from.k === "u64") return `__ykF64FromBits(${args[0]})`;
           throw new RaiseCError(`bit_cast from ${from.k} to ${to.k}`);
         }
-        if (callee.kind === "MemberExpr")
+        if (callee.kind === "MemberExpr" && !(typeOf(callee).k === "ptr"))
           throw new RaiseCError(`a call of the method "${name}" on an object`);
         const d = callee.referencedDecl as ClangNode | undefined;
-        // A call through a function pointer (a variable holding a function): call its value.
+        // A call through a function pointer (a variable, a field, any expression): the function at
+        // its address.
+        // (The callee's own type, before its casts: `((cmpfun)p)(..)` calls a void * as a function.)
+        const ct = typeOf(k0);
+        const direct =
+          callee.kind === "DeclRefExpr" &&
+          (d?.kind === "FunctionDecl" || d?.kind === "CXXMethodDecl");
+        if (!direct && ct.k === "ptr" && ct.to.k === "fn")
+          return `__ykFnAt(${expr(k0)})(${args.join(", ")})`;
+        if (callee.kind === "UnaryOperator" && callee.opcode === "*")
+          return `__ykFnAt(${expr((callee.inner as ClangNode[])[0] as ClangNode)})(${args.join(", ")})`;
         if (d === undefined || d.kind === "VarDecl" || d.kind === "ParmVarDecl")
-          return `(${expr(callee)})(${args.join(", ")})`;
+          throw new RaiseCError(`a call of ${callee.kind}`);
         const leaf = Object.hasOwn(LEAF_CALLS, name) ? LEAF_CALLS[name] : undefined;
         if (leaf !== undefined) return leaf(args);
         const key = resolve({ name, kind: d.kind, type: normType(d.type?.qualType ?? "") });
@@ -1383,13 +1424,21 @@ function raiseBody(
             continue;
           }
           if (d.kind !== "VarDecl") throw new RaiseCError(`the declaration ${d.kind}`);
+          const t = ctype(d.type);
           if (
             d.storageClass === "static" &&
             !/\bconst\b/.test(d.type?.qualType ?? "") &&
             (written.has(d.id ?? "") || inMemory.has(d.id ?? ""))
-          )
-            throw new RaiseCError(`the static variable "${d.name}" is state`);
-          const t = ctype(d.type);
+          ) {
+            // A static local that is written: module state, in static memory (its initializer is
+            // its definition's, applied once).
+            const key = unitStatic?.(d, fn.name);
+            if (key === undefined)
+              throw new RaiseCError(`the static variable "${d.name}" is state`);
+            vars.set(d.id ?? "", t);
+            mems.set(d.id ?? "", { k: "mem", addr: `__ykStatic(${JSON.stringify(key)})`, t });
+            continue;
+          }
           vars.set(d.id ?? "", t);
           const init = d.inner?.[0];
           if (
@@ -1552,17 +1601,15 @@ function raiseBody(
 }
 
 const tsType = (t: CType): string =>
-  t.k === "ptr" && t.to.k === "fn"
-    ? "any"
-    : t.k === "f64" || t.k === "f32" || t.k === "i32" || t.k === "u32" || narrow(t) || t.k === "ptr"
-      ? "number"
-      : wide(t)
-        ? "bigint"
-        : t.k === "bool"
-          ? "boolean"
-          : t.k === "arr"
-            ? `${tsType(t.of)}[]`
-            : "void";
+  t.k === "f64" || t.k === "f32" || t.k === "i32" || t.k === "u32" || narrow(t) || t.k === "ptr"
+    ? "number"
+    : wide(t)
+      ? "bigint"
+      : t.k === "bool"
+        ? "boolean"
+        : t.k === "arr"
+          ? `${tsType(t.of)}[]`
+          : "void";
 
 function stripParens(e: ClangNode): ClangNode {
   let n = e;
@@ -1647,6 +1694,12 @@ export interface ShavedUnit {
     { readonly source: string; readonly externals: readonly string[] }
   >;
   readonly refused: ReadonlyMap<string, string>;
+  /**
+   * The variables with static storage the atoms use as module state, by key: a global by its name
+   * (external linkage, shared by every unit), a file-scope `static` as `unit:name`, a static local
+   * as `unit:function.name`. Only the unit that defines one has its definition.
+   */
+  readonly statics: ReadonlyMap<string, StaticDef>;
 }
 
 /**
@@ -1659,6 +1712,8 @@ export function shaveCUnit(
   filters: readonly string[],
   args: readonly string[] = [],
   clang = "clang++",
+  /** The unit's name in the keys of its internal statics (by default, its file's base name). */
+  unit: string = file.split("/").pop() ?? file,
 ): ShavedUnit {
   const roots = clangFunctions(file, filters, args, clang);
   const dumps = new Map<string, ClangNode[]>();
@@ -1773,6 +1828,69 @@ export function shaveCUnit(
     );
     return layouts.get(recordKey(name));
   };
+  // Module state: each static the atoms use, keyed and defined (when this unit defines it).
+  const statics = new Map<string, StaticDef>();
+  const staticKeys = new Map<string, string | undefined>(); // decl id (or name) -> key
+  const definitionOf = (name: string, type: string): ClangNode | undefined => {
+    let decl: ClangNode | undefined;
+    let tentative: ClangNode | undefined;
+    const walk = (n: ClangNode, inFunction: boolean): void => {
+      if (
+        n.kind === "VarDecl" &&
+        !inFunction &&
+        n.name === name &&
+        (type === "" ||
+          normType(n.type?.qualType ?? "").replace(/\[\d*\]/g, "[]") ===
+            type.replace(/\[\d*\]/g, "[]")) &&
+        n.storageClass !== "extern"
+      ) {
+        if (n.inner?.[0] !== undefined) decl ??= n;
+        else tentative ??= n;
+      }
+      const fn = n.kind === "FunctionDecl" || n.kind === "CXXMethodDecl";
+      for (const k of n.inner ?? []) walk(k, inFunction || fn);
+    };
+    for (const n of dumpOf(name)) walk(n, false);
+    return decl ?? tentative;
+  };
+  const staticHook = (d: ClangNode, fnName?: string): string | undefined => {
+    const id = fnName === undefined ? `g:${d.name}` : (d.id ?? "");
+    if (staticKeys.has(id)) return staticKeys.get(id);
+    staticKeys.set(id, undefined); // a cycle through initializers resolves to the key set below
+    let key: string;
+    let decl: ClangNode | undefined;
+    if (fnName !== undefined) {
+      key = `${unit}:${fnName}.${d.name}`;
+      decl = d;
+    } else {
+      decl = definitionOf(d.name ?? "", normType(d.type?.qualType ?? ""));
+      key = decl?.storageClass === "static" ? `${unit}:${d.name}` : (d.name ?? "");
+    }
+    staticKeys.set(id, key);
+    if (decl !== undefined) {
+      try {
+        statics.set(
+          key,
+          staticDefinition(decl, {
+            staticKey: (g) => staticHook(g),
+            fnKey: (f) =>
+              resolve({
+                name: f.name ?? "",
+                kind: f.kind,
+                type: normType(f.type?.qualType ?? ""),
+              }) ??
+              f.name ??
+              "",
+          }),
+        );
+      } catch (e) {
+        throw new RaiseCError(
+          `the static "${d.name}": ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+    return key;
+  };
   const atoms = new Map<string, { source: string; externals: string[] }>();
   const refused = new Map<string, string>();
   const done = new Set<string>();
@@ -1785,7 +1903,11 @@ export function shaveCUnit(
       const externals = new Set<string>();
       try {
         atoms.set(key, {
-          source: raiseCFunction(fn, resolve, externals, resolveGlobal, { typedef, layout }),
+          source: raiseCFunction(fn, resolve, externals, resolveGlobal, {
+            typedef,
+            layout,
+            static: staticHook,
+          }),
           externals: [...externals],
         });
       } catch (e) {
@@ -1793,7 +1915,180 @@ export function shaveCUnit(
       }
     }
   }
-  return { atoms, refused };
+  return { atoms, refused, statics };
+}
+
+/**
+ * A static's definition: its size and alignment, and its initializer evaluated to items (C's
+ * static initializers are constant: numbers, addresses of statics and functions, string
+ * literals). A static with no initializer is zero.
+ */
+function staticDefinition(
+  decl: ClangNode,
+  hooks: {
+    readonly staticKey: (d: ClangNode) => string | undefined;
+    readonly fnKey: (d: ClangNode) => string;
+  },
+): StaticDef {
+  const t = ctype(decl.type);
+  const init: StaticItem[] = [];
+  const typeOf = (e: ClangNode): CType => ctype(e.type);
+  /** A constant scalar: a number or bigint, or an address (a static, a function, a string). */
+  type Const =
+    | { k: "v"; v: number | bigint }
+    | { k: "static"; key: string; addend: number }
+    | { k: "fn"; key: string }
+    | { k: "data"; kind: string; values: number[] };
+  const scalar = (e: ClangNode): Const => {
+    const kids = e.inner ?? [];
+    const k0 = kids[0] as ClangNode;
+    switch (e.kind) {
+      case "ParenExpr":
+      case "ConstantExpr":
+        return scalar(k0);
+      case "IntegerLiteral":
+        return { k: "v", v: BigInt(e.value ?? "0") };
+      case "CharacterLiteral":
+        return { k: "v", v: BigInt(Number(e.value)) };
+      case "FloatingLiteral":
+        return { k: "v", v: Number(e.value) };
+      case "UnaryExprOrTypeTraitExpr": {
+        const arg = (e as { argType?: { qualType: string; desugaredQualType?: string } }).argType;
+        const at = arg !== undefined ? ctype(arg) : typeOf(k0);
+        return { k: "v", v: BigInt(e.name === "sizeof" ? sizeOf(at) : alignOf(at)) };
+      }
+      case "ImplicitCastExpr":
+      case "CStyleCastExpr": {
+        const ck = e.castKind ?? "";
+        if (ck === "ArrayToPointerDecay" || ck === "FunctionToPointerDecay") return address(k0);
+        const v = scalar(k0);
+        if (v.k !== "v") return v; // an address through a pointer cast
+        const to = typeOf(e);
+        if (ck === "NullToPointer") return { k: "v", v: 0n };
+        if (to.k === "f64" || to.k === "f32") return { k: "v", v: Number(v.v) };
+        if (typeof v.v === "number") return { k: "v", v: BigInt(Math.trunc(v.v)) };
+        return { k: "v", v: v.v };
+      }
+      case "UnaryOperator": {
+        if (e.opcode === "&") return address(k0);
+        const v = scalar(k0);
+        if (v.k !== "v") throw new RaiseCError(`"${e.opcode}" of an address`);
+        if (e.opcode === "-") return { k: "v", v: typeof v.v === "bigint" ? -v.v : -v.v };
+        if (e.opcode === "~" && typeof v.v === "bigint") return { k: "v", v: ~v.v };
+        if (e.opcode === "+") return v;
+        if (e.opcode === "!") return { k: "v", v: v.v ? 0n : 1n };
+        break;
+      }
+      case "BinaryOperator": {
+        const a = scalar(k0);
+        const b = scalar(kids[1] as ClangNode);
+        const op = e.opcode ?? "";
+        // An address plus or minus a constant (`buf + UNGET`).
+        if ((a.k === "static" || a.k === "data") && b.k === "v" && (op === "+" || op === "-")) {
+          const tt = typeOf(k0);
+          const size = tt.k === "ptr" && tt.to.k !== "void" ? sizeOf(tt.to) : 1;
+          const n = Number(b.v) * size * (op === "-" ? -1 : 1);
+          if (a.k === "static") return { ...a, addend: a.addend + n };
+          throw new RaiseCError("an offset into a string literal");
+        }
+        if (a.k !== "v" || b.k !== "v") throw new RaiseCError(`"${op}" of addresses`);
+        if (typeof a.v === "number" || typeof b.v === "number") {
+          const x = Number(a.v);
+          const y = Number(b.v);
+          const r: Record<string, number> = { "+": x + y, "-": x - y, "*": x * y, "/": x / y };
+          if (r[op] === undefined) throw new RaiseCError(`"${op}" on doubles in an initializer`);
+          return { k: "v", v: r[op] as number };
+        }
+        const x = a.v;
+        const y = b.v;
+        const r: Record<string, () => bigint> = {
+          "+": () => x + y,
+          "-": () => x - y,
+          "*": () => x * y,
+          "/": () => x / y,
+          "%": () => x % y,
+          "<<": () => x << y,
+          ">>": () => x >> y,
+          "&": () => x & y,
+          "|": () => x | y,
+          "^": () => x ^ y,
+        };
+        if (r[op] === undefined) throw new RaiseCError(`"${op}" in an initializer`);
+        return { k: "v", v: (r[op] as () => bigint)() };
+      }
+    }
+    throw new RaiseCError(`the initializer ${e.kind}`);
+  };
+  const address = (e: ClangNode): Const => {
+    const n = stripParens(e);
+    if (n.kind === "StringLiteral")
+      return { k: "data", kind: "u8", values: cStringBytes(n.value ?? '""') };
+    if (n.kind === "DeclRefExpr") {
+      const d = n.referencedDecl as ClangNode;
+      if (d.kind === "FunctionDecl") return { k: "fn", key: hooks.fnKey(d) };
+      const key = hooks.staticKey(d);
+      if (key !== undefined) return { k: "static", key, addend: 0 };
+    }
+    if (n.kind === "ArraySubscriptExpr") {
+      const base = address(stripCasts((n.inner ?? [])[0] as ClangNode));
+      const i = scalar((n.inner ?? [])[1] as ClangNode);
+      if (base.k === "static" && i.k === "v")
+        return { ...base, addend: base.addend + Number(i.v) * sizeOf(typeOf(n)) };
+    }
+    if (n.kind === "MemberExpr" && (n as { isArrow?: boolean }).isArrow !== true) {
+      const base = address((n.inner ?? [])[0] as ClangNode);
+      const field = layoutOf(typeOf((n.inner ?? [])[0] as ClangNode)).fields.get(n.name ?? "");
+      if (base.k === "static" && field !== undefined)
+        return { ...base, addend: base.addend + field.offset };
+    }
+    throw new RaiseCError(`the address of ${n.kind} in an initializer`);
+  };
+  const put = (e: ClangNode | undefined, ty: CType, offset: number): void => {
+    const n = e === undefined || e.kind === "ImplicitValueInitExpr" ? undefined : stripParens(e);
+    if (ty.k === "arr") {
+      const count = ty.size ?? 0;
+      const size = sizeOf(ty.of);
+      if (n?.kind === "StringLiteral") {
+        cStringBytes(n.value ?? '""')
+          .slice(0, count)
+          .forEach((b, i) => {
+            if (b !== 0) init.push({ offset: offset + i, kind: "u8", value: b });
+          });
+        return;
+      }
+      const items = n === undefined ? [] : initItems(n);
+      items.forEach((it, i) => put(it, ty.of, offset + i * size));
+      return;
+    }
+    if (ty.k === "rec") {
+      const l = layoutOf(ty);
+      const items = n === undefined ? [] : initItems(n);
+      let i = 0;
+      for (const [, f] of l.fields) {
+        put(items[i], parseType(f.type), offset + f.offset);
+        i++;
+        if (/^union /.test(ty.name)) break;
+      }
+      return;
+    }
+    if (n === undefined) return; // zero
+    const c = scalar(n);
+    if (c.k === "v") {
+      if (c.v === 0n || c.v === 0) return;
+      const kind = dataKind(ty);
+      const v =
+        ty.k === "f64" || ty.k === "f32"
+          ? Number(c.v)
+          : wide(ty) || ty.k === "ptr"
+            ? BigInt.asUintN(64, BigInt(c.v))
+            : Number(BigInt.asIntN(32, BigInt(c.v)));
+      init.push({ offset, kind: kind === "u64" && ty.k === "ptr" ? "u64" : kind, value: v });
+    } else if (c.k === "static") init.push({ offset, static: c.key, addend: c.addend });
+    else if (c.k === "fn") init.push({ offset, fn: c.key });
+    else init.push({ offset, data: { kind: c.kind, values: c.values } });
+  };
+  put(decl.inner?.[0], t, 0);
+  return { size: sizeOf(t), align: alignOf(t), init };
 }
 
 /** A record's name as a key: C++ scopes dropped (`union P::(unnamed at f.c:1:40)` and the C spelling meet). */
@@ -1864,6 +2159,23 @@ export class CMemoryTrap extends Error {}
  * freed region's addresses are never reused, so a stale pointer traps too. `__ykData` is constant
  * memory: a kind's values laid out once per distinct content, read-only.
  */
+/** One item of a static's initializer: a value of a kind at an offset, or an address. */
+export type StaticItem =
+  | { readonly offset: number; readonly kind: string; readonly value: number | bigint }
+  | { readonly offset: number; readonly static: string; readonly addend: number }
+  | { readonly offset: number; readonly fn: string }
+  | {
+      readonly offset: number;
+      readonly data: { readonly kind: string; readonly values: readonly (number | bigint)[] };
+    };
+
+/** A variable with static storage (module state): its size, alignment and initializer. */
+export interface StaticDef {
+  readonly size: number;
+  readonly align: number;
+  readonly init: readonly StaticItem[];
+}
+
 export function createCMemory() {
   interface Region {
     readonly base: number;
@@ -1873,6 +2185,14 @@ export function createCMemory() {
     live: boolean;
   }
   const regions: Region[] = []; // by base, ascending (addresses only grow)
+  // Functions as addresses, for function pointers (stored in memory, compared, called through):
+  // a range no region uses, 16 apart.
+  const FN_BASE = 0x7f0000000000;
+  const fnAddrs = new Map<unknown, number>();
+  const fnsAt: unknown[] = [];
+  const statics = new Map<string, StaticDef>();
+  const staticAddrs = new Map<string, number>();
+  let fnByName: (name: string) => unknown = () => undefined;
   let next = 0x10000;
   const data = new Map<string, number>();
   const regionOf = (a: number, n: number, write: boolean): Region => {
@@ -1917,8 +2237,54 @@ export function createCMemory() {
     f64: [8, (v, o, x) => v.setFloat64(o, x, true)],
     f32: [4, (v, o, x) => v.setFloat32(o, x, true)],
   };
+  const fnAddr = (f: unknown): number => {
+    if (typeof f !== "function") throw new CMemoryTrap(`memory trap: the address of ${String(f)}`);
+    let a = fnAddrs.get(f);
+    if (a === undefined) {
+      a = FN_BASE + 16 * fnsAt.length;
+      fnsAt.push(f);
+      fnAddrs.set(f, a);
+    }
+    return a;
+  };
+  const staticAt = (key: string): number => {
+    const known = staticAddrs.get(key);
+    if (known !== undefined) return known;
+    const def = statics.get(key);
+    if (def === undefined) throw new CMemoryTrap(`memory trap: no definition of the static ${key}`);
+    const a = alloc(def.size, def.align);
+    staticAddrs.set(key, a); // before its initializer, which may point at itself
+    const r = regions[regions.length - 1] as Region;
+    for (const item of def.init) {
+      if ("value" in item) {
+        const spec = KINDS[item.kind];
+        if (spec === undefined) throw new CMemoryTrap(`a static item of kind ${item.kind}`);
+        spec[1](r.view, item.offset, item.value as number & bigint);
+        continue;
+      }
+      const target =
+        "static" in item
+          ? staticAt(item.static) + item.addend
+          : "fn" in item
+            ? fnAddr(fnByName(item.fn))
+            : leaves.__ykData(item.data.kind, item.data.values);
+      r.view.setBigUint64(item.offset, BigInt(target), true);
+    }
+    return a;
+  };
   const leaves = {
     __ykAlloc: (size: number, align: number): number => alloc(size, align),
+    /** A function's address (a function pointer's value). */
+    __ykFnAddr: fnAddr,
+    /** The function at an address (a call through a function pointer). */
+    __ykFnAt: (a: number): unknown => {
+      const i = (a - FN_BASE) / 16;
+      const f = Number.isInteger(i) ? fnsAt[i] : undefined;
+      if (f === undefined) throw new CMemoryTrap(`memory trap: a call of 0x${a.toString(16)}`);
+      return f;
+    },
+    /** A static variable's address: allocated and initialized when first used. */
+    __ykStatic: staticAt,
     __ykFree: (a: number): void => {
       if (a === 0) return;
       const r = regionOf(a, 1, false);
@@ -1996,6 +2362,14 @@ export function createCMemory() {
   };
   return {
     leaves,
+    /** Define a static (module state) by its key, from its unit's shave. */
+    defineStatic(key: string, def: StaticDef): void {
+      statics.set(key, def);
+    },
+    /** How a static's initializer finds a function it points to, by name. */
+    resolveFunctions(by: (name: string) => unknown): void {
+      fnByName = by;
+    },
     /** Bytes into a fresh region (for a test's inputs): its address. */
     put(bytes: Uint8Array | readonly number[], align = 16): number {
       const a = alloc(bytes.length, align);
