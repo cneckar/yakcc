@@ -29,6 +29,7 @@ import type { DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js"
 import {
   ARRAY_FN_ATOMS,
   BIGNUM_ATOMS,
+  COLLECTION_ATOMS,
   DYNAMIC_ATOMS,
   JSON_ATOMS,
   RUNTIME_ATOMS,
@@ -95,6 +96,7 @@ export const ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   ...DYNAMIC_ATOMS,
   ...ARRAY_FN_ATOMS,
   ...JSON_ATOMS,
+  ...COLLECTION_ATOMS,
 };
 
 /**
@@ -188,6 +190,9 @@ export type Ins =
   | { readonly op: "try" }
   | { readonly op: "catch" };
 
+/** The array methods called through __ykInvoke when not lowered directly. */
+const INVOKED_ARRAY_METHODS: ReadonlySet<string> = new Set(["indexOf", "includes", "join"]);
+
 /** The array methods that take a function: each a runtime atom, lowered once per callback. */
 const ARRAY_FN_METHODS: ReadonlySet<string> = new Set([
   "map",
@@ -218,6 +223,15 @@ function builtinSource(c: Callee): string | undefined {
   if (c.k === "boolean-of") return one("Boolean(x)");
   if (c.k === "math" && (NATIVE_MATH.has(c.name) || UNARY_HOST_MATH.has(c.name)))
     return one(`Math.${c.name}(x as number)`);
+  // A primitive or a runtime atom (an atom's closure captures it): the call of it, at its arity.
+  if (c.k === "prim" || c.k === "atom") {
+    const arity =
+      c.k === "prim"
+        ? ((PRIMITIVES[c.name] ?? ARRAY_PRIMITIVES[c.name]) as { params: WT[] }).params.length
+        : (ATOMS[c.name] as RuntimeAtom).inputs.length;
+    const ps = Array.from({ length: arity }, (_, i) => `a${i}`);
+    return `export function f(${ps.join(", ")}) { return ${c.name}(${ps.join(", ")}); }`;
+  }
   return undefined;
 }
 const UNARY_HOST_MATH: ReadonlySet<string> = new Set([
@@ -677,8 +691,10 @@ type Callee =
   | { readonly k: "object-ns"; readonly name: string }
   /** JSON, and its stringify and parse. */
   | { readonly k: "json-ns"; readonly name: string }
-  /** Array or Function: a class instanceof names, and Array.isArray. */
+  /** Array, Function, Map or Set: a class instanceof names; Array.isArray; new Map, new Set. */
   | { readonly k: "class-ref"; readonly name: string }
+  /** __ykCallWith(f, args): the call of a function value with an array of arguments (atoms'). */
+  | { readonly k: "callwith" }
   /** `__yakccTry(body, handler, finalizer)`: a try statement (#1276). */
   | { readonly k: "try" }
   | { readonly k: "method"; readonly recv: ValueId; readonly name: string }
@@ -1011,9 +1027,43 @@ function lowerFunction(
       const c = t.call;
       if (c.k === "error-class") return c.name;
       if (c.k === "object-ns" && c.name === "") return "Object";
-      if (c.k === "class-ref" && (c.name === "Array" || c.name === "Function")) return c.name;
+      if (c.k === "class-ref" && c.name !== "isArray") return c.name;
     }
     throw new LoweringError("instanceof of other than a builtin class is not in the subset yet");
+  };
+  /**
+   * A closure as a function value calls its function with its captures (a captured function a
+   * function value too) and arguments of any kind. Typed now, so that arrays it stores other than
+   * numbers in grow where they were made; a closure it cannot lower so may never be a value, and
+   * is refused only if it becomes one.
+   */
+  const typedAsValue = new Set<string>();
+  const typeAsValue = (v: ValueId, node: DucNode): void => {
+    const inner = node.closure as DucGraph;
+    const caps = node.inputs as readonly ValueId[];
+    const capTypes: WT[] = [];
+    for (const c of caps) {
+      const t = get(c);
+      if (t === "?") return;
+      capTypes.push(typeof t === "string" ? (t === "undef" ? "any" : t) : "any");
+    }
+    const key = `${v}:${capTypes.join(",")}`;
+    if (typedAsValue.has(key)) return;
+    typedAsValue.add(key);
+    const nargs = paramCount(inner) - caps.length;
+    const sig: WT[] = [...capTypes, ...Array.from({ length: nargs }, () => "any" as const)];
+    try {
+      mod.closure(inner, sig, trusted, caps.length);
+    } catch (e) {
+      if (e instanceof GrowParams) {
+        typedAsValue.delete(key);
+        for (const path of e.paths) {
+          const [i, ...rest] = path as [number, ...number[]];
+          const c = caps[i];
+          if (c !== undefined && rest.length === 0) stored(c, "any");
+        }
+      } else if (!(e instanceof LoweringError)) throw e;
+    }
   };
   const computeType = (v: ValueId): VT | "?" => {
     const iterating = elementOf.get(v);
@@ -1061,7 +1111,9 @@ function lowerFunction(
       if (sym === "Math") return { call: { k: "math", name: "" } };
       if (sym === "Object") return { call: { k: "object-ns", name: "" } };
       if (sym === "JSON") return { call: { k: "json-ns", name: "" } };
-      if (sym === "Array" || sym === "Function") return { call: { k: "class-ref", name: sym } };
+      if (sym === "Array" || sym === "Function" || sym === "Map" || sym === "Set")
+        return { call: { k: "class-ref", name: sym } };
+      if (sym === "__ykCallWith") return { call: { k: "callwith" } };
       if (sym === "String") return { call: { k: "string-of" } };
       if (sym === "Number") return { call: { k: "number-of" } };
       if (sym === "Boolean") return { call: { k: "boolean-of" } };
@@ -1090,6 +1142,7 @@ function lowerFunction(
     if (p.closure !== undefined) {
       if (p.label !== "closure")
         throw new LoweringError(`a "${p.label}" with a body is not in the subset`);
+      typeAsValue(v, p);
       return { call: { k: "closure", node: p } };
     }
     const label = p.label ?? "";
@@ -1125,6 +1178,8 @@ function lowerFunction(
         if (member === "length") return "f64";
         if (member === "push" || member === "pop" || ARRAY_FN_METHODS.has(member))
           return { call: { k: "method", recv: ins[0] as ValueId, name: `${t0}.${member}` } };
+        // The methods __ykInvoke implements for an array (called through it).
+        if (INVOKED_ARRAY_METHODS.has(member)) return "any";
         throw new LoweringError(`the array method ${member} is not in the subset yet`);
       }
       // A property of an object, or of a value of any kind: the runtime atoms.
@@ -1154,6 +1209,7 @@ function lowerFunction(
       if (callee.k === "error-class") return "obj";
       if (callee.k === "object-ns") return "arr";
       if (callee.k === "class-ref") return "i32";
+      if (callee.k === "callwith") return "any";
       if (callee.k === "json-ns") {
         // A replacer or a reviver: not yet.
         const extra = ins[2];
@@ -1253,7 +1309,15 @@ function lowerFunction(
       const t0 = operand(0);
       if (t0 === "?") return "?";
       if (typeof t0 === "object" && t0.call.k === "error-class") return "obj";
-      throw new LoweringError("new of other than an error class is not in the subset yet");
+      if (
+        typeof t0 === "object" &&
+        t0.call.k === "class-ref" &&
+        (t0.call.name === "Map" || t0.call.name === "Set")
+      )
+        return "obj";
+      throw new LoweringError(
+        "new of other than an error class, Map or Set is not in the subset yet",
+      );
     }
     if (label === "ArrayLiteral") {
       // As TypeScript types it: numbers make an array of numbers; anything else, or nothing in a
@@ -1729,8 +1793,8 @@ function lowerFunction(
         set(out);
         return;
       }
-      if (t0 === "obj" || t0 === "any" || t0 === "undef") {
-        // A property of an object or any value: its own, else what an error inherits; lengths;
+      if (t0 === "obj" || t0 === "any" || t0 === "undef" || t0 === "nums" || t0 === "arr") {
+        // A property of an object or any value (or an array's method, read for __ykInvoke): its own, else what an error inherits; lengths;
         // a TypeError for undefined and null.
         push(ins[0] as ValueId, "any");
         emit({ op: "const.str", s: label.slice(1) });
@@ -1761,12 +1825,46 @@ function lowerFunction(
       return;
     }
     if (label === "NewExpression") {
-      const callee = (ty(ins[0] as ValueId) as { call: Callee }).call as { name: string };
+      const callee = (ty(ins[0] as ValueId) as { call: Callee }).call as {
+        k: string;
+        name: string;
+      };
+      if (callee.k === "class-ref") {
+        // new Map(iterable), new Set(iterable).
+        emit({ op: "const.str", s: callee.name });
+        if (ins[1] === undefined) emit({ op: "const.undef" });
+        else push(ins[1], "any");
+        emit({ op: "call", fn: mod.atom("__ykCollNew").fn });
+        set(out);
+        return;
+      }
       makeError(callee.name, ins[1]);
       set(out);
       return;
     }
     if (label === "CallExpression" && typeof opType(ins[0] as ValueId) === "string") {
+      // A method of a receiver of any kind (or an object): __ykInvoke, which calls an own function
+      // property, or the builtin method of the receiver's kind.
+      const member = producer.get(resolve(ins[0] as ValueId));
+      const recvT =
+        member?.kind === "op" && /^\.\w+$/.test(member.label ?? "")
+          ? opType(member.inputs[0] as ValueId)
+          : undefined;
+      if (
+        member !== undefined &&
+        (recvT === "any" ||
+          recvT === "obj" ||
+          recvT === "undef" ||
+          recvT === "nums" ||
+          recvT === "arr")
+      ) {
+        push(member.inputs[0] as ValueId, "any");
+        emit({ op: "const.str", s: (member.label ?? "").slice(1) });
+        for (const x of ins.slice(1)) push(x, "any");
+        emit({ op: "arr.of", n: ins.length - 1 }, { op: "call", fn: mod.atom("__ykInvoke").fn });
+        set(out);
+        return;
+      }
       // A call of a value of any kind: its arguments as an array of any values, then __ykCall.
       push(ins[0] as ValueId, "any");
       for (const x of ins.slice(1)) push(x, "any");
@@ -1795,6 +1893,10 @@ function lowerFunction(
         }
       } else if (callee.k === "error-class") {
         makeError(callee.name, args[0]);
+      } else if (callee.k === "callwith") {
+        push(args[0] as ValueId, "any");
+        push(args[1] as ValueId, "arr");
+        emit({ op: "call", fn: mod.dynCall() });
       } else if (callee.k === "class-ref") {
         // Array.isArray(x): x instanceof Array.
         if (args[0] === undefined) emit({ op: "const.undef" });
