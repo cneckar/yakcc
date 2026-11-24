@@ -1,0 +1,3185 @@
+{
+  "sliceSource": "retrieved",
+  "maxPackageShare": 0.5,
+  "budgets": {
+    "400": {
+      "tasksWhereFillDiffers": [
+        "add-days-iso",
+        "clamp",
+        "days-between",
+        "pointer-get",
+        "sort-versions"
+      ],
+      "tasks": [
+        {
+          "task": "add-days-iso",
+          "differs": true,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "date-fns-4.1.0/addDays.cjs#addDays@32",
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "date-fns-4.1.0/parseISO.cjs#parseYear@141",
+              "zod-3.25.76/src/v4/mini/iso.ts#datetime@15",
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+              "date-fns-4.1.0/parseISO.cjs#parseDate@164",
+              "zod-3.25.76/src/v4/classic/iso.ts#date@43"
+            ],
+            "tokens": 399,
+            "byPackage": {
+              "date-fns-4.1.0": 361,
+              "zod-3.25.76": 38
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "date-fns-4.1.0/addDays.cjs#addDays@32",
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "zod-3.25.76/src/v4/mini/iso.ts#datetime@15",
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271",
+              "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+              "zod-3.25.76/src/v4/classic/iso.ts#date@43"
+            ],
+            "dropped": [
+              "date-fns-4.1.0/parseISO.cjs#parseYear@141",
+              "date-fns-4.1.0/parseISO.cjs#parseDate@164"
+            ],
+            "tokens": 299,
+            "byPackage": {
+              "date-fns-4.1.0": 194,
+              "zod-3.25.76": 105
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "add-durations",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/src/v4/mini/iso.ts#duration@60",
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "zod-3.25.76/src/v4/classic/iso.ts#duration@88",
+              "zod-3.25.76/v4/mini/iso.js#duration@28",
+              "lodash-4.17.21/debounce.js#trailingEdge@138",
+              "date-fns-4.1.0/parseISO.cjs#validateWeekDate@275",
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 330,
+            "byPackage": {
+              "zod-3.25.76": 124,
+              "date-fns-4.1.0": 134,
+              "lodash-4.17.21": 72
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/src/v4/mini/iso.ts#duration@60",
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "zod-3.25.76/src/v4/classic/iso.ts#duration@88",
+              "zod-3.25.76/v4/mini/iso.js#duration@28",
+              "lodash-4.17.21/debounce.js#trailingEdge@138",
+              "date-fns-4.1.0/parseISO.cjs#validateWeekDate@275",
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 330,
+            "byPackage": {
+              "zod-3.25.76": 124,
+              "date-fns-4.1.0": 134,
+              "lodash-4.17.21": 72
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "base64url-from-string",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_encode@38",
+              "zod-3.25.76/src/v4/classic/schemas.ts#base64url@647",
+              "zod-3.25.76/src/v4/mini/schemas.ts#base64url@384",
+              "zod-3.25.76/src/v4/core/schemas.ts#isValidBase64URL@843",
+              "validator-13.15.35/lib/isSurrogatePair.js#isSurrogatePair@10",
+              "nanoid-3.3.12/index.js#random@17"
+            ],
+            "dropped": [
+              "zod-3.25.76/v4/core/schemas.js#isValidBase64URL@348",
+              "zod-3.25.76/v4/core/schemas.cjs#isValidBase64URL@379"
+            ],
+            "tokens": 396,
+            "byPackage": {
+              "bcryptjs-2.4.3": 201,
+              "zod-3.25.76": 142,
+              "validator-13.15.35": 26,
+              "nanoid-3.3.12": 27
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_encode@38",
+              "zod-3.25.76/src/v4/classic/schemas.ts#base64url@647",
+              "zod-3.25.76/src/v4/mini/schemas.ts#base64url@384",
+              "zod-3.25.76/src/v4/core/schemas.ts#isValidBase64URL@843",
+              "validator-13.15.35/lib/isSurrogatePair.js#isSurrogatePair@10",
+              "nanoid-3.3.12/index.js#random@17"
+            ],
+            "dropped": [
+              "zod-3.25.76/v4/core/schemas.js#isValidBase64URL@348",
+              "zod-3.25.76/v4/core/schemas.cjs#isValidBase64URL@379"
+            ],
+            "tokens": 396,
+            "byPackage": {
+              "zod-3.25.76": 142,
+              "validator-13.15.35": 26,
+              "nanoid-3.3.12": 27,
+              "bcryptjs-2.4.3": 201
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "build-order",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "bcryptjs-2.4.3/externs/minimal-env.js#require@10",
+              "lodash-4.17.21/_createBaseFor.js#createBaseFor@8",
+              "zod-3.25.76/src/v4/core/util.ts#aborted@686",
+              "zod-3.25.76/src/v3/helpers/util.ts#arrayToEnum@16",
+              "zod-3.25.76/src/v3/helpers/errorUtil.ts#toString@6",
+              "zod-3.25.76/src/v3/helpers/errorUtil.ts#errToObj@3",
+              "zod-3.25.76/src/v4/core/util.ts#unwrapMessage@701"
+            ],
+            "dropped": [],
+            "tokens": 368,
+            "byPackage": {
+              "zod-3.25.76": 260,
+              "bcryptjs-2.4.3": 8,
+              "lodash-4.17.21": 100
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "bcryptjs-2.4.3/externs/minimal-env.js#require@10",
+              "lodash-4.17.21/_createBaseFor.js#createBaseFor@8",
+              "zod-3.25.76/src/v4/core/util.ts#aborted@686",
+              "zod-3.25.76/src/v3/helpers/util.ts#arrayToEnum@16",
+              "zod-3.25.76/src/v3/helpers/errorUtil.ts#toString@6",
+              "zod-3.25.76/src/v3/helpers/errorUtil.ts#errToObj@3",
+              "zod-3.25.76/src/v4/core/util.ts#unwrapMessage@701"
+            ],
+            "dropped": [],
+            "tokens": 368,
+            "byPackage": {
+              "zod-3.25.76": 260,
+              "bcryptjs-2.4.3": 8,
+              "lodash-4.17.21": 100
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "chunk",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/isDate.js#_slicedToArray@9",
+              "zod-3.25.76/v4/core/api.js#_maxSize@484",
+              "zod-3.25.76/v4/core/api.cjs#_maxSize@617",
+              "semver-7.8.0/ranges/valid.js#validRange@4",
+              "zod-3.25.76/src/v4/core/api.ts#_size@896",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1302",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 365,
+            "byPackage": {
+              "validator-13.15.35": 38,
+              "zod-3.25.76": 266,
+              "semver-7.8.0": 61
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/isDate.js#_slicedToArray@9",
+              "zod-3.25.76/v4/core/api.js#_maxSize@484",
+              "zod-3.25.76/v4/core/api.cjs#_maxSize@617",
+              "semver-7.8.0/ranges/valid.js#validRange@4",
+              "zod-3.25.76/src/v4/core/api.ts#_size@896",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1302",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 365,
+            "byPackage": {
+              "validator-13.15.35": 38,
+              "zod-3.25.76": 266,
+              "semver-7.8.0": 61
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "clamp",
+          "differs": true,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/stripLow.js#stripLow@10",
+              "p-limit-7.3.0/index.js#limitFunction@117",
+              "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+              "semver-7.8.0/ranges/valid.js#validRange@4"
+            ],
+            "dropped": [
+              "p-throttle-8.1.0/index.js#pThrottle@21",
+              "lodash-4.17.21/toNumber.js#toNumber@43",
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139",
+              "semver-7.8.0/ranges/to-comparators.js#toComparators@6"
+            ],
+            "tokens": 387,
+            "byPackage": {
+              "validator-13.15.35": 288,
+              "p-limit-7.3.0": 38,
+              "semver-7.8.0": 61
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/stripLow.js#stripLow@10",
+              "p-limit-7.3.0/index.js#limitFunction@117",
+              "semver-7.8.0/ranges/valid.js#validRange@4",
+              "lodash-4.17.21/toNumber.js#toNumber@43",
+              "semver-7.8.0/ranges/to-comparators.js#toComparators@6"
+            ],
+            "dropped": [
+              "p-throttle-8.1.0/index.js#pThrottle@21",
+              "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139"
+            ],
+            "tokens": 334,
+            "byPackage": {
+              "validator-13.15.35": 54,
+              "p-limit-7.3.0": 38,
+              "semver-7.8.0": 97,
+              "lodash-4.17.21": 145
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "days-between",
+          "differs": true,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "date-fns-4.1.0/parseISO.cjs#parseYear@141",
+              "date-fns-4.1.0/addDays.cjs#addDays@32",
+              "zod-3.25.76/src/v4/mini/iso.ts#datetime@15",
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271"
+            ],
+            "dropped": [
+              "date-fns-4.1.0/parseISO.cjs#splitDateString@103",
+              "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+              "date-fns-4.1.0/parseISO.cjs#parseTime@201"
+            ],
+            "tokens": 399,
+            "byPackage": {
+              "date-fns-4.1.0": 361,
+              "zod-3.25.76": 38
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "date-fns-4.1.0/addDays.cjs#addDays@32",
+              "zod-3.25.76/src/v4/mini/iso.ts#datetime@15",
+              "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+              "date-fns-4.1.0/parseISO.cjs#parseTime@201",
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271"
+            ],
+            "dropped": [
+              "date-fns-4.1.0/parseISO.cjs#splitDateString@103",
+              "date-fns-4.1.0/parseISO.cjs#parseYear@141"
+            ],
+            "tokens": 385,
+            "byPackage": {
+              "date-fns-4.1.0": 311,
+              "zod-3.25.76": 74
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "group-by",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "zod-3.25.76/src/v4/core/api.ts#_readonly@1395",
+              "zod-3.25.76/v4/mini/schemas.cjs#record@556",
+              "zod-3.25.76/v4/mini/schemas.js#record@446",
+              "zod-3.25.76/src/v4/mini/schemas.ts#readonly@1408",
+              "zod-3.25.76/src/v4/classic/schemas.ts#record@1345"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v4/mini/schemas.ts#record@1010"
+            ],
+            "tokens": 389,
+            "byPackage": {
+              "zod-3.25.76": 389
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "zod-3.25.76/src/v4/core/api.ts#_readonly@1395",
+              "zod-3.25.76/v4/mini/schemas.cjs#record@556",
+              "zod-3.25.76/v4/mini/schemas.js#record@446",
+              "zod-3.25.76/src/v4/mini/schemas.ts#readonly@1408",
+              "zod-3.25.76/src/v4/classic/schemas.ts#record@1345"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v4/mini/schemas.ts#record@1010"
+            ],
+            "tokens": 389,
+            "byPackage": {
+              "zod-3.25.76": 389
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "memoize-lru",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/v4/core/api.cjs#_maxSize@617",
+              "zod-3.25.76/v4/core/api.js#_maxSize@484",
+              "zod-3.25.76/src/v4/core/api.ts#_maxSize@872",
+              "zod-3.25.76/v4/core/api.js#_maxLength@505",
+              "zod-3.25.76/src/v4/core/api.ts#_size@896",
+              "lodash-4.17.21/_MapCache.js#MapCache@14",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v4/core/regexes.ts#uuid@22"
+            ],
+            "tokens": 344,
+            "byPackage": {
+              "zod-3.25.76": 289,
+              "lodash-4.17.21": 55
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/v4/core/api.cjs#_maxSize@617",
+              "zod-3.25.76/v4/core/api.js#_maxSize@484",
+              "zod-3.25.76/src/v4/core/api.ts#_maxSize@872",
+              "zod-3.25.76/v4/core/api.js#_maxLength@505",
+              "zod-3.25.76/src/v4/core/api.ts#_size@896",
+              "lodash-4.17.21/_MapCache.js#MapCache@14",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v4/core/regexes.ts#uuid@22"
+            ],
+            "tokens": 344,
+            "byPackage": {
+              "zod-3.25.76": 289,
+              "lodash-4.17.21": 55
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "parse-int-strict",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/isDecimal.js#decimalRegExp@12",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "zod-3.25.76/src/v3/types.ts#makeReturnsIssue@3845",
+              "zod-3.25.76/src/v4/classic/schemas.ts#int@788",
+              "zod-3.25.76/v3/types.js#makeReturnsIssue@2894"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v3/types.ts#ZodNumber@1367",
+              "zod-3.25.76/src/v3/types.ts#ZodBigInt@1633",
+              "zod-3.25.76/src/v3/types.ts#ZodEnum@4077"
+            ],
+            "tokens": 349,
+            "byPackage": {
+              "validator-13.15.35": 101,
+              "zod-3.25.76": 248
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/isDecimal.js#decimalRegExp@12",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "zod-3.25.76/src/v3/types.ts#makeReturnsIssue@3845",
+              "zod-3.25.76/src/v4/classic/schemas.ts#int@788",
+              "zod-3.25.76/v3/types.js#makeReturnsIssue@2894"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v3/types.ts#ZodNumber@1367",
+              "zod-3.25.76/src/v3/types.ts#ZodBigInt@1633",
+              "zod-3.25.76/src/v3/types.ts#ZodEnum@4077"
+            ],
+            "tokens": 349,
+            "byPackage": {
+              "validator-13.15.35": 101,
+              "zod-3.25.76": 248
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "pointer-get",
+          "differs": true,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "jsonpointer-5.0.1/jsonpointer.js#get@66",
+              "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+              "jsonpointer-5.0.1/jsonpointer.js#compilePointer@49",
+              "zod-3.25.76/v4/core/api.cjs#_undefined@510",
+              "jsonwebtoken-9.0.2/lib/JsonWebTokenError.js#JsonWebTokenError@1"
+            ],
+            "dropped": [
+              "date-fns-4.1.0/_lib/addLeadingZeros.cjs#addLeadingZeros@3",
+              "lodash-4.17.21/_isIndex.js#isIndex@15",
+              "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@829"
+            ],
+            "tokens": 379,
+            "byPackage": {
+              "jsonpointer-5.0.1": 277,
+              "zod-3.25.76": 35,
+              "jsonwebtoken-9.0.2": 67
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "jsonpointer-5.0.1/jsonpointer.js#get@66",
+              "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+              "zod-3.25.76/v4/core/api.cjs#_undefined@510",
+              "jsonwebtoken-9.0.2/lib/JsonWebTokenError.js#JsonWebTokenError@1",
+              "date-fns-4.1.0/_lib/addLeadingZeros.cjs#addLeadingZeros@3",
+              "lodash-4.17.21/_isIndex.js#isIndex@15"
+            ],
+            "dropped": [
+              "jsonpointer-5.0.1/jsonpointer.js#compilePointer@49",
+              "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@829"
+            ],
+            "tokens": 370,
+            "byPackage": {
+              "jsonpointer-5.0.1": 152,
+              "zod-3.25.76": 35,
+              "jsonwebtoken-9.0.2": 67,
+              "date-fns-4.1.0": 47,
+              "lodash-4.17.21": 69
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "range",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "semver-7.8.0/ranges/valid.js#validRange@4",
+              "bcryptjs-2.4.3/src/bcrypt/prng/accum.js#step@20",
+              "zod-3.25.76/v4/core/util.cjs#aborted@462",
+              "zod-3.25.76/v4/core/util.js#aborted@417"
+            ],
+            "dropped": [
+              "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+              "zod-3.25.76/src/v3/types.ts#floatSafeRemainder@1352",
+              "zod-3.25.76/src/v4/core/util.ts#floatSafeRemainder@242",
+              "semver-7.8.0/ranges/min-version.js#minVersion@7"
+            ],
+            "tokens": 303,
+            "byPackage": {
+              "semver-7.8.0": 61,
+              "bcryptjs-2.4.3": 145,
+              "zod-3.25.76": 97
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "semver-7.8.0/ranges/valid.js#validRange@4",
+              "bcryptjs-2.4.3/src/bcrypt/prng/accum.js#step@20",
+              "zod-3.25.76/v4/core/util.cjs#aborted@462",
+              "zod-3.25.76/v4/core/util.js#aborted@417"
+            ],
+            "dropped": [
+              "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+              "zod-3.25.76/src/v3/types.ts#floatSafeRemainder@1352",
+              "zod-3.25.76/src/v4/core/util.ts#floatSafeRemainder@242",
+              "semver-7.8.0/ranges/min-version.js#minVersion@7"
+            ],
+            "tokens": 303,
+            "byPackage": {
+              "semver-7.8.0": 61,
+              "bcryptjs-2.4.3": 145,
+              "zod-3.25.76": 97
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "safe-filename",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "validator-13.15.35/lib/whitelist.js#whitelist@9",
+              "validator-13.15.35/lib/blacklist.js#blacklist@9",
+              "validator-13.15.35/lib/isWhitelisted.js#isWhitelisted@9",
+              "validator-13.15.35/lib/isAscii.js#isAscii@13",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "lodash-4.17.21/eq.js#eq@33",
+              "zod-3.25.76/src/v4/core/errors.ts#toDotPath@392"
+            ],
+            "dropped": [],
+            "tokens": 347,
+            "byPackage": {
+              "validator-13.15.35": 210,
+              "lodash-4.17.21": 24,
+              "zod-3.25.76": 113
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "validator-13.15.35/lib/whitelist.js#whitelist@9",
+              "validator-13.15.35/lib/blacklist.js#blacklist@9",
+              "validator-13.15.35/lib/isWhitelisted.js#isWhitelisted@9",
+              "validator-13.15.35/lib/isAscii.js#isAscii@13",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "lodash-4.17.21/eq.js#eq@33",
+              "zod-3.25.76/src/v4/core/errors.ts#toDotPath@392"
+            ],
+            "dropped": [],
+            "tokens": 347,
+            "byPackage": {
+              "validator-13.15.35": 210,
+              "lodash-4.17.21": 24,
+              "zod-3.25.76": 113
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "shallow-equal",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/src/v4/core/util.ts#isPlainObject@339",
+              "validator-13.15.35/lib/equals.js#equals@9",
+              "zod-3.25.76/v4/core/util.cjs#assertEqual@46",
+              "zod-3.25.76/v4/core/util.js#assertEqual@2",
+              "zod-3.25.76/src/v4/core/util.ts#assertEqual@186",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190",
+              "zod-3.25.76/src/v3/helpers/util.ts#assertEqual@5"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139"
+            ],
+            "tokens": 238,
+            "byPackage": {
+              "zod-3.25.76": 213,
+              "validator-13.15.35": 25
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/src/v4/core/util.ts#isPlainObject@339",
+              "validator-13.15.35/lib/equals.js#equals@9",
+              "zod-3.25.76/v4/core/util.cjs#assertEqual@46",
+              "zod-3.25.76/v4/core/util.js#assertEqual@2",
+              "zod-3.25.76/src/v4/core/util.ts#assertEqual@186",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190",
+              "zod-3.25.76/src/v3/helpers/util.ts#assertEqual@5"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139"
+            ],
+            "tokens": 238,
+            "byPackage": {
+              "zod-3.25.76": 213,
+              "validator-13.15.35": 25
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "slugify",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "validator-13.15.35/lib/stripLow.js#stripLow@10",
+              "validator-13.15.35/lib/toInt.js#toInt@9",
+              "validator-13.15.35/lib/whitelist.js#whitelist@9",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "zod-3.25.76/src/v4/core/api.ts#_startsWith@983",
+              "zod-3.25.76/src/v4/core/api.ts#_endsWith@994",
+              "lodash-4.17.21/eq.js#eq@33"
+            ],
+            "dropped": [],
+            "tokens": 340,
+            "byPackage": {
+              "validator-13.15.35": 182,
+              "zod-3.25.76": 134,
+              "lodash-4.17.21": 24
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "validator-13.15.35/lib/stripLow.js#stripLow@10",
+              "validator-13.15.35/lib/toInt.js#toInt@9",
+              "validator-13.15.35/lib/whitelist.js#whitelist@9",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "zod-3.25.76/src/v4/core/api.ts#_startsWith@983",
+              "zod-3.25.76/src/v4/core/api.ts#_endsWith@994",
+              "lodash-4.17.21/eq.js#eq@33"
+            ],
+            "dropped": [],
+            "tokens": 340,
+            "byPackage": {
+              "validator-13.15.35": 182,
+              "zod-3.25.76": 134,
+              "lodash-4.17.21": 24
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "sort-versions",
+          "differs": true,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "semver-7.8.0/ranges/min-version.js#minVersion@7",
+              "semver-7.8.0/functions/sort.js#sort@4"
+            ],
+            "dropped": [
+              "semver-7.8.0/functions/inc.js#inc@5",
+              "semver-7.8.0/ranges/ltr.js#ltr@5",
+              "semver-7.8.0/functions/parse.js#parse@4",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190",
+              "zod-3.25.76/src/v4/locales/be.ts#getSizing@69"
+            ],
+            "tokens": 395,
+            "byPackage": {
+              "zod-3.25.76": 39,
+              "semver-7.8.0": 356
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "zod-3.25.76/src/v4/locales/be.ts#getSizing@69",
+              "semver-7.8.0/functions/sort.js#sort@4",
+              "semver-7.8.0/functions/inc.js#inc@5",
+              "semver-7.8.0/functions/parse.js#parse@4",
+              "semver-7.8.0/ranges/ltr.js#ltr@5",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [
+              "semver-7.8.0/ranges/min-version.js#minVersion@7"
+            ],
+            "tokens": 292,
+            "byPackage": {
+              "zod-3.25.76": 91,
+              "semver-7.8.0": 201
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "suggest-words",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/v4/core/api.js#_maxLength@505",
+              "zod-3.25.76/v4/core/api.cjs#_maxLength@638",
+              "zod-3.25.76/src/v4/core/api.ts#_maxLength@908",
+              "zod-3.25.76/src/v4/core/api.ts#_maxSize@872",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1",
+              "validator-13.15.35/lib/isDivisibleBy.js#isDivisibleBy@10",
+              "zod-3.25.76/src/v4/core/api.ts#_negative@845",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 348,
+            "byPackage": {
+              "zod-3.25.76": 314,
+              "validator-13.15.35": 34
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/v4/core/api.js#_maxLength@505",
+              "zod-3.25.76/v4/core/api.cjs#_maxLength@638",
+              "zod-3.25.76/src/v4/core/api.ts#_maxLength@908",
+              "zod-3.25.76/src/v4/core/api.ts#_maxSize@872",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1",
+              "validator-13.15.35/lib/isDivisibleBy.js#isDivisibleBy@10",
+              "zod-3.25.76/src/v4/core/api.ts#_negative@845",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 348,
+            "byPackage": {
+              "zod-3.25.76": 314,
+              "validator-13.15.35": 34
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "title-case",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "zod-3.25.76/v4/core/api.cjs#_uppercase@675",
+              "validator-13.15.35/lib/isUppercase.js#isUppercase@9",
+              "zod-3.25.76/v4/core/api.cjs#_lowercase@668",
+              "zod-3.25.76/v4/core/api.cjs#_toUpperCase@740",
+              "validator-13.15.35/lib/isTaxID.js#itItNameCheck@682",
+              "zod-3.25.76/src/v3/helpers/util.ts#mergeShapes@113"
+            ],
+            "dropped": [
+              "validator-13.15.35/lib/isTaxID.js#itItCheck@718"
+            ],
+            "tokens": 370,
+            "byPackage": {
+              "validator-13.15.35": 219,
+              "zod-3.25.76": 151
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "zod-3.25.76/v4/core/api.cjs#_uppercase@675",
+              "validator-13.15.35/lib/isUppercase.js#isUppercase@9",
+              "zod-3.25.76/v4/core/api.cjs#_lowercase@668",
+              "zod-3.25.76/v4/core/api.cjs#_toUpperCase@740",
+              "validator-13.15.35/lib/isTaxID.js#itItNameCheck@682",
+              "zod-3.25.76/src/v3/helpers/util.ts#mergeShapes@113"
+            ],
+            "dropped": [
+              "validator-13.15.35/lib/isTaxID.js#itItCheck@718"
+            ],
+            "tokens": 370,
+            "byPackage": {
+              "validator-13.15.35": 219,
+              "zod-3.25.76": 151
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "unique",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/v4/core/api.cjs#_readonly@914",
+              "zod-3.25.76/src/v4/core/api.ts#_readonly@1395",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "toposort-2.0.2/index.js#uniqueNodes@93",
+              "zod-3.25.76/src/v4/mini/schemas.ts#readonly@1408",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1302",
+              "zod-3.25.76/src/v4/mini/schemas.ts#tuple@969",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1306"
+            ],
+            "dropped": [],
+            "tokens": 360,
+            "byPackage": {
+              "zod-3.25.76": 311,
+              "toposort-2.0.2": 49
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/v4/core/api.cjs#_readonly@914",
+              "zod-3.25.76/src/v4/core/api.ts#_readonly@1395",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "toposort-2.0.2/index.js#uniqueNodes@93",
+              "zod-3.25.76/src/v4/mini/schemas.ts#readonly@1408",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1302",
+              "zod-3.25.76/src/v4/mini/schemas.ts#tuple@969",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1306"
+            ],
+            "dropped": [],
+            "tokens": 360,
+            "byPackage": {
+              "zod-3.25.76": 311,
+              "toposort-2.0.2": 49
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "uuid-normalize",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "uuid-11.1.1/dist/esm/parse.js#parse@2",
+              "uuid-11.1.1/dist/esm/validate.js#validate@2",
+              "zod-3.25.76/src/v4/core/api.ts#_normalize@1033",
+              "uuid-11.1.1/dist/cjs/version.js#version@4",
+              "uuid-11.1.1/dist/esm/version.js#version@2",
+              "zod-3.25.76/src/v4/core/api.ts#_startsWith@983"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139",
+              "zod-3.25.76/src/v3/types.ts#mergeValues@3239"
+            ],
+            "tokens": 349,
+            "byPackage": {
+              "uuid-11.1.1": 237,
+              "zod-3.25.76": 112
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "uuid-11.1.1/dist/esm/parse.js#parse@2",
+              "uuid-11.1.1/dist/esm/validate.js#validate@2",
+              "zod-3.25.76/src/v4/core/api.ts#_normalize@1033",
+              "uuid-11.1.1/dist/cjs/version.js#version@4",
+              "uuid-11.1.1/dist/esm/version.js#version@2",
+              "zod-3.25.76/src/v4/core/api.ts#_startsWith@983"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139",
+              "zod-3.25.76/src/v3/types.ts#mergeValues@3239"
+            ],
+            "tokens": 349,
+            "byPackage": {
+              "uuid-11.1.1": 237,
+              "zod-3.25.76": 112
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "uuid-version",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "uuid-11.1.1/dist/esm/version.js#version@2",
+              "validator-13.15.35/lib/isUUID.js#isUUID@24",
+              "uuid-11.1.1/dist/cjs/version.js#version@4",
+              "zod-3.25.76/src/v3/types.ts#isValidIP@687",
+              "zod-3.25.76/v4/core/regexes.js#uuid@16",
+              "zod-3.25.76/src/v4/core/regexes.ts#uuid@22",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1"
+            ],
+            "dropped": [
+              "zod-3.25.76/v4/core/regexes.cjs#uuid@22"
+            ],
+            "tokens": 383,
+            "byPackage": {
+              "uuid-11.1.1": 78,
+              "validator-13.15.35": 51,
+              "zod-3.25.76": 254
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "uuid-11.1.1/dist/esm/version.js#version@2",
+              "validator-13.15.35/lib/isUUID.js#isUUID@24",
+              "uuid-11.1.1/dist/cjs/version.js#version@4",
+              "zod-3.25.76/src/v3/types.ts#isValidIP@687",
+              "zod-3.25.76/v4/core/regexes.js#uuid@16",
+              "zod-3.25.76/src/v4/core/regexes.ts#uuid@22",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1"
+            ],
+            "dropped": [
+              "zod-3.25.76/v4/core/regexes.cjs#uuid@22"
+            ],
+            "tokens": 383,
+            "byPackage": {
+              "uuid-11.1.1": 78,
+              "validator-13.15.35": 51,
+              "zod-3.25.76": 254
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        }
+      ]
+    },
+    "600": {
+      "tasksWhereFillDiffers": [
+        "add-days-iso",
+        "days-between",
+        "sort-versions"
+      ],
+      "tasks": [
+        {
+          "task": "add-days-iso",
+          "differs": true,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "date-fns-4.1.0/addDays.cjs#addDays@32",
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "date-fns-4.1.0/parseISO.cjs#parseYear@141",
+              "date-fns-4.1.0/parseISO.cjs#parseDate@164",
+              "zod-3.25.76/src/v4/mini/iso.ts#datetime@15"
+            ],
+            "dropped": [
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271",
+              "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+              "zod-3.25.76/src/v4/classic/iso.ts#date@43"
+            ],
+            "tokens": 600,
+            "byPackage": {
+              "date-fns-4.1.0": 562,
+              "zod-3.25.76": 38
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "date-fns-4.1.0/addDays.cjs#addDays@32",
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "date-fns-4.1.0/parseISO.cjs#parseYear@141",
+              "zod-3.25.76/src/v4/mini/iso.ts#datetime@15",
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271",
+              "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+              "zod-3.25.76/src/v4/classic/iso.ts#date@43"
+            ],
+            "dropped": [
+              "date-fns-4.1.0/parseISO.cjs#parseDate@164"
+            ],
+            "tokens": 466,
+            "byPackage": {
+              "date-fns-4.1.0": 361,
+              "zod-3.25.76": 105
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "add-durations",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/src/v4/mini/iso.ts#duration@60",
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "zod-3.25.76/src/v4/classic/iso.ts#duration@88",
+              "zod-3.25.76/v4/mini/iso.js#duration@28",
+              "lodash-4.17.21/debounce.js#trailingEdge@138",
+              "date-fns-4.1.0/parseISO.cjs#validateWeekDate@275",
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 330,
+            "byPackage": {
+              "zod-3.25.76": 124,
+              "date-fns-4.1.0": 134,
+              "lodash-4.17.21": 72
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/src/v4/mini/iso.ts#duration@60",
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "zod-3.25.76/src/v4/classic/iso.ts#duration@88",
+              "zod-3.25.76/v4/mini/iso.js#duration@28",
+              "lodash-4.17.21/debounce.js#trailingEdge@138",
+              "date-fns-4.1.0/parseISO.cjs#validateWeekDate@275",
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 330,
+            "byPackage": {
+              "zod-3.25.76": 124,
+              "date-fns-4.1.0": 134,
+              "lodash-4.17.21": 72
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "base64url-from-string",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_encode@38",
+              "zod-3.25.76/src/v4/classic/schemas.ts#base64url@647",
+              "zod-3.25.76/src/v4/mini/schemas.ts#base64url@384",
+              "zod-3.25.76/src/v4/core/schemas.ts#isValidBase64URL@843",
+              "zod-3.25.76/v4/core/schemas.js#isValidBase64URL@348",
+              "validator-13.15.35/lib/isSurrogatePair.js#isSurrogatePair@10",
+              "nanoid-3.3.12/index.js#random@17",
+              "zod-3.25.76/v4/core/schemas.cjs#isValidBase64URL@379"
+            ],
+            "dropped": [],
+            "tokens": 537,
+            "byPackage": {
+              "bcryptjs-2.4.3": 201,
+              "zod-3.25.76": 283,
+              "validator-13.15.35": 26,
+              "nanoid-3.3.12": 27
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_encode@38",
+              "zod-3.25.76/src/v4/classic/schemas.ts#base64url@647",
+              "zod-3.25.76/src/v4/mini/schemas.ts#base64url@384",
+              "zod-3.25.76/src/v4/core/schemas.ts#isValidBase64URL@843",
+              "zod-3.25.76/v4/core/schemas.js#isValidBase64URL@348",
+              "validator-13.15.35/lib/isSurrogatePair.js#isSurrogatePair@10",
+              "nanoid-3.3.12/index.js#random@17",
+              "zod-3.25.76/v4/core/schemas.cjs#isValidBase64URL@379"
+            ],
+            "dropped": [],
+            "tokens": 537,
+            "byPackage": {
+              "bcryptjs-2.4.3": 201,
+              "zod-3.25.76": 283,
+              "validator-13.15.35": 26,
+              "nanoid-3.3.12": 27
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "build-order",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "bcryptjs-2.4.3/externs/minimal-env.js#require@10",
+              "lodash-4.17.21/_createBaseFor.js#createBaseFor@8",
+              "zod-3.25.76/src/v4/core/util.ts#aborted@686",
+              "zod-3.25.76/src/v3/helpers/util.ts#arrayToEnum@16",
+              "zod-3.25.76/src/v3/helpers/errorUtil.ts#toString@6",
+              "zod-3.25.76/src/v3/helpers/errorUtil.ts#errToObj@3",
+              "zod-3.25.76/src/v4/core/util.ts#unwrapMessage@701"
+            ],
+            "dropped": [],
+            "tokens": 368,
+            "byPackage": {
+              "zod-3.25.76": 260,
+              "bcryptjs-2.4.3": 8,
+              "lodash-4.17.21": 100
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "bcryptjs-2.4.3/externs/minimal-env.js#require@10",
+              "lodash-4.17.21/_createBaseFor.js#createBaseFor@8",
+              "zod-3.25.76/src/v4/core/util.ts#aborted@686",
+              "zod-3.25.76/src/v3/helpers/util.ts#arrayToEnum@16",
+              "zod-3.25.76/src/v3/helpers/errorUtil.ts#toString@6",
+              "zod-3.25.76/src/v3/helpers/errorUtil.ts#errToObj@3",
+              "zod-3.25.76/src/v4/core/util.ts#unwrapMessage@701"
+            ],
+            "dropped": [],
+            "tokens": 368,
+            "byPackage": {
+              "zod-3.25.76": 260,
+              "bcryptjs-2.4.3": 8,
+              "lodash-4.17.21": 100
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "chunk",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/isDate.js#_slicedToArray@9",
+              "zod-3.25.76/v4/core/api.js#_maxSize@484",
+              "zod-3.25.76/v4/core/api.cjs#_maxSize@617",
+              "semver-7.8.0/ranges/valid.js#validRange@4",
+              "zod-3.25.76/src/v4/core/api.ts#_size@896",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1302",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 365,
+            "byPackage": {
+              "validator-13.15.35": 38,
+              "zod-3.25.76": 266,
+              "semver-7.8.0": 61
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/isDate.js#_slicedToArray@9",
+              "zod-3.25.76/v4/core/api.js#_maxSize@484",
+              "zod-3.25.76/v4/core/api.cjs#_maxSize@617",
+              "semver-7.8.0/ranges/valid.js#validRange@4",
+              "zod-3.25.76/src/v4/core/api.ts#_size@896",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1302",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 365,
+            "byPackage": {
+              "validator-13.15.35": 38,
+              "zod-3.25.76": 266,
+              "semver-7.8.0": 61
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "clamp",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/stripLow.js#stripLow@10",
+              "p-limit-7.3.0/index.js#limitFunction@117",
+              "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+              "semver-7.8.0/ranges/valid.js#validRange@4",
+              "lodash-4.17.21/toNumber.js#toNumber@43",
+              "semver-7.8.0/ranges/to-comparators.js#toComparators@6"
+            ],
+            "dropped": [
+              "p-throttle-8.1.0/index.js#pThrottle@21",
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139"
+            ],
+            "tokens": 568,
+            "byPackage": {
+              "validator-13.15.35": 288,
+              "p-limit-7.3.0": 38,
+              "semver-7.8.0": 97,
+              "lodash-4.17.21": 145
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/stripLow.js#stripLow@10",
+              "p-limit-7.3.0/index.js#limitFunction@117",
+              "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+              "semver-7.8.0/ranges/valid.js#validRange@4",
+              "lodash-4.17.21/toNumber.js#toNumber@43",
+              "semver-7.8.0/ranges/to-comparators.js#toComparators@6"
+            ],
+            "dropped": [
+              "p-throttle-8.1.0/index.js#pThrottle@21",
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139"
+            ],
+            "tokens": 568,
+            "byPackage": {
+              "validator-13.15.35": 288,
+              "p-limit-7.3.0": 38,
+              "semver-7.8.0": 97,
+              "lodash-4.17.21": 145
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "days-between",
+          "differs": true,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "date-fns-4.1.0/parseISO.cjs#parseYear@141",
+              "date-fns-4.1.0/parseISO.cjs#splitDateString@103",
+              "date-fns-4.1.0/addDays.cjs#addDays@32"
+            ],
+            "dropped": [
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271",
+              "zod-3.25.76/src/v4/mini/iso.ts#datetime@15",
+              "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+              "date-fns-4.1.0/parseISO.cjs#parseTime@201"
+            ],
+            "tokens": 570,
+            "byPackage": {
+              "date-fns-4.1.0": 570
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "date-fns-4.1.0/parseISO.cjs#parseYear@141",
+              "date-fns-4.1.0/parseISO.cjs#splitDateString@103",
+              "zod-3.25.76/src/v4/mini/iso.ts#datetime@15",
+              "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271"
+            ],
+            "dropped": [
+              "date-fns-4.1.0/addDays.cjs#addDays@32",
+              "date-fns-4.1.0/parseISO.cjs#parseTime@201"
+            ],
+            "tokens": 589,
+            "byPackage": {
+              "date-fns-4.1.0": 515,
+              "zod-3.25.76": 74
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "group-by",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "zod-3.25.76/src/v4/core/api.ts#_readonly@1395",
+              "zod-3.25.76/v4/mini/schemas.cjs#record@556",
+              "zod-3.25.76/v4/mini/schemas.js#record@446",
+              "zod-3.25.76/src/v4/mini/schemas.ts#readonly@1408",
+              "zod-3.25.76/src/v4/classic/schemas.ts#record@1345",
+              "zod-3.25.76/src/v4/mini/schemas.ts#record@1010"
+            ],
+            "dropped": [],
+            "tokens": 477,
+            "byPackage": {
+              "zod-3.25.76": 477
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "zod-3.25.76/src/v4/core/api.ts#_readonly@1395",
+              "zod-3.25.76/v4/mini/schemas.cjs#record@556",
+              "zod-3.25.76/v4/mini/schemas.js#record@446",
+              "zod-3.25.76/src/v4/mini/schemas.ts#readonly@1408",
+              "zod-3.25.76/src/v4/classic/schemas.ts#record@1345",
+              "zod-3.25.76/src/v4/mini/schemas.ts#record@1010"
+            ],
+            "dropped": [],
+            "tokens": 477,
+            "byPackage": {
+              "zod-3.25.76": 477
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "memoize-lru",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/v4/core/api.cjs#_maxSize@617",
+              "zod-3.25.76/v4/core/api.js#_maxSize@484",
+              "zod-3.25.76/src/v4/core/api.ts#_maxSize@872",
+              "zod-3.25.76/v4/core/api.js#_maxLength@505",
+              "zod-3.25.76/src/v4/core/api.ts#_size@896",
+              "lodash-4.17.21/_MapCache.js#MapCache@14",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1",
+              "zod-3.25.76/src/v4/core/regexes.ts#uuid@22"
+            ],
+            "dropped": [],
+            "tokens": 433,
+            "byPackage": {
+              "zod-3.25.76": 378,
+              "lodash-4.17.21": 55
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/v4/core/api.cjs#_maxSize@617",
+              "zod-3.25.76/v4/core/api.js#_maxSize@484",
+              "zod-3.25.76/src/v4/core/api.ts#_maxSize@872",
+              "zod-3.25.76/v4/core/api.js#_maxLength@505",
+              "zod-3.25.76/src/v4/core/api.ts#_size@896",
+              "lodash-4.17.21/_MapCache.js#MapCache@14",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1",
+              "zod-3.25.76/src/v4/core/regexes.ts#uuid@22"
+            ],
+            "dropped": [],
+            "tokens": 433,
+            "byPackage": {
+              "zod-3.25.76": 378,
+              "lodash-4.17.21": 55
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "parse-int-strict",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/isDecimal.js#decimalRegExp@12",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "zod-3.25.76/src/v3/types.ts#makeReturnsIssue@3845",
+              "zod-3.25.76/src/v4/classic/schemas.ts#int@788",
+              "zod-3.25.76/v3/types.js#makeReturnsIssue@2894"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v3/types.ts#ZodNumber@1367",
+              "zod-3.25.76/src/v3/types.ts#ZodBigInt@1633",
+              "zod-3.25.76/src/v3/types.ts#ZodEnum@4077"
+            ],
+            "tokens": 349,
+            "byPackage": {
+              "validator-13.15.35": 101,
+              "zod-3.25.76": 248
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/isDecimal.js#decimalRegExp@12",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "zod-3.25.76/src/v3/types.ts#makeReturnsIssue@3845",
+              "zod-3.25.76/src/v4/classic/schemas.ts#int@788",
+              "zod-3.25.76/v3/types.js#makeReturnsIssue@2894"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v3/types.ts#ZodNumber@1367",
+              "zod-3.25.76/src/v3/types.ts#ZodBigInt@1633",
+              "zod-3.25.76/src/v3/types.ts#ZodEnum@4077"
+            ],
+            "tokens": 349,
+            "byPackage": {
+              "validator-13.15.35": 101,
+              "zod-3.25.76": 248
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "pointer-get",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "jsonpointer-5.0.1/jsonpointer.js#get@66",
+              "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+              "jsonpointer-5.0.1/jsonpointer.js#compilePointer@49",
+              "zod-3.25.76/v4/core/api.cjs#_undefined@510",
+              "jsonwebtoken-9.0.2/lib/JsonWebTokenError.js#JsonWebTokenError@1",
+              "date-fns-4.1.0/_lib/addLeadingZeros.cjs#addLeadingZeros@3",
+              "lodash-4.17.21/_isIndex.js#isIndex@15",
+              "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@829"
+            ],
+            "dropped": [],
+            "tokens": 540,
+            "byPackage": {
+              "jsonpointer-5.0.1": 277,
+              "zod-3.25.76": 80,
+              "jsonwebtoken-9.0.2": 67,
+              "date-fns-4.1.0": 47,
+              "lodash-4.17.21": 69
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "jsonpointer-5.0.1/jsonpointer.js#get@66",
+              "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+              "jsonpointer-5.0.1/jsonpointer.js#compilePointer@49",
+              "zod-3.25.76/v4/core/api.cjs#_undefined@510",
+              "jsonwebtoken-9.0.2/lib/JsonWebTokenError.js#JsonWebTokenError@1",
+              "date-fns-4.1.0/_lib/addLeadingZeros.cjs#addLeadingZeros@3",
+              "lodash-4.17.21/_isIndex.js#isIndex@15",
+              "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@829"
+            ],
+            "dropped": [],
+            "tokens": 540,
+            "byPackage": {
+              "jsonpointer-5.0.1": 277,
+              "zod-3.25.76": 80,
+              "jsonwebtoken-9.0.2": 67,
+              "date-fns-4.1.0": 47,
+              "lodash-4.17.21": 69
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "range",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "semver-7.8.0/ranges/valid.js#validRange@4",
+              "bcryptjs-2.4.3/src/bcrypt/prng/accum.js#step@20",
+              "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+              "zod-3.25.76/v4/core/util.cjs#aborted@462",
+              "zod-3.25.76/v4/core/util.js#aborted@417"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v3/types.ts#floatSafeRemainder@1352",
+              "zod-3.25.76/src/v4/core/util.ts#floatSafeRemainder@242",
+              "semver-7.8.0/ranges/min-version.js#minVersion@7"
+            ],
+            "tokens": 537,
+            "byPackage": {
+              "semver-7.8.0": 61,
+              "bcryptjs-2.4.3": 145,
+              "validator-13.15.35": 234,
+              "zod-3.25.76": 97
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "semver-7.8.0/ranges/valid.js#validRange@4",
+              "bcryptjs-2.4.3/src/bcrypt/prng/accum.js#step@20",
+              "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+              "zod-3.25.76/v4/core/util.cjs#aborted@462",
+              "zod-3.25.76/v4/core/util.js#aborted@417"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v3/types.ts#floatSafeRemainder@1352",
+              "zod-3.25.76/src/v4/core/util.ts#floatSafeRemainder@242",
+              "semver-7.8.0/ranges/min-version.js#minVersion@7"
+            ],
+            "tokens": 537,
+            "byPackage": {
+              "semver-7.8.0": 61,
+              "bcryptjs-2.4.3": 145,
+              "validator-13.15.35": 234,
+              "zod-3.25.76": 97
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "safe-filename",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "validator-13.15.35/lib/whitelist.js#whitelist@9",
+              "validator-13.15.35/lib/blacklist.js#blacklist@9",
+              "validator-13.15.35/lib/isWhitelisted.js#isWhitelisted@9",
+              "validator-13.15.35/lib/isAscii.js#isAscii@13",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "lodash-4.17.21/eq.js#eq@33",
+              "zod-3.25.76/src/v4/core/errors.ts#toDotPath@392"
+            ],
+            "dropped": [],
+            "tokens": 347,
+            "byPackage": {
+              "validator-13.15.35": 210,
+              "lodash-4.17.21": 24,
+              "zod-3.25.76": 113
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "validator-13.15.35/lib/whitelist.js#whitelist@9",
+              "validator-13.15.35/lib/blacklist.js#blacklist@9",
+              "validator-13.15.35/lib/isWhitelisted.js#isWhitelisted@9",
+              "validator-13.15.35/lib/isAscii.js#isAscii@13",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "lodash-4.17.21/eq.js#eq@33",
+              "zod-3.25.76/src/v4/core/errors.ts#toDotPath@392"
+            ],
+            "dropped": [],
+            "tokens": 347,
+            "byPackage": {
+              "validator-13.15.35": 210,
+              "lodash-4.17.21": 24,
+              "zod-3.25.76": 113
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "shallow-equal",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/src/v4/core/util.ts#isPlainObject@339",
+              "validator-13.15.35/lib/equals.js#equals@9",
+              "zod-3.25.76/v4/core/util.cjs#assertEqual@46",
+              "zod-3.25.76/v4/core/util.js#assertEqual@2",
+              "zod-3.25.76/src/v4/core/util.ts#assertEqual@186",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190",
+              "zod-3.25.76/src/v3/helpers/util.ts#assertEqual@5"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139"
+            ],
+            "tokens": 238,
+            "byPackage": {
+              "zod-3.25.76": 213,
+              "validator-13.15.35": 25
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/src/v4/core/util.ts#isPlainObject@339",
+              "validator-13.15.35/lib/equals.js#equals@9",
+              "zod-3.25.76/v4/core/util.cjs#assertEqual@46",
+              "zod-3.25.76/v4/core/util.js#assertEqual@2",
+              "zod-3.25.76/src/v4/core/util.ts#assertEqual@186",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190",
+              "zod-3.25.76/src/v3/helpers/util.ts#assertEqual@5"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139"
+            ],
+            "tokens": 238,
+            "byPackage": {
+              "zod-3.25.76": 213,
+              "validator-13.15.35": 25
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "slugify",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "validator-13.15.35/lib/stripLow.js#stripLow@10",
+              "validator-13.15.35/lib/toInt.js#toInt@9",
+              "validator-13.15.35/lib/whitelist.js#whitelist@9",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "zod-3.25.76/src/v4/core/api.ts#_startsWith@983",
+              "zod-3.25.76/src/v4/core/api.ts#_endsWith@994",
+              "lodash-4.17.21/eq.js#eq@33"
+            ],
+            "dropped": [],
+            "tokens": 340,
+            "byPackage": {
+              "validator-13.15.35": 182,
+              "zod-3.25.76": 134,
+              "lodash-4.17.21": 24
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "validator-13.15.35/lib/stripLow.js#stripLow@10",
+              "validator-13.15.35/lib/toInt.js#toInt@9",
+              "validator-13.15.35/lib/whitelist.js#whitelist@9",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "zod-3.25.76/src/v4/core/api.ts#_startsWith@983",
+              "zod-3.25.76/src/v4/core/api.ts#_endsWith@994",
+              "lodash-4.17.21/eq.js#eq@33"
+            ],
+            "dropped": [],
+            "tokens": 340,
+            "byPackage": {
+              "validator-13.15.35": 182,
+              "zod-3.25.76": 134,
+              "lodash-4.17.21": 24
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "sort-versions",
+          "differs": true,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "semver-7.8.0/ranges/min-version.js#minVersion@7",
+              "zod-3.25.76/src/v4/locales/be.ts#getSizing@69",
+              "semver-7.8.0/functions/sort.js#sort@4",
+              "semver-7.8.0/functions/inc.js#inc@5",
+              "semver-7.8.0/functions/parse.js#parse@4"
+            ],
+            "dropped": [
+              "semver-7.8.0/ranges/ltr.js#ltr@5",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "tokens": 583,
+            "byPackage": {
+              "zod-3.25.76": 65,
+              "semver-7.8.0": 518
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "zod-3.25.76/src/v4/locales/be.ts#getSizing@69",
+              "semver-7.8.0/functions/sort.js#sort@4",
+              "semver-7.8.0/functions/inc.js#inc@5",
+              "semver-7.8.0/functions/parse.js#parse@4",
+              "semver-7.8.0/ranges/ltr.js#ltr@5",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [
+              "semver-7.8.0/ranges/min-version.js#minVersion@7"
+            ],
+            "tokens": 292,
+            "byPackage": {
+              "zod-3.25.76": 91,
+              "semver-7.8.0": 201
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "suggest-words",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/v4/core/api.js#_maxLength@505",
+              "zod-3.25.76/v4/core/api.cjs#_maxLength@638",
+              "zod-3.25.76/src/v4/core/api.ts#_maxLength@908",
+              "zod-3.25.76/src/v4/core/api.ts#_maxSize@872",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1",
+              "validator-13.15.35/lib/isDivisibleBy.js#isDivisibleBy@10",
+              "zod-3.25.76/src/v4/core/api.ts#_negative@845",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 348,
+            "byPackage": {
+              "zod-3.25.76": 314,
+              "validator-13.15.35": 34
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/v4/core/api.js#_maxLength@505",
+              "zod-3.25.76/v4/core/api.cjs#_maxLength@638",
+              "zod-3.25.76/src/v4/core/api.ts#_maxLength@908",
+              "zod-3.25.76/src/v4/core/api.ts#_maxSize@872",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1",
+              "validator-13.15.35/lib/isDivisibleBy.js#isDivisibleBy@10",
+              "zod-3.25.76/src/v4/core/api.ts#_negative@845",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 348,
+            "byPackage": {
+              "zod-3.25.76": 314,
+              "validator-13.15.35": 34
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "title-case",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "zod-3.25.76/v4/core/api.cjs#_uppercase@675",
+              "validator-13.15.35/lib/isUppercase.js#isUppercase@9",
+              "zod-3.25.76/v4/core/api.cjs#_lowercase@668",
+              "zod-3.25.76/v4/core/api.cjs#_toUpperCase@740",
+              "validator-13.15.35/lib/isTaxID.js#itItNameCheck@682",
+              "zod-3.25.76/src/v3/helpers/util.ts#mergeShapes@113"
+            ],
+            "dropped": [
+              "validator-13.15.35/lib/isTaxID.js#itItCheck@718"
+            ],
+            "tokens": 370,
+            "byPackage": {
+              "validator-13.15.35": 219,
+              "zod-3.25.76": 151
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "zod-3.25.76/v4/core/api.cjs#_uppercase@675",
+              "validator-13.15.35/lib/isUppercase.js#isUppercase@9",
+              "zod-3.25.76/v4/core/api.cjs#_lowercase@668",
+              "zod-3.25.76/v4/core/api.cjs#_toUpperCase@740",
+              "validator-13.15.35/lib/isTaxID.js#itItNameCheck@682",
+              "zod-3.25.76/src/v3/helpers/util.ts#mergeShapes@113"
+            ],
+            "dropped": [
+              "validator-13.15.35/lib/isTaxID.js#itItCheck@718"
+            ],
+            "tokens": 370,
+            "byPackage": {
+              "validator-13.15.35": 219,
+              "zod-3.25.76": 151
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "unique",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/v4/core/api.cjs#_readonly@914",
+              "zod-3.25.76/src/v4/core/api.ts#_readonly@1395",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "toposort-2.0.2/index.js#uniqueNodes@93",
+              "zod-3.25.76/src/v4/mini/schemas.ts#readonly@1408",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1302",
+              "zod-3.25.76/src/v4/mini/schemas.ts#tuple@969",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1306"
+            ],
+            "dropped": [],
+            "tokens": 360,
+            "byPackage": {
+              "zod-3.25.76": 311,
+              "toposort-2.0.2": 49
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/v4/core/api.cjs#_readonly@914",
+              "zod-3.25.76/src/v4/core/api.ts#_readonly@1395",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "toposort-2.0.2/index.js#uniqueNodes@93",
+              "zod-3.25.76/src/v4/mini/schemas.ts#readonly@1408",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1302",
+              "zod-3.25.76/src/v4/mini/schemas.ts#tuple@969",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1306"
+            ],
+            "dropped": [],
+            "tokens": 360,
+            "byPackage": {
+              "zod-3.25.76": 311,
+              "toposort-2.0.2": 49
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "uuid-normalize",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "uuid-11.1.1/dist/esm/parse.js#parse@2",
+              "uuid-11.1.1/dist/esm/validate.js#validate@2",
+              "zod-3.25.76/src/v4/core/api.ts#_normalize@1033",
+              "uuid-11.1.1/dist/cjs/version.js#version@4",
+              "uuid-11.1.1/dist/esm/version.js#version@2",
+              "zod-3.25.76/src/v4/core/api.ts#_startsWith@983"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139",
+              "zod-3.25.76/src/v3/types.ts#mergeValues@3239"
+            ],
+            "tokens": 349,
+            "byPackage": {
+              "uuid-11.1.1": 237,
+              "zod-3.25.76": 112
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "uuid-11.1.1/dist/esm/parse.js#parse@2",
+              "uuid-11.1.1/dist/esm/validate.js#validate@2",
+              "zod-3.25.76/src/v4/core/api.ts#_normalize@1033",
+              "uuid-11.1.1/dist/cjs/version.js#version@4",
+              "uuid-11.1.1/dist/esm/version.js#version@2",
+              "zod-3.25.76/src/v4/core/api.ts#_startsWith@983"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139",
+              "zod-3.25.76/src/v3/types.ts#mergeValues@3239"
+            ],
+            "tokens": 349,
+            "byPackage": {
+              "uuid-11.1.1": 237,
+              "zod-3.25.76": 112
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "uuid-version",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "uuid-11.1.1/dist/esm/version.js#version@2",
+              "validator-13.15.35/lib/isUUID.js#isUUID@24",
+              "uuid-11.1.1/dist/cjs/version.js#version@4",
+              "zod-3.25.76/src/v3/types.ts#isValidIP@687",
+              "zod-3.25.76/v4/core/regexes.js#uuid@16",
+              "zod-3.25.76/src/v4/core/regexes.ts#uuid@22",
+              "zod-3.25.76/v4/core/regexes.cjs#uuid@22",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1"
+            ],
+            "dropped": [],
+            "tokens": 463,
+            "byPackage": {
+              "uuid-11.1.1": 78,
+              "validator-13.15.35": 51,
+              "zod-3.25.76": 334
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "uuid-11.1.1/dist/esm/version.js#version@2",
+              "validator-13.15.35/lib/isUUID.js#isUUID@24",
+              "uuid-11.1.1/dist/cjs/version.js#version@4",
+              "zod-3.25.76/src/v3/types.ts#isValidIP@687",
+              "zod-3.25.76/v4/core/regexes.js#uuid@16",
+              "zod-3.25.76/src/v4/core/regexes.ts#uuid@22",
+              "zod-3.25.76/v4/core/regexes.cjs#uuid@22",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1"
+            ],
+            "dropped": [],
+            "tokens": 463,
+            "byPackage": {
+              "uuid-11.1.1": 78,
+              "validator-13.15.35": 51,
+              "zod-3.25.76": 334
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        }
+      ]
+    },
+    "1200": {
+      "tasksWhereFillDiffers": [],
+      "tasks": [
+        {
+          "task": "add-days-iso",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "date-fns-4.1.0/addDays.cjs#addDays@32",
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "date-fns-4.1.0/parseISO.cjs#parseYear@141",
+              "date-fns-4.1.0/parseISO.cjs#parseDate@164",
+              "zod-3.25.76/src/v4/mini/iso.ts#datetime@15",
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271",
+              "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+              "zod-3.25.76/src/v4/classic/iso.ts#date@43"
+            ],
+            "dropped": [],
+            "tokens": 699,
+            "byPackage": {
+              "date-fns-4.1.0": 594,
+              "zod-3.25.76": 105
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "date-fns-4.1.0/addDays.cjs#addDays@32",
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "date-fns-4.1.0/parseISO.cjs#parseYear@141",
+              "date-fns-4.1.0/parseISO.cjs#parseDate@164",
+              "zod-3.25.76/src/v4/mini/iso.ts#datetime@15",
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271",
+              "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+              "zod-3.25.76/src/v4/classic/iso.ts#date@43"
+            ],
+            "dropped": [],
+            "tokens": 699,
+            "byPackage": {
+              "date-fns-4.1.0": 594,
+              "zod-3.25.76": 105
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "add-durations",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/src/v4/mini/iso.ts#duration@60",
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "zod-3.25.76/src/v4/classic/iso.ts#duration@88",
+              "zod-3.25.76/v4/mini/iso.js#duration@28",
+              "lodash-4.17.21/debounce.js#trailingEdge@138",
+              "date-fns-4.1.0/parseISO.cjs#validateWeekDate@275",
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 330,
+            "byPackage": {
+              "zod-3.25.76": 124,
+              "date-fns-4.1.0": 134,
+              "lodash-4.17.21": 72
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/src/v4/mini/iso.ts#duration@60",
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "zod-3.25.76/src/v4/classic/iso.ts#duration@88",
+              "zod-3.25.76/v4/mini/iso.js#duration@28",
+              "lodash-4.17.21/debounce.js#trailingEdge@138",
+              "date-fns-4.1.0/parseISO.cjs#validateWeekDate@275",
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 330,
+            "byPackage": {
+              "zod-3.25.76": 124,
+              "date-fns-4.1.0": 134,
+              "lodash-4.17.21": 72
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "base64url-from-string",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_encode@38",
+              "zod-3.25.76/src/v4/classic/schemas.ts#base64url@647",
+              "zod-3.25.76/src/v4/mini/schemas.ts#base64url@384",
+              "zod-3.25.76/src/v4/core/schemas.ts#isValidBase64URL@843",
+              "zod-3.25.76/v4/core/schemas.js#isValidBase64URL@348",
+              "validator-13.15.35/lib/isSurrogatePair.js#isSurrogatePair@10",
+              "nanoid-3.3.12/index.js#random@17",
+              "zod-3.25.76/v4/core/schemas.cjs#isValidBase64URL@379"
+            ],
+            "dropped": [],
+            "tokens": 537,
+            "byPackage": {
+              "bcryptjs-2.4.3": 201,
+              "zod-3.25.76": 283,
+              "validator-13.15.35": 26,
+              "nanoid-3.3.12": 27
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_encode@38",
+              "zod-3.25.76/src/v4/classic/schemas.ts#base64url@647",
+              "zod-3.25.76/src/v4/mini/schemas.ts#base64url@384",
+              "zod-3.25.76/src/v4/core/schemas.ts#isValidBase64URL@843",
+              "zod-3.25.76/v4/core/schemas.js#isValidBase64URL@348",
+              "validator-13.15.35/lib/isSurrogatePair.js#isSurrogatePair@10",
+              "nanoid-3.3.12/index.js#random@17",
+              "zod-3.25.76/v4/core/schemas.cjs#isValidBase64URL@379"
+            ],
+            "dropped": [],
+            "tokens": 537,
+            "byPackage": {
+              "bcryptjs-2.4.3": 201,
+              "zod-3.25.76": 283,
+              "validator-13.15.35": 26,
+              "nanoid-3.3.12": 27
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "build-order",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "bcryptjs-2.4.3/externs/minimal-env.js#require@10",
+              "lodash-4.17.21/_createBaseFor.js#createBaseFor@8",
+              "zod-3.25.76/src/v4/core/util.ts#aborted@686",
+              "zod-3.25.76/src/v3/helpers/util.ts#arrayToEnum@16",
+              "zod-3.25.76/src/v3/helpers/errorUtil.ts#toString@6",
+              "zod-3.25.76/src/v3/helpers/errorUtil.ts#errToObj@3",
+              "zod-3.25.76/src/v4/core/util.ts#unwrapMessage@701"
+            ],
+            "dropped": [],
+            "tokens": 368,
+            "byPackage": {
+              "zod-3.25.76": 260,
+              "bcryptjs-2.4.3": 8,
+              "lodash-4.17.21": 100
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "bcryptjs-2.4.3/externs/minimal-env.js#require@10",
+              "lodash-4.17.21/_createBaseFor.js#createBaseFor@8",
+              "zod-3.25.76/src/v4/core/util.ts#aborted@686",
+              "zod-3.25.76/src/v3/helpers/util.ts#arrayToEnum@16",
+              "zod-3.25.76/src/v3/helpers/errorUtil.ts#toString@6",
+              "zod-3.25.76/src/v3/helpers/errorUtil.ts#errToObj@3",
+              "zod-3.25.76/src/v4/core/util.ts#unwrapMessage@701"
+            ],
+            "dropped": [],
+            "tokens": 368,
+            "byPackage": {
+              "zod-3.25.76": 260,
+              "bcryptjs-2.4.3": 8,
+              "lodash-4.17.21": 100
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "chunk",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/isDate.js#_slicedToArray@9",
+              "zod-3.25.76/v4/core/api.js#_maxSize@484",
+              "zod-3.25.76/v4/core/api.cjs#_maxSize@617",
+              "semver-7.8.0/ranges/valid.js#validRange@4",
+              "zod-3.25.76/src/v4/core/api.ts#_size@896",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1302",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 365,
+            "byPackage": {
+              "validator-13.15.35": 38,
+              "zod-3.25.76": 266,
+              "semver-7.8.0": 61
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/isDate.js#_slicedToArray@9",
+              "zod-3.25.76/v4/core/api.js#_maxSize@484",
+              "zod-3.25.76/v4/core/api.cjs#_maxSize@617",
+              "semver-7.8.0/ranges/valid.js#validRange@4",
+              "zod-3.25.76/src/v4/core/api.ts#_size@896",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1302",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 365,
+            "byPackage": {
+              "validator-13.15.35": 38,
+              "zod-3.25.76": 266,
+              "semver-7.8.0": 61
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "clamp",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/stripLow.js#stripLow@10",
+              "p-limit-7.3.0/index.js#limitFunction@117",
+              "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+              "semver-7.8.0/ranges/valid.js#validRange@4",
+              "lodash-4.17.21/toNumber.js#toNumber@43",
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139",
+              "semver-7.8.0/ranges/to-comparators.js#toComparators@6"
+            ],
+            "dropped": [
+              "p-throttle-8.1.0/index.js#pThrottle@21"
+            ],
+            "tokens": 955,
+            "byPackage": {
+              "validator-13.15.35": 288,
+              "p-limit-7.3.0": 38,
+              "semver-7.8.0": 97,
+              "lodash-4.17.21": 145,
+              "zod-3.25.76": 387
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/stripLow.js#stripLow@10",
+              "p-limit-7.3.0/index.js#limitFunction@117",
+              "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+              "semver-7.8.0/ranges/valid.js#validRange@4",
+              "lodash-4.17.21/toNumber.js#toNumber@43",
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139",
+              "semver-7.8.0/ranges/to-comparators.js#toComparators@6"
+            ],
+            "dropped": [
+              "p-throttle-8.1.0/index.js#pThrottle@21"
+            ],
+            "tokens": 955,
+            "byPackage": {
+              "validator-13.15.35": 288,
+              "p-limit-7.3.0": 38,
+              "semver-7.8.0": 97,
+              "lodash-4.17.21": 145,
+              "zod-3.25.76": 387
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "days-between",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "date-fns-4.1.0/parseISO.cjs#parseYear@141",
+              "date-fns-4.1.0/parseISO.cjs#splitDateString@103",
+              "date-fns-4.1.0/addDays.cjs#addDays@32",
+              "zod-3.25.76/src/v4/mini/iso.ts#datetime@15",
+              "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+              "date-fns-4.1.0/parseISO.cjs#parseTime@201",
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271"
+            ],
+            "dropped": [],
+            "tokens": 793,
+            "byPackage": {
+              "date-fns-4.1.0": 719,
+              "zod-3.25.76": 74
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+              "date-fns-4.1.0/parseISO.cjs#parseYear@141",
+              "date-fns-4.1.0/parseISO.cjs#splitDateString@103",
+              "date-fns-4.1.0/addDays.cjs#addDays@32",
+              "zod-3.25.76/src/v4/mini/iso.ts#datetime@15",
+              "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+              "date-fns-4.1.0/parseISO.cjs#parseTime@201",
+              "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271"
+            ],
+            "dropped": [],
+            "tokens": 793,
+            "byPackage": {
+              "date-fns-4.1.0": 719,
+              "zod-3.25.76": 74
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "group-by",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "zod-3.25.76/src/v4/core/api.ts#_readonly@1395",
+              "zod-3.25.76/v4/mini/schemas.cjs#record@556",
+              "zod-3.25.76/v4/mini/schemas.js#record@446",
+              "zod-3.25.76/src/v4/mini/schemas.ts#readonly@1408",
+              "zod-3.25.76/src/v4/classic/schemas.ts#record@1345",
+              "zod-3.25.76/src/v4/mini/schemas.ts#record@1010"
+            ],
+            "dropped": [],
+            "tokens": 477,
+            "byPackage": {
+              "zod-3.25.76": 477
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "zod-3.25.76/src/v4/core/api.ts#_readonly@1395",
+              "zod-3.25.76/v4/mini/schemas.cjs#record@556",
+              "zod-3.25.76/v4/mini/schemas.js#record@446",
+              "zod-3.25.76/src/v4/mini/schemas.ts#readonly@1408",
+              "zod-3.25.76/src/v4/classic/schemas.ts#record@1345",
+              "zod-3.25.76/src/v4/mini/schemas.ts#record@1010"
+            ],
+            "dropped": [],
+            "tokens": 477,
+            "byPackage": {
+              "zod-3.25.76": 477
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "memoize-lru",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/v4/core/api.cjs#_maxSize@617",
+              "zod-3.25.76/v4/core/api.js#_maxSize@484",
+              "zod-3.25.76/src/v4/core/api.ts#_maxSize@872",
+              "zod-3.25.76/v4/core/api.js#_maxLength@505",
+              "zod-3.25.76/src/v4/core/api.ts#_size@896",
+              "lodash-4.17.21/_MapCache.js#MapCache@14",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1",
+              "zod-3.25.76/src/v4/core/regexes.ts#uuid@22"
+            ],
+            "dropped": [],
+            "tokens": 433,
+            "byPackage": {
+              "zod-3.25.76": 378,
+              "lodash-4.17.21": 55
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/v4/core/api.cjs#_maxSize@617",
+              "zod-3.25.76/v4/core/api.js#_maxSize@484",
+              "zod-3.25.76/src/v4/core/api.ts#_maxSize@872",
+              "zod-3.25.76/v4/core/api.js#_maxLength@505",
+              "zod-3.25.76/src/v4/core/api.ts#_size@896",
+              "lodash-4.17.21/_MapCache.js#MapCache@14",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1",
+              "zod-3.25.76/src/v4/core/regexes.ts#uuid@22"
+            ],
+            "dropped": [],
+            "tokens": 433,
+            "byPackage": {
+              "zod-3.25.76": 378,
+              "lodash-4.17.21": 55
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "parse-int-strict",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/isDecimal.js#decimalRegExp@12",
+              "zod-3.25.76/src/v3/types.ts#ZodEnum@4077",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "zod-3.25.76/src/v3/types.ts#makeReturnsIssue@3845",
+              "zod-3.25.76/src/v4/classic/schemas.ts#int@788",
+              "zod-3.25.76/v3/types.js#makeReturnsIssue@2894"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v3/types.ts#ZodNumber@1367",
+              "zod-3.25.76/src/v3/types.ts#ZodBigInt@1633"
+            ],
+            "tokens": 902,
+            "byPackage": {
+              "validator-13.15.35": 101,
+              "zod-3.25.76": 801
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/isDecimal.js#decimalRegExp@12",
+              "zod-3.25.76/src/v3/types.ts#ZodEnum@4077",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "zod-3.25.76/src/v3/types.ts#makeReturnsIssue@3845",
+              "zod-3.25.76/src/v4/classic/schemas.ts#int@788",
+              "zod-3.25.76/v3/types.js#makeReturnsIssue@2894"
+            ],
+            "dropped": [
+              "zod-3.25.76/src/v3/types.ts#ZodNumber@1367",
+              "zod-3.25.76/src/v3/types.ts#ZodBigInt@1633"
+            ],
+            "tokens": 902,
+            "byPackage": {
+              "validator-13.15.35": 101,
+              "zod-3.25.76": 801
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "pointer-get",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "jsonpointer-5.0.1/jsonpointer.js#get@66",
+              "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+              "jsonpointer-5.0.1/jsonpointer.js#compilePointer@49",
+              "zod-3.25.76/v4/core/api.cjs#_undefined@510",
+              "jsonwebtoken-9.0.2/lib/JsonWebTokenError.js#JsonWebTokenError@1",
+              "date-fns-4.1.0/_lib/addLeadingZeros.cjs#addLeadingZeros@3",
+              "lodash-4.17.21/_isIndex.js#isIndex@15",
+              "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@829"
+            ],
+            "dropped": [],
+            "tokens": 540,
+            "byPackage": {
+              "jsonpointer-5.0.1": 277,
+              "zod-3.25.76": 80,
+              "jsonwebtoken-9.0.2": 67,
+              "date-fns-4.1.0": 47,
+              "lodash-4.17.21": 69
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "jsonpointer-5.0.1/jsonpointer.js#get@66",
+              "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+              "jsonpointer-5.0.1/jsonpointer.js#compilePointer@49",
+              "zod-3.25.76/v4/core/api.cjs#_undefined@510",
+              "jsonwebtoken-9.0.2/lib/JsonWebTokenError.js#JsonWebTokenError@1",
+              "date-fns-4.1.0/_lib/addLeadingZeros.cjs#addLeadingZeros@3",
+              "lodash-4.17.21/_isIndex.js#isIndex@15",
+              "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@829"
+            ],
+            "dropped": [],
+            "tokens": 540,
+            "byPackage": {
+              "jsonpointer-5.0.1": 277,
+              "zod-3.25.76": 80,
+              "jsonwebtoken-9.0.2": 67,
+              "date-fns-4.1.0": 47,
+              "lodash-4.17.21": 69
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "range",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "semver-7.8.0/ranges/valid.js#validRange@4",
+              "bcryptjs-2.4.3/src/bcrypt/prng/accum.js#step@20",
+              "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+              "zod-3.25.76/v4/core/util.cjs#aborted@462",
+              "zod-3.25.76/v4/core/util.js#aborted@417",
+              "semver-7.8.0/ranges/min-version.js#minVersion@7",
+              "zod-3.25.76/src/v3/types.ts#floatSafeRemainder@1352",
+              "zod-3.25.76/src/v4/core/util.ts#floatSafeRemainder@242"
+            ],
+            "dropped": [],
+            "tokens": 1112,
+            "byPackage": {
+              "semver-7.8.0": 398,
+              "bcryptjs-2.4.3": 145,
+              "validator-13.15.35": 234,
+              "zod-3.25.76": 335
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "semver-7.8.0/ranges/valid.js#validRange@4",
+              "bcryptjs-2.4.3/src/bcrypt/prng/accum.js#step@20",
+              "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+              "zod-3.25.76/v4/core/util.cjs#aborted@462",
+              "zod-3.25.76/v4/core/util.js#aborted@417",
+              "semver-7.8.0/ranges/min-version.js#minVersion@7",
+              "zod-3.25.76/src/v3/types.ts#floatSafeRemainder@1352",
+              "zod-3.25.76/src/v4/core/util.ts#floatSafeRemainder@242"
+            ],
+            "dropped": [],
+            "tokens": 1112,
+            "byPackage": {
+              "semver-7.8.0": 398,
+              "bcryptjs-2.4.3": 145,
+              "validator-13.15.35": 234,
+              "zod-3.25.76": 335
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "safe-filename",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "validator-13.15.35/lib/whitelist.js#whitelist@9",
+              "validator-13.15.35/lib/blacklist.js#blacklist@9",
+              "validator-13.15.35/lib/isWhitelisted.js#isWhitelisted@9",
+              "validator-13.15.35/lib/isAscii.js#isAscii@13",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "lodash-4.17.21/eq.js#eq@33",
+              "zod-3.25.76/src/v4/core/errors.ts#toDotPath@392"
+            ],
+            "dropped": [],
+            "tokens": 347,
+            "byPackage": {
+              "validator-13.15.35": 210,
+              "lodash-4.17.21": 24,
+              "zod-3.25.76": 113
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "validator-13.15.35/lib/whitelist.js#whitelist@9",
+              "validator-13.15.35/lib/blacklist.js#blacklist@9",
+              "validator-13.15.35/lib/isWhitelisted.js#isWhitelisted@9",
+              "validator-13.15.35/lib/isAscii.js#isAscii@13",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "lodash-4.17.21/eq.js#eq@33",
+              "zod-3.25.76/src/v4/core/errors.ts#toDotPath@392"
+            ],
+            "dropped": [],
+            "tokens": 347,
+            "byPackage": {
+              "validator-13.15.35": 210,
+              "lodash-4.17.21": 24,
+              "zod-3.25.76": 113
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "shallow-equal",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/src/v4/core/util.ts#isPlainObject@339",
+              "validator-13.15.35/lib/equals.js#equals@9",
+              "zod-3.25.76/v4/core/util.cjs#assertEqual@46",
+              "zod-3.25.76/v4/core/util.js#assertEqual@2",
+              "zod-3.25.76/src/v4/core/util.ts#assertEqual@186",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190",
+              "zod-3.25.76/src/v3/helpers/util.ts#assertEqual@5",
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139"
+            ],
+            "dropped": [],
+            "tokens": 625,
+            "byPackage": {
+              "zod-3.25.76": 600,
+              "validator-13.15.35": 25
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/src/v4/core/util.ts#isPlainObject@339",
+              "validator-13.15.35/lib/equals.js#equals@9",
+              "zod-3.25.76/v4/core/util.cjs#assertEqual@46",
+              "zod-3.25.76/v4/core/util.js#assertEqual@2",
+              "zod-3.25.76/src/v4/core/util.ts#assertEqual@186",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190",
+              "zod-3.25.76/src/v3/helpers/util.ts#assertEqual@5",
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139"
+            ],
+            "dropped": [],
+            "tokens": 625,
+            "byPackage": {
+              "zod-3.25.76": 600,
+              "validator-13.15.35": 25
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "slugify",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "validator-13.15.35/lib/stripLow.js#stripLow@10",
+              "validator-13.15.35/lib/toInt.js#toInt@9",
+              "validator-13.15.35/lib/whitelist.js#whitelist@9",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "zod-3.25.76/src/v4/core/api.ts#_startsWith@983",
+              "zod-3.25.76/src/v4/core/api.ts#_endsWith@994",
+              "lodash-4.17.21/eq.js#eq@33"
+            ],
+            "dropped": [],
+            "tokens": 340,
+            "byPackage": {
+              "validator-13.15.35": 182,
+              "zod-3.25.76": 134,
+              "lodash-4.17.21": 24
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "validator-13.15.35/lib/stripLow.js#stripLow@10",
+              "validator-13.15.35/lib/toInt.js#toInt@9",
+              "validator-13.15.35/lib/whitelist.js#whitelist@9",
+              "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+              "zod-3.25.76/src/v4/core/api.ts#_startsWith@983",
+              "zod-3.25.76/src/v4/core/api.ts#_endsWith@994",
+              "lodash-4.17.21/eq.js#eq@33"
+            ],
+            "dropped": [],
+            "tokens": 340,
+            "byPackage": {
+              "validator-13.15.35": 182,
+              "zod-3.25.76": 134,
+              "lodash-4.17.21": 24
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "sort-versions",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "semver-7.8.0/ranges/min-version.js#minVersion@7",
+              "zod-3.25.76/src/v4/locales/be.ts#getSizing@69",
+              "semver-7.8.0/functions/sort.js#sort@4",
+              "semver-7.8.0/functions/inc.js#inc@5",
+              "semver-7.8.0/functions/parse.js#parse@4",
+              "semver-7.8.0/ranges/ltr.js#ltr@5",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 629,
+            "byPackage": {
+              "zod-3.25.76": 91,
+              "semver-7.8.0": 538
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+              "semver-7.8.0/ranges/min-version.js#minVersion@7",
+              "zod-3.25.76/src/v4/locales/be.ts#getSizing@69",
+              "semver-7.8.0/functions/sort.js#sort@4",
+              "semver-7.8.0/functions/inc.js#inc@5",
+              "semver-7.8.0/functions/parse.js#parse@4",
+              "semver-7.8.0/ranges/ltr.js#ltr@5",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 629,
+            "byPackage": {
+              "zod-3.25.76": 91,
+              "semver-7.8.0": 538
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "suggest-words",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/v4/core/api.js#_maxLength@505",
+              "zod-3.25.76/v4/core/api.cjs#_maxLength@638",
+              "zod-3.25.76/src/v4/core/api.ts#_maxLength@908",
+              "zod-3.25.76/src/v4/core/api.ts#_maxSize@872",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1",
+              "validator-13.15.35/lib/isDivisibleBy.js#isDivisibleBy@10",
+              "zod-3.25.76/src/v4/core/api.ts#_negative@845",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 348,
+            "byPackage": {
+              "zod-3.25.76": 314,
+              "validator-13.15.35": 34
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/v4/core/api.js#_maxLength@505",
+              "zod-3.25.76/v4/core/api.cjs#_maxLength@638",
+              "zod-3.25.76/src/v4/core/api.ts#_maxLength@908",
+              "zod-3.25.76/src/v4/core/api.ts#_maxSize@872",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1",
+              "validator-13.15.35/lib/isDivisibleBy.js#isDivisibleBy@10",
+              "zod-3.25.76/src/v4/core/api.ts#_negative@845",
+              "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190"
+            ],
+            "dropped": [],
+            "tokens": 348,
+            "byPackage": {
+              "zod-3.25.76": 314,
+              "validator-13.15.35": 34
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "title-case",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "zod-3.25.76/v4/core/api.cjs#_uppercase@675",
+              "validator-13.15.35/lib/isUppercase.js#isUppercase@9",
+              "zod-3.25.76/v4/core/api.cjs#_lowercase@668",
+              "zod-3.25.76/v4/core/api.cjs#_toUpperCase@740",
+              "validator-13.15.35/lib/isTaxID.js#itItNameCheck@682",
+              "validator-13.15.35/lib/isTaxID.js#itItCheck@718",
+              "zod-3.25.76/src/v3/helpers/util.ts#mergeShapes@113"
+            ],
+            "dropped": [],
+            "tokens": 1011,
+            "byPackage": {
+              "validator-13.15.35": 860,
+              "zod-3.25.76": 151
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "validator-13.15.35/lib/trim.js#trim@10",
+              "zod-3.25.76/v4/core/api.cjs#_uppercase@675",
+              "validator-13.15.35/lib/isUppercase.js#isUppercase@9",
+              "zod-3.25.76/v4/core/api.cjs#_lowercase@668",
+              "zod-3.25.76/v4/core/api.cjs#_toUpperCase@740",
+              "validator-13.15.35/lib/isTaxID.js#itItNameCheck@682",
+              "validator-13.15.35/lib/isTaxID.js#itItCheck@718",
+              "zod-3.25.76/src/v3/helpers/util.ts#mergeShapes@113"
+            ],
+            "dropped": [],
+            "tokens": 1011,
+            "byPackage": {
+              "validator-13.15.35": 860,
+              "zod-3.25.76": 151
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "unique",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "zod-3.25.76/v4/core/api.cjs#_readonly@914",
+              "zod-3.25.76/src/v4/core/api.ts#_readonly@1395",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "toposort-2.0.2/index.js#uniqueNodes@93",
+              "zod-3.25.76/src/v4/mini/schemas.ts#readonly@1408",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1302",
+              "zod-3.25.76/src/v4/mini/schemas.ts#tuple@969",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1306"
+            ],
+            "dropped": [],
+            "tokens": 360,
+            "byPackage": {
+              "zod-3.25.76": 311,
+              "toposort-2.0.2": 49
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "zod-3.25.76/v4/core/api.cjs#_readonly@914",
+              "zod-3.25.76/src/v4/core/api.ts#_readonly@1395",
+              "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+              "toposort-2.0.2/index.js#uniqueNodes@93",
+              "zod-3.25.76/src/v4/mini/schemas.ts#readonly@1408",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1302",
+              "zod-3.25.76/src/v4/mini/schemas.ts#tuple@969",
+              "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1306"
+            ],
+            "dropped": [],
+            "tokens": 360,
+            "byPackage": {
+              "zod-3.25.76": 311,
+              "toposort-2.0.2": 49
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "uuid-normalize",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "uuid-11.1.1/dist/esm/parse.js#parse@2",
+              "uuid-11.1.1/dist/esm/validate.js#validate@2",
+              "zod-3.25.76/src/v4/core/api.ts#_normalize@1033",
+              "uuid-11.1.1/dist/cjs/version.js#version@4",
+              "uuid-11.1.1/dist/esm/version.js#version@2",
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139",
+              "zod-3.25.76/src/v3/types.ts#mergeValues@3239",
+              "zod-3.25.76/src/v4/core/api.ts#_startsWith@983"
+            ],
+            "dropped": [],
+            "tokens": 1085,
+            "byPackage": {
+              "uuid-11.1.1": 237,
+              "zod-3.25.76": 848
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "uuid-11.1.1/dist/esm/parse.js#parse@2",
+              "uuid-11.1.1/dist/esm/validate.js#validate@2",
+              "zod-3.25.76/src/v4/core/api.ts#_normalize@1033",
+              "uuid-11.1.1/dist/cjs/version.js#version@4",
+              "uuid-11.1.1/dist/esm/version.js#version@2",
+              "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139",
+              "zod-3.25.76/src/v3/types.ts#mergeValues@3239",
+              "zod-3.25.76/src/v4/core/api.ts#_startsWith@983"
+            ],
+            "dropped": [],
+            "tokens": 1085,
+            "byPackage": {
+              "uuid-11.1.1": 237,
+              "zod-3.25.76": 848
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "uuid-version",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "uuid-11.1.1/dist/esm/version.js#version@2",
+              "validator-13.15.35/lib/isUUID.js#isUUID@24",
+              "uuid-11.1.1/dist/cjs/version.js#version@4",
+              "zod-3.25.76/src/v3/types.ts#isValidIP@687",
+              "zod-3.25.76/v4/core/regexes.js#uuid@16",
+              "zod-3.25.76/src/v4/core/regexes.ts#uuid@22",
+              "zod-3.25.76/v4/core/regexes.cjs#uuid@22",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1"
+            ],
+            "dropped": [],
+            "tokens": 463,
+            "byPackage": {
+              "uuid-11.1.1": 78,
+              "validator-13.15.35": 51,
+              "zod-3.25.76": 334
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "uuid-11.1.1/dist/esm/version.js#version@2",
+              "validator-13.15.35/lib/isUUID.js#isUUID@24",
+              "uuid-11.1.1/dist/cjs/version.js#version@4",
+              "zod-3.25.76/src/v3/types.ts#isValidIP@687",
+              "zod-3.25.76/v4/core/regexes.js#uuid@16",
+              "zod-3.25.76/src/v4/core/regexes.ts#uuid@22",
+              "zod-3.25.76/v4/core/regexes.cjs#uuid@22",
+              "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1"
+            ],
+            "dropped": [],
+            "tokens": 463,
+            "byPackage": {
+              "uuid-11.1.1": 78,
+              "validator-13.15.35": 51,
+              "zod-3.25.76": 334
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        }
+      ]
+    }
+  }
+}

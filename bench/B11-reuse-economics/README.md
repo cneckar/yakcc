@@ -14,6 +14,10 @@ the deck's numbers.
 | `slice` | The task spec, plus the retrieved slice in rank order within the token budget. This is the default composition context. |
 | `slice-fill` | The task spec, plus the slice under the budgeted source-spread fill (#1271). |
 | `fallback` | Gap-gated (#1263). It composes from the rank-order slice, and synthesizes only on a measured gap, with the reason logged. See "Fallback policy". |
+| `slice-oracle` (opt-in) | The task spec, plus the hand-curated fixture slice, which always holds the needed atoms. This is the ceiling with perfect retrieval. The gap between it and `slice` is what retrieval's misses cost. |
+
+The slice is real registry retrieval by default (`--slice retrieved`). See "Retrieval".
+`--slice fixture` swaps in the hand-curated slices for every arm.
 
 Both slice arms choose their candidates with `selectCompositionContext` from
 `@yakcc/shave` (`packages/shave/src/retrieval/context.ts`, DEC-RETRIEVAL-CONTEXT-001). With
@@ -43,9 +47,11 @@ live run (see Limitations).
 
 ### Fill on and off (#1271)
 
-`results/fill-selections.json` records each task's candidate set in rank order and under
-the fill, at budgets 600 and 1200 (`node harness/selections.mjs`). Every run also records
-both sets per task in `selections`.
+`results/fill-selections.json` records each task's fixture-slice candidate set in rank
+order and under the fill, at budgets 400, 600 and 1200 (`node harness/selections.mjs`).
+`results/fill-selections-retrieved.json` is the same record for the retrieved slices
+(`--slice retrieved`). Every run also records both sets per task in `selections`. The
+findings below are for the fixture slices. For retrieved slices, see "Retrieval".
 
 - At 1200 tokens the two sets agree on every task. The fill changes nothing there.
 - At 600 tokens they differ on five tasks. In each case one package held every candidate
@@ -61,6 +67,83 @@ both sets per task in `selections`.
   (`differenceInMilliseconds`) and `uuid-normalize` (`unsafeStringify`). On these tasks
   every needed atom comes from one package, so a share cap works against them. Whether
   that costs pass rate is what the `slice` and `slice-fill` arms measure.
+
+## Retrieval
+
+`harness/retrieve.mjs` builds the slices from real retrieval, offline, with no model API:
+
+1. **Pool.** Every named definition in the shave corpus fixtures: functions, classes,
+   methods, and const-bound function expressions, de-duplicated by text. Shave's three
+   synthetic test packages are left out.
+2. **Specs.** Each definition gets the spec shave persists offline: `staticExtract` →
+   `validateIntentCard` → `specFromIntent`. It is stored as a block in an in-memory
+   registry that uses the local embedding provider (`Xenova/bge-small-en-v1.5`, the same
+   one bootstrap uses). 2,360 of 2,985 definitions store. The rest are mostly class methods,
+   which are not valid source on their own; their class is in the pool and covers them.
+3. **Query.** Each task's spec is the query for `registry.findCandidatesByIntent` with
+   `lexical: true`: embedding KNN fused with BM25 (DEC-RETRIEVAL-LEXICAL-001). The top 8
+   are the slice.
+4. **Score.** Each candidate's score is the registry's `cosineDistanceToCombinedScore`. A
+   lexical-only hit has no embedding distance, and the registry reports it as 0.75.
+
+The output is `retrieval/production.json`, which is deterministic: two runs are
+byte-identical. `retrieval/with-behavior.json` is a diagnostic variant whose spec keeps
+the extracted behavior text. In production, `specFromIntent` keeps behavior only as a
+30-character name slug. A needed atom counts as retrieved when a candidate has its package
+and name, or contains its span (a class covers its methods).
+
+### Recall on the composition tasks
+
+7 of the 29 needed atoms reach the top-8 slice, and 16 reach the top 50. No task gets all of
+its atoms, and seven get none.
+
+| Task | In slice | Needed atom: rank in top 8 / rank in top 50 | Best score |
+|---|---|---|---|
+| `add-days-iso` | 2/3 | parseDate 7/7, addDays 3/3, addLeadingZeros –/37 | 0.84 |
+| `add-durations` | 0/2 | parse –/>50, fmtShort –/10 | 0.82 |
+| `base64url-from-string` | 0/3 | fromByteArray, encodeChunk, tripletToBase64 all –/>50 | 0.84 |
+| `build-order` | 0/3 | uniqueNodes, makeOutgoingEdges, toposort all –/>50 | 0.80 |
+| `days-between` | 0/3 | parseDate –/9, validateDate –/14, differenceInMilliseconds –/12 | 0.81 |
+| `memoize-lru` | 0/2 | memoize –/15, LRUCache –/>50 | 0.84 |
+| `pointer-get` | 2/3 | compilePointer 6/6, untilde –/>50, get 1/1 | 0.85 |
+| `sort-versions` | 0/3 | compareMain, comparePre –/>50, compareIdentifiers –/26 | 0.81 |
+| `suggest-words` | 0/2 | distance –/5, closest –/>50 | 0.80 |
+| `uuid-normalize` | 2/3 | validate 5/9, parse 3/7, unsafeStringify –/>50 | 0.82 |
+| `uuid-version` | 1/2 | validate –/18, version 4/4 | 0.81 |
+
+The top-8 and top-50 ranks come from separate queries. With the lexical channel on, the
+registry fuses over a KNN pool of 4k, so the two can order differently.
+
+Keeping the behavior text does not help. The `with-behavior` variant gets 5 of 29 in the
+top 8 and 17 of 29 in the top 50.
+
+### What the retrieval shows
+
+- **One package crowds out the rest.** zod is about 70% of the pool, and it takes 94 of the
+  168 slice slots.
+- **Scores are compressed.** The best score per task is 0.77 to 0.86, whether or not the
+  slice holds anything needed. Fifteen of 21 tasks have a best score at or above 0.8. That
+  includes seed tasks such as `slugify` (0.83) whose function is not in the corpus at all.
+  So under real retrieval the fallback arm's 0.8 strong-match threshold does not separate
+  relevant slices from irrelevant ones, and the arm composes from irrelevant slices on most
+  tasks. The threshold needs calibrating against these scores before the fallback arm's
+  trigger counts mean anything.
+- **The lexical channel admits generic hits.** 34 of the 168 slots are lexical-only.
+  zod's `assertNotEqual` appears in five tasks' slices.
+- **Undocumented functions get thin specs.** With no JSDoc, the extracted behavior is the
+  signature, for example `function _maxLength(maximum, params) -> unknown`.
+- **The fill does not change real slices at the default budget.** All eight candidates
+  fit in 1200 tokens (about 850 on average). At 600 tokens the fill changes 3 tasks, and
+  at 400 it changes 5 (`results/fill-selections-retrieved.json`).
+
+### Limits of this retrieval
+
+- **One query per task.** The query is the whole task spec. A composing model would
+  instead name each atom it needs and search for each one (#1275, item 4). Per-atom
+  queries need a model or hand-written sub-queries, and the hand-written kind would leak
+  the answer.
+- **Raw corpus, not shave's atoms.** The pool is definitions as written, not shave's
+  slicer output, and it has no graph candidates (#1280).
 
 ## Scoring
 
@@ -83,27 +166,32 @@ Cost is tokens times the model's price. Prices are not stored here.
 
 ```sh
 pnpm --filter @yakcc/shave build                 # the runner imports shave's retrieval code
-node --test harness/harness.test.mjs harness/run.test.mjs
+node --test harness/harness.test.mjs harness/run.test.mjs harness/retrieval.test.mjs
 node harness/build-tasks.mjs --check             # corpus task files match their source
+node harness/retrieve.mjs                        # rebuild retrieval/production.json (~1 min;
+                                                 # needs registry and contracts built and the
+                                                 # embedding model, fetched once then cached)
 node harness/run.mjs --dry-run --seeds 3         # plan and token upper bound; no calls
 node harness/run.mjs --client offline --seeds 3 --out results/offline-validation.json
-node harness/selections.mjs                      # fill on/off candidate sets
+node harness/selections.mjs [--slice retrieved]  # fill on/off candidate sets
 ```
 
-Options: `--seeds N`, `--arms scratch,slice,slice-fill,fallback`, `--budget`, `--share`,
-`--effort` (live only).
+Options: `--seeds N`, `--arms scratch,slice,slice-fill,fallback[,slice-oracle]`,
+`--slice retrieved|fixture`, `--retrieval <file>`, `--budget`, `--share`, `--effort` (live
+only).
 
 ## Status
 
-- **Harness: built and tested.** 75 tests pass across `harness.test.mjs` and
-  `run.test.mjs`.
+- **Harness: built and tested.** 84 tests pass across `harness.test.mjs`, `run.test.mjs`
+  and `retrieval.test.mjs`.
 - **Offline dry run:** `results/offline-validation.json`, with three seeds and every arm. The
   offline client returns reference solutions, so every row passes and the token counts are
   estimates. It checks that the harness runs end to end. It is **not** a measurement of
-  reuse.
+  reuse. It uses the retrieved slices.
 - **Live run: not run.** It needs a key and approved spend. `results/dry-run-plan.json`
-  bounds a three-seed run at 294 calls, about 218k input tokens, and at most 588k output
-  tokens (2000 per call, thinking included). Run it only with approval:
+  bounds a three-seed run on the retrieved slices at 297 calls, about 285k input tokens,
+  and at most 594k output tokens (2000 per call, thinking included). Adding
+  `slice-oracle` adds 63 calls. Run it only with approval:
 
   ```sh
   ANTHROPIC_API_KEY=... node harness/run.mjs --client anthropic --model claude-sonnet-5-5 \
@@ -167,11 +255,12 @@ self-tests confirm that a naive copy fails the held-out check:
 
 ## Limitations
 
-- The slice scores are fixture scores, set by hand so the needed atoms rank first. They are
-  not retriever output, so B11 measures what a model does with a given slice, not
-  retrieval quality. `scripts/retrieval-recall-measure.mjs` measures retrieval.
-- The corpus spans are not registry blocks. A citation's `merkleRoot` is
-  `unregistered-sha256-<hash of the span>`, not a block merkle root.
+- The fixture slices (`--slice fixture` and the `slice-oracle` arm) have hand-set scores
+  that put the needed atoms first, and their citations are not registry blocks
+  (`unregistered-sha256-<hash>`). Retrieved slices have the registry's scores and real
+  block merkle roots.
+- The retrieval limits are listed under "Retrieval": one query per task, a raw-definition
+  pool, and a 0.8 threshold not calibrated to real scores.
 - 21 tasks is still a small sample. Per-class pass rates over four to ten tasks have wide
   intervals, so report them with their counts.
 - The arms work on TypeScript text. Moving them to line-form composition (#1275) is part of

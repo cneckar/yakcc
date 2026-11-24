@@ -1,6 +1,862 @@
 {
+  "sliceSource": "fixture",
   "maxPackageShare": 0.5,
   "budgets": {
+    "400": {
+      "tasksWhereFillDiffers": [
+        "add-days-iso",
+        "add-durations",
+        "base64url-from-string",
+        "build-order",
+        "sort-versions",
+        "uuid-normalize"
+      ],
+      "tasks": [
+        {
+          "task": "add-days-iso",
+          "differs": true,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "dfns-add-days",
+              "dfns-parse-date",
+              "dfns-validate-date"
+            ],
+            "dropped": [
+              "dfns-leading-zeros",
+              "dfns-format-iso",
+              "ms-fmt-short"
+            ],
+            "tokens": 367,
+            "byPackage": {
+              "date-fns-4.1.0": 367
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "dfns-add-days",
+              "dfns-validate-date",
+              "dfns-leading-zeros",
+              "ms-fmt-short"
+            ],
+            "dropped": [
+              "dfns-parse-date",
+              "dfns-format-iso"
+            ],
+            "tokens": 261,
+            "byPackage": {
+              "date-fns-4.1.0": 181,
+              "ms-2.1.3": 80
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [
+              "dfns-leading-zeros"
+            ],
+            "fill": [
+              "dfns-parse-date"
+            ]
+          }
+        },
+        {
+          "task": "add-durations",
+          "differs": true,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "ms-parse",
+              "ms-fmt-short",
+              "date-fns-diff-ms"
+            ],
+            "dropped": [
+              "ms-fmt-long"
+            ],
+            "tokens": 386,
+            "byPackage": {
+              "ms-2.1.3": 351,
+              "date-fns-4.1.0": 35
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "ms-fmt-short",
+              "ms-fmt-long",
+              "date-fns-diff-ms"
+            ],
+            "dropped": [
+              "ms-parse"
+            ],
+            "tokens": 199,
+            "byPackage": {
+              "ms-2.1.3": 164,
+              "date-fns-4.1.0": 35
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": [
+              "ms-parse"
+            ]
+          }
+        },
+        {
+          "task": "base64url-from-string",
+          "differs": true,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "b64-from-byte-array",
+              "b64-encode-chunk",
+              "b64-triplet"
+            ],
+            "dropped": [
+              "b64-to-byte-array",
+              "uuid-unsafe-stringify"
+            ],
+            "tokens": 343,
+            "byPackage": {
+              "base64-js-1.5.1": 343
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "b64-encode-chunk",
+              "b64-triplet",
+              "uuid-unsafe-stringify"
+            ],
+            "dropped": [
+              "b64-from-byte-array",
+              "b64-to-byte-array"
+            ],
+            "tokens": 294,
+            "byPackage": {
+              "base64-js-1.5.1": 113,
+              "uuid-11.1.1": 181
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": [
+              "b64-from-byte-array"
+            ]
+          }
+        },
+        {
+          "task": "build-order",
+          "differs": true,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "topo-toposort",
+              "topo-nodes-hash"
+            ],
+            "dropped": [
+              "topo-unique-nodes",
+              "topo-outgoing",
+              "semver-lru"
+            ],
+            "tokens": 390,
+            "byPackage": {
+              "toposort-2.0.2": 390
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "topo-unique-nodes",
+              "topo-outgoing",
+              "topo-nodes-hash",
+              "semver-lru"
+            ],
+            "dropped": [
+              "topo-toposort"
+            ],
+            "tokens": 352,
+            "byPackage": {
+              "toposort-2.0.2": 162,
+              "semver-7.8.0": 190
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [
+              "topo-unique-nodes",
+              "topo-outgoing"
+            ],
+            "fill": [
+              "topo-toposort"
+            ]
+          }
+        },
+        {
+          "task": "chunk",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "arr-window",
+              "unrelated-date"
+            ],
+            "dropped": [],
+            "tokens": 25,
+            "byPackage": {
+              "shadow-utils": 16,
+              "shadow-dates": 9
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "arr-window",
+              "unrelated-date"
+            ],
+            "dropped": [],
+            "tokens": 25,
+            "byPackage": {
+              "shadow-utils": 16,
+              "shadow-dates": 9
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "clamp",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "bound-check"
+            ],
+            "dropped": [],
+            "tokens": 15,
+            "byPackage": {
+              "shadow-utils": 15
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "bound-check"
+            ],
+            "dropped": [],
+            "tokens": 15,
+            "byPackage": {
+              "shadow-utils": 15
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "days-between",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "dfns-parse-date",
+              "dfns-validate-date",
+              "dfns-leap",
+              "dfns-diff-ms"
+            ],
+            "dropped": [
+              "dfns-parse-iso",
+              "ms-parse"
+            ],
+            "tokens": 341,
+            "byPackage": {
+              "date-fns-4.1.0": 341
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "dfns-parse-date",
+              "dfns-validate-date",
+              "dfns-leap",
+              "dfns-diff-ms"
+            ],
+            "dropped": [
+              "dfns-parse-iso",
+              "ms-parse"
+            ],
+            "tokens": 341,
+            "byPackage": {
+              "date-fns-4.1.0": 341
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "group-by",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "bucket-by",
+              "unrelated"
+            ],
+            "dropped": [],
+            "tokens": 23,
+            "byPackage": {
+              "shadow-utils": 13,
+              "shadow-misc": 10
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "bucket-by",
+              "unrelated"
+            ],
+            "dropped": [],
+            "tokens": 23,
+            "byPackage": {
+              "shadow-utils": 13,
+              "shadow-misc": 10
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "memoize-lru",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "lodash-memoize",
+              "semver-lru",
+              "lodash-memoize-capped"
+            ],
+            "dropped": [
+              "topo-nodes-hash"
+            ],
+            "tokens": 388,
+            "byPackage": {
+              "lodash-4.17.21": 198,
+              "semver-7.8.0": 190
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "lodash-memoize",
+              "semver-lru",
+              "lodash-memoize-capped"
+            ],
+            "dropped": [
+              "topo-nodes-hash"
+            ],
+            "tokens": 388,
+            "byPackage": {
+              "lodash-4.17.21": 198,
+              "semver-7.8.0": 190
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "parse-int-strict",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "parse-number",
+              "unrelated"
+            ],
+            "dropped": [],
+            "tokens": 22,
+            "byPackage": {
+              "shadow-utils": 13,
+              "shadow-misc": 9
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "parse-number",
+              "unrelated"
+            ],
+            "dropped": [],
+            "tokens": 22,
+            "byPackage": {
+              "shadow-utils": 13,
+              "shadow-misc": 9
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "pointer-get",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "jp-get",
+              "jp-compile-pointer",
+              "jp-untilde",
+              "jp-escape-replacer"
+            ],
+            "dropped": [
+              "jp-setter",
+              "date-fns-parse-date"
+            ],
+            "tokens": 284,
+            "byPackage": {
+              "jsonpointer-5.0.1": 284
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "jp-get",
+              "jp-compile-pointer",
+              "jp-untilde",
+              "jp-escape-replacer"
+            ],
+            "dropped": [
+              "jp-setter",
+              "date-fns-parse-date"
+            ],
+            "tokens": 284,
+            "byPackage": {
+              "jsonpointer-5.0.1": 284
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "range",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "counted-loop",
+              "unrelated"
+            ],
+            "dropped": [],
+            "tokens": 21,
+            "byPackage": {
+              "shadow-utils": 12,
+              "shadow-misc": 9
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "counted-loop",
+              "unrelated"
+            ],
+            "dropped": [],
+            "tokens": 21,
+            "byPackage": {
+              "shadow-utils": 12,
+              "shadow-misc": 9
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "safe-filename",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "path-join"
+            ],
+            "dropped": [],
+            "tokens": 18,
+            "byPackage": {
+              "shadow-fs": 18
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "path-join"
+            ],
+            "dropped": [],
+            "tokens": 18,
+            "byPackage": {
+              "shadow-fs": 18
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "shallow-equal",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "key-compare",
+              "unrelated"
+            ],
+            "dropped": [],
+            "tokens": 22,
+            "byPackage": {
+              "shadow-utils": 13,
+              "shadow-misc": 9
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "key-compare",
+              "unrelated"
+            ],
+            "dropped": [],
+            "tokens": 22,
+            "byPackage": {
+              "shadow-utils": 13,
+              "shadow-misc": 9
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "slugify",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "normalize-text",
+              "unrelated"
+            ],
+            "dropped": [],
+            "tokens": 24,
+            "byPackage": {
+              "shadow-utils": 15,
+              "shadow-misc": 9
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "normalize-text",
+              "unrelated"
+            ],
+            "dropped": [],
+            "tokens": 24,
+            "byPackage": {
+              "shadow-utils": 15,
+              "shadow-misc": 9
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "sort-versions",
+          "differs": true,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "semver-compare-pre",
+              "semver-compare-main",
+              "semver-sort",
+              "semver-compare-fn"
+            ],
+            "dropped": [
+              "semver-compare-identifiers",
+              "semver-compare",
+              "levenshtein-closest"
+            ],
+            "tokens": 374,
+            "byPackage": {
+              "semver-7.8.0": 374
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "semver-compare-main",
+              "semver-compare-identifiers",
+              "semver-sort",
+              "semver-compare-fn",
+              "levenshtein-closest"
+            ],
+            "dropped": [
+              "semver-compare-pre",
+              "semver-compare"
+            ],
+            "tokens": 327,
+            "byPackage": {
+              "semver-7.8.0": 248,
+              "fastest-levenshtein-1.0.16": 79
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [
+              "semver-compare-identifiers"
+            ],
+            "fill": [
+              "semver-compare-pre"
+            ]
+          }
+        },
+        {
+          "task": "suggest-words",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "lev-distance",
+              "lev-closest",
+              "lev-myers-32",
+              "semver-sort"
+            ],
+            "dropped": [],
+            "tokens": 339,
+            "byPackage": {
+              "fastest-levenshtein-1.0.16": 320,
+              "semver-7.8.0": 19
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "lev-distance",
+              "lev-closest",
+              "lev-myers-32",
+              "semver-sort"
+            ],
+            "dropped": [],
+            "tokens": 339,
+            "byPackage": {
+              "fastest-levenshtein-1.0.16": 320,
+              "semver-7.8.0": 19
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "title-case",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "word-split",
+              "unrelated"
+            ],
+            "dropped": [],
+            "tokens": 22,
+            "byPackage": {
+              "shadow-utils": 13,
+              "shadow-misc": 9
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "word-split",
+              "unrelated"
+            ],
+            "dropped": [],
+            "tokens": 22,
+            "byPackage": {
+              "shadow-utils": 13,
+              "shadow-misc": 9
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "unique",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "dedupe-by",
+              "unrelated"
+            ],
+            "dropped": [],
+            "tokens": 24,
+            "byPackage": {
+              "shadow-utils": 14,
+              "shadow-misc": 10
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "dedupe-by",
+              "unrelated"
+            ],
+            "dropped": [],
+            "tokens": 24,
+            "byPackage": {
+              "shadow-utils": 14,
+              "shadow-misc": 10
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "uuid-normalize",
+          "differs": true,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "uuid-parse",
+              "uuid-unsafe-stringify",
+              "uuid-validate",
+              "uuid-stringify"
+            ],
+            "dropped": [
+              "uuid-version-fn",
+              "b64-to-byte-array"
+            ],
+            "tokens": 388,
+            "byPackage": {
+              "uuid-11.1.1": 388
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "uuid-parse",
+              "uuid-unsafe-stringify",
+              "uuid-validate",
+              "uuid-version-fn"
+            ],
+            "dropped": [
+              "uuid-stringify",
+              "b64-to-byte-array"
+            ],
+            "tokens": 377,
+            "byPackage": {
+              "uuid-11.1.1": 377
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        },
+        {
+          "task": "uuid-version",
+          "differs": false,
+          "rank": {
+            "mode": "rank",
+            "maxPackageShare": 1,
+            "selected": [
+              "uuid-version-fn",
+              "uuid-validate",
+              "uuid-parse",
+              "semver-compare-identifiers"
+            ],
+            "dropped": [],
+            "tokens": 284,
+            "byPackage": {
+              "uuid-11.1.1": 196,
+              "semver-7.8.0": 88
+            }
+          },
+          "fill": {
+            "mode": "fill",
+            "maxPackageShare": 0.5,
+            "selected": [
+              "uuid-version-fn",
+              "uuid-validate",
+              "uuid-parse",
+              "semver-compare-identifiers"
+            ],
+            "dropped": [],
+            "tokens": 284,
+            "byPackage": {
+              "uuid-11.1.1": 196,
+              "semver-7.8.0": 88
+            }
+          },
+          "neededAtomsDropped": {
+            "rank": [],
+            "fill": []
+          }
+        }
+      ]
+    },
     "600": {
       "tasksWhereFillDiffers": [
         "build-order",
