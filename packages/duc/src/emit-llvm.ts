@@ -19,6 +19,7 @@
  */
 import { type DucType, parseType } from "./infer-types.js";
 import { bodyPathOf, joinOwners, sidePath } from "./line-form.js";
+import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
 import { paramIndex } from "./params.js";
 import { type ScopeItem, scopePlanner } from "./scopes.js";
@@ -133,7 +134,9 @@ function isSymbol(name: string): boolean {
 }
 
 /** The graph lowered to an LLVM module exporting `symbol`. Throws LlvmEmitError outside the subset. */
-export function emitLlvm(source: DucGraph, signature: NativeSignature, symbol = "f"): LlvmModule {
+export function emitLlvm(input: DucGraph, signature: NativeSignature, symbol = "f"): LlvmModule {
+  // ECMAScript's operations: each generic operation as the case of them it is (#1310).
+  const source = ecmaScriptView(input);
   if (!isSymbol(symbol)) throw new LlvmEmitError(`"${symbol}" is not a symbol a linker takes`);
   if (source.mode !== undefined)
     throw new LlvmEmitError(`an ${source.mode} function has no form here`);

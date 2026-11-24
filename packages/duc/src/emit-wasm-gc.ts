@@ -23,6 +23,7 @@ import { WASM_HOST, WasmEmitError, type WasmSignature } from "./emit-wasm.js";
 import { type DucType, parseType } from "./infer-types.js";
 import { liftAtom } from "./lift.js";
 import { bodyPathOf, joinOwners, sidePath } from "./line-form.js";
+import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
 import { paramIndex } from "./params.js";
 import { type ScopeItem, scopePlanner } from "./scopes.js";
@@ -953,7 +954,9 @@ function lowerFunction(
  * The graph lowered to a WasmGC module exporting `f`, with the runtime atoms it reaches. The
  * signature's output type is required, and must not include undefined.
  */
-export function emitWasmGc(source: DucGraph, signature: WasmSignature): WasmGcModule {
+export function emitWasmGc(input: DucGraph, signature: WasmSignature): WasmGcModule {
+  // ECMAScript's operations: each generic operation as the case of them it is (#1310).
+  const source = ecmaScriptView(input);
   if (signature.output === undefined)
     throw new WasmEmitError("the contract's output type is needed");
   const out = parseType(signature.output);

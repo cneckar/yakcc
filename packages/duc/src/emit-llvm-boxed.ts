@@ -22,6 +22,7 @@
 import { LlvmEmitError, type LlvmModule } from "./emit-llvm.js";
 import { DECLARES } from "./lift.js";
 import { bodyPathOf, joinOwners, sidePath } from "./line-form.js";
+import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
 import { paramIndex } from "./params.js";
 import { RegexCompileError, regexMatcherGraph } from "./regex.js";
@@ -1065,7 +1066,9 @@ function lowerFunction(
 }
 
 /** The graph lowered to an LLVM module of boxed values, calling the runtime. */
-export function emitLlvmBoxed(source: DucGraph, symbol = "f"): LlvmModule {
+export function emitLlvmBoxed(input: DucGraph, symbol = "f"): LlvmModule {
+  // ECMAScript's operations: each generic operation as the case of them it is (#1310).
+  const source = ecmaScriptView(input);
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(symbol))
     throw new LlvmEmitError(`"${symbol}" is not a symbol a linker takes`);
   const m = new ModuleBuilder();
@@ -1187,7 +1190,7 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
       if (st.kind === "function") {
         const name = st.declares[0];
         if (name === undefined) throw new LlvmEmitError("a function statement with no name");
-        lowerFunction(m, st.graph, fn, { captures: 0 }, scope());
+        lowerFunction(m, ecmaScriptView(st.graph), fn, { captures: 0 }, scope());
         m.used.add("yk_closure_new");
         init.push(`  %f${k} = call i64 @yk_closure_new(ptr @${fn}, i32 1, i64 0, ptr null)`);
         init.push(`  store i64 %f${k}, ptr ${g(i, `b.${name}`)}`);
@@ -1196,7 +1199,13 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     mod.statements.forEach((st, k) => {
       if (st.kind !== "statement") return;
       const fn = `m${i}_s${k}`;
-      lowerFunction(m, st.graph, fn, undefined, scope(st.declares.map((d) => g(i, `b.${d}`))));
+      lowerFunction(
+        m,
+        ecmaScriptView(st.graph),
+        fn,
+        undefined,
+        scope(st.declares.map((d) => g(i, `b.${d}`))),
+      );
       init.push(`  call i64 @${fn}()`);
     });
     // require: each specifier the record names, to its module's initializer.

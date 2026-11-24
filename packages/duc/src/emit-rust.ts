@@ -11,6 +11,7 @@
  * Anything else is refused with a reason (`RustEmitError`), never guessed.
  */
 import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
+import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
 import { isRestParam, paramIndex } from "./params.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
@@ -174,7 +175,9 @@ export function referenceName(symbol: string): string {
 }
 
 /** Lowers a graph to Rust source (to follow RUST_PRELUDE) defining `fn f(args: Vec<V>) -> V`. */
-export function emitRust(g: DucGraph): string {
+export function emitRust(input: DucGraph): string {
+  // ECMAScript's operations: each generic operation as the case of them it is (#1310).
+  const g = ecmaScriptView(input);
   try {
     printLineForm(g);
   } catch (e) {

@@ -1,5 +1,6 @@
 import { regexToPython } from "./emit-py.js";
 import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
+import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
@@ -158,7 +159,9 @@ function literal(label: string): string {
 }
 
 /** Lowers a graph to Go source (to follow GO_PRELUDE in package main) defining `f`. */
-export function emitGo(g: DucGraph): string {
+export function emitGo(input: DucGraph): string {
+  // ECMAScript's operations: each generic operation as the case of them it is (#1310).
+  const g = ecmaScriptView(input);
   try {
     printLineForm(g);
   } catch (e) {

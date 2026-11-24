@@ -158,3 +158,4 @@ export {
 } from "./native.js";
 export type { NativeModule, NativeModuleStatement, NativeModules } from "./emit-llvm-boxed.js";
 export { emitLlvmBoxed, emitNativeModules, moduleSymbol } from "./emit-llvm-boxed.js";
+export { ecmaScriptLabel, ecmaScriptView } from "./ops.js";
