@@ -157,6 +157,8 @@ export type LayoutResolver = (name: string) => RecordLayout | undefined;
 // The unit being raised: its typedefs (a function's own are added as it is raised) and layouts.
 let unitTypedef: TypedefResolver = () => undefined;
 let unitLayout: LayoutResolver = () => undefined;
+// Whether the unit is parsed with -mlong-double-64 (long double is IEEE double).
+let unitLongDouble64 = false;
 const localTypedefs = new Map<string, string>();
 
 /** The C library's fixed typedefs on LP64, for a unit whose headers clang did not show. */
@@ -232,6 +234,7 @@ function parseType(spelled: string, depth = 0): CType {
   if (builtin !== undefined) return builtin;
   if (/^(struct|union) /.test(raw)) return { k: "rec", name: raw };
   if (/\)$/.test(raw)) return { k: "fn" };
+  if (raw === "long double" && unitLongDouble64) return F64;
   if (raw === "long double") throw new RaiseCError(`the C type "${raw}" is not raised yet`);
   if (raw === "__builtin_va_list") return parseType("struct __va_list_tag[1]", depth + 1);
   const named = localTypedefs.get(raw) ?? unitTypedef(raw) ?? LP64_TYPEDEFS[raw];
@@ -444,6 +447,11 @@ function arith(op: string, a: string, b: string, t: CType, rhs: CType): string {
  */
 const LEAF_CALLS: Readonly<Record<string, (args: readonly string[]) => string>> = {
   fabs: (a) => `Math.abs(${a[0]})`,
+  fabsl: (a) => `Math.abs(${a[0]})`,
+  __builtin_fabsl: (a) => `Math.abs(${a[0]})`,
+  __builtin_huge_vall: () => "Infinity",
+  __builtin_infl: () => "Infinity",
+  __builtin_nanl: () => "NaN",
   __builtin_fabs: (a) => `Math.abs(${a[0]})`,
   sqrt: (a) => `Math.sqrt(${a[0]})`,
   __builtin_sqrt: (a) => `Math.sqrt(${a[0]})`,
@@ -547,6 +555,8 @@ export interface UnitTypes {
    * for a static local. Undefined when the unit cannot define it (then it is refused).
    */
   readonly static?: (decl: ClangNode, fn?: string) => string | undefined;
+  /** The unit is parsed with clang's -mlong-double-64: long double is double. */
+  readonly longDouble64?: boolean;
 }
 
 /**
@@ -674,14 +684,15 @@ export function raiseCFunction(
   resolveGlobal: GlobalResolver = () => undefined,
   types: UnitTypes = {},
 ): string {
-  const saved = [unitTypedef, unitLayout] as const;
+  const saved = [unitTypedef, unitLayout, unitLongDouble64] as const;
   unitTypedef = types.typedef ?? (() => undefined);
   unitLayout = types.layout ?? (() => undefined);
+  unitLongDouble64 = types.longDouble64 === true;
   localTypedefs.clear();
   try {
     return raiseBody(fn, resolve, externals, resolveGlobal, types.static);
   } finally {
-    [unitTypedef, unitLayout] = saved;
+    [unitTypedef, unitLayout, unitLongDouble64] = saved;
     localTypedefs.clear();
   }
 }
@@ -1983,6 +1994,7 @@ export function shaveCUnit(
             typedef,
             layout,
             static: staticHook,
+            longDouble64: args.includes("-mlong-double-64"),
           }),
           externals: [...externals],
         });

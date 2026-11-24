@@ -11,10 +11,15 @@ musl's license (`COPYRIGHT`), for the C front end to shave (#1365):
 Not vendored: the build system, `crt/`, `ldso/`, `compat/`, other architectures (added with their
 targets).
 
-Two files are not musl's own sources:
+These files are not musl's own sources:
 
-- `obj/include/bits/alltypes.h` is generated as musl's build does:
-  `sed -f tools/mkalltypes.sed arch/x86_64/bits/alltypes.h.in include/alltypes.h.in`.
+- `obj/include/bits/alltypes.h` and `obj/include/bits/syscall.h` are generated as musl's build does:
+  `sed -f tools/mkalltypes.sed arch/x86_64/bits/alltypes.h.in include/alltypes.h.in`, and
+  `arch/x86_64/bits/syscall.h.in` followed by its lines with `__NR_` renamed `SYS_`.
+- `yakcc/syscall_arch.h`: each `__syscallN` calls `__yk_syscall`, the system-call leaf (no
+  assembly, no vDSO). `yakcc/pthread_arch.h`: the thread pointer is a leaf, `__yk_tp()`.
+  `yakcc/bits/float.h`: a 64-bit `long double` (musl's arm description), for units parsed with
+  clang's `-mlong-double-64`, as printf and strtod are.
 - `yakcc/atomic_arch.h` has no architecture code, so `src/internal/atomic.h` uses musl's portable
   C (no inline assembly); its two definitions, single-threaded `a_cas` and `a_cas_p`, only let
   `atomic.h` parse. It is found before `arch/x86_64/atomic_arch.h`.
