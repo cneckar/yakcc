@@ -23,6 +23,7 @@ import {
   declaredNamesOf,
 } from "./lift.js";
 import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
+import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
 import { isRestParam, paramIndex } from "./params.js";
 import { RUNTIME_MODULE } from "./runtime.js";
@@ -108,10 +109,12 @@ export interface EmitSignature {
  * graph it cannot express.
  */
 export function emitTypeScript(
-  g: DucGraph,
+  input: DucGraph,
   signature?: EmitSignature,
   options: { readonly name?: string } = {},
 ): string {
+  // TypeScript is ECMAScript: every operation is written as the operator it is a case of (#1310).
+  const g = ecmaScriptView(input);
   // The structure must be expressible: the line form's checks hold here too, closures included.
   try {
     printLineForm(g);

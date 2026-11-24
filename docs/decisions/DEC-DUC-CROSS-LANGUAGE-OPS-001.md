@@ -1,6 +1,6 @@
 # DEC-DUC-CROSS-LANGUAGE-OPS-001: how operations are named across languages
 
-**Status:** **Proposed, direction set by the user (2026-11-24):** operations are generic across languages wherever their meaning is shared, and per-language only where a meaning is unique to one language. Below: how that is done, and what is still to confirm.
+**Status:** **Decided (2026-11-24).** The user set the direction: operations are generic across languages wherever their meaning is shared, and per-language only where a meaning is unique to one language. They confirmed the table below as the first vocabulary, the choice by the #1277 inference from the contract's types, and the relabel. Done in #1310: step 1 (one vocabulary module read by every lowering) and step 2 (the relabel, and the choice by meaning). See **Implementation** at the end.
 **Date:** 2026-11-23
 **Issues:**
 - https://github.com/cneckar/yakcc/issues/1298
@@ -131,3 +131,56 @@ named by **meaning**, and each language's symbol is raised to the meaning it has
 
 - **The lowering side:** which targets implement which language's operations. That is per target and does not lock.
 - **Go and Rust raising:** `raise-go.ts` and `raise-rust.ts` read the lowerings' own dialects today, as `raise-py.ts` did. The same decision applies to them.
+
+## Implementation (#1310)
+
+**The names (`packages/duc/src/ops.ts`).**
+- The lifter names every ECMAScript operator as an operation:
+  - binary: `js.add`, `js.sub`, `js.mul`, `js.div`, `js.rem`, `js.pow`, `js.loose_eq`, `js.strict_eq`, `js.lt`, …, `js.and`, `js.or`, `js.nullish`, `js.in`, `js.instanceof`;
+  - by arity: `js.neg` and `js.tonumber` for unary `-` and `+`;
+  - `js.typeof`, `js.void`;
+  - the steps `js.inc` and `js.postinc`;
+  - compound assignments `js.add_assign`, ….
+- No graph holds an ECMAScript symbol any more. A line form written in the symbols (`op + a b`) is parsed to the names.
+- A lowering of ECMAScript's semantics reads a graph through `ecmaScriptView`, where each operation becomes the operator it is a case of. Readers that use the view or `ecmaScriptLabel`:
+  - every lowering, emit-ts, the type inference;
+  - the heap labels, the canonical order, similarity, the retrieval signature.
+
+**The choice (`byMeaning(graph, contractSignature(spec))`, `packages/duc/src/by-meaning.ts`).**
+- The #1277 inference runs from the contract's input types. Each operation whose operands have one known kind becomes the generic operation:
+
+| ECMAScript | numbers | strings | booleans | arrays |
+|---|---|---|---|---|
+| `+` | `f64.add` | `str.concat` | | |
+| `-` `*` `/` | `f64.sub` `f64.mul` `f64.div` | | | |
+| `%` | `rem.truncated` | | | |
+| `===` `!==` | `f64.eq` `f64.ne` | `str.eq` `str.ne` | `bool.eq` `bool.ne` | |
+| `<` `>` `<=` `>=` | `f64.lt` `f64.gt` `f64.le` `f64.ge` | | | |
+| unary `-` | `f64.neg` | | | |
+| `!` | | | `bool.not` | |
+| `.length` | | `str.length.units16` | | `list.length` |
+| `xs[i]` (number `i`) | | | | `list.get` |
+
+- **Everything else stays `js.*`:**
+  - unknown or mixed operand types;
+  - string ordering (UTF-16 code units, not code points);
+  - bigint, integer arithmetic, `**`;
+  - closures, whose types are inferred at each call.
+- **Choosing is a function of the graph and the contract,** whichever names the graph came in. It is idempotent. A graph in generic names, chosen under a contract that does not give the types, goes back to `js.*`.
+- **Canonical order:** `f64.add` and `f64.mul` commute in it, as `===` already did. `js.add` does not, because concatenation does not commute.
+
+**Where it is applied.**
+- **Shave persist:** the implementation stored beside a block (`ducImplementationOf`, and the linking pass `linkPlanAtoms`) is chosen under the block's contract.
+- **Federation, authored graphs:** a model's line form is chosen under its contract, and the round trip relifts and chooses again.
+- **Federation receiver, check 3 (integrity):** the receiver chooses again under the contract and refuses a graph whose identity changes. A sender cannot store `js.add` where the contract's types make it `f64.add`, or the reverse.
+
+**Round trip.** Graph → TypeScript (through the view) → lift → choose under the same contract gives the same identity. This holds on every corpus-sample atom whose plain round trip holds; two seeds don't round-trip even without the choice, a join order tracked in #1316.
+
+**Identity.**
+- Every lifted identity changed once: `LIFTER_VERSION` 41, and the pinned corpus sample was regenerated.
+- The same algorithm raised from Python gets the TypeScript function's graph wherever its operations are generic. Tested on float arithmetic, string concatenation and comparisons.
+- Python's `%` (floored) and ECMAScript's `%` (`rem.truncated`) stay different operations.
+
+**Not done here** (lane 2: raising and lowering):
+- **Raisers:** they still write TypeScript compositions for Python's own operations (`/` checked, `%` floored). They could write `f64.div.checked` and `mod.floored` once they produce graphs directly.
+- **Lowerings:** they could implement generic operations natively, for example `f64.add` as a machine add without ECMAScript's dispatch on `+`. Today every lowering reads the ECMAScript view.

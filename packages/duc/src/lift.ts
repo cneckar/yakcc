@@ -34,6 +34,7 @@ import { KNOWN_PRIMITIVES } from "./base-set.js";
 import { canonicalizeGraph } from "./canonical.js";
 import { isHeapLabel } from "./heap-labels.js";
 import { normalizeLiteral } from "./literal.js";
+import { jsOperation } from "./ops.js";
 import { RUNTIME_MODULE } from "./runtime.js";
 import type {
   DiamondReason,
@@ -512,11 +513,15 @@ class Lifter {
       ...(this.regionStack.length > 0 ? { region: this.regionStack.join("/") } : {}),
       ...(extra?.diamond !== undefined ? { diamond: extra.diamond } : {}),
       ...(extra?.origin !== undefined ? { origin: extra.origin } : {}),
-      // Structural label (D6): explicit, else the syntactic kind of the origin.
+      // Structural label (D6): explicit, else the syntactic kind of the origin. An ECMAScript
+      // operator is named as an operation (`+` is `js.add`, #1310).
       ...(extra?.label !== undefined
-        ? { label: extra.label }
+        ? { label: kind === "op" ? jsOperation(extra.label, given.length) : extra.label }
         : extra?.origin !== undefined && (kind === "op" || kind === "literal-source")
-          ? { label: extra.origin.kind }
+          ? {
+              label:
+                kind === "op" ? jsOperation(extra.origin.kind, given.length) : extra.origin.kind,
+            }
           : kind === "sel" && extra?.origin?.text === HEAP
             ? { label: "heap" }
             : {}),

@@ -17,21 +17,25 @@
  * operands to primitives differs between them.
  */
 import { canonicalizeGraph } from "./canonical.js";
+import { ecmaScriptLabel } from "./ops.js";
 import type { DucGraph, DucNode, ValueId } from "./types.js";
 
 /** A comparison's mirror: `b > a` selects like `a < b`. */
 const MIRROR: Readonly<Record<string, string>> = { ">": "<", ">=": "<=" };
 const COMPARISONS = new Set(["<", "<=", ">", ">="]);
+/** An operation's label as the ECMAScript operator it is a case of: one key across the vocabulary. */
+const opLabel = (n: DucNode): string =>
+  n.kind === "op" ? ecmaScriptLabel(n.label ?? "") : (n.label ?? "");
 const mirrored = (n: DucNode): boolean =>
-  n.kind === "op" && n.inputs.length === 2 && MIRROR[n.label ?? ""] !== undefined;
+  n.kind === "op" && n.inputs.length === 2 && MIRROR[opLabel(n)] !== undefined;
 
 /** A node's key; a parameter is keyed by its position, so `a < b` and `a > b` stay apart. */
 const nodeKey = (n: DucNode, params: ReadonlyMap<DucNode, number>): string => {
-  if (mirrored(n)) return `op:${MIRROR[n.label ?? ""]}`;
+  if (mirrored(n)) return `op:${MIRROR[opLabel(n)]}`;
   if (n.kind === "diamond-source") return `diamond:${n.diamond?.reason}:${n.diamond?.symbol}`;
   if (n.kind === "carry-source") return `carry:${(n.label ?? "").replace(/\d+$/, "")}`;
   if (n.kind === "param-source") return `param:${params.get(n) ?? "?"}`;
-  return `${n.kind}:${n.label ?? ""}`;
+  return `${n.kind}:${opLabel(n)}`;
 };
 
 /** Rounds of neighbourhood refinement in a bag (measured on the corpus, #1280). */
@@ -67,8 +71,8 @@ export function structuralBag(g: DucGraph): Map<string, number> {
       add(`n${depth}|${key(n)}`);
       // The comparison as written, at half weight: a weak signal beside the mirrored entries, which
       // breaks a tie toward the operator the query used.
-      if (n.kind === "op" && n.inputs.length === 2 && COMPARISONS.has(n.label ?? ""))
-        add(`r${depth}|${n.label}`, 0.5);
+      if (n.kind === "op" && n.inputs.length === 2 && COMPARISONS.has(opLabel(n)))
+        add(`r${depth}|${opLabel(n)}`, 0.5);
       const flip = mirrored(n);
       n.inputs.forEach((v, i) => {
         const p = producer.get(v);

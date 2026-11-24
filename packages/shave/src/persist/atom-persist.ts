@@ -26,8 +26,10 @@
 //     persistence requires storeBlock, which isn't in the read-only view. Callers
 //     that have a full Registry pass it directly.
 
-import type { BlockMerkleRoot, CanonicalAstHash } from "@yakcc/contracts";
+import type { BlockMerkleRoot, CanonicalAstHash, SpecYak } from "@yakcc/contracts";
 import {
+  byMeaning,
+  contractSignature,
   emitTypeScript,
   liftAtom,
   linkReferences,
@@ -341,7 +343,12 @@ export async function persistNovelGlueAtom(
   // with the emitted TypeScript as its cache. A registry view without the method, or an atom the
   // lifter refuses, stores the block alone.
   if (typeof registry.storeDucImplementation === "function") {
-    const stored = ducImplementationOf(entry.source, triplet.specHash, triplet.merkleRoot);
+    const stored = ducImplementationOf(
+      entry.source,
+      triplet.specHash,
+      triplet.merkleRoot,
+      triplet.spec,
+    );
     if (stored !== undefined) await registry.storeDucImplementation(stored);
   }
 
@@ -351,16 +358,19 @@ export async function persistNovelGlueAtom(
 /**
  * The DUC implementation of an atom's source: its packed graph under the contract, with the emitted
  * TypeScript as a cache (undefined when the emitter does not express the graph). Undefined when the
- * source does not lift.
+ * source does not lift. Its operations are chosen by meaning from the contract's types (#1310): the
+ * graph's identity is the one a receiver gets by choosing again.
  */
 export function ducImplementationOf(
   source: string,
   specHash: string,
   blockMerkleRoot: string | null,
+  spec?: Pick<SpecYak, "inputs" | "outputs">,
 ): DucImplementationRow | undefined {
   let graph: ReturnType<typeof liftAtom>;
   try {
     graph = liftAtom(source);
+    if (spec !== undefined) graph = byMeaning(graph, contractSignature(spec));
   } catch {
     return undefined;
   }
@@ -458,12 +468,22 @@ export async function linkPlanAtoms(
     return 0;
   // The contract of each name an atom of the plan declares.
   const declared = new Map<string, string>();
-  const persisted: { source: string; specHash: string; merkleRoot: BlockMerkleRoot }[] = [];
+  const persisted: {
+    source: string;
+    specHash: string;
+    merkleRoot: BlockMerkleRoot;
+    spec: SpecYak | undefined;
+  }[] = [];
   for (const atom of atoms) {
     if (atom.merkleRoot === undefined) continue;
     const row = await registry.getBlock(atom.merkleRoot);
     if (row === null || row === undefined) continue;
-    persisted.push({ source: atom.source, specHash: row.specHash, merkleRoot: atom.merkleRoot });
+    persisted.push({
+      source: atom.source,
+      specHash: row.specHash,
+      merkleRoot: atom.merkleRoot,
+      spec: specOf(row),
+    });
     for (const name of atomDefinedNames(atom.source))
       if (!declared.has(name)) declared.set(name, row.specHash);
   }
@@ -472,6 +492,7 @@ export async function linkPlanAtoms(
     let graph: ReturnType<typeof liftAtom>;
     try {
       graph = liftAtom(atom.source);
+      if (atom.spec !== undefined) graph = byMeaning(graph, contractSignature(atom.spec));
     } catch {
       continue;
     }
@@ -506,4 +527,14 @@ export async function linkPlanAtoms(
     linked += count;
   }
   return linked;
+}
+
+/** A stored block's contract, when its canonical bytes parse as one. */
+function specOf(row: Pick<BlockTripletRow, "specCanonicalBytes">): SpecYak | undefined {
+  try {
+    const spec = JSON.parse(new TextDecoder().decode(row.specCanonicalBytes)) as SpecYak;
+    return Array.isArray(spec.inputs) && Array.isArray(spec.outputs) ? spec : undefined;
+  } catch {
+    return undefined;
+  }
 }
