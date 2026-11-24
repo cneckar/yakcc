@@ -57,7 +57,7 @@ the format lacks, classified (a), (b) or (c) as in #1299, before the lock.
   - the array methods that take a function: `map`, `filter`, `forEach`, `reduce`, `some`, `every`, `find` and `findIndex`, as runtime atoms;
   - recursive closures (a closure that refers to itself returns a value of any kind, so a call of itself knows its result type while it is lowered), and `const` closures that call each other (through a cell, read with the comma operator);
   - builtins as functions (`String`, `Number`, `Boolean`, Math's one-argument functions): each the closure of the call it means;
-  - `JSON.stringify` (key order, `toJSON`, `space`, the cycle's TypeError) and `JSON.parse` (strictly, a SyntaxError otherwise), as runtime atoms;
+  - `JSON.stringify` (key order, `toJSON`, `space`, the cycle's TypeError, a replacer function or a property list) and `JSON.parse` (strictly, a SyntaxError otherwise; a reviver, a property revived to undefined deleted), as runtime atoms;
   - `instanceof` for the builtin classes (the error classes, `Object`, `Array`, `Function`) and `Array.isArray`;
   - bitwise operators (ToInt32 by exact double arithmetic, then 32-bit integer operations);
   - `Map` and `Set` (SameValueZero, insertion order; `keys`/`values`/`entries` as snapshot arrays), and method calls of receivers of any kind through one dispatch atom (`__ykInvoke`);
@@ -75,7 +75,8 @@ the format lacks, classified (a), (b) or (c) as in #1299, before the lock.
   - Variadic builtins (`Math.max`, `Math.min`) as function values, and `instanceof` of a user's class. They are refused with the reason.
   - Function declarations that call each other: the forward reference lifts as a free identifier, which only a name match could resolve. Classified (c), filed for lane:core as #1349.
   - A function value's source text (`String(f)`), which a lowering does not keep.
-  - A replacer for `JSON.stringify`, a reviver for `JSON.parse`, and the engines' exact SyntaxError messages.
+  - Arrays with holes. An array element a reviver revives to undefined is deleted, which leaves a hole; the lowering's arrays have none, so it holds undefined (the same to reads, `length` and `JSON.stringify`; not to `Object.keys`, `in` or `forEach`). A reviver's and a replacer's `this` (the holder), which arrow functions do not see.
+  - The engines' exact SyntaxError messages.
   - Iteration over maps, sets and other iterables.
   - The engines' exact TypeError messages.
 - **(c) format gaps:** none found. The graph carried everything both lowerings need: the contract's types, the dataflow, and the heap order.

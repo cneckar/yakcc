@@ -1306,16 +1306,7 @@ function lowerFunction(
       }
       if (callee.k === "callwith") return "any";
       if (callee.k === "json-ns") {
-        // A replacer or a reviver: not yet.
-        const extra = ins[2];
-        if (callee.name === "stringify" && extra !== undefined) {
-          const te = get(extra);
-          const p2 = producer.get(resolve(extra));
-          if (te !== "undef" && p2?.label !== "null")
-            throw new LoweringError("JSON.stringify with a replacer is not in the subset yet");
-        }
-        if (callee.name === "parse" && extra !== undefined)
-          throw new LoweringError("JSON.parse with a reviver is not in the subset yet");
+        // A replacer or a reviver: a value of any kind (a function called as a function value).
         return "any";
       }
       if (callee.k === "try") {
@@ -2049,6 +2040,7 @@ function lowerFunction(
           else push(v, "any");
         };
         pushOrUndef(args[0]);
+        pushOrUndef(args[1]);
         if (callee.name === "stringify") {
           pushOrUndef(args[2]);
           emit({ op: "call", fn: mod.atom("__ykJsonStringify").fn });

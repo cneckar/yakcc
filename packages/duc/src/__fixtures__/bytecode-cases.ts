@@ -333,6 +333,25 @@ export const numericText = fc.oneof(
 
 export const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
   [
+    "JSON.stringify with a replacer function or a property list, and JSON.parse with a reviver (a property revived to undefined deleted)",
+    "export function f(x: unknown, names: unknown[], k: string, text: string): unknown { const r1 = JSON.stringify(x, (key: string, v: unknown) => (key === k ? undefined : typeof v === 'number' ? v * 2 : v)); const r2 = [JSON.stringify(x, names, 1), JSON.stringify({ y: x, z: [1, { w: k, y: 2 }], 1: k }, names)]; const seen: unknown[] = []; let p: unknown = 'bad'; try { p = JSON.parse(text, (key: string, v: unknown) => { seen.push(key); return key === k ? undefined : Array.isArray(v) ? v.length : v; }); } catch (e) { p = (e as Error).name; } return [r1, r2, p, seen]; }",
+    ["unknown", "unknown[]", "string", "string"],
+    "unknown",
+    fc.tuple(
+      anyValue,
+      fc.array(
+        fc.oneof(fc.constantFrom("y", "z", "w", "0", "1", null), fc.integer({ min: 0, max: 2 })),
+        { maxLength: 4 },
+      ),
+      fc.constantFrom("y", "z", "0", "", "w"),
+      fc.oneof(
+        fc.json().filter((t) => t.length < 200),
+        anyValue.map((v) => JSON.stringify(v) ?? "u"),
+        fc.constantFrom('{"y":1,"z":[1,{"w":2}],"q":null}', "[1,[2,3],{}]", "{bad"),
+      ),
+    ),
+  ],
+  [
     "rest parameters: called with arguments, with a spread, as a function value, and as an array method's callback",
     "export function f(xs: unknown[], n: number): unknown { const g = (a: unknown, ...r: unknown[]) => [a, r.length, r]; const h = (...r: unknown[]) => r.length + n; const v: any = n > 1 ? g : h; const p = (a: unknown, b: unknown) => [b, a, n]; return [g(1), g(1, 2, 3), g(n, ...xs), h(...xs, ...xs), h(), v(xs, n), v(...xs), xs.map(g), xs.map((x: unknown, ...more: unknown[]) => more.length), g(...xs), g(...xs, n), p(...xs), p(n, ...xs)]; }",
     ["unknown[]", "number"],

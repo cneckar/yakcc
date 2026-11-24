@@ -900,16 +900,19 @@ export const JSON_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
 }`,
   },
   // SerializeJSONProperty: a value's JSON text, or undefined (undefined, a function). stack holds
-  // the objects being written (a cycle is a TypeError); indent and gap the space argument's.
+  // the objects being written (a cycle is a TypeError); indent and gap the space argument's; rep
+  // the replacer function, or undefined; plist the property list (an array replacer's), or
+  // undefined.
   __ykJsonValue: {
-    inputs: ["unknown", "string", "unknown[]", "string", "string"],
+    inputs: ["unknown", "string", "unknown[]", "string", "string", "unknown", "unknown"],
     output: "unknown",
-    source: String.raw`export function f(v: unknown, key: string, stack: unknown[], indent: string, gap: string): unknown {
+    source: String.raw`export function f(v: unknown, key: string, stack: unknown[], indent: string, gap: string, rep: unknown, plist: unknown): unknown {
   let x = v;
   if (__ykTag(x) === 7) {
     const tj = __ykGetAny(x, "toJSON");
     if (__ykTag(tj) === 8) x = tj(key);
   }
+  if (__ykTag(rep) === 8) x = rep(key, x);
   const t = __ykTag(x);
   if (t === 1) return "null";
   if (t === 2) return __ykBool(x) ? "true" : "false";
@@ -934,7 +937,7 @@ export const JSON_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     let parts = "";
     let i = 0;
     while (i < n) {
-      const e = __ykJsonValue(__ykIndex(x, i), __ykNumberToString(i), stack, inner, gap);
+      const e = __ykJsonValue(__ykIndex(x, i), __ykNumberToString(i), stack, inner, gap, rep, plist);
       if (i > 0) parts = parts + sep;
       parts = parts + (__ykTag(e) === 0 ? "null" : __ykStr(e));
       i = i + 1;
@@ -943,13 +946,13 @@ export const JSON_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     else if (gap.length > 0) out = "[\n" + inner + parts + "\n" + indent + "]";
     else out = "[" + parts + "]";
   } else {
-    const keys = __ykKeysOf(x, false);
+    const keys = __ykTag(plist) === 0 ? __ykKeysOf(x, false) : __ykArrAny(plist);
     let parts = "";
     let count = 0;
     let i = 0;
     while (i < keys.length) {
       const k = __ykStr(keys[i]);
-      const e = __ykJsonValue(__ykGetAny(x, k), k, stack, inner, gap);
+      const e = __ykJsonValue(__ykGetAny(x, k), k, stack, inner, gap, rep, plist);
       if (__ykTag(e) !== 0) {
         if (count > 0) parts = parts + sep;
         parts = parts + __ykJsonQuote(k) + (gap.length > 0 ? ": " : ":") + __ykStr(e);
@@ -965,11 +968,37 @@ export const JSON_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   return out;
 }`,
   },
-  // JSON.stringify(value, undefined, space).
+  // JSON.stringify(value, replacer, space): a function replacer called for every property, or an
+  // array's strings and numbers (as strings, once each) the properties written of objects.
   __ykJsonStringify: {
-    inputs: ["unknown", "unknown"],
+    inputs: ["unknown", "unknown", "unknown"],
     output: "unknown",
-    source: String.raw`export function f(x: unknown, space: unknown): unknown {
+    source: String.raw`export function f(x: unknown, replacer: unknown, space: unknown): unknown {
+  let rep = __ykUndef();
+  let plist = __ykUndef();
+  const tr = __ykTag(replacer);
+  if (tr === 8) rep = replacer;
+  else if (tr === 5 || tr === 6) {
+    const names: unknown[] = [];
+    const n = __ykNum(__ykGetAny(replacer, "length"));
+    let j = 0;
+    while (j < n) {
+      const e = __ykIndex(replacer, j);
+      const te = __ykTag(e);
+      if (te === 3 || te === 4) {
+        const item = te === 3 ? __ykNumberToString(__ykNum(e)) : __ykStr(e);
+        let seen = false;
+        let m = 0;
+        while (m < names.length) {
+          if (__ykStrEquals(__ykStr(names[m]), item)) seen = true;
+          m = m + 1;
+        }
+        if (!seen) names.push(item);
+      }
+      j = j + 1;
+    }
+    plist = names;
+  }
   let gap = "";
   const ts = __ykTag(space);
   if (ts === 3) {
@@ -986,7 +1015,7 @@ export const JSON_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   const stack = [];
   stack.push(__ykUndef());
   stack.pop();
-  return __ykJsonValue(x, "", stack, "", gap);
+  return __ykJsonValue(x, "", stack, "", gap, rep, plist);
 }`,
   },
   // JSON's whitespace, skipped from pos[0].
@@ -1166,17 +1195,48 @@ export const JSON_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   return __ykJsonError();
 }`,
   },
-  // JSON.parse(text): the whole text one JSON value, else a SyntaxError.
+  // JSON.parse(text, reviver): the whole text one JSON value, else a SyntaxError; then, with a
+  // reviver, InternalizeJSONProperty from the root.
   __ykJsonParse: {
-    inputs: ["unknown"],
+    inputs: ["unknown", "unknown"],
     output: "unknown",
-    source: String.raw`export function f(text: unknown): unknown {
+    source: String.raw`export function f(text: unknown, reviver: unknown): unknown {
   const s = __ykToString(text);
   const pos = [0];
   const v = __ykJsonParseValue(s, pos);
   __ykJsonWs(s, pos);
   if (pos[0] !== s.length) return __ykJsonError();
-  return v;
+  if (__ykTag(reviver) !== 8) return v;
+  return __ykJsonRevive(v, "", reviver);
+}`,
+  },
+  // InternalizeJSONProperty, of the value of a property named name: its elements' or properties'
+  // values revived first (a property revived to undefined deleted), then it.
+  __ykJsonRevive: {
+    inputs: ["unknown", "string", "unknown"],
+    output: "unknown",
+    source: String.raw`export function f(val: unknown, name: string, reviver: unknown): unknown {
+  const t = __ykTag(val);
+  if (t === 6) {
+    const a = __ykArrAny(val);
+    const n = a.length;
+    let i = 0;
+    while (i < n) {
+      a[i] = __ykJsonRevive(a[i], __ykNumberToString(i), reviver);
+      i = i + 1;
+    }
+  } else if (t === 7) {
+    const keys = __ykKeysOf(val, false);
+    let i = 0;
+    while (i < keys.length) {
+      const k = __ykStr(keys[i]);
+      const e = __ykJsonRevive(__ykGetAny(val, k), k, reviver);
+      if (__ykTag(e) === 0) __ykObjDelete(val, k);
+      else __ykPut(val, k, e);
+      i = i + 1;
+    }
+  }
+  return reviver(name, val);
 }`,
   },
 };
@@ -2014,6 +2074,30 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     i = i + 1;
   }
   return false;
+}`,
+  },
+  // delete o[k]: the property removed, the others in their order.
+  __ykObjDelete: {
+    inputs: ["YkObject", "string"],
+    output: "unknown",
+    source: `export function f(o: YkObject, k: string): unknown {
+  const keys = __ykObjKeys(o);
+  const vals = __ykObjVals(o);
+  let i = 0;
+  let found = false;
+  while (i < keys.length) {
+    if (!found && __ykStrEquals(__ykStr(keys[i]), k)) found = true;
+    if (found && i + 1 < keys.length) {
+      keys[i] = keys[i + 1];
+      vals[i] = vals[i + 1];
+    }
+    i = i + 1;
+  }
+  if (found) {
+    keys.pop();
+    vals.pop();
+  }
+  return __ykUndef();
 }`,
   },
   // o[k] = v: the property replaced, or added at the end; the object.
