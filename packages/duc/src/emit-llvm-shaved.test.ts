@@ -21,7 +21,7 @@ import { canRun, decode, encode, same } from "./__fixtures__/native-harness.js";
 import { emitNativeModules } from "./emit-llvm-boxed.js";
 import { liftAtom } from "./lift.js";
 import { compileObject, compileRuntime } from "./native.js";
-import { C_LEAVES_JS, type ShavedUnit, shaveCUnit } from "./raise-c.js";
+import { C_LEAVES_JS, type ShavedUnit, createCMemory, shaveCUnit } from "./raise-c.js";
 
 const here = (p: string): string => fileURLToPath(new URL(p, import.meta.url));
 const V8 = here("../vendor/v8/");
@@ -68,12 +68,20 @@ function nativeUnit(
   name: string,
   atoms: ReadonlyMap<string, { readonly source: string }>,
 ): (calls: readonly [string, unknown[]][]) => unknown[] {
-  const names = [...atoms.keys()];
+  return nativeUnitWith(name, atoms, []);
+}
+function nativeUnitWith(
+  name: string,
+  atoms: ReadonlyMap<string, { readonly source: string }>,
+  extra: readonly [string, string][],
+): (calls: readonly [string, unknown[]][]) => unknown[] {
+  const names = [...atoms.keys(), ...extra.map(([n]) => n)];
+  const sources = new Map([...[...atoms].map(([n, a]) => [n, a.source] as const), ...extra]);
   const statements = [
     ...names.map((n) => ({
       kind: "function" as const,
       declares: [n],
-      graph: liftAtom((atoms.get(n) as { source: string }).source),
+      graph: liftAtom(sources.get(n) as string),
     })),
     {
       kind: "statement" as const,
@@ -284,5 +292,129 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
     );
     expect(bad.slice(0, 10)).toEqual([]);
     expect(kept.length).toBeGreaterThan(2500);
+  }, 900_000);
+
+  it("musl's memcpy, memset, strlen, strcmp and qsort, shaved, natively over the memory leaves equal their raised source", () => {
+    const MUSL_ARGS = [
+      "-std=c99",
+      "-nostdinc",
+      "-ffreestanding",
+      "-D_XOPEN_SOURCE=700",
+      `-I${MUSL}yakcc`,
+      `-I${MUSL}arch/x86_64`,
+      `-I${MUSL}src/include`,
+      `-I${MUSL}src/internal`,
+      `-I${MUSL}obj/include`,
+      `-I${MUSL}include`,
+    ];
+    const units = [
+      shaveCUnit(`${MUSL}src/string/memcpy.c`, ["memcpy"], MUSL_ARGS, "clang"),
+      shaveCUnit(`${MUSL}src/string/memset.c`, ["memset"], MUSL_ARGS, "clang"),
+      shaveCUnit(`${MUSL}src/string/strlen.c`, ["strlen"], MUSL_ARGS, "clang"),
+      shaveCUnit(`${MUSL}src/string/strcmp.c`, ["strcmp"], MUSL_ARGS, "clang"),
+      shaveCUnit(`${MUSL}src/stdlib/qsort.c`, ["__qsort_r"], MUSL_ARGS, "clang"),
+      shaveCUnit(`${MUSL}src/stdlib/qsort_nr.c`, ["qsort"], MUSL_ARGS, "clang"),
+    ];
+    for (const u of units) expect([...u.refused]).toEqual([]);
+    const atoms = new Map(units.flatMap((u) => [...u.atoms]));
+    // The drivers: buffers made and read through the leaves, the same source in both memories.
+    const DRIVERS: [string, string][] = [
+      [
+        "put",
+        "export function f(bytes: number[]): number { const a = __ykAlloc(bytes.length, 16); for (let i = 0; i < bytes.length; i++) __ykStore8(a + i, bytes[i] as number); return a; }",
+      ],
+      [
+        "get",
+        "export function f(a: number, n: number): number[] { const out: number[] = []; for (let i = 0; i < n; i++) out.push(__ykLoad8(a + i)); return out; }",
+      ],
+      [
+        "tMemcpy",
+        "export function f(src: number[], dst: number[], d: number, s: number, n: number): unknown { const ps = put(src); const pd = put(dst); const r = memcpy(pd + d, ps + s, BigInt(n)) as number; return [get(pd, dst.length), r - pd]; }",
+      ],
+      [
+        "tMemset",
+        "export function f(dst: number[], d: number, c: number, n: number): unknown { const pd = put(dst); const r = memset(pd + d, c, BigInt(n)) as number; return [get(pd, dst.length), r - pd]; }",
+      ],
+      [
+        "tStrlen",
+        "export function f(buf: number[], o: number): unknown { return strlen(put(buf) + o); }",
+      ],
+      [
+        "tStrcmp",
+        "export function f(p: number[], q: number[], a: number, b: number): unknown { return strcmp(put(p) + a, put(q) + b); }",
+      ],
+      [
+        "cmpInt",
+        "export function f(a: number, b: number): number { const x = __ykLoad32(a) | 0; const y = __ykLoad32(b) | 0; return x < y ? -1 : x > y ? 1 : 0; }",
+      ],
+      [
+        "tQsort",
+        "export function f(xs: number[]): unknown { const a = __ykAlloc(xs.length * 4, 16); for (let i = 0; i < xs.length; i++) __ykStore32(a + 4 * i, xs[i] as number); qsort(a, BigInt(xs.length), 4n, cmpInt); const out: number[] = []; for (let i = 0; i < xs.length; i++) out.push(__ykLoad32(a + 4 * i) | 0); return out; }",
+      ],
+      [
+        "tTrap",
+        "export function f(n: number): unknown { const a = __ykAlloc(8, 8); __ykFree(a); try { return __ykLoad8(a + n); } catch (e) { return [(e as Error).name, (e as Error).message]; } }",
+      ],
+    ];
+    const run = nativeUnitWith("musl", atoms, DRIVERS);
+    // The reference: the raised sources and the drivers in Node, over createCMemory.
+    const memory = createCMemory();
+    const leaves = {
+      ...(C_LEAVES_JS as Record<string, unknown>),
+      ...(memory.leaves as Record<string, unknown>),
+    };
+    const all: [string, string][] = [
+      ...[...atoms].map(([n, a]) => [n, a.source] as [string, string]),
+      ...DRIVERS,
+    ];
+    const js = all
+      .map(
+        ([n, src]) =>
+          ts.transpileModule(src.replace(/^export function f\(/, `function ${n}(`), {
+            compilerOptions: { target: ts.ScriptTarget.ES2022 },
+          }).outputText,
+      )
+      .join("\n");
+    const ref = new Function(
+      ...Object.keys(leaves),
+      `${js}\nreturn { ${DRIVERS.map(([n]) => n).join(", ")} };`,
+    )(...Object.values(leaves)) as Record<string, (...a: unknown[]) => unknown>;
+    const bytes = (n: number, seed: number, min = 0) =>
+      fc.sample(fc.integer({ min, max: 255 }), { numRuns: n, seed });
+    const calls: [string, unknown[]][] = [];
+    for (let i = 0; i < 60; i++) {
+      const n = (i * 37) % 120;
+      calls.push(["tMemcpy", [bytes(160, i), bytes(160, i + 500), i % 16, (i * 7) % 16, n]]);
+      calls.push(["tMemset", [bytes(160, i + 900), (i * 5) % 16, i * 131 - 3000, n]]);
+      calls.push(["tStrlen", [[...bytes(i % 16, i + 50), ...bytes(n, i + 1300, 1), 0], i % 16]]);
+      const common = bytes(n % 40, i + 1700, 1);
+      calls.push([
+        "tStrcmp",
+        [[...common, ...bytes(3, i + 1800), 0], [...common, ...bytes(3, i + 1900), 0], 0, 0],
+      ]);
+      calls.push([
+        "tQsort",
+        [
+          fc.sample(fc.integer({ min: -(2 ** 31), max: 2 ** 31 - 1 }), {
+            numRuns: (i * 3) % 50,
+            seed: i + 2100,
+          }),
+        ],
+      ]);
+    }
+    calls.push(["tTrap", [0]], ["tTrap", [99]]);
+    const got = run(calls);
+    const bad: string[] = [];
+    calls.forEach(([fn, args], i) => {
+      let want: unknown;
+      try {
+        want = ref[fn]?.(...args);
+      } catch (e) {
+        want = `threw ${(e as Error).message}`;
+      }
+      if (!same(got[i], want) && bad.length < 5)
+        bad.push(`${fn}: ${JSON.stringify(got[i])} vs ${JSON.stringify(want)}`);
+    });
+    expect(bad).toEqual([]);
   }, 900_000);
 });

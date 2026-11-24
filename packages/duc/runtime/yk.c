@@ -4507,6 +4507,196 @@ int yk_main_end(void) {
   return exit_code_of();
 }
 
+/* --- C's memory: the memory leaves raised C lowers to (#1363, DEC-DUC-OPERATIONS-AS-ATOMS-001) ---
+ *
+ * One flat, byte-addressed memory, as raise-c's createCMemory defines it: an address is an integer;
+ * a region is allocated aligned to max(16, align) after the last one (with a 16-byte gap: one past a
+ * region's end is in no other), its size rounded up to 16 and zeroed. Addresses only grow, so a
+ * freed region's are never reused and a stale pointer traps. Loads and stores are little-endian and
+ * trap outside a live region, and a store traps on constant data (`__ykData`: one region per
+ * distinct content). A trap is an Error, "memory trap: …", as the JavaScript definition throws.
+ */
+
+typedef struct {
+  uint64_t base;
+  uint32_t len;
+  int32_t constant, live;
+  uint8_t *bytes;
+} c_region;
+static c_region *c_regions = NULL;
+static uint32_t c_nregions = 0, c_capregions = 0;
+static uint64_t c_next = 0x10000;
+static yk c_data_keys = 0; /* an object: a constant's content, to its address */
+
+static _Noreturn void c_trap(yk message) {
+  yk_throw(make_error("Error", concat(str(ascii("memory trap: ")), str(message))));
+}
+static yk hex_of(double a) { return number_to_radix(a, 16); }
+
+static uint64_t c_alloc(double size, double align, int constant) {
+  double a = align > 16 ? align : 16;
+  uint64_t al = (uint64_t)a;
+  uint64_t base = (c_next + al - 1) / al * al;
+  double n = ceil(size / 16) * 16;
+  uint32_t len = (uint32_t)(n > 16 ? n : 16);
+  if (c_nregions == c_capregions) {
+    c_capregions = c_capregions == 0 ? 64 : c_capregions * 2;
+    c_region *grown = alloc((size_t)c_capregions * sizeof(c_region));
+    if (c_nregions > 0) memcpy(grown, c_regions, (size_t)c_nregions * sizeof(c_region));
+    c_regions = grown;
+  }
+  uint8_t *bytes = alloc(len);
+  memset(bytes, 0, len);
+  c_regions[c_nregions++] = (c_region){base, len, constant, 1, bytes};
+  c_next = base + len + 16;
+  return base;
+}
+static c_region *c_region_of(double a, uint32_t n, int write) {
+  if (!(a == a && !isinf(a) && trunc(a) == a)) c_trap(concat(str(ascii("address ")), str(number_to_string(a))));
+  uint32_t lo = 0, hi = c_nregions;
+  while (lo < hi) {
+    uint32_t mid = (lo + hi) / 2;
+    c_region *r = &c_regions[mid];
+    if (a < (double)r->base) hi = mid;
+    else if (a >= (double)(r->base + r->len)) lo = mid + 1;
+    else {
+      if (!r->live || a + n > (double)(r->base + r->len) || (write && r->constant)) break;
+      return r;
+    }
+  }
+  char what[48];
+  snprintf(what, sizeof what, "%s of %u at 0x", write ? "store" : "load", n);
+  c_trap(concat(str(ascii(what)), str(hex_of(a))));
+}
+static uint8_t *c_at(yk addr, uint32_t n, int write) {
+  double a = to_number(addr);
+  c_region *r = c_region_of(a, n, write);
+  return r->bytes + (uint64_t)(a - (double)r->base);
+}
+
+yk yk_leaf_alloc(yk size, yk align) { return yk_number((double)c_alloc(to_number(size), to_number(align), 0)); }
+yk yk_leaf_free(yk addr) {
+  double a = to_number(addr);
+  if (a == 0) return YK_UNDEFINED;
+  c_region *r = c_region_of(a, 1, 0);
+  if ((double)r->base != a || r->constant) c_trap(concat(str(ascii("free of 0x")), str(hex_of(a))));
+  r->live = 0;
+  return YK_UNDEFINED;
+}
+yk yk_leaf_load8(yk a) { return yk_number(*c_at(a, 1, 0)); }
+yk yk_leaf_load16(yk a) {
+  uint8_t *p = c_at(a, 2, 0);
+  return yk_number(p[0] | (p[1] << 8));
+}
+yk yk_leaf_load32(yk a) {
+  uint8_t *p = c_at(a, 4, 0);
+  return yk_number((double)((uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24)));
+}
+static uint64_t c_le64(const uint8_t *p) {
+  uint64_t x = 0;
+  for (int i = 7; i >= 0; i--) x = (x << 8) | p[i];
+  return x;
+}
+yk yk_leaf_load64(yk a) { return big_from_u64(c_le64(c_at(a, 8, 0)), 0); }
+yk yk_leaf_load_f64(yk a) {
+  uint64_t x = c_le64(c_at(a, 8, 0));
+  double d;
+  memcpy(&d, &x, 8);
+  return yk_number(d);
+}
+yk yk_leaf_load_f32(yk a) {
+  uint8_t *p = c_at(a, 4, 0);
+  uint32_t x = (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+  float f;
+  memcpy(&f, &x, 4);
+  return yk_number(f);
+}
+static void c_put(uint8_t *p, uint64_t x, int n) {
+  for (int i = 0; i < n; i++) p[i] = (uint8_t)(x >> (8 * i));
+}
+yk yk_leaf_store8(yk a, yk x) {
+  uint8_t *p = c_at(a, 1, 1);
+  c_put(p, (uint32_t)to_int32(x) & 255, 1);
+  return x;
+}
+yk yk_leaf_store16(yk a, yk x) {
+  uint8_t *p = c_at(a, 2, 1);
+  c_put(p, (uint32_t)to_int32(x) & 65535, 2);
+  return x;
+}
+yk yk_leaf_store32(yk a, yk x) {
+  uint8_t *p = c_at(a, 4, 1);
+  c_put(p, to_uint32(x), 4);
+  return x;
+}
+yk yk_leaf_store64(yk a, yk x) {
+  uint8_t *p = c_at(a, 8, 1);
+  c_put(p, big_low64(want_big(x)), 8);
+  return x;
+}
+yk yk_leaf_store_f64(yk a, yk x) {
+  uint8_t *p = c_at(a, 8, 1);
+  double d = to_number(x);
+  uint64_t u;
+  memcpy(&u, &d, 8);
+  c_put(p, u, 8);
+  return x;
+}
+yk yk_leaf_store_f32(yk a, yk x) {
+  uint8_t *p = c_at(a, 4, 1);
+  float f = (float)to_number(x);
+  uint32_t u;
+  memcpy(&u, &f, 4);
+  c_put(p, u, 4);
+  return x;
+}
+yk yk_leaf_f32(yk x) { return yk_number((float)to_number(x)); }
+
+/* __ykData(kind, values): the values laid out once per distinct content, read-only. */
+yk yk_leaf_data(yk kind, yk values) {
+  yk_array *vs = arr(values);
+  /* The content's key, as the JavaScript definition makes it: kind, ":", the values joined by ",". */
+  yk key = concat(str(to_string(kind)), str(ascii(":")));
+  for (uint32_t i = 0; i < vs->len; i++) {
+    if (i > 0) key = concat(str(key), str(ascii(",")));
+    key = concat(str(key), str(to_string(vs->items[i])));
+  }
+  if (c_data_keys == 0) c_data_keys = yk_object_of(0, NULL, NULL);
+  yk known;
+  if (own_get((yk_object *)PTR(c_data_keys), key, &known)) return known;
+  static const char *const kinds[10] = {"i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f64", "f32"};
+  static const int sizes[10] = {1, 1, 2, 2, 4, 4, 8, 8, 8, 4};
+  int k = -1;
+  for (int j = 0; j < 10; j++)
+    if (key_is(kind, kinds[j])) k = j;
+  if (k < 0) c_trap(concat(str(ascii("constant data of kind ")), str(to_string(kind))));
+  uint64_t base = c_alloc((double)sizes[k] * vs->len, sizes[k], 1);
+  uint8_t *p = c_regions[c_nregions - 1].bytes;
+  for (uint32_t i = 0; i < vs->len; i++) {
+    yk v = vs->items[i];
+    uint8_t *q = p + (size_t)i * sizes[k];
+    if (k <= 5) {
+      double d = to_number(v);
+      c_put(q, double_to_u32(d), sizes[k]);
+    } else if (k <= 7) {
+      c_put(q, big_low64(is_bigint(v) ? big(v) : big(big_from_double(to_number(v)))), 8);
+    } else if (k == 8) {
+      double d = to_number(v);
+      uint64_t u;
+      memcpy(&u, &d, 8);
+      c_put(q, u, 8);
+    } else {
+      float f = (float)to_number(v);
+      uint32_t u;
+      memcpy(&u, &f, 4);
+      c_put(q, u, 4);
+    }
+  }
+  yk addr = yk_number((double)base);
+  own_set((yk_object *)PTR(c_data_keys), key, addr);
+  return addr;
+}
+
 /* BigInt(x): a number (an integer, else a RangeError), a string (StringToBigInt, else a
    SyntaxError), a boolean, or a BigInt. */
 static yk builtin_bigint(void *c, yk s, uint64_t argc, const yk *argv) {
@@ -4609,16 +4799,40 @@ LEAF_VALUE1(leaf_v_f64_from_bits, yk_leaf_f64_from_bits)
 LEAF_VALUE1(leaf_v_f64_hi, yk_leaf_f64_hi)
 LEAF_VALUE1(leaf_v_f64_lo, yk_leaf_f64_lo)
 LEAF_VALUE2(leaf_v_f64_make, yk_leaf_f64_make)
-#define N_LEAVES 13
+LEAF_VALUE2(leaf_v_alloc, yk_leaf_alloc)
+LEAF_VALUE1(leaf_v_free, yk_leaf_free)
+LEAF_VALUE2(leaf_v_data, yk_leaf_data)
+LEAF_VALUE1(leaf_v_load8, yk_leaf_load8)
+LEAF_VALUE1(leaf_v_load16, yk_leaf_load16)
+LEAF_VALUE1(leaf_v_load32, yk_leaf_load32)
+LEAF_VALUE1(leaf_v_load64, yk_leaf_load64)
+LEAF_VALUE1(leaf_v_load_f64, yk_leaf_load_f64)
+LEAF_VALUE1(leaf_v_load_f32, yk_leaf_load_f32)
+LEAF_VALUE2(leaf_v_store8, yk_leaf_store8)
+LEAF_VALUE2(leaf_v_store16, yk_leaf_store16)
+LEAF_VALUE2(leaf_v_store32, yk_leaf_store32)
+LEAF_VALUE2(leaf_v_store64, yk_leaf_store64)
+LEAF_VALUE2(leaf_v_store_f64, yk_leaf_store_f64)
+LEAF_VALUE2(leaf_v_store_f32, yk_leaf_store_f32)
+LEAF_VALUE1(leaf_v_f32, yk_leaf_f32)
+#define N_LEAVES 29
 static yk leaf_value(const char *name, uint64_t n) {
   static const char *names[N_LEAVES] = {"__ykI32Mul", "__ykU64", "__ykI64", "__ykNumToBig",
                                         "__ykBigToI32", "__ykBigToU32", "__ykBigToF64",
                                         "__ykF64ToI64", "__ykF64Bits", "__ykF64FromBits",
-                                        "__ykF64Hi", "__ykF64Lo", "__ykF64Make"};
+                                        "__ykF64Hi", "__ykF64Lo", "__ykF64Make",
+                                        "__ykAlloc", "__ykFree", "__ykData", "__ykLoad8", "__ykLoad16",
+                                        "__ykLoad32", "__ykLoad64", "__ykLoadF64", "__ykLoadF32",
+                                        "__ykStore8", "__ykStore16", "__ykStore32", "__ykStore64",
+                                        "__ykStoreF64", "__ykStoreF32", "__ykF32"};
   static const yk_code codes[N_LEAVES] = {leaf_v_i32mul, leaf_v_u64, leaf_v_i64, leaf_v_num_to_big,
                                           leaf_v_big_to_i32, leaf_v_big_to_u32, leaf_v_big_to_f64,
                                           leaf_v_f64_to_i64, leaf_v_f64_bits, leaf_v_f64_from_bits,
-                                          leaf_v_f64_hi, leaf_v_f64_lo, leaf_v_f64_make};
+                                          leaf_v_f64_hi, leaf_v_f64_lo, leaf_v_f64_make,
+                                          leaf_v_alloc, leaf_v_free, leaf_v_data, leaf_v_load8, leaf_v_load16,
+                                          leaf_v_load32, leaf_v_load64, leaf_v_load_f64, leaf_v_load_f32,
+                                          leaf_v_store8, leaf_v_store16, leaf_v_store32, leaf_v_store64,
+                                          leaf_v_store_f64, leaf_v_store_f32, leaf_v_f32};
   static yk fns[N_LEAVES];
   for (int i = 0; i < N_LEAVES; i++)
     if (strlen(names[i]) == n && memcmp(names[i], name, n) == 0)
