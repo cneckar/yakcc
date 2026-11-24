@@ -46,7 +46,7 @@ A **leaf** is an operation a target implements itself. It is exact, total, and h
 | a float64's 64 bits: `__ykF64Bits(x)`, `__ykF64FromBits(b)` | its representation (`bit_cast`, a union, `memcpy`). Its 32-bit words are integer operations on the bits |
 | `floor`, `ceil`, `trunc` | exact |
 | comparisons and equality on float64 | IEEE 754 |
-| memory (#1363): `__ykAlloc(n, align)`, `__ykFree(p)`; `__ykLoad{I8,U8,I16,U16,I32,U32,I64,U64,F32,F64}(p)`; `__ykStore{8,16,32,64,F32,F64}(p, v)`; `__ykMemCopy(d, s, n)`, `__ykMemFill(d, v, n)` | one flat, byte-addressed, little-endian memory per program. An address is a number, a non-negative integer below 2^53, so address arithmetic is float64 arithmetic. Address 0 is never allocated. An access is defined inside an allocated block. The reference lowering traps outside one; a native lowering may leave the check out where the source's own meaning leaves the access undefined (C's out-of-bounds access) |
+| memory (#1363): `__ykAlloc(n, align)`, `__ykFree(p)`, `__ykData(kind, values)` (constant memory); `__ykLoad{8,16,32,64,F32,F64}(p)`, unsigned; `__ykStore{8,16,32,64,F32,F64}(p, v)`; and `__ykF32(x)`, rounding to binary32 | one flat, byte-addressed, little-endian memory per program. An address is an integer below 2^53, so address arithmetic is float64 arithmetic. Address 0 is never allocated. An access is defined inside a live block. The reference implementation traps outside one; a native lowering may leave the check out where the source's own meaning leaves the access undefined (C's out-of-bounds access). A signed load is the integer operations on an unsigned one |
 | bitwise `& \| ^ ~ << >> >>>` on numbers | ECMAScript's, ToInt32/ToUint32 included: exactly specified, total |
 | the string primitives: a UTF-16 unit, a substring by checked bounds, a join, the length | DEC-DUC-WASM-MEMORY-001 |
 | objects, arrays and closures: make, read a slot, write a slot | the heap |
@@ -57,7 +57,7 @@ The table is the list, kept in one module: `packages/duc/src/leaves.ts` (`LEAF_F
 
 *Amended 2026-11-24 (#1362, #1363):*
 - the float64-word leaves (`__ykF64Hi`, `__ykF64Lo`, `__ykF64Make`) are dropped, since they are integer operations on `__ykF64Bits`;
-- the memory leaves are added.
+- the memory leaves are added. They are named as the C front end raises them (#1372).
 
 ### 2. Every other operation is an atom, and a label is a reference to its root
 

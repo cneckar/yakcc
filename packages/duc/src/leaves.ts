@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+import { C_LEAVES_JS, createCMemory } from "./raise-c.js";
+
 /**
  * The leaves (DEC-DUC-OPERATIONS-AS-ATOMS-001, #1362, #1363): the operations a target implements
  * itself. Each is exact, total within its stated domain, and has one meaning. Every other operation
@@ -54,39 +56,34 @@ const INTEGER_LEAVES: readonly LeafFunction[] = [
 const BITS_LEAVES: readonly LeafFunction[] = [
   leaf("__ykF64Bits", ["f64"], "i64", "the IEEE 754 binary64 bits, unsigned"),
   leaf("__ykF64FromBits", ["i64"], "f64", "the float64 whose bits are the low 64 bits"),
+  leaf("__ykF32", ["f64"], "f64", "the float64 rounded to binary32, ties to even, widened"),
 ];
 
 /**
- * Memory (#1363): one flat, byte-addressed, little-endian memory per program. Address 0 is never
- * allocated. An access is defined within an allocated block and refused (a trap) outside it; the
- * reference lowering checks, and a native lowering may omit the check where the source's own
- * meaning makes the access undefined (C's out-of-bounds access).
- *
- * Integers load as numbers (8, 16 and 32 bits, sign- or zero-extended) or as a bigint (64 bits);
- * a store writes the low bits of its value. An address is a number, so address arithmetic is
- * float64 arithmetic on integers, exact below 2^53.
+ * Memory (#1363), as the C front end raises it (`raise-c.ts`, #1372): one flat, byte-addressed,
+ * little-endian memory per program. An address is an integer (a number, below 2^53), so address
+ * arithmetic is float64 arithmetic on integers. Address 0 is never allocated. An access is defined
+ * inside a live block, and traps outside one (the reference implementation checks; a native
+ * lowering may leave the check out where the source's own meaning leaves the access undefined).
+ * Loads are unsigned: a signed type's value is the integer operations on the bits. A store writes
+ * the low bits of its value and gives the value.
  */
 const MEMORY_LEAVES: readonly LeafFunction[] = [
   leaf("__ykAlloc", ["f64", "f64"], "addr", "a new block of n bytes aligned to a, zeroed"),
   leaf("__ykFree", ["addr"], "void", "release a block from __ykAlloc"),
-  leaf("__ykLoadI8", ["addr"], "f64", "a byte, sign-extended"),
-  leaf("__ykLoadU8", ["addr"], "f64", "a byte, zero-extended"),
-  leaf("__ykLoadI16", ["addr"], "f64", "2 bytes, sign-extended"),
-  leaf("__ykLoadU16", ["addr"], "f64", "2 bytes, zero-extended"),
-  leaf("__ykLoadI32", ["addr"], "f64", "4 bytes, signed"),
-  leaf("__ykLoadU32", ["addr"], "f64", "4 bytes, unsigned"),
-  leaf("__ykLoadI64", ["addr"], "i64", "8 bytes, signed"),
-  leaf("__ykLoadU64", ["addr"], "i64", "8 bytes, unsigned"),
+  leaf("__ykData", ["f64", "f64"], "addr", "constant memory: a kind's values laid out, read-only"),
+  leaf("__ykLoad8", ["addr"], "f64", "a byte, unsigned"),
+  leaf("__ykLoad16", ["addr"], "f64", "2 bytes, unsigned"),
+  leaf("__ykLoad32", ["addr"], "f64", "4 bytes, unsigned"),
+  leaf("__ykLoad64", ["addr"], "i64", "8 bytes, unsigned"),
   leaf("__ykLoadF32", ["addr"], "f64", "a binary32, widened exactly"),
   leaf("__ykLoadF64", ["addr"], "f64", "a binary64"),
-  leaf("__ykStore8", ["addr", "f64"], "void", "the low 8 bits of an integer"),
-  leaf("__ykStore16", ["addr", "f64"], "void", "the low 16 bits of an integer"),
-  leaf("__ykStore32", ["addr", "f64"], "void", "the low 32 bits of an integer"),
-  leaf("__ykStore64", ["addr", "i64"], "void", "the low 64 bits of a bigint"),
-  leaf("__ykStoreF32", ["addr", "f64"], "void", "the float64 rounded to binary32, ties to even"),
-  leaf("__ykStoreF64", ["addr", "f64"], "void", "a binary64"),
-  leaf("__ykMemCopy", ["addr", "addr", "f64"], "void", "n bytes, as if through a temporary"),
-  leaf("__ykMemFill", ["addr", "f64", "f64"], "void", "n bytes set to the low 8 bits of a value"),
+  leaf("__ykStore8", ["addr", "f64"], "f64", "the low 8 bits of an integer"),
+  leaf("__ykStore16", ["addr", "f64"], "f64", "the low 16 bits of an integer"),
+  leaf("__ykStore32", ["addr", "f64"], "f64", "the low 32 bits of an integer"),
+  leaf("__ykStore64", ["addr", "i64"], "i64", "the low 64 bits of a bigint"),
+  leaf("__ykStoreF32", ["addr", "f64"], "f64", "the float64 rounded to binary32, ties to even"),
+  leaf("__ykStoreF64", ["addr", "f64"], "f64", "a binary64"),
 ];
 
 /** Every leaf function, by name. */
@@ -133,122 +130,14 @@ export const LEAF_OPERATIONS: ReadonlySet<string> = new Set([
 /** A leaf function's reference implementation. */
 export type LeafImpl = (...args: never[]) => unknown;
 
-/** The memory leaves' reference implementation: one memory, growing, every access checked. */
-class ReferenceMemory {
-  private bytes = new Uint8Array(1 << 16);
-  private view = new DataView(this.bytes.buffer);
-  private top = 16; // address 0 (and the first bytes) are never allocated
-  /** Allocated blocks: start -> size. */
-  private readonly blocks = new Map<number, number>();
-  /** Block starts, ascending, for the bounds check. */
-  private starts: number[] = [];
-
-  alloc(n: number, align: number): number {
-    const a = Math.max(1, align);
-    const at = Math.ceil(this.top / a) * a;
-    const end = at + Math.max(0, n);
-    if (end > this.bytes.length) {
-      let size = this.bytes.length;
-      while (size < end) size *= 2;
-      const grown = new Uint8Array(size);
-      grown.set(this.bytes);
-      this.bytes = grown;
-      this.view = new DataView(grown.buffer);
-    }
-    this.top = Math.max(end, at + 1);
-    this.blocks.set(at, n);
-    this.starts.push(at);
-    this.bytes.fill(0, at, end);
-    return at;
-  }
-
-  free(p: number): void {
-    if (p === 0) return;
-    if (!this.blocks.delete(p)) throw new RangeError(`free of ${p}, not an allocated block`);
-    this.starts = this.starts.filter((s) => s !== p);
-  }
-
-  /** The address `p` checked for an access of `n` bytes inside one live block. */
-  check(p: number, n: number): number {
-    let lo = 0;
-    let hi = this.starts.length - 1;
-    let start = -1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      const s = this.starts[mid] as number;
-      if (s <= p) {
-        start = s;
-        lo = mid + 1;
-      } else hi = mid - 1;
-    }
-    const size = start >= 0 ? this.blocks.get(start) : undefined;
-    if (size === undefined || p + n > start + size || !Number.isInteger(p))
-      throw new RangeError(`memory access of ${n} bytes at ${p} is outside every block`);
-    return p;
-  }
-
-  get dv(): DataView {
-    return this.view;
-  }
-
-  get u8(): Uint8Array {
-    return this.bytes;
-  }
-}
-
 /**
  * The leaf functions' reference implementations, over a fresh memory: what the TypeScript lowering
- * of a graph runs with, and what each target's leaves are tested against.
+ * of a graph runs with, and what each target's leaves are tested against. They are the C front
+ * end's (`C_LEAVES_JS`, `createCMemory`), which its tests show equal C compiled natively.
  */
 export function leafFunctionsJs(): Readonly<Record<string, LeafImpl>> {
-  const m = new ReferenceMemory();
-  const bits = new DataView(new ArrayBuffer(8));
-  const le = true;
   return {
-    __ykI32Mul: (a: number, b: number): number => Math.imul(a, b),
-    __ykU64: (x: bigint): bigint => BigInt.asUintN(64, x),
-    __ykI64: (x: bigint): bigint => BigInt.asIntN(64, x),
-    __ykNumToBig: (x: number): bigint => BigInt(x),
-    __ykBigToI32: (x: bigint): number => Number(BigInt.asIntN(32, x)),
-    __ykBigToU32: (x: bigint): number => Number(BigInt.asUintN(32, x)),
-    __ykBigToF64: (x: bigint): number => Number(x),
-    __ykF64ToI64: (x: number): bigint => BigInt.asIntN(64, BigInt(Math.trunc(x))),
-    __ykF64Bits: (x: number): bigint => {
-      bits.setFloat64(0, x);
-      return bits.getBigUint64(0);
-    },
-    __ykF64FromBits: (x: bigint): number => {
-      bits.setBigUint64(0, BigInt.asUintN(64, x));
-      return bits.getFloat64(0);
-    },
-    __ykAlloc: (n: number, align: number): number => m.alloc(n, align),
-    __ykFree: (p: number): void => m.free(p),
-    __ykLoadI8: (p: number): number => m.dv.getInt8(m.check(p, 1)),
-    __ykLoadU8: (p: number): number => m.dv.getUint8(m.check(p, 1)),
-    __ykLoadI16: (p: number): number => m.dv.getInt16(m.check(p, 2), le),
-    __ykLoadU16: (p: number): number => m.dv.getUint16(m.check(p, 2), le),
-    __ykLoadI32: (p: number): number => m.dv.getInt32(m.check(p, 4), le),
-    __ykLoadU32: (p: number): number => m.dv.getUint32(m.check(p, 4), le),
-    __ykLoadI64: (p: number): bigint => m.dv.getBigInt64(m.check(p, 8), le),
-    __ykLoadU64: (p: number): bigint => m.dv.getBigUint64(m.check(p, 8), le),
-    __ykLoadF32: (p: number): number => m.dv.getFloat32(m.check(p, 4), le),
-    __ykLoadF64: (p: number): number => m.dv.getFloat64(m.check(p, 8), le),
-    __ykStore8: (p: number, v: number): void => m.dv.setUint8(m.check(p, 1), v & 0xff),
-    __ykStore16: (p: number, v: number): void => m.dv.setUint16(m.check(p, 2), v & 0xffff, le),
-    __ykStore32: (p: number, v: number): void => m.dv.setUint32(m.check(p, 4), v >>> 0, le),
-    __ykStore64: (p: number, v: bigint): void =>
-      m.dv.setBigUint64(m.check(p, 8), BigInt.asUintN(64, v), le),
-    __ykStoreF32: (p: number, v: number): void => m.dv.setFloat32(m.check(p, 4), v, le),
-    __ykStoreF64: (p: number, v: number): void => m.dv.setFloat64(m.check(p, 8), v, le),
-    __ykMemCopy: (d: number, s: number, n: number): void => {
-      if (n <= 0) return;
-      m.check(d, n);
-      m.check(s, n);
-      m.u8.copyWithin(d, s, s + n);
-    },
-    __ykMemFill: (d: number, v: number, n: number): void => {
-      if (n <= 0) return;
-      m.u8.fill(v & 0xff, m.check(d, n), d + n);
-    },
+    ...(C_LEAVES_JS as unknown as Record<string, LeafImpl>),
+    ...(createCMemory().leaves as unknown as Record<string, LeafImpl>),
   };
 }
