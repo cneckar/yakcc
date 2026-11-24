@@ -135,3 +135,38 @@ describe("function declarations that call one another (#1349)", () => {
     );
   });
 });
+
+describe("a function read into a name and called has no receiver (#1330)", () => {
+  it("`const cb = o[k]; cb()` is not `o[k]()`", () => {
+    agrees(
+      `export function f(o: any) {
+  const k = 'm';
+  const p = { ...o };
+  const cb = p[k];
+  if (cb) { p[k] = null; return cb(); }
+  return 'none';
+}`,
+      [
+        [{ m: () => 1 }],
+        [
+          {
+            m: function (this: unknown) {
+              return this === undefined ? "no receiver" : "receiver";
+            },
+          },
+        ],
+        [{}],
+      ],
+    );
+    agrees("export function f(o: any) { const m = o.m; return [m(), o.m()]; }", [
+      [
+        {
+          x: 1,
+          m: function (this: any) {
+            return this?.x ?? "none";
+          },
+        },
+      ],
+    ]);
+  });
+});

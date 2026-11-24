@@ -3370,7 +3370,26 @@ class Lifter {
         });
         inputs.push(fn as ValueId, ...this.liftElements(node.getArguments() as Node[]));
       } else {
-        if (callee !== undefined) inputs.push(this.liftExpr(callee));
+        let fn = callee !== undefined ? this.liftExpr(callee) : undefined;
+        // A function read into a name and then called has no receiver: `const m = o.m; m()` is not
+        // `o.m()`. A call of a member read's value means the method call, so the name's value is
+        // `(0, m)`, as a lowering writes it (#1330).
+        if (
+          fn !== undefined &&
+          callee !== undefined &&
+          !this.isMemberCallee(callee) &&
+          this.isMemberRead(fn)
+        ) {
+          const [zero] = this.emit("literal-source", [], 1, {
+            origin: { kind: "NumericLiteral", text: "0" },
+            label: "0",
+          });
+          fn = this.emit("op", [zero as ValueId, fn], 1, {
+            origin: { kind: "Binary", text: "," },
+            label: ",",
+          })[0] as ValueId;
+        }
+        if (fn !== undefined) inputs.push(fn);
         inputs.push(...this.liftElements(node.getArguments() as Node[]));
       }
       const optional = Node.isCallExpression(node) && this.optional(node);
@@ -4002,6 +4021,32 @@ class Lifter {
         }
       },
     );
+  }
+
+  /** Whether a call's callee is written as a member access (`o.m`, `o[k]`, `(o.m)`): a method call. */
+  private isMemberCallee(callee: Node): boolean {
+    let c = callee;
+    while (Node.isParenthesizedExpression(c)) c = c.getExpression();
+    return Node.isPropertyAccessExpression(c) || Node.isElementAccessExpression(c);
+  }
+
+  /** Whether a value is a member read's result (`.m`, `?.m`, `[k]`, `super.m`): a method if called. */
+  private isMemberRead(v: ValueId): boolean {
+    for (let i = this.nodes.length - 1; i >= 0; i--) {
+      const n = this.nodes[i] as DucNode;
+      if (!n.outputs.includes(v)) continue;
+      const label = n.kind === "op" ? (n.label ?? "") : "";
+      return (
+        ((label.startsWith(".") || label.startsWith("?.")) &&
+          label.length > 1 &&
+          !label.endsWith("=")) ||
+        label.startsWith("super.") ||
+        label === "super[]" ||
+        label === "ElementAccess" ||
+        label === "ElementAccess?."
+      );
+    }
+    return false;
   }
 
   /** Whether a name is a binding outside the atom that it writes (its value is the binding). */
