@@ -235,13 +235,18 @@ const arrayFnAtom = (kind: "nums" | "arr", method: string, nargs: number): strin
 
 /**
  * A builtin used as a function value, as the closure of the call it means: the source of that
- * closure, or undefined when the builtin is not one of these (a variadic Math function's meaning
- * depends on how many arguments it is given, so it is not).
+ * closure, or undefined when the builtin is not one of these.
  */
 function builtinSource(c: Callee): string | undefined {
   const one = (call: string): string => `export function f(x: unknown) { return ${call}; }`;
-  if (c.k === "string-of") return one("String(x)");
-  if (c.k === "number-of") return one("Number(x)");
+  // String() and Number() with no argument are "" and 0, not String(undefined) and NaN.
+  const noneOrOne = (none: string, call: string): string =>
+    `export function f(...a: unknown[]) { return a.length === 0 ? ${none} : ${call}; }`;
+  if (c.k === "string-of") return noneOrOne('""', "String(a[0])");
+  if (c.k === "number-of") return noneOrOne("0", "Number(a[0])");
+  // Math.max and Math.min of however many arguments they are given.
+  if (c.k === "math" && (c.name === "max" || c.name === "min"))
+    return `export function f(...a: unknown[]) { return Math.${c.name}(...(a as number[])); }`;
   if (c.k === "boolean-of") return one("Boolean(x)");
   if (c.k === "math" && (NATIVE_MATH.has(c.name) || UNARY_HOST_MATH.has(c.name)))
     return one(`Math.${c.name}(x as number)`);
@@ -256,6 +261,35 @@ function builtinSource(c: Callee): string | undefined {
   }
   return undefined;
 }
+/**
+ * A compound assignment's operation (\`a += b\` computes a + b, the variable's new value), and an
+ * increment's or decrement's (++a and a++ both compute ToNumber(a) + 1: the old value is the
+ * graph's ToNumber of a). The short-circuiting ones (&&=, ||=, ??=) are not here.
+ */
+const COMPOUND_BASE: ReadonlyMap<string, string> = new Map([
+  ["+=", "+"],
+  ["-=", "-"],
+  ["*=", "*"],
+  ["/=", "/"],
+  ["%=", "%"],
+  ["**=", "**"],
+  ["&=", "&"],
+  ["|=", "|"],
+  ["^=", "^"],
+  ["<<=", "<<"],
+  [">>=", ">>"],
+  [">>>=", ">>>"],
+]);
+const STEP: ReadonlyMap<string, "add" | "sub"> = new Map([
+  ["++", "add"],
+  ["post++", "add"],
+  ["--", "sub"],
+  ["post--", "sub"],
+]);
+/** An optional chain's link: a?.k, a?.[key], f?.(...). */
+const OPTIONAL_LINK = /^(\?\.\w+|ElementAccess\?\.|CallExpression\?\.)$/;
+const baseLabel = (label: string | undefined): string =>
+  COMPOUND_BASE.get(label ?? "") ?? label ?? "";
 const UNARY_HOST_MATH: ReadonlySet<string> = new Set([
   "round",
   "sign",
@@ -1096,6 +1130,9 @@ function lowerFunction(
     emit({ op: "call", fn });
     return result;
   };
+  /** Whether a value is an optional chain link's result. */
+  const readsOptionalLink = (v: ValueId): boolean =>
+    OPTIONAL_LINK.test(producer.get(resolve(v))?.label ?? "");
   /** Whether a value is a spread element (`...x`): the `...` marker over x. */
   const spreadOf = (v: ValueId): ValueId | undefined => {
     const p = producer.get(resolve(v));
@@ -1225,7 +1262,7 @@ function lowerFunction(
       typeAsValue(v, p);
       return { call: { k: "closure", node: p } };
     }
-    const label = p.label ?? "";
+    const label = baseLabel(p.label);
     const operand = (i: number): VT | "?" => {
       const t = get(ins[i] as ValueId);
       if (t !== "undef") return t;
@@ -1233,6 +1270,30 @@ function lowerFunction(
       if (trusted) throw new LoweringError(`undefined is an operand of "${label}"`);
       return "any";
     };
+    // An optional chain's link: a value of any kind. A plain link that reads one's result is
+    // refused: the graph does not say whether the chain's short-circuit covers it (#1360).
+    if (OPTIONAL_LINK.test(label)) {
+      // a.m?.(...): the method's call, unless it has none; which methods a builtin kind has is not
+      // a value here yet.
+      if (
+        label === "CallExpression?." &&
+        /^\??\.\w+$/.test(producer.get(resolve(ins[0] as ValueId))?.label ?? "")
+      )
+        throw new LoweringError("an optional call of a method (a.m?.()) is not in the subset yet");
+      for (let i = 0; i < ins.length; i++) operand(i);
+      return "any";
+    }
+    if (
+      (/^\.\w+$/.test(label) || label === "ElementAccess" || label === "CallExpression") &&
+      readsOptionalLink(ins[0] as ValueId) &&
+      !(
+        label === "CallExpression" &&
+        /^\?\.\w+$/.test(producer.get(resolve(ins[0] as ValueId))?.label ?? "")
+      )
+    )
+      throw new LoweringError(
+        "a plain link after an optional one (a?.b.c) is not in the subset: the graph does not say whether the chain short-circuits it (#1360)",
+      );
     if (/^\.\w+$/.test(label) && ins.length === 1) {
       const member = label.slice(1);
       const t0 = operand(0);
@@ -1306,16 +1367,7 @@ function lowerFunction(
       }
       if (callee.k === "callwith") return "any";
       if (callee.k === "json-ns") {
-        // A replacer or a reviver: not yet.
-        const extra = ins[2];
-        if (callee.name === "stringify" && extra !== undefined) {
-          const te = get(extra);
-          const p2 = producer.get(resolve(extra));
-          if (te !== "undef" && p2?.label !== "null")
-            throw new LoweringError("JSON.stringify with a replacer is not in the subset yet");
-        }
-        if (callee.name === "parse" && extra !== undefined)
-          throw new LoweringError("JSON.parse with a reviver is not in the subset yet");
+        // A replacer or a reviver: a value of any kind (a function called as a function value).
         return "any";
       }
       if (callee.k === "try") {
@@ -1440,6 +1492,8 @@ function lowerFunction(
       if (t0 !== "nums" && t0 !== "arr")
         throw new LoweringError(`an element read of ${show(t0)} is not in the subset`);
       const t1 = operand(1);
+      // An array's property by a key of another kind: an element, or its length (__ykGetKey).
+      if (t1 !== "?" && t1 !== "f64" && !trusted) return "any";
       if (t1 !== "?" && t1 !== "f64")
         throw new LoweringError(`an element read at ${show(t1)} is not in the subset yet`);
       // In a program a read out of range is undefined: a value of any kind.
@@ -1487,7 +1541,7 @@ function lowerFunction(
     if (ins.length === 2 && (F64_BINARY[label] !== undefined || label === "%" || label === "**"))
       return "f64";
     if (ins.length === 2 && F64_COMPARE[label] !== undefined) return "i32";
-    if (ins.length === 1 && (label === "-" || label === "+")) return "f64";
+    if (ins.length === 1 && (label === "-" || label === "+" || STEP.has(label))) return "f64";
     if ((ins.length === 2 && BITWISE[label] !== undefined) || (ins.length === 1 && label === "~"))
       return "f64";
     if (ins.length === 1 && label === "!") return "i32";
@@ -1893,7 +1947,7 @@ function lowerFunction(
     const t = ty(out);
     // A function, or undefined: nothing to compute, only what uses it.
     if (typeof t === "object" || t === "undef") return;
-    const label = n.label ?? "";
+    const label = n.kind === "op" ? baseLabel(n.label) : (n.label ?? "");
     const ins = n.inputs as readonly ValueId[];
     if (n.kind === "sel") {
       const [c, a, b] = ins as [ValueId, ValueId, ValueId];
@@ -1975,6 +2029,37 @@ function lowerFunction(
       set(out);
       return;
     }
+    if (/^\?\.\w+$/.test(label)) {
+      push(ins[0] as ValueId, "any");
+      emit({ op: "const.str", s: label.slice(2) }, { op: "call", fn: mod.atom("__ykOptGet").fn });
+      set(out);
+      return;
+    }
+    if (label === "ElementAccess?.") {
+      push(ins[0] as ValueId, "any");
+      push(ins[1] as ValueId, "any");
+      emit({ op: "call", fn: mod.atom("__ykOptGetKey").fn });
+      set(out);
+      return;
+    }
+    if (label === "CallExpression?.") {
+      push(ins[0] as ValueId, "any");
+      pushArgsArray(ins.slice(1));
+      emit({ op: "call", fn: mod.atom("__ykOptCall").fn });
+      set(out);
+      return;
+    }
+    const optMember =
+      label === "CallExpression" ? producer.get(resolve(ins[0] as ValueId)) : undefined;
+    if (optMember?.kind === "op" && /^\?\.\w+$/.test(optMember.label ?? "")) {
+      // a?.m(...): undefined when a is undefined or null, else the method's call.
+      push(optMember.inputs[0] as ValueId, "any");
+      emit({ op: "const.str", s: (optMember.label ?? "").slice(2) });
+      pushArgsArray(ins.slice(1));
+      emit({ op: "call", fn: mod.atom("__ykOptInvoke").fn });
+      set(out);
+      return;
+    }
     if (label === "CallExpression" && typeof opType(ins[0] as ValueId) === "string") {
       // A method of a receiver of any kind (or an object): __ykInvoke, which calls an own function
       // property, or the builtin method of the receiver's kind.
@@ -2017,6 +2102,11 @@ function lowerFunction(
         if (NATIVE_MATH.has(m) && args.length === 1) {
           pushNumber(args[0] as ValueId);
           emit({ op: "f64", name: m as F64Op });
+        } else if ((m === "min" || m === "max") && args.length === 0) {
+          emit({
+            op: "const.f64",
+            x: m === "max" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
+          });
         } else if ((m === "min" || m === "max") && args.length >= 1) {
           pushNumber(args[0] as ValueId);
           for (const a of args.slice(1)) {
@@ -2049,6 +2139,7 @@ function lowerFunction(
           else push(v, "any");
         };
         pushOrUndef(args[0]);
+        pushOrUndef(args[1]);
         if (callee.name === "stringify") {
           pushOrUndef(args[2]);
           emit({ op: "call", fn: mod.atom("__ykJsonStringify").fn });
@@ -2070,9 +2161,12 @@ function lowerFunction(
         if (args.length === 0) emit({ op: "const.i32", x: 0 });
         else truthy(args[0] as ValueId);
       } else if (callee.k === "method" && callee.name === "toString") {
-        if (args.length > 0)
-          throw new LoweringError("toString with a radix is not in the subset yet");
-        pushString(callee.recv);
+        // A number's in a radix (a boolean's has none: its argument is ignored).
+        if (args.length > 0 && opType(callee.recv) === "f64") {
+          pushNumber(callee.recv);
+          push(args[0] as ValueId, "any");
+          emit({ op: "call", fn: mod.atom("__ykNumberToStringRadix").fn });
+        } else pushString(callee.recv);
       } else if (callee.k === "method" && callee.name === "nums.push") {
         if (args.length !== 1)
           throw new LoweringError("push of other than one value is not in the subset yet");
@@ -2186,11 +2280,19 @@ function lowerFunction(
         set(out);
         return;
       }
-      if (of === "str" || of === "any") {
-        // A string's unit, or any value's element: the runtime atom.
+      if (of === "str" && opType(ins[1] as ValueId) === "f64") {
+        // A string's unit at a number: the runtime atom.
         push(ins[0] as ValueId, "any");
         pushNumber(ins[1] as ValueId);
         emit({ op: "call", fn: mod.atom("__ykIndex").fn });
+        set(out);
+        return;
+      }
+      if (of === "str" || of === "any" || opType(ins[1] as ValueId) !== "f64") {
+        // Any value's property by a key of any kind (an object's too, at a number).
+        push(ins[0] as ValueId, "any");
+        push(ins[1] as ValueId, "any");
+        emit({ op: "call", fn: mod.atom("__ykGetKey").fn });
         set(out);
         return;
       }
@@ -2339,6 +2441,13 @@ function lowerFunction(
     }
     if (ins.length === 1 && label === "+") {
       pushNumber(ins[0] as ValueId);
+      set(out);
+      return;
+    }
+    const step = STEP.get(label);
+    if (ins.length === 1 && step !== undefined) {
+      pushNumber(ins[0] as ValueId);
+      emit({ op: "const.f64", x: 1 }, { op: "f64", name: step });
       set(out);
       return;
     }
