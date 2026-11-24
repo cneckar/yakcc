@@ -97,11 +97,16 @@ const NUMS = 2;
  * itself. `__ykTag` tells them apart.
  */
 const BOX = 3;
+/** An array of any values: type 5, a struct of its length and a growable type 4, (array (mut anyref)). */
+const ANYS = 4;
+const ARR = 5;
 const BASE_TYPES: number[][] = [
   [0x5e, 0x77, 0x01],
   [0x5e, 0x7c, 0x01],
   [0x5f, 0x02, 0x7f, 0x01, 0x63, F64S, 0x01],
   [0x5f, 0x01, 0x7c, 0x00],
+  [0x5e, 0x63, 0x6e, 0x01],
+  [0x5f, 0x02, 0x7f, 0x01, 0x63, ANYS, 0x01],
 ];
 /** Abstract heap types. */
 const HT_I31 = 0x6c;
@@ -112,6 +117,7 @@ const VAL: Record<WT, number[]> = {
   i32: [0x7f],
   str: [0x63, STR],
   nums: [0x63, NUMS],
+  arr: [0x63, ARR],
   any: [0x63, HT_ANY],
 };
 /** The i31 that is undefined. */
@@ -178,6 +184,9 @@ const GC = {
   numsSetLen: [0xfb, 0x05, NUMS, 0x00],
   numsSetData: [0xfb, 0x05, NUMS, 0x01],
   boxNew: [0xfb, 0x00, BOX],
+  anysNewFixed: (n: number) => [0xfb, 0x08, ANYS, ...u32(n)],
+  arrNew: [0xfb, 0x00, ARR],
+  arrLen: [0xfb, 0x02, ARR, 0x00],
   boxGet: [0xfb, 0x02, BOX, 0x00],
   refI31: [0xfb, 0x1c],
   i31GetS: [0xfb, 0x1d],
@@ -212,6 +221,11 @@ const I32_OPS: Readonly<Record<string, number>> = { eqz: 0x45, and: 0x71, eq: 0x
 
 /** An array of numbers made from its storage: `nums.of` pushes the numbers, then this. */
 const NUMS_WRAP = "wasm:numsWrap";
+/** An array of any values made from its storage: `arr.of` pushes the values, then this. */
+const ARR_WRAP = "wasm:arrWrap";
+
+/** The primitives the boundary reads a value of any kind with. */
+const BOUNDARY_READS = ["__ykTag", "__ykNum", "__ykBool", "__ykStr", "__ykArr", "__ykArrAny"];
 
 /** The IR as wasm instructions; `index` gives a function's index by key. */
 function encode(code: readonly Ins[], index: (fn: string) => number): number[] {
@@ -261,6 +275,12 @@ function encode(code: readonly Ins[], index: (fn: string) => number): number[] {
       case "nums.len":
         out.push(...GC.numsLen);
         break;
+      case "arr.of":
+        out.push(...GC.anysNewFixed(x.n), I.call, ...u32(index(ARR_WRAP)));
+        break;
+      case "arr.len":
+        out.push(...GC.arrLen);
+        break;
       case "to.any":
         if (x.from === "f64") out.push(...GC.boxNew);
         else if (x.from === "i32") out.push(I.i32eqz, I.i32eqz, ...GC.refI31);
@@ -268,7 +288,8 @@ function encode(code: readonly Ins[], index: (fn: string) => number): number[] {
       case "from.any":
         if (x.to === "f64") out.push(...GC.refCast(BOX), ...GC.boxGet);
         else if (x.to === "i32") out.push(...GC.refCast(HT_I31), ...GC.i31GetS);
-        else if (x.to !== "any") out.push(...GC.refCastNull(x.to === "str" ? STR : NUMS));
+        else if (x.to !== "any")
+          out.push(...GC.refCastNull(x.to === "str" ? STR : x.to === "nums" ? NUMS : ARR));
         break;
       case "ref.eq":
         out.push(I.refEq);
@@ -341,6 +362,12 @@ function writeModule(prog: StackProgram, exports: Readonly<Record<string, string
       });
     }
   }
+  funcs.set(ARR_WRAP, {
+    params: [],
+    result: "arr",
+    locals: [],
+    code: () => [I.get, 0, ...GC.arrayLen, I.get, 0, ...GC.arrNew, I.end],
+  });
   funcs.set(NUMS_WRAP, {
     params: [],
     result: "nums",
@@ -387,7 +414,12 @@ function writeModule(prog: StackProgram, exports: Readonly<Record<string, string
   });
   const funcTypes = order.map((k) => {
     const f = funcs.get(k) as WasmFunc;
-    const params = k === NUMS_WRAP ? [[0x63, F64S]] : f.params.map((p) => VAL[p]);
+    const params =
+      k === NUMS_WRAP
+        ? [[0x63, F64S]]
+        : k === ARR_WRAP
+          ? [[0x63, ANYS]]
+          : f.params.map((p) => VAL[p]);
     return u32(fnType(params, f.result === undefined ? [] : [VAL[f.result]]));
   });
   const bodies = order.map((k) => {
@@ -427,11 +459,213 @@ const MARSHAL: Readonly<Record<string, { params: WT[]; result: WT | undefined }>
   numsSetAt: { params: ["nums", "i32", "f64"], result: undefined },
   numsLen: { params: ["nums"], result: "i32" },
   numsGetAt: { params: ["nums", "i32"], result: "f64" },
+  arrNew: { params: ["i32"], result: "arr" },
+  arrSetAt: { params: ["arr", "i32", "any"], result: undefined },
+  arrLen: { params: ["arr"], result: "i32" },
+  arrGetAt: { params: ["arr", "i32"], result: "any" },
   mkNum: { params: ["f64"], result: "any" },
   mkBool: { params: ["i32"], result: "any" },
   mkUndef: { params: [], result: "any" },
   mkNull: { params: [], result: "any" },
 };
+
+/**
+ * An array's operations, for an array of numbers or of any values: a struct of its length and its
+ * storage, which grows to 2 len + 4 when full. `Push` gives the new length; `Pop` and `Get` give
+ * the missing value (NaN for numbers, never observed in an atom; undefined for any values) for an
+ * empty array or an index that is not an integer in [0, length); `Set` writes within the array or
+ * at its end (a push). `boxed`: a number read as a value of any kind (`numsAt`).
+ */
+function arrayPrimitive(
+  op: string,
+  kind: "nums" | "arr",
+  boxed: boolean,
+): { locals: number[][]; code: Tok[] } {
+  const get = (i: number) => [I.get, ...u32(i)];
+  const set = (i: number) => [I.set, ...u32(i)];
+  const nums = kind === "nums";
+  const store = nums ? F64S : ANYS;
+  const struct = nums ? NUMS : ARR;
+  const len = [0xfb, 0x02, struct, 0x00];
+  const data = [0xfb, 0x02, struct, 0x01];
+  const setLen = [0xfb, 0x05, struct, 0x00];
+  const setData = [0xfb, 0x05, struct, 0x01];
+  const aget = [0xfb, 0x0b, store];
+  const aset = [0xfb, 0x0e, store];
+  const missing =
+    nums && !boxed ? [I.f64const, ...f64(Number.NaN)] : [I.i32const, UNDEFINED_I31, ...GC.refI31];
+  const box = nums && boxed ? GC.boxNew : [];
+  const resultType = nums && !boxed ? [0x7c] : VAL.any;
+  switch (op) {
+    case "Push": {
+      const [a, x, n, d, grown] = [0, 1, 2, 3, 4];
+      return {
+        locals: [VAL.i32, [0x63, store], [0x63, store]],
+        code: [
+          ...get(a),
+          ...len,
+          ...set(n),
+          ...get(a),
+          ...data,
+          ...set(d),
+          ...get(n),
+          ...get(d),
+          ...GC.arrayLen,
+          I.i32eq,
+          I.if,
+          0x40,
+          ...get(n),
+          I.i32const,
+          1,
+          0x74, // i32.shl
+          I.i32const,
+          4,
+          I.i32add,
+          0xfb,
+          0x07,
+          store, // array.new_default
+          ...set(grown),
+          ...get(grown),
+          I.i32const,
+          0,
+          ...get(d),
+          I.i32const,
+          0,
+          ...get(n),
+          0xfb,
+          0x11,
+          store,
+          store, // array.copy
+          ...get(a),
+          ...get(grown),
+          ...setData,
+          ...get(grown),
+          ...set(d),
+          I.end,
+          ...get(d),
+          ...get(n),
+          ...get(x),
+          ...aset,
+          ...get(a),
+          ...get(n),
+          I.i32const,
+          1,
+          I.i32add,
+          ...setLen,
+          ...get(n),
+          I.i32const,
+          1,
+          I.i32add,
+          I.f64fromI32,
+          I.end,
+        ],
+      };
+    }
+    case "Pop": {
+      const [a, n] = [0, 1];
+      return {
+        locals: [VAL.i32],
+        code: [
+          ...get(a),
+          ...len,
+          ...set(n),
+          ...get(n),
+          I.i32eqz,
+          I.if,
+          ...resultType,
+          ...missing,
+          I.else,
+          ...get(a),
+          ...get(n),
+          I.i32const,
+          1,
+          I.i32sub,
+          ...setLen,
+          ...get(a),
+          ...data,
+          ...get(n),
+          I.i32const,
+          1,
+          I.i32sub,
+          ...aget,
+          ...box,
+          I.end,
+          I.end,
+        ],
+      };
+    }
+    case "Get":
+    case "At": {
+      // An index is one when it is an integer in [0, length): -0 is 0.
+      const [a, i, k] = [0, 1, 2];
+      return {
+        locals: [VAL.i32],
+        code: [
+          ...get(i),
+          ...GC.truncSat,
+          ...set(k),
+          ...get(k),
+          I.f64fromI32,
+          ...get(i),
+          I.f64ne,
+          ...get(k),
+          I.i32const,
+          0,
+          0x48, // i32.lt_s
+          I.i32or,
+          ...get(k),
+          ...get(a),
+          ...len,
+          0x4e, // i32.ge_s
+          I.i32or,
+          I.if,
+          ...resultType,
+          ...missing,
+          I.else,
+          ...get(a),
+          ...data,
+          ...get(k),
+          ...aget,
+          ...box,
+          I.end,
+          I.end,
+        ],
+      };
+    }
+    case "Set": {
+      const [a, i, v, k] = [0, 1, 2, 3];
+      return {
+        locals: [VAL.i32],
+        code: [
+          ...get(i),
+          ...GC.truncSat,
+          ...set(k),
+          ...get(k),
+          ...get(a),
+          ...len,
+          I.i32eq,
+          I.if,
+          0x40,
+          ...get(a),
+          ...get(v),
+          I.call,
+          { fn: `prim:${kind}Push` },
+          0x1a,
+          I.else,
+          ...get(a),
+          ...data,
+          ...get(k),
+          ...get(v),
+          ...aset,
+          I.end,
+          ...get(a),
+          I.end,
+        ],
+      };
+    }
+  }
+  throw new WasmEmitError(`no array primitive ${op}`);
+}
 
 /** The primitives, written directly: `__ykUnit`, `__ykSub`, `__ykJoin`, and the host's string access. */
 function primitiveBody(key: string): { locals: number[][]; code: Tok[] } {
@@ -584,174 +818,19 @@ function primitiveBody(key: string): { locals: number[][]; code: Tok[] } {
         ],
       };
     }
-    case "numsPush": {
-      // len = a.len; data = a.data; when full, grow to 2 len + 4; data[len] = x; a.len = len + 1.
-      const [a, x, len, data, grown] = [0, 1, 2, 3, 4];
-      return {
-        locals: [VAL.i32, [0x63, F64S], [0x63, F64S]],
-        code: [
-          ...get(a),
-          ...GC.numsLen,
-          I.set,
-          ...u32(len),
-          ...get(a),
-          ...GC.numsData,
-          I.set,
-          ...u32(data),
-          ...get(len),
-          ...get(data),
-          ...GC.arrayLen,
-          I.i32eq,
-          I.if,
-          0x40,
-          ...get(len),
-          I.i32const,
-          1,
-          0x74,
-          I.i32const,
-          4,
-          I.i32add,
-          ...GC.f64sNewDefault,
-          I.set,
-          ...u32(grown),
-          ...get(grown),
-          I.i32const,
-          0,
-          ...get(data),
-          I.i32const,
-          0,
-          ...get(len),
-          ...GC.f64sCopy,
-          ...get(a),
-          ...get(grown),
-          ...GC.numsSetData,
-          ...get(grown),
-          I.set,
-          ...u32(data),
-          I.end,
-          ...get(data),
-          ...get(len),
-          ...get(x),
-          ...GC.f64sSet,
-          ...get(a),
-          ...get(len),
-          I.i32const,
-          1,
-          I.i32add,
-          ...GC.numsSetLen,
-          ...get(len),
-          I.i32const,
-          1,
-          I.i32add,
-          I.f64fromI32,
-          I.end,
-        ],
-      };
-    }
-    case "numsPop": {
-      // An empty array pops undefined: NaN stands for it here, and is never observed.
-      const [a, len] = [0, 1];
-      return {
-        locals: [VAL.i32],
-        code: [
-          ...get(a),
-          ...GC.numsLen,
-          I.set,
-          ...u32(len),
-          ...get(len),
-          I.i32eqz,
-          I.if,
-          0x7c,
-          I.f64const,
-          ...f64(Number.NaN),
-          I.else,
-          ...get(a),
-          ...get(len),
-          I.i32const,
-          1,
-          I.i32sub,
-          ...GC.numsSetLen,
-          ...get(a),
-          ...GC.numsData,
-          ...get(len),
-          I.i32const,
-          1,
-          I.i32sub,
-          ...GC.f64sGet,
-          I.end,
-          I.end,
-        ],
-      };
-    }
-    case "numsGet": {
-      // An index out of range, or not an integer, reads undefined: NaN stands for it here.
-      const [a, i, k] = [0, 1, 2];
-      return {
-        locals: [VAL.i32],
-        code: [
-          ...trunc(i),
-          I.set,
-          ...u32(k),
-          ...get(k),
-          I.f64fromI32,
-          ...get(i),
-          I.f64ne,
-          ...get(k),
-          I.i32const,
-          0,
-          0x48,
-          I.i32or,
-          ...get(k),
-          ...get(a),
-          ...GC.numsLen,
-          0x4e,
-          I.i32or,
-          I.if,
-          0x7c,
-          I.f64const,
-          ...f64(Number.NaN),
-          I.else,
-          ...get(a),
-          ...GC.numsData,
-          ...get(k),
-          ...GC.f64sGet,
-          I.end,
-          I.end,
-        ],
-      };
-    }
-    case "numsSet": {
-      // a[i] = v for i within the array, or at its end (a push); anywhere else is not lowered.
-      const [a, i, v, k] = [0, 1, 2, 3];
-      return {
-        locals: [VAL.i32],
-        code: [
-          ...trunc(i),
-          I.set,
-          ...u32(k),
-          ...get(k),
-          ...get(a),
-          ...GC.numsLen,
-          I.i32eq,
-          I.if,
-          0x40,
-          ...get(a),
-          ...get(v),
-          I.call,
-          { fn: "prim:numsPush" },
-          0x1a,
-          I.else,
-          ...get(a),
-          ...GC.numsData,
-          ...get(k),
-          ...get(v),
-          ...GC.f64sSet,
-          I.end,
-          ...get(a),
-          I.end,
-        ],
-      };
-    }
+    case "numsPopAny":
+      return arrayPrimitive("Pop", "nums", true);
+    case "numsPush":
+    case "numsPop":
+    case "numsGet":
+    case "numsAt":
+    case "numsSet":
+      return arrayPrimitive(key.slice(4), "nums", key === "numsAt");
+    case "arrPush":
+    case "arrPop":
+    case "arrAt":
+    case "arrSet":
+      return arrayPrimitive(key === "arrAt" ? "Get" : key.slice(3), "arr", false);
     case "__ykTag":
       // null 1; an i31: 2 (a boolean) for 0 and 1, 0 for undefined; a box 3; a string 4; else 5.
       return {
@@ -797,8 +876,16 @@ function primitiveBody(key: string): { locals: number[][]; code: Tok[] } {
           I.f64const,
           ...f64(4),
           I.else,
+          ...get(0),
+          ...GC.refTest(NUMS),
+          I.if,
+          0x7c,
           I.f64const,
           ...f64(5),
+          I.else,
+          I.f64const,
+          ...f64(6),
+          I.end,
           I.end,
           I.end,
           I.end,
@@ -814,6 +901,13 @@ function primitiveBody(key: string): { locals: number[][]; code: Tok[] } {
       return { locals: [], code: [...get(0), ...GC.refCastNull(STR), I.end] };
     case "__ykArr":
       return { locals: [], code: [...get(0), ...GC.refCastNull(NUMS), I.end] };
+    case "__ykUndef":
+      return { locals: [], code: [I.i32const, UNDEFINED_I31, ...GC.refI31, I.end] };
+    case "__ykTypeError":
+      // A trap, until exceptions: the program stops where ECMAScript throws a TypeError.
+      return { locals: [], code: [0x00, I.end] };
+    case "__ykArrAny":
+      return { locals: [], code: [...get(0), ...GC.refCastNull(ARR), I.end] };
     case "__ykSame":
       return {
         locals: [],
@@ -826,40 +920,22 @@ function primitiveBody(key: string): { locals: number[][]; code: Tok[] } {
           I.end,
         ],
       };
-    case "numsAt":
-      // An index is one when it is an integer in [0, length): -0 is 0.
+    case "arrNew":
       return {
         locals: [],
-        code: [
-          ...get(1),
-          ...get(1),
-          0x9d, // f64.trunc
-          I.f64eq,
-          ...get(1),
-          I.f64const,
-          ...f64(0),
-          I.f64ge,
-          I.i32and,
-          ...get(1),
-          ...get(0),
-          ...GC.numsLen,
-          I.f64fromI32,
-          I.f64lt,
-          I.i32and,
-          I.if,
-          ...VAL.any,
-          ...get(0),
-          ...GC.numsData,
-          ...trunc(1),
-          ...GC.f64sGet,
-          ...GC.boxNew,
-          I.else,
-          I.i32const,
-          UNDEFINED_I31,
-          ...GC.refI31,
-          I.end,
-          I.end,
-        ],
+        code: [...get(0), ...get(0), 0xfb, 0x07, ANYS, ...GC.arrNew, I.end],
+      };
+    case "arrSetAt":
+      return {
+        locals: [],
+        code: [...get(0), 0xfb, 0x02, ARR, 0x01, ...get(1), ...get(2), 0xfb, 0x0e, ANYS, I.end],
+      };
+    case "arrLen":
+      return { locals: [], code: [...get(0), ...GC.arrLen, I.end] };
+    case "arrGetAt":
+      return {
+        locals: [],
+        code: [...get(0), 0xfb, 0x02, ARR, 0x01, ...get(1), 0xfb, 0x0b, ANYS, I.end],
       };
     case "numsNew":
       return {
@@ -904,7 +980,7 @@ export function emitWasmGc(input: DucGraph, signature: WasmSignature): WasmGcMod
   try {
     prog = lowerProgram(input, signature);
     // The boundary reads a value of any kind with the primitives.
-    for (const k of ["__ykTag", "__ykNum", "__ykBool", "__ykStr", "__ykArr"]) prog.primitive(k);
+    for (const k of BOUNDARY_READS) prog.primitive(k);
   } catch (e) {
     if (e instanceof LoweringError) throw new WasmEmitError(e.message);
     throw e;
@@ -913,8 +989,7 @@ export function emitWasmGc(input: DucGraph, signature: WasmSignature): WasmGcMod
   if (f?.kind !== "lowered") throw new WasmEmitError("no function f");
   const exports: Record<string, string> = { f: "f" };
   for (const k of Object.keys(MARSHAL)) exports[k] = `mar:${k}`;
-  for (const k of ["__ykTag", "__ykNum", "__ykBool", "__ykStr", "__ykArr"])
-    exports[k] = `prim:${k}`;
+  for (const k of BOUNDARY_READS) exports[k] = `prim:${k}`;
   const bytes = writeModule(prog, exports);
   return {
     bytes,
@@ -945,6 +1020,12 @@ export async function instantiateWasmGc(m: WasmGcModule): Promise<(...args: unkn
   const toWasm = (v: unknown, t: WT): unknown => {
     if (t === "i32") return v ? 1 : 0;
     if (t === "f64") return v;
+    if (t === "arr") {
+      const a = v as readonly unknown[];
+      const r = fn("arrNew")(a.length);
+      a.forEach((e, i) => fn("arrSetAt")(r, i, toWasm(e, "any")));
+      return r;
+    }
     if (t === "nums") {
       const a = v as readonly number[];
       const r = fn("numsNew")(a.length);
@@ -957,7 +1038,8 @@ export async function instantiateWasmGc(m: WasmGcModule): Promise<(...args: unkn
       if (typeof v === "boolean") return fn("mkBool")(v ? 1 : 0);
       if (typeof v === "number") return fn("mkNum")(v);
       if (typeof v === "string") return toWasm(v, "str");
-      if (Array.isArray(v) && v.every((e) => typeof e === "number")) return toWasm(v, "nums");
+      if (Array.isArray(v))
+        return toWasm(v, v.every((e) => typeof e === "number") ? "nums" : "arr");
       throw new TypeError(`${String(v)} is not a value the WasmGC lowering represents`);
     }
     const s = String(v);
@@ -968,6 +1050,10 @@ export async function instantiateWasmGc(m: WasmGcModule): Promise<(...args: unkn
   const fromWasm = (v: unknown, t: WT): unknown => {
     if (t === "i32") return v !== 0;
     if (t === "f64") return v;
+    if (t === "arr") {
+      const n = fn("arrLen")(v) as number;
+      return Array.from({ length: n }, (_, i) => fromWasm(fn("arrGetAt")(v, i), "any"));
+    }
     if (t === "nums") {
       const n = fn("numsLen")(v) as number;
       return Array.from({ length: n }, (_, i) => fn("numsGetAt")(v, i));
@@ -978,6 +1064,7 @@ export async function instantiateWasmGc(m: WasmGcModule): Promise<(...args: unkn
       if (tag === 1) return null;
       if (tag === 2) return fn("__ykBool")(v) !== 0;
       if (tag === 3) return fn("__ykNum")(v);
+      if (tag === 6) return fromWasm(fn("__ykArrAny")(v), "arr");
       return fromWasm(v, tag === 4 ? "str" : "nums");
     }
     const n = fn("strLen")(v) as number;
