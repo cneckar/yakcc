@@ -12,7 +12,7 @@ import { ts } from "ts-morph";
 import { afterAll, describe, expect, it } from "vitest";
 import { emitTypeScript } from "./emit-ts.js";
 import { liftAtom } from "./lift.js";
-import { C_LEAVES_JS, shaveCUnit } from "./raise-c.js";
+import { C_LEAVES_JS, createCMemory, shaveCUnit } from "./raise-c.js";
 import type { DucGraph } from "./types.js";
 
 const here = (p: string): string => fileURLToPath(new URL(p, import.meta.url));
@@ -44,9 +44,14 @@ type Fn = (...a: unknown[]) => unknown;
 function link(
   atoms: ReadonlyMap<string, { source: string }>,
   lowered: boolean,
+  memory: ReturnType<typeof createCMemory> = createCMemory(),
 ): Record<string, Fn> {
-  const env: Record<string, Fn> = { ...(C_LEAVES_JS as unknown as Record<string, Fn>) };
-  const names = [...Object.keys(C_LEAVES_JS), ...atoms.keys()];
+  const leaves = {
+    ...(C_LEAVES_JS as unknown as Record<string, Fn>),
+    ...(memory.leaves as unknown as Record<string, Fn>),
+  };
+  const env: Record<string, Fn> = { ...leaves };
+  const names = [...Object.keys(leaves), ...atoms.keys()];
   for (const [key, atom] of atoms) {
     let source = atom.source;
     if (lowered) {
