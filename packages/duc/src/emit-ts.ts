@@ -1,3 +1,4 @@
+import { isHeapLabel } from "./heap-labels.js";
 import { parseType, typeToTypeScript } from "./infer-types.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
@@ -512,36 +513,66 @@ function emitFunction(
       return lines;
     }
     if (label.startsWith("class:")) {
-      // `class Self_ { constructor(..) {..} [static] name(..) {..} get name() {..} }`
-      const members = JSON.parse(label.slice("class:".length)) as [string, string?, boolean?][];
+      // `class Self_ { constructor(..) {..} [static] name(..) {..} get name() {..} }`, and the
+      // fields and static blocks of #1330. A computed name's key is the input before the member's.
+      const members = JSON.parse(label.slice("class:".length)) as [
+        string,
+        (string | null)?,
+        boolean?,
+      ][];
       // `class Self_ extends P {`: the parent is the first input (#1276).
       const lines = [
         `const ${name} = class Self_${members[0]?.[0] === "extends" ? ` extends ${arg(0)}` : ""} {`,
       ];
-      members.forEach(([kind, member, isStatic], i) => {
-        if (kind === "extends") return;
-        const c = producer.get(node.inputs[i] as ValueId);
+      let at = 0;
+      for (const [kind, member, isStatic] of members) {
+        if (kind === "extends") {
+          at++;
+          continue;
+        }
+        const key =
+          kind !== "constructor" && kind !== "block" && member === null
+            ? `[${ref(node.inputs[at++] as ValueId)}]`
+            : (member ?? "");
+        const c = producer.get(node.inputs[at] as ValueId);
         if (c?.closure === undefined || !classMembers.has(c.id))
-          throw new EmitError(`member ${i} of class ${node.id} is not its own closure`);
+          throw new EmitError(`member ${at} of class ${node.id} is not its own closure`);
+        at++;
         const inner = emitFunction(
           c.closure,
           `${prefix}${c.id}_`,
           c.inputs.map((v) => ref(v)),
           imports,
         );
+        const body = inner.body.map((l) => `    ${l}`);
+        if (kind === "field") {
+          // The initializer runs with the instance (or the class) as `this`, as the arrow sees it.
+          lines.push(
+            `  ${isStatic === true ? "static " : ""}${key} = (() => {`,
+            ...body,
+            "  })();",
+          );
+          continue;
+        }
+        if (kind === "block") {
+          lines.push(
+            "  static {",
+            "    (() => {",
+            ...body.map((l) => `  ${l}`),
+            "    })();",
+            "  }",
+          );
+          continue;
+        }
         // A method's `async` and `*` are in its closure's label.
         const own = c.label ?? "";
         const mode = `${own.startsWith("async ") ? "async " : ""}${own.endsWith("*") ? "*" : ""}`;
         const head =
           kind === "constructor"
             ? "constructor"
-            : `${isStatic === true ? "static " : ""}${kind === "method" ? mode : `${kind} `}${member}`;
-        lines.push(
-          `  ${head}(${inner.params.join(", ")}) {`,
-          ...inner.body.map((l) => `    ${l}`),
-          "  }",
-        );
-      });
+            : `${isStatic === true ? "static " : ""}${kind === "method" ? mode : `${kind} `}${key}`;
+        lines.push(`  ${head}(${inner.params.join(", ")}) {`, ...body, "  }");
+      }
       lines.push("};");
       return lines;
     }
@@ -601,8 +632,23 @@ function emitFunction(
   const needs = (node: DucNode): ValueId[] =>
     [...node.inputs, ...(after.get(node.id) ?? [])].flatMap((v) => {
       const p = producer.get(v);
-      // A class needs what its members capture.
-      return p !== undefined && (inline.has(p.id) || classMembers.has(p.id)) ? needs(p) : [v];
+      // A class needs what its members capture. A heap-ordered inline value (a spread) is still
+      // needed itself: the statement that writes it is where it is made.
+      if (p === undefined || !(inline.has(p.id) || classMembers.has(p.id))) return [v];
+      return heapOrdered(p) ? [v, ...needs(p)] : needs(p);
+    });
+  /** A node ordered among the heap operations: its place is structure (#1285). */
+  const heapOrdered = (n: DucNode): boolean =>
+    isHeapLabel(n.label ?? "") || (after.get(n.id)?.length ?? 0) > 0;
+  /**
+   * The values of the heap-ordered inline nodes a node writes (a spread), through the inline nodes
+   * it writes: a statement ordered after one of them comes after the statement that writes it.
+   */
+  const writtenInline = (node: DucNode): ValueId[] =>
+    node.inputs.flatMap((v) => {
+      const p = producer.get(v);
+      if (p === undefined || !inline.has(p.id)) return [];
+      return [...(heapOrdered(p) ? p.outputs : []), ...writtenInline(p)];
     });
   /** The values made inside a region (a branch side or a loop body), nested regions included. */
   const madeWithin = (path: string): ValueId[] =>
@@ -713,8 +759,10 @@ function emitFunction(
       items.push({
         first: nodeIndex.get(node.id) as number,
         last: node.label === "throw" ? 2 : 0,
-        produces: node.outputs,
-        requires: needs(node),
+        // What it writes inline is made where it is: a heap token of an inline spread orders what
+        // follows after this statement.
+        produces: [...node.outputs, ...writtenInline(node)],
+        requires: needs(node).filter((v) => !writtenInline(node).includes(v)),
         lines: () => statementsOf(node),
       });
     }
