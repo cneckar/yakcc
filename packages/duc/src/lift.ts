@@ -113,8 +113,7 @@ export function liftAtom(source: string, options: LiftOptions = {}): DucGraph {
   // its returns as observations, so no influence edge is lost. The first form that
   // parses wins. If none parses, the error reported is for the source as written.
   const parsed = parseAtomSource(source);
-  const project = parsed.project;
-  const file = normalizeJumps(project, parsed.file);
+  const file = normalizeJumps(parsed.file);
   // Names a target provides are platform primitives (D5); which target is checked by the closure check.
   const ambient = new Set(options.ambientGlobals ?? KNOWN_PRIMITIVES);
   const builder = new Lifter(ambient);
@@ -283,12 +282,19 @@ export function atomShape(source: string): AtomShape {
  * loop's. A label whose jumps are all of its own loop is dropped. A jump with a switch between it
  * and its loop, or to a labelled block, is left as it is.
  */
-function normalizeJumps(project: Project, file: SourceFile): SourceFile {
+function normalizeJumps(
+  file: SourceFile,
+  reparse: (text: string) => SourceFile = (text) =>
+    file.getProject().createSourceFile("atom.ts", text, {
+      overwrite: true,
+      scriptKind: ScriptKind.TS,
+    }),
+): SourceFile {
   let sf = file;
   for (let round = 0; round < 64; round++) {
     const text = nextJumpRewrite(sf, round);
     if (text === undefined) return sf;
-    sf = project.createSourceFile("atom.ts", text, { overwrite: true, scriptKind: ScriptKind.TS });
+    sf = reparse(text);
   }
   return sf;
 }
@@ -356,6 +362,15 @@ function nextJumpRewrite(sf: SourceFile, round: number): string | undefined {
   for (const j of jumps) {
     const inner = ownLoop(j);
     if (inner === undefined) continue;
+    // A plain break must leave the inner loop: with a switch between them, the jump first leaves
+    // the switch nearest it, by a flag and a break of the switch, and is written again after it
+    // (#1368); the next round takes it on from there.
+    let sw: Node | undefined;
+    for (let p: Node | undefined = j.getParent(); p !== undefined && p !== inner; p = p.getParent())
+      if (Node.isSwitchStatement(p)) {
+        sw = p;
+        break;
+      }
     let needs: boolean;
     if (Node.isReturnStatement(j)) needs = ownLoop(inner) !== undefined;
     else {
@@ -363,15 +378,12 @@ function nextJumpRewrite(sf: SourceFile, round: number): string | undefined {
       if (label === undefined) continue;
       const l = labelTarget(j, label);
       if (l === undefined || !isLoopStatement(labelled(l))) continue;
-      needs = labelled(l) !== inner;
+      // A labelled break of its own loop, from a switch in it, leaves the switch first: then it is
+      // the loop's plain break, and its label is dropped (#1368).
+      needs = labelled(l) !== inner || (Node.isBreakStatement(j) && sw !== undefined);
     }
     if (!needs) continue;
-    // A plain break must leave the inner loop: no switch between them.
-    let blocked = false;
-    for (let p: Node | undefined = j.getParent(); p !== undefined && p !== inner; p = p.getParent())
-      if (Node.isSwitchStatement(p)) blocked = true;
-    if (blocked) continue;
-    let outer: Node = inner;
+    let outer: Node = sw ?? inner;
     while (Node.isLabeledStatement(outer.getParent())) outer = outer.getParent() as Node;
     const flag = `$jump${round}`;
     const value = `$jumpv${round}`;
@@ -995,18 +1007,13 @@ class Lifter {
       text = `if (${arm.tests.length > 0 ? test(arm.tests) : "false"}) {\n${arm.body}\n}${text !== "" ? ` else ${text}` : ""}`;
     }
     const source = `${syntheticFunction(sw)} __switch() {\n{\nconst ${tmp} = (${sw.getExpression().getText()});\n${text}\n}\n}`;
-    const file = sw
-      .getSourceFile()
-      .getProject()
-      .createSourceFile(`__switch${this.switchCount}.ts`, source, { overwrite: true });
+    const file = syntheticFile(sw, "__switch", source);
     return this.noteExits(
       file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0],
     );
   }
 
   private tryCount = 0;
-
-  private classRewriteCount = 0;
 
   /**
    * A class as one operation over its members (#1276, #1330): the constructor, then each member in
@@ -1167,9 +1174,7 @@ class Lifter {
     }
     for (const [from, to, replacement] of edits.sort((a, b) => b[0] - a[0]))
       text = text.slice(0, from) + replacement + text.slice(to);
-    const copy = file
-      .getProject()
-      .createSourceFile(`__class${this.classRewriteCount++}.ts`, text, { overwrite: true });
+    const copy = syntheticFile(file, "__class", text);
     const at = node.getStart();
     const cls = [
       ...copy.getDescendantsOfKind(SyntaxKind.ClassDeclaration),
@@ -1310,10 +1315,7 @@ class Lifter {
       });
       this.env.set(name, cell as ValueId);
     }
-    const file = t
-      .getSourceFile()
-      .getProject()
-      .createSourceFile(`__try${n}_${t.getStart()}.ts`, source, { overwrite: true });
+    const file = syntheticFile(t, "__try", source);
     // The return after the call is the try's returns: in a loop's body, an exit of the loop (#1330).
     return this.noteExits(
       file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0],
@@ -1367,75 +1369,38 @@ class Lifter {
    * Any switch, as one pass of a loop (#1276): the index of the clause to start at (the first case
    * that matches, tested lazily in order, else the default's, else past the end), then each clause
    * in order under `if ($at <= i)`, so a clause falls into the next, and a break leaves the pass.
-   * Undefined for a continue inside (it would continue the pass) and for a name a clause declares
-   * and another clause reads (the clauses share one scope).
+   * A continue of the loop around it, and a return, set a flag and leave the pass; after it, the
+   * loop continues or the function returns (#1330, #1368). Undefined where `switchPassShape` is.
    */
   private lowerSwitchAsPass(sw: import("ts-morph").SwitchStatement): Node | undefined {
+    const shape = switchPassShape(sw);
+    if (shape === undefined) return undefined;
+    const { continues, returns } = shape;
     const clauses = sw.getCaseBlock().getClauses();
-    const own = (n: Node): boolean => !isInsideNestedFunction(n, sw);
-    // A `continue` of the loop around the switch (#1330): the pass sets a flag and leaves, and the
-    // loop continues after it. One inside a loop or a switch within this one is that statement's.
-    const nearestBreakable = (n: Node): Node | undefined =>
-      n
-        .getAncestors()
-        .find(
-          (a) =>
-            isLoopStatement(a) || Node.isSwitchStatement(a) || a.compilerNode === sw.compilerNode,
-        );
-    const loopInside = (c: Node): boolean => {
-      for (const a of c.getAncestors()) {
-        if (a.compilerNode === sw.compilerNode) return false;
-        if (isLoopStatement(a)) return true;
-      }
-      return false;
-    };
-    const continues = sw
-      .getDescendantsOfKind(SyntaxKind.ContinueStatement)
-      .filter((c) => own(c) && !loopInside(c));
-    if (
-      continues.some(
-        (c) => c.getLabel() !== undefined || nearestBreakable(c)?.compilerNode !== sw.compilerNode,
-      )
-    )
-      return undefined;
-    if (
-      sw
-        .getDescendantsOfKind(SyntaxKind.BreakStatement)
-        .some((b) => b.getLabel() !== undefined && own(b))
-    )
-      return undefined;
-    for (const clause of clauses) {
-      const declared = clause
-        .getStatements()
-        .flatMap((st) =>
-          Node.isVariableStatement(st)
-            ? st.getDeclarations().flatMap((d) => patternNames(d.getNameNode()))
-            : Node.isFunctionDeclaration(st) || Node.isClassDeclaration(st)
-              ? [st.getName() ?? ""]
-              : [],
-        );
-      const elsewhere = clauses
-        .filter((c) => c !== clause)
-        .flatMap((c) => c.getDescendantsOfKind(SyntaxKind.Identifier).map((id) => id.getText()));
-      if (declared.some((name) => elsewhere.includes(name))) return undefined;
-    }
     const n = this.switchCount++;
     const tmp = `$switch${n}`;
     const at = `$at${n}`;
     const cont = `$continue${n}`;
-    const continuing = new Set(continues.map((c) => c.compilerNode));
-    /** A clause's statement as written, with each of the switch's continues made the flag's. */
+    const ret = `$return${n}`;
+    const value = `$value${n}`;
+    const leaving = new Set([...continues, ...returns].map((c) => c.compilerNode));
+    /** A clause's statement as written, with each of the switch's continues and returns a flag's. */
     const textOf = (st: Node): string => {
       let text = st.getText();
       const inside = [
-        ...(Node.isContinueStatement(st) ? [st] : []),
+        ...(Node.isContinueStatement(st) || Node.isReturnStatement(st) ? [st] : []),
         ...st.getDescendantsOfKind(SyntaxKind.ContinueStatement),
+        ...st.getDescendantsOfKind(SyntaxKind.ReturnStatement),
       ]
-        .filter((c) => continuing.has(c.compilerNode))
+        .filter((c) => leaving.has(c.compilerNode))
         .sort((a, b) => b.getStart() - a.getStart());
       for (const c of inside) {
         const from = c.getStart() - st.getStart();
-        text = `${text.slice(0, from)}{ ${cont} = true; break; }${text.slice(c.getEnd() - st.getStart())}`;
+        const expr = Node.isReturnStatement(c) ? c.getExpression() : undefined;
+        const set = Node.isReturnStatement(c)
+          ? `${ret} = true;${expr !== undefined ? ` ${value} = (${expr.getText()});` : ""}`
+          : `${cont} = true;`;
+        text = `${text.slice(0, from)}{ ${set} break; }${text.slice(c.getEnd() - st.getStart())}`;
       }
       return text;
     };
@@ -1450,20 +1415,25 @@ class Lifter {
     const bodies = clauses
       .map((c, i) => `if (${at} <= ${i}) {\n${c.getStatements().map(textOf).join("\n")}\n}`)
       .join("\n");
-    const before = continues.length > 0 ? `let ${cont} = false;\n` : "";
-    const after = continues.length > 0 ? `\nif (${cont}) continue;` : "";
+    const before =
+      (continues.length > 0 ? `let ${cont} = false;\n` : "") +
+      (returns.length > 0 ? `let ${ret} = false;\nlet ${value};\n` : "");
+    const after =
+      (returns.length > 0 ? `\nif (${ret}) return ${value};` : "") +
+      (continues.length > 0 ? `\nif (${cont}) continue;` : "");
     const loop = continues.length > 0 ? "while (true) {\n" : "";
     const source = `${syntheticFunction(sw)} __switch() {\n${loop}{\n${before}const ${tmp} = (${sw.getExpression().getText()});\nconst ${at} = ${chain};\ndo {\n${bodies}\n} while (false);${after}\n}\n${continues.length > 0 ? "}\n" : ""}}`;
-    const file = sw
-      .getSourceFile()
-      .getProject()
-      .createSourceFile(`__switchpass${n}_${sw.getStart()}.ts`, source, { overwrite: true });
+    // A return in a loop within a clause is now one inside a loop of the pass's: it leaves its own
+    // loops as a jump does (#1368).
+    const file = normalizeJumps(syntheticFile(sw, "__switchpass", source), (text) =>
+      syntheticFile(sw, "__switchpass", text),
+    );
     const first = file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0];
     // With a continue, the block sits in a loop of the synthetic function only so it parses: the
     // block is what replaces the switch, inside the real loop, and its continue is that loop's.
-    return continues.length > 0
-      ? this.noteExits(first?.asKind(SyntaxKind.WhileStatement)?.getStatement())
-      : first;
+    return this.noteExits(
+      continues.length > 0 ? first?.asKind(SyntaxKind.WhileStatement)?.getStatement() : first,
+    );
   }
 
   /** Whether an `if` that exits on some paths can take `tail` onto its sides. */
@@ -2150,7 +2120,9 @@ class Lifter {
       return;
     }
     // An empty statement computes nothing.
-    if (Node.isEmptyStatement(node)) return;
+    // `debugger` is an implementation's hook, and does nothing where no debugger is attached
+    // (ECMA-262 14.16): no target of the graph has one, so it is the empty statement (#1368).
+    if (Node.isEmptyStatement(node) || Node.isDebuggerStatement(node)) return;
     // `export default x` (and `export = x`) exports one value: the module's name `default`
     // (#1276, #1292), declared with the others.
     if (Node.isExportAssignment(node)) {
@@ -2423,8 +2395,6 @@ class Lifter {
     return this.liftLoopBody(node);
   }
 
-  private testedCount = 0;
-
   /**
    * A loop whose condition assigns a name, as one that tests it in its body (#1276):
    * `while (C) B` is `while (true) { if (!(C)) break; B }`, `for (i; C; u) B` is
@@ -2464,17 +2434,11 @@ class Lifter {
       if (loopJumpsOf(node).some((j) => Node.isContinueStatement(j))) return undefined;
       text = `do {\n${inner}\n${test}\n} while (true);`;
     }
-    const n = this.testedCount++;
-    const file = node
-      .getSourceFile()
-      .getProject()
-      .createSourceFile(
-        `__tested${n}_${node.getStart()}.ts`,
-        `${syntheticFunction(node)} __tested() {\n${text}\n}`,
-        {
-          overwrite: true,
-        },
-      );
+    const file = syntheticFile(
+      node,
+      "__tested",
+      `${syntheticFunction(node)} __tested() {\n${text}\n}`,
+    );
     const loop = file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0];
     return loop !== undefined &&
       (Node.isWhileStatement(loop) || Node.isForStatement(loop) || Node.isDoStatement(loop))
@@ -5047,6 +5011,70 @@ function isInert(node: Node): boolean {
   return !effect(node);
 }
 
+/**
+ * Whether a switch lowers to one pass of a loop (see lowerSwitchAsPass), and the continues and
+ * returns it leaves the pass by: those with no loop or switch between them and it, of its own
+ * function. Undefined for a labelled break or continue of its own, a continue of a loop or switch
+ * within it, and a name a clause declares and another clause reads (the clauses share one scope).
+ */
+function switchPassShape(sw: import("ts-morph").SwitchStatement):
+  | {
+      readonly continues: readonly Node[];
+      readonly returns: readonly Node[];
+    }
+  | undefined {
+  const clauses = sw.getCaseBlock().getClauses();
+  const own = (n: Node): boolean => !isInsideNestedFunction(n, sw);
+  const nearestBreakable = (n: Node): Node | undefined =>
+    n
+      .getAncestors()
+      .find(
+        (a) =>
+          isLoopStatement(a) || Node.isSwitchStatement(a) || a.compilerNode === sw.compilerNode,
+      );
+  const loopInside = (c: Node): boolean => {
+    for (const a of c.getAncestors()) {
+      if (a.compilerNode === sw.compilerNode) return false;
+      if (isLoopStatement(a)) return true;
+    }
+    return false;
+  };
+  const continues = sw
+    .getDescendantsOfKind(SyntaxKind.ContinueStatement)
+    .filter((c) => own(c) && !loopInside(c));
+  if (
+    continues.some(
+      (c) => c.getLabel() !== undefined || nearestBreakable(c)?.compilerNode !== sw.compilerNode,
+    )
+  )
+    return undefined;
+  if (
+    sw
+      .getDescendantsOfKind(SyntaxKind.BreakStatement)
+      .some((b) => b.getLabel() !== undefined && own(b))
+  )
+    return undefined;
+  for (const clause of clauses) {
+    const declared = clause
+      .getStatements()
+      .flatMap((st) =>
+        Node.isVariableStatement(st)
+          ? st.getDeclarations().flatMap((d) => patternNames(d.getNameNode()))
+          : Node.isFunctionDeclaration(st) || Node.isClassDeclaration(st)
+            ? [st.getName() ?? ""]
+            : [],
+      );
+    const elsewhere = clauses
+      .filter((c) => c !== clause)
+      .flatMap((c) => c.getDescendantsOfKind(SyntaxKind.Identifier).map((id) => id.getText()));
+    if (declared.some((name) => elsewhere.includes(name))) return undefined;
+  }
+  const returns = sw
+    .getDescendantsOfKind(SyntaxKind.ReturnStatement)
+    .filter((r) => own(r) && nearestBreakable(r)?.compilerNode === sw.compilerNode);
+  return { continues, returns };
+}
+
 interface SwitchArm {
   /** The case expressions that select the arm, as source text. */
   readonly tests: readonly string[];
@@ -5094,7 +5122,13 @@ function switchArmsOf(sw: import("ts-morph").SwitchStatement): SwitchArm[] | und
       stmts = stmts.slice(0, -1);
     } else if (ownBreaks.length > 0) {
       return undefined;
-    } else if (!(last !== undefined && alwaysReturns(last)) && i !== clauses.length - 1) {
+    } else if (
+      !(
+        last !== undefined &&
+        (alwaysReturns(last) || (Node.isContinueStatement(last) && last.getLabel() === undefined))
+      ) &&
+      i !== clauses.length - 1
+    ) {
       return undefined; // Falls into the next clause.
     }
     arms.push({ tests, isDefault, body: stmts.map((st) => st.getText()).join("\n") });
@@ -5246,6 +5280,21 @@ function iterateGuard(loop: Node): Node | undefined {
  * The function a construct rewritten as source is re-parsed in (a switch's pass, a tested loop): a
  * generator, or async, as the construct's own `yield` and `await` need, so they parse as written.
  */
+/** How many synthetic files each lift's project has. */
+const syntheticFiles = new WeakMap<Project, number>();
+
+/**
+ * A rewrite's source, parsed as a new file of the lift's project under a name no other file of it
+ * has. A closure is lifted by its own lifter, whose counters start again: a name taken from them
+ * would overwrite its parent's rewrite, and ts-morph forgets the nodes the parent is still lifting.
+ */
+function syntheticFile(near: Node, prefix: string, source: string): SourceFile {
+  const project = near.getSourceFile().getProject();
+  const n = syntheticFiles.get(project) ?? 0;
+  syntheticFiles.set(project, n + 1);
+  return project.createSourceFile(`${prefix}${n}.ts`, source);
+}
+
 function syntheticFunction(node: Node): string {
   const own = (n: Node): boolean => !isInsideNestedFunction(n, node);
   const yields = node.getDescendantsOfKind(SyntaxKind.YieldExpression).some(own);
@@ -5492,14 +5541,19 @@ function jumpsSupported(loop: Node): boolean {
       // A jump inside an inner loop, or a try or label of the body, is not one this lifts; nor
       // one inside a switch, unless it is a return and the switch is the chain of ifs it lowers to
       // (#1330): a return leaves the function wherever it is written.
-      // A continue in a switch nearest to it is the flag the switch's pass sets (#1330).
-      const switchContinue =
-        Node.isContinueStatement(j) && breakTarget(j)?.compilerNode === p.compilerNode;
+      // A continue in a switch nearest to it is the flag the switch's pass sets (#1330); so is a
+      // return, when the switch is a pass (#1368). A continue that ends an arm of the chain of ifs
+      // is the loop's (#1368).
+      const nearest = breakTarget(j)?.compilerNode === p.compilerNode;
+      const switchLeaves =
+        Node.isSwitchStatement(p) &&
+        (Node.isContinueStatement(j) || Node.isReturnStatement(j)) &&
+        (switchArms(p) !== undefined
+          ? Node.isReturnStatement(j) || nearest
+          : nearest && switchPassShape(p) !== undefined);
       if (
         isLoopStatement(p) ||
-        (Node.isSwitchStatement(p) &&
-          !switchContinue &&
-          (switchArms(p) === undefined || !Node.isReturnStatement(j))) ||
+        (Node.isSwitchStatement(p) && !switchLeaves) ||
         Node.isTryStatement(p) ||
         Node.isLabeledStatement(p)
       )
