@@ -13,6 +13,11 @@
  *
  * The exported function takes and returns boxed values: `uint64_t f(uint64_t, …)`.
  *
+ * BigInts are the runtime's own arbitrary-precision values (ECMAScript's operators on them, and
+ * their TypeError and RangeError), and the fixed-width and float64-bits leaves that raised C's
+ * 64-bit integers and a double's bits lower to (DEC-DUC-OPERATIONS-AS-ATOMS-001) are direct calls
+ * of the runtime's functions for them (#1361).
+ *
  * Covered: numbers, booleans, undefined, null, strings (UTF-16), arrays, plain objects, closures; the
  * operators with JavaScript's coercions; `typeof`; template literals; reads and writes of members and
  * elements; calls of closures and of methods (an object's own, and the string and array builtins the
@@ -97,11 +102,39 @@ const GLOBALS = new Set([
   "Object",
   "JSON",
 ]);
+/**
+ * The fixed-width and float64-bits leaves (DEC-DUC-OPERATIONS-AS-ATOMS-001) that raised C calls:
+ * each the runtime function that implements it, and its arity. A call of one is a direct call.
+ */
+const LEAVES: Readonly<Record<string, [string, number]>> = {
+  __ykI32Mul: ["yk_leaf_i32mul", 2],
+  __ykU64: ["yk_leaf_u64", 1],
+  __ykI64: ["yk_leaf_i64", 1],
+  __ykNumToBig: ["yk_leaf_num_to_big", 1],
+  __ykBigToI32: ["yk_leaf_big_to_i32", 1],
+  __ykBigToU32: ["yk_leaf_big_to_u32", 1],
+  __ykBigToF64: ["yk_leaf_big_to_f64", 1],
+  __ykF64ToI64: ["yk_leaf_f64_to_i64", 1],
+  __ykF64Bits: ["yk_leaf_f64_bits", 1],
+  __ykF64FromBits: ["yk_leaf_f64_from_bits", 1],
+  __ykF64Hi: ["yk_leaf_f64_hi", 1],
+  __ykF64Lo: ["yk_leaf_f64_lo", 1],
+  __ykF64Make: ["yk_leaf_f64_make", 2],
+};
+/** A BigInt literal: its digits (any radix prefix kept), then n. */
+const BIGINT_LITERAL = /^(0[xXoObB][0-9a-fA-F_]+|[0-9_]+)n$/;
 const MATH1 = new Set(["floor", "ceil", "trunc", "sqrt", "abs", "sign", "round"]);
 const APPROXIMATED =
   /^(exp|expm1|log|log1p|log2|log10|sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|cbrt|hypot|pow)$/;
 
 const RUNTIME_DECLS: Readonly<Record<string, string>> = {
+  yk_bigint_literal: "declare i64 @yk_bigint_literal(ptr, i64)",
+  ...Object.fromEntries(
+    Object.values(LEAVES).map(([fn, n]) => [
+      fn,
+      `declare i64 @${fn}(${Array(n).fill("i64").join(", ")})`,
+    ]),
+  ),
   yk_truthy: "declare i32 @yk_truthy(i64)",
   yk_string_utf8: "declare i64 @yk_string_utf8(ptr, i64)",
   yk_array_of: "declare i64 @yk_array_of(i64, ptr)",
@@ -291,10 +324,12 @@ function lowerFunction(
   const mathValue = new Set<ValueId>();
   const globalValue = new Map<ValueId, string>();
   const freeValue = new Map<ValueId, string>();
+  const leafValue = new Map<ValueId, string>();
   for (const n of g.nodes) {
     if (n.kind !== "diamond-source") continue;
     const sym = n.diamond?.symbol ?? "";
-    if (n.diamond?.reason === "platform-primitive" && sym === "Math")
+    if (LEAVES[sym] !== undefined) leafValue.set(n.outputs[0] as ValueId, sym);
+    else if (n.diamond?.reason === "platform-primitive" && sym === "Math")
       mathValue.add(n.outputs[0] as ValueId);
     else if (n.diamond?.reason === "platform-primitive" && GLOBALS.has(sym))
       globalValue.set(n.outputs[0] as ValueId, sym);
@@ -374,12 +409,22 @@ function lowerFunction(
         emit(`${r} = load i64, ptr ${slotOf(v)}`);
         return r;
       }
+      if (BIGINT_LITERAL.test(text)) {
+        const digits = m.constant(text.slice(0, -1), true);
+        return call("yk_bigint_literal", `ptr ${digits.ptr}, i64 ${digits.length}`);
+      }
       const n = Number(text.replace(/_/g, ""));
       if (text === "" || (Number.isNaN(n) && text !== "NaN"))
         throw new LlvmEmitError(`the literal ${text} is not in the subset yet`);
       return boxedNumber(n);
     }
     if (p?.kind === "diamond-source") {
+      const leaf = leafValue.get(v);
+      if (leaf !== undefined) {
+        // A leaf as a value: the runtime's function value for it.
+        const key = m.constant(leaf);
+        return call("yk_global", `ptr ${key.ptr}, i64 ${key.length}`);
+      }
       const free = freeValue.get(v);
       if (free !== undefined) {
         // A name the module does not declare and the platform does not give is absent: undefined,
@@ -813,6 +858,18 @@ function lowerFunction(
       }
       const args = ins.slice(1).map(operand);
       set(out, call("yk_new", `i64 ${callee}, i64 ${args.length}, ptr ${list(args)}`));
+      return;
+    }
+    if (lbl === "CallExpression" && leafValue.has(resolve(ins[0] as ValueId))) {
+      // A leaf: the runtime's function for it, called directly.
+      const [fn, arity] = LEAVES[leafValue.get(resolve(ins[0] as ValueId)) as string] as [
+        string,
+        number,
+      ];
+      if (ins.length - 1 !== arity)
+        throw new LlvmEmitError(`the leaf ${fn} takes ${arity} arguments`);
+      const args = ins.slice(1).map(operand);
+      set(out, call(fn, args.map((a) => `i64 ${a}`).join(", ")));
       return;
     }
     if (lbl === "CallExpression") {

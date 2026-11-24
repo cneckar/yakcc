@@ -13,6 +13,7 @@
  *       0xFFFC: an object (pointer to yk_object: own properties in insertion order)
  *       0xFFFD: a function (pointer to yk_closure: its code and the values it captures)
  *       0xFFFE: the runtime's own (an iterator), never a program's value
+ *       0xFFFF: a BigInt  (pointer to yk_bigint: a sign and 32-bit limbs)
  * Strings are UTF-16 code units, as JavaScript's are. Memory is allocated and not freed: a collector
  * is a later slice.
  *
@@ -56,6 +57,13 @@ typedef struct {
   void *privates;    /* its private members (#1330): a yk_object no enumeration sees, or NULL */
 } yk_object;
 
+/* A BigInt: a sign and a magnitude, 32-bit limbs least significant first, no zero limb on top. */
+typedef struct {
+  int32_t neg;
+  uint32_t len;
+  uint32_t d[];
+} yk_bigint;
+
 /* Every function has one calling convention: the closure, the receiver, the arguments. */
 typedef yk (*yk_code)(void *closure, yk self, uint64_t argc, const yk *argv);
 typedef struct {
@@ -88,6 +96,7 @@ typedef struct {
 #define T_OBJECT 0xFFFCu
 #define T_CLOSURE 0xFFFDu
 #define T_INTERNAL 0xFFFEu
+#define T_BIGINT 0xFFFFu
 #define PTR(v) ((void *)(uintptr_t)((v) & 0x0000FFFFFFFFFFFFull))
 #define BOX(tag, p) (((yk)(tag) << 48) | (yk)(uintptr_t)(p))
 
@@ -101,6 +110,7 @@ static int is_string(yk v) { return TAG(v) == T_STRING; }
 static int is_array(yk v) { return TAG(v) == T_ARRAY; }
 static int is_object(yk v) { return TAG(v) == T_OBJECT; }
 static int is_closure(yk v) { return TAG(v) == T_CLOSURE; }
+static int is_bigint(yk v) { return TAG(v) == T_BIGINT; }
 /* Anything that is not a primitive. */
 static int is_reference(yk v) { return is_array(v) || is_object(v) || is_closure(v); }
 static int is_bool(yk v) { return v == YK_TRUE || v == YK_FALSE; }
@@ -209,6 +219,17 @@ static int string_pattern_method(yk recv, yk key, uint64_t argc, const yk *argv,
 static int is_regexp(yk v);
 static yk regexp_exec(yk re, yk s);
 static yk_array *iterable_items(yk v);
+static yk big_to_string_v(yk v);
+static double big_to_double_v(yk v);
+static int big_cmp_v(yk a, yk b);
+static int big_cmp_double_v(yk a, double y);
+static yk big_binary(yk a, yk b, char op);
+static int numeric_pair(yk *a, yk *b);
+static yk big_from_string_v(yk s);
+static yk big_negate(yk a);
+static yk big_add_small(yk a, int64_t k);
+static uint32_t to_uint32(yk v);
+static int32_t to_int32(yk v);
 
 /* --- ToString --- */
 
@@ -283,6 +304,7 @@ static yk to_string(yk v) {
   if (v == YK_NULL) return ascii("null");
   if (v == YK_TRUE) return ascii("true");
   if (v == YK_FALSE) return ascii("false");
+  if (is_bigint(v)) return big_to_string_v(v);
   return array_join(arr(v), str(ascii(",")));
 }
 
@@ -383,7 +405,10 @@ static double to_number(yk v) {
   if (v == YK_NULL || v == YK_FALSE) return 0;
   if (v == YK_TRUE) return 1;
   if (is_string(v)) return string_to_number(str(v));
-  return string_to_number(str(to_string(v)));
+  if (is_bigint(v)) type_error("Cannot convert a BigInt value to a number");
+  v = to_primitive(v);
+  if (is_bigint(v)) type_error("Cannot convert a BigInt value to a number");
+  return to_number(v);
 }
 
 /* --- operators --- */
@@ -395,6 +420,7 @@ int yk_truthy(yk v) {
   }
   if (is_string(v)) return str(v)->len > 0;
   if (is_reference(v)) return 1;
+  if (is_bigint(v)) return ((yk_bigint *)PTR(v))->len != 0;
   return v == YK_TRUE;
 }
 
@@ -402,17 +428,27 @@ yk yk_add(yk a, yk b) {
   a = to_primitive(a);
   b = to_primitive(b);
   if (is_string(a) || is_string(b)) return concat(str(to_string(a)), str(to_string(b)));
+  if (numeric_pair(&a, &b)) return big_binary(a, b, '+');
   return yk_number(to_number(a) + to_number(b));
 }
-yk yk_sub(yk a, yk b) { return yk_number(to_number(a) - to_number(b)); }
-yk yk_mul(yk a, yk b) { return yk_number(to_number(a) * to_number(b)); }
-yk yk_div(yk a, yk b) { return yk_number(to_number(a) / to_number(b)); }
-yk yk_mod(yk a, yk b) { return yk_number(fmod(to_number(a), to_number(b))); }
-yk yk_neg(yk a) { return yk_number(-to_number(a)); }
+yk yk_sub(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '-') : yk_number(to_number(a) - to_number(b)); }
+yk yk_mul(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '*') : yk_number(to_number(a) * to_number(b)); }
+yk yk_div(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '/') : yk_number(to_number(a) / to_number(b)); }
+yk yk_mod(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '%') : yk_number(fmod(to_number(a), to_number(b))); }
+yk yk_neg(yk a) {
+  a = to_primitive(a);
+  return is_bigint(a) ? big_negate(a) : yk_number(-to_number(a));
+}
 yk yk_pos(yk a) { return yk_number(to_number(a)); }
 yk yk_not(yk a) { return yk_bool(!yk_truthy(a)); }
-yk yk_inc(yk a) { return yk_number(to_number(a) + 1); }
-yk yk_dec(yk a) { return yk_number(to_number(a) - 1); }
+yk yk_inc(yk a) {
+  a = to_primitive(a);
+  return is_bigint(a) ? big_add_small(a, 1) : yk_number(to_number(a) + 1);
+}
+yk yk_dec(yk a) {
+  a = to_primitive(a);
+  return is_bigint(a) ? big_add_small(a, -1) : yk_number(to_number(a) - 1);
+}
 int yk_is_nullish(yk a) { return is_nullish(a); }
 
 static int string_equal(yk_string *a, yk_string *b) {
@@ -422,6 +458,7 @@ static int string_equal(yk_string *a, yk_string *b) {
 static int strict_equal(yk a, yk b) {
   if (is_number(a) && is_number(b)) return num(a) == num(b);
   if (is_string(a) && is_string(b)) return string_equal(str(a), str(b));
+  if (is_bigint(a) && is_bigint(b)) return big_cmp_v(a, b) == 0;
   return a == b;
 }
 yk yk_seq(yk a, yk b) { return yk_bool(strict_equal(a, b)); }
@@ -437,6 +474,13 @@ static int loose_equal(yk a, yk b) {
   if (is_reference(b) && !is_reference(a)) return loose_equal(a, to_primitive(b));
   if (is_number(a) && is_string(b)) return num(a) == to_number(b);
   if (is_string(a) && is_number(b)) return to_number(a) == num(b);
+  if (is_bigint(a) && is_number(b)) return big_cmp_double_v(a, num(b)) == 0;
+  if (is_number(a) && is_bigint(b)) return big_cmp_double_v(b, num(a)) == 0;
+  if (is_bigint(a) && is_string(b)) {
+    yk n = big_from_string_v(b);
+    return n != 0 && big_cmp_v(a, n) == 0;
+  }
+  if (is_string(a) && is_bigint(b)) return loose_equal(b, a);
   return 0;
 }
 yk yk_eq(yk a, yk b) { return yk_bool(loose_equal(a, b)); }
@@ -453,6 +497,17 @@ static int less_than(yk a, yk b) {
       if (x->units[i] != y->units[i]) return x->units[i] < y->units[i];
     return x->len < y->len;
   }
+  if (is_bigint(a) || is_bigint(b)) {
+    if (is_string(a) && (a = big_from_string_v(a)) == 0) return -1;
+    if (is_string(b) && (b = big_from_string_v(b)) == 0) return -1;
+    if (is_bigint(a) && is_bigint(b)) return big_cmp_v(a, b) < 0;
+    if (is_bigint(a)) {
+      int c = big_cmp_double_v(a, to_number(b));
+      return c == 2 ? -1 : c < 0;
+    }
+    int c = big_cmp_double_v(b, to_number(a));
+    return c == 2 ? -1 : c > 0;
+  }
   double x = to_number(a), y = to_number(b);
   if (x != x || y != y) return -1;
   return x < y;
@@ -468,6 +523,7 @@ yk yk_typeof(yk v) {
   if (is_bool(v)) return ascii("boolean");
   if (v == YK_UNDEFINED) return ascii("undefined");
   if (is_closure(v)) return ascii("function");
+  if (is_bigint(v)) return ascii("bigint");
   return ascii("object");
 }
 
@@ -1479,13 +1535,497 @@ static uint32_t to_uint32(yk v) {
 }
 static int32_t to_int32(yk v) { return (int32_t)to_uint32(v); }
 
-yk yk_bitor(yk a, yk b) { return yk_number(to_int32(a) | to_int32(b)); }
-yk yk_bitand(yk a, yk b) { return yk_number(to_int32(a) & to_int32(b)); }
-yk yk_bitxor(yk a, yk b) { return yk_number(to_int32(a) ^ to_int32(b)); }
-yk yk_shl(yk a, yk b) { return yk_number((int32_t)((uint32_t)to_int32(a) << (to_uint32(b) & 31))); }
-yk yk_shr(yk a, yk b) { return yk_number(to_int32(a) >> (to_uint32(b) & 31)); }
-yk yk_ushr(yk a, yk b) { return yk_number(to_uint32(a) >> (to_uint32(b) & 31)); }
-yk yk_bitnot(yk a) { return yk_number(~to_int32(a)); }
+yk yk_bitor(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '|') : yk_number(to_int32(a) | to_int32(b)); }
+yk yk_bitand(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '&') : yk_number(to_int32(a) & to_int32(b)); }
+yk yk_bitxor(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '^') : yk_number(to_int32(a) ^ to_int32(b)); }
+yk yk_shl(yk a, yk b) {
+  if (numeric_pair(&a, &b)) return big_binary(a, b, '<');
+  return yk_number((int32_t)((uint32_t)to_int32(a) << (to_uint32(b) & 31)));
+}
+yk yk_shr(yk a, yk b) {
+  if (numeric_pair(&a, &b)) return big_binary(a, b, '>');
+  return yk_number(to_int32(a) >> (to_uint32(b) & 31));
+}
+yk yk_ushr(yk a, yk b) {
+  if (numeric_pair(&a, &b)) type_error("BigInts have no unsigned right shift, use >> instead");
+  return yk_number(to_uint32(a) >> (to_uint32(b) & 31));
+}
+yk yk_bitnot(yk a) {
+  a = to_primitive(a);
+  return is_bigint(a) ? big_add_small(big_negate(a), -1) : yk_number(~to_int32(a));
+}
+
+/* --- BigInt (ECMA-262 6.1.6.2), and the fixed-width and float64-bits leaves --------------------
+ *
+ * A BigInt is a sign and a magnitude of 32-bit limbs, least significant first, with no zero limb
+ * at the top (zero has none, and is never negative). Every operation is exact, as ECMAScript's:
+ * arbitrary precision, division truncating, `>>` flooring, the bitwise operators on the infinite
+ * two's complement. The leaves of DEC-DUC-OPERATIONS-AS-ATOMS-001 that C's fixed-width integers
+ * and a float64's bits are raised to are defined here as their JavaScript definitions
+ * (`raise-c.ts`'s C_LEAVES_JS) define them.
+ */
+
+static void range_error(const char *what) { yk_throw(make_error("RangeError", ascii(what))); }
+
+static yk_bigint *big_new(uint32_t len) {
+  yk_bigint *b = alloc(sizeof(yk_bigint) + (size_t)len * 4);
+  b->neg = 0;
+  b->len = len;
+  return b;
+}
+/* Its top zero limbs dropped, and a zero's sign cleared: the normal form. */
+static yk big_box(yk_bigint *b) {
+  while (b->len > 0 && b->d[b->len - 1] == 0) b->len--;
+  if (b->len == 0) b->neg = 0;
+  return BOX(T_BIGINT, b);
+}
+static yk_bigint *big(yk v) { return (yk_bigint *)PTR(v); }
+
+static yk big_from_u64(uint64_t m, int neg) {
+  yk_bigint *b = big_new(2);
+  b->d[0] = (uint32_t)m;
+  b->d[1] = (uint32_t)(m >> 32);
+  b->neg = neg;
+  return big_box(b);
+}
+static yk big_from_i64(int64_t x) {
+  return x < 0 ? big_from_u64((uint64_t)0 - (uint64_t)x, 1) : big_from_u64((uint64_t)x, 0);
+}
+
+/* |a| compared with |b|: -1, 0 or 1. */
+static int mag_cmp(const yk_bigint *a, const yk_bigint *b) {
+  if (a->len != b->len) return a->len < b->len ? -1 : 1;
+  for (uint32_t i = a->len; i-- > 0;)
+    if (a->d[i] != b->d[i]) return a->d[i] < b->d[i] ? -1 : 1;
+  return 0;
+}
+static yk_bigint *mag_add(const yk_bigint *a, const yk_bigint *b) {
+  uint32_t n = (a->len > b->len ? a->len : b->len) + 1;
+  yk_bigint *r = big_new(n);
+  uint64_t carry = 0;
+  for (uint32_t i = 0; i < n; i++) {
+    uint64_t t = carry + (i < a->len ? a->d[i] : 0) + (i < b->len ? b->d[i] : 0);
+    r->d[i] = (uint32_t)t;
+    carry = t >> 32;
+  }
+  return r;
+}
+/* |a| - |b|, for |a| >= |b|. */
+static yk_bigint *mag_sub(const yk_bigint *a, const yk_bigint *b) {
+  yk_bigint *r = big_new(a->len);
+  int64_t borrow = 0;
+  for (uint32_t i = 0; i < a->len; i++) {
+    int64_t t = (int64_t)a->d[i] - (i < b->len ? b->d[i] : 0) - borrow;
+    borrow = t < 0;
+    r->d[i] = (uint32_t)(t + (borrow ? ((int64_t)1 << 32) : 0));
+  }
+  return r;
+}
+/* a + b with signs: the magnitudes added or subtracted. */
+static yk big_add_signed(const yk_bigint *a, int aneg, const yk_bigint *b, int bneg) {
+  yk_bigint *r;
+  if (aneg == bneg) {
+    r = mag_add(a, b);
+    r->neg = aneg;
+  } else if (mag_cmp(a, b) >= 0) {
+    r = mag_sub(a, b);
+    r->neg = aneg;
+  } else {
+    r = mag_sub(b, a);
+    r->neg = bneg;
+  }
+  return big_box(r);
+}
+static yk big_mul(const yk_bigint *a, const yk_bigint *b) {
+  yk_bigint *r = big_new(a->len + b->len);
+  memset(r->d, 0, (size_t)r->len * 4);
+  for (uint32_t i = 0; i < a->len; i++) {
+    uint64_t carry = 0;
+    for (uint32_t j = 0; j < b->len; j++) {
+      uint64_t t = (uint64_t)a->d[i] * b->d[j] + r->d[i + j] + carry;
+      r->d[i + j] = (uint32_t)t;
+      carry = t >> 32;
+    }
+    for (uint32_t k = i + b->len; carry != 0; k++) {
+      uint64_t t = (uint64_t)r->d[k] + carry;
+      r->d[k] = (uint32_t)t;
+      carry = t >> 32;
+    }
+  }
+  r->neg = a->neg != b->neg;
+  return big_box(r);
+}
+static uint64_t mag_bitlen(const yk_bigint *a) {
+  if (a->len == 0) return 0;
+  uint32_t top = a->d[a->len - 1];
+  int bits = 0;
+  while (top != 0) bits++, top >>= 1;
+  return (uint64_t)(a->len - 1) * 32 + bits;
+}
+static int mag_bit(const yk_bigint *a, uint64_t i) {
+  uint64_t limb = i / 32;
+  return limb < a->len ? (a->d[limb] >> (i % 32)) & 1 : 0;
+}
+/* |a| / |b| and |a| % |b| (b nonzero), by shifting and subtracting. */
+static void mag_divmod(const yk_bigint *a, const yk_bigint *b, yk_bigint **q, yk_bigint **r) {
+  yk_bigint *quo = big_new(a->len);
+  memset(quo->d, 0, (size_t)quo->len * 4);
+  yk_bigint *rem = big_new(b->len + 1);
+  memset(rem->d, 0, (size_t)rem->len * 4);
+  rem->len = 0;
+  for (uint64_t i = mag_bitlen(a); i-- > 0;) {
+    /* rem = rem * 2 + bit i of a */
+    uint32_t carry = (uint32_t)mag_bit(a, i);
+    for (uint32_t k = 0; k < rem->len; k++) {
+      uint32_t next = rem->d[k] >> 31;
+      rem->d[k] = (rem->d[k] << 1) | carry;
+      carry = next;
+    }
+    if (carry) rem->d[rem->len++] = carry;
+    if (mag_cmp(rem, b) >= 0) {
+      yk_bigint *t = mag_sub(rem, b);
+      while (t->len > 0 && t->d[t->len - 1] == 0) t->len--;
+      memcpy(rem->d, t->d, (size_t)t->len * 4);
+      rem->len = t->len;
+      quo->d[i / 32] |= 1u << (i % 32);
+    }
+  }
+  *q = quo;
+  *r = rem;
+}
+
+/* The infinite two's complement of a, in n limbs (n past its magnitude: the sign extends). */
+static void twos(const yk_bigint *a, uint32_t *out, uint32_t n) {
+  for (uint32_t i = 0; i < n; i++) out[i] = i < a->len ? a->d[i] : 0;
+  if (!a->neg) return;
+  uint64_t carry = 1;
+  for (uint32_t i = 0; i < n; i++) {
+    uint64_t t = (uint64_t)(uint32_t)~out[i] + carry;
+    out[i] = (uint32_t)t;
+    carry = t >> 32;
+  }
+}
+/* A two's complement of n limbs (its top limb's top bit the sign) as a BigInt. */
+static yk from_twos(const uint32_t *in, uint32_t n) {
+  yk_bigint *r = big_new(n);
+  int neg = n > 0 && (in[n - 1] >> 31);
+  memcpy(r->d, in, (size_t)n * 4);
+  if (neg) {
+    uint64_t carry = 1;
+    for (uint32_t i = 0; i < n; i++) {
+      uint64_t t = (uint64_t)(uint32_t)~r->d[i] + carry;
+      r->d[i] = (uint32_t)t;
+      carry = t >> 32;
+    }
+  }
+  r->neg = neg;
+  return big_box(r);
+}
+static yk big_bitwise(const yk_bigint *a, const yk_bigint *b, char op) {
+  uint32_t n = (a->len > b->len ? a->len : b->len) + 1;
+  uint32_t *x = alloc((size_t)n * 4), *y = alloc((size_t)n * 4);
+  twos(a, x, n);
+  twos(b, y, n);
+  for (uint32_t i = 0; i < n; i++) x[i] = op == '&' ? x[i] & y[i] : op == '|' ? x[i] | y[i] : x[i] ^ y[i];
+  return from_twos(x, n);
+}
+
+/* a * 2^k (k >= 0). */
+static yk big_shl_mag(const yk_bigint *a, int neg, uint64_t k) {
+  if (a->len == 0) return big_from_u64(0, 0);
+  if (k > (uint64_t)1 << 30) range_error("Maximum BigInt size exceeded");
+  uint32_t words = (uint32_t)(k / 32), bits = (uint32_t)(k % 32);
+  yk_bigint *r = big_new(a->len + words + 1);
+  memset(r->d, 0, (size_t)r->len * 4);
+  for (uint32_t i = 0; i < a->len; i++) {
+    uint64_t t = (uint64_t)a->d[i] << bits;
+    r->d[i + words] |= (uint32_t)t;
+    r->d[i + words + 1] |= (uint32_t)(t >> 32);
+  }
+  r->neg = neg;
+  return big_box(r);
+}
+/* floor(a / 2^k) (k >= 0). */
+static yk big_sar(const yk_bigint *a, uint64_t k) {
+  if (!a->neg) {
+    uint64_t words = k / 32;
+    uint32_t bits = (uint32_t)(k % 32);
+    if (words >= a->len) return big_from_u64(0, 0);
+    yk_bigint *r = big_new(a->len - (uint32_t)words);
+    for (uint32_t i = 0; i < r->len; i++) {
+      uint64_t lo = a->d[i + words];
+      uint64_t hi = i + words + 1 < a->len ? a->d[i + words + 1] : 0;
+      r->d[i] = (uint32_t)(((hi << 32) | lo) >> bits);
+    }
+    return big_box(r);
+  }
+  /* A negative's: -(((|a| - 1) >> k) + 1). */
+  yk_bigint *one_p = big_new(1);
+  one_p->d[0] = 1;
+  yk_bigint *m = mag_sub(a, one_p);
+  m->neg = 0;
+  yk s = big_sar(big(big_box(m)), k);
+  yk_bigint *r = mag_add(big(s), one_p);
+  r->neg = 1;
+  return big_box(r);
+}
+static int64_t shift_count(const yk_bigint *b) {
+  if (b->len > 1 || (b->len == 1 && b->d[0] > (1u << 30))) return b->neg ? INT64_MIN : INT64_MAX;
+  int64_t k = b->len == 0 ? 0 : b->d[0];
+  return b->neg ? -k : k;
+}
+static yk big_shift(const yk_bigint *a, const yk_bigint *b, int left) {
+  int64_t k = shift_count(b);
+  if (!left) k = k == INT64_MIN ? INT64_MAX : -k;
+  if (k >= 0) return big_shl_mag(a, a->neg, (uint64_t)k);
+  return big_sar(a, k == INT64_MIN ? (uint64_t)INT64_MAX : (uint64_t)(-k));
+}
+
+/* The low 64 bits of a's two's complement: BigInt.asUintN(64, a). */
+static uint64_t big_low64(const yk_bigint *a) {
+  uint32_t w[2];
+  twos(a, w, 2);
+  return ((uint64_t)w[1] << 32) | w[0];
+}
+
+/* Number(a): the nearest double, ties to even. */
+static double big_to_double(const yk_bigint *a) {
+  uint64_t L = mag_bitlen(a);
+  double r;
+  if (L <= 64) {
+    uint64_t m = a->len == 0 ? 0 : a->len == 1 ? a->d[0] : ((uint64_t)a->d[1] << 32) | a->d[0];
+    r = (double)m;
+  } else {
+    /* The top 64 bits, with every lower bit folded into the last (a sticky bit). */
+    uint64_t t = 0;
+    for (uint64_t i = 0; i < 64; i++) t |= (uint64_t)mag_bit(a, L - 64 + i) << i;
+    for (uint64_t i = 0; i < L - 64; i++)
+      if (mag_bit(a, i)) {
+        t |= 1;
+        break;
+      }
+    r = ldexp((double)t, (int)(L - 64 > 2000 ? 2000 : L - 64));
+  }
+  return a->neg ? -r : r;
+}
+
+/* BigInt(x) for a number: a RangeError unless it is an integer. */
+static yk big_from_double(double x) {
+  if (x != x || isinf(x) || trunc(x) != x) {
+    yk s = number_to_string(x);
+    yk msg = concat(str(concat(str(ascii("The number ")), str(s))),
+                    str(ascii(" cannot be converted to a BigInt because it is not an integer")));
+    yk_throw(make_error("RangeError", msg));
+  }
+  int neg = x < 0;
+  double m = fabs(x);
+  if (m < 18446744073709551616.0) return big_from_u64((uint64_t)m, neg);
+  int e;
+  double f = frexp(m, &e); /* m = f * 2^e, f in [0.5, 1) */
+  uint64_t mant = (uint64_t)ldexp(f, 53);
+  yk_bigint *b = big(big_from_u64(mant, 0));
+  return big_shl_mag(b, neg, (uint64_t)(e - 53));
+}
+
+/* The BigInt's decimal digits. */
+static yk big_to_string(const yk_bigint *a) {
+  if (a->len == 0) return ascii("0");
+  uint32_t n = a->len;
+  uint32_t *w = alloc((size_t)n * 4);
+  memcpy(w, a->d, (size_t)n * 4);
+  size_t cap = (size_t)n * 10 + 2, k = 0;
+  char *digits = alloc(cap);
+  while (n > 0) {
+    uint64_t rem = 0;
+    for (uint32_t i = n; i-- > 0;) {
+      uint64_t cur = (rem << 32) | w[i];
+      w[i] = (uint32_t)(cur / 1000000000u);
+      rem = cur % 1000000000u;
+    }
+    while (n > 0 && w[n - 1] == 0) n--;
+    for (int j = 0; j < 9 && (n > 0 || rem > 0); j++) {
+      digits[k++] = (char)('0' + rem % 10);
+      rem /= 10;
+    }
+  }
+  char *out = alloc(k + 2);
+  size_t o = 0;
+  if (a->neg) out[o++] = '-';
+  while (k > 0) out[o++] = digits[--k];
+  out[o] = 0;
+  return ascii(out);
+}
+
+/* StringToBigInt over UTF-16 units: undefined (0) when the string is not one. */
+static yk big_from_units(const uint16_t *u, uint32_t len, int literal) {
+  uint32_t a = 0, b = len;
+  if (!literal) {
+    while (a < b && is_space(u[a])) a++;
+    while (b > a && is_space(u[b - 1])) b--;
+    if (a == b) return big_from_u64(0, 0);
+  }
+  int neg = 0, radix = 10;
+  if (b - a >= 2 && u[a] == '0' && (u[a + 1] | 32) == 'x') radix = 16, a += 2;
+  else if (b - a >= 2 && u[a] == '0' && (u[a + 1] | 32) == 'o') radix = 8, a += 2;
+  else if (b - a >= 2 && u[a] == '0' && (u[a + 1] | 32) == 'b') radix = 2, a += 2;
+  else if (!literal && (u[a] == '+' || u[a] == '-')) neg = u[a] == '-', a++;
+  if (a == b) return 0;
+  yk_bigint *r = big_new((b - a) / 2 + 2);
+  memset(r->d, 0, (size_t)r->len * 4);
+  for (uint32_t i = a; i < b; i++) {
+    uint16_t c = u[i];
+    if (literal && c == '_') continue;
+    int d = c >= '0' && c <= '9' ? c - '0' : (c | 32) >= 'a' && (c | 32) <= 'z' ? (c | 32) - 'a' + 10 : 99;
+    if (d >= radix) return 0;
+    uint64_t carry = (uint64_t)d;
+    for (uint32_t k = 0; k < r->len; k++) {
+      uint64_t t = (uint64_t)r->d[k] * radix + carry;
+      r->d[k] = (uint32_t)t;
+      carry = t >> 32;
+    }
+  }
+  r->neg = neg;
+  return big_box(r);
+}
+/* A BigInt literal's value (the n dropped): its digits, as the lowering writes them. */
+yk yk_bigint_literal(const char *p, uint64_t n) {
+  uint16_t *u = alloc((size_t)n * 2 + 2);
+  for (uint64_t i = 0; i < n; i++) u[i] = (uint8_t)p[i];
+  yk v = big_from_units(u, (uint32_t)n, 1);
+  if (v == 0) type_error("not a BigInt literal");
+  return v;
+}
+
+/* a compared with a number: -1, 0 or 1; 2 when the number is NaN. */
+static int big_cmp_double(const yk_bigint *a, double y) {
+  if (y != y) return 2;
+  if (isinf(y)) return y > 0 ? -1 : 1;
+  double fy = floor(y);
+  yk b = big_from_double(fy);
+  yk_bigint *bb = big(b);
+  int c;
+  if (a->neg != bb->neg) c = a->neg ? -1 : 1;
+  else {
+    c = mag_cmp(a, bb);
+    if (a->neg) c = -c;
+  }
+  if (c != 0) return c;
+  return fy < y ? -1 : 0; /* a == floor(y): below y if y has a fraction */
+}
+static int big_cmp(const yk_bigint *a, const yk_bigint *b) {
+  if (a->neg != b->neg) return a->neg ? -1 : 1;
+  int c = mag_cmp(a, b);
+  return a->neg ? -c : c;
+}
+
+static void mix_error(void) { type_error("Cannot mix BigInt and other types, use explicit conversions"); }
+
+/* An arithmetic or bitwise operator of two BigInts. */
+static yk big_binary(yk a, yk b, char op) {
+  yk_bigint *x = big(a), *y = big(b);
+  switch (op) {
+  case '+':
+    return big_add_signed(x, x->neg, y, y->neg);
+  case '-':
+    return big_add_signed(x, x->neg, y, !y->neg && y->len > 0);
+  case '*':
+    return big_mul(x, y);
+  case '/':
+  case '%': {
+    if (y->len == 0) range_error("Division by zero");
+    yk_bigint *q, *r;
+    mag_divmod(x, y, &q, &r);
+    if (op == '/') {
+      q->neg = x->neg != y->neg;
+      return big_box(q);
+    }
+    r->neg = x->neg;
+    return big_box(r);
+  }
+  case '&':
+  case '|':
+  case '^':
+    return big_bitwise(x, y, op);
+  case '<':
+    return big_shift(x, y, 1);
+  case '>':
+    return big_shift(x, y, 0);
+  }
+  return YK_UNDEFINED;
+}
+/* The operands as numbers or BigInts: 1 when both are BigInts, 0 when neither, else a TypeError. */
+static int numeric_pair(yk *a, yk *b) {
+  *a = to_primitive(*a);
+  *b = to_primitive(*b);
+  int x = is_bigint(*a), y = is_bigint(*b);
+  if (x && y) return 1;
+  if (x || y) mix_error();
+  return 0;
+}
+
+/* --- the leaves --- */
+
+yk yk_leaf_i32mul(yk a, yk b) { return yk_number((int32_t)((uint32_t)to_int32(a) * (uint32_t)to_int32(b))); }
+static yk_bigint *want_big(yk v) {
+  if (!is_bigint(v)) type_error("Cannot convert to a BigInt");
+  return big(v);
+}
+yk yk_leaf_u64(yk x) { return big_from_u64(big_low64(want_big(x)), 0); }
+yk yk_leaf_i64(yk x) { return big_from_i64((int64_t)big_low64(want_big(x))); }
+yk yk_leaf_num_to_big(yk x) {
+  if (is_bigint(x)) return x;
+  return big_from_double(to_number(x));
+}
+yk yk_leaf_big_to_i32(yk x) { return yk_number((int32_t)(uint32_t)big_low64(want_big(x))); }
+yk yk_leaf_big_to_u32(yk x) { return yk_number((uint32_t)big_low64(want_big(x))); }
+yk yk_leaf_big_to_f64(yk x) { return yk_number(big_to_double(want_big(x))); }
+yk yk_leaf_f64_to_i64(yk x) {
+  yk b = big_from_double(trunc(to_number(x)));
+  return big_from_i64((int64_t)big_low64(big(b)));
+}
+yk yk_leaf_f64_bits(yk x) {
+  double d = to_number(x);
+  uint64_t u;
+  memcpy(&u, &d, 8);
+  return big_from_u64(u, 0);
+}
+yk yk_leaf_f64_from_bits(yk x) {
+  uint64_t u = big_low64(want_big(x));
+  double d;
+  memcpy(&d, &u, 8);
+  return yk_number(d);
+}
+yk yk_leaf_f64_hi(yk x) {
+  double d = to_number(x);
+  uint64_t u;
+  memcpy(&u, &d, 8);
+  return yk_number((double)(uint32_t)(u >> 32));
+}
+yk yk_leaf_f64_lo(yk x) {
+  double d = to_number(x);
+  uint64_t u;
+  memcpy(&u, &d, 8);
+  return yk_number((double)(uint32_t)u);
+}
+yk yk_leaf_f64_make(yk hi, yk lo) {
+  uint64_t u = ((uint64_t)to_uint32(hi) << 32) | to_uint32(lo);
+  double d;
+  memcpy(&d, &u, 8);
+  return yk_number(d);
+}
+
+static yk big_to_string_v(yk v) { return big_to_string(big(v)); }
+static double big_to_double_v(yk v) { return big_to_double(big(v)); }
+static int big_cmp_v(yk a, yk b) { return big_cmp(big(a), big(b)); }
+static int big_cmp_double_v(yk a, double y) { return big_cmp_double(big(a), y); }
+static yk big_from_string_v(yk s) { return big_from_units(str(s)->units, str(s)->len, 0); }
+static yk big_negate(yk a) {
+  yk_bigint *x = big(a), *r = big_new(x->len);
+  memcpy(r->d, x->d, (size_t)x->len * 4);
+  r->neg = !x->neg;
+  return big_box(r);
+}
+static yk big_add_small(yk a, int64_t k) { return big_binary(a, big_from_i64(k), '+'); }
 
 /* --- Map and Set: entries in insertion order, keys compared by SameValueZero --- */
 
@@ -2173,6 +2713,10 @@ static yk builtin_string(void *c, yk self, uint64_t argc, const yk *argv) {
 }
 static yk builtin_number(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
+  if (argc > 0) {
+    yk v = to_primitive(argv[0]);
+    if (is_bigint(v)) return yk_number(big_to_double_v(v));
+  }
   return yk_number(argc == 0 ? 0 : to_number(argv[0]));
 }
 static yk builtin_boolean(void *c, yk self, uint64_t argc, const yk *argv) {
@@ -2874,8 +3418,53 @@ yk yk_settle(yk v) {
  * A global the platform gives, by name: a function value, NaN or Infinity, or undefined when the
  * runtime has none (so a `typeof` probe for it sees what a platform without it gives).
  */
+/* The leaves as function values: each calls the leaf with its arguments (undefined past argc). */
+#define LEAF_VALUE1(name, fn)                                                                   \
+  static yk name(void *c, yk s, uint64_t argc, const yk *argv) {                                 \
+    (void)c, (void)s;                                                                            \
+    return fn(argc > 0 ? argv[0] : YK_UNDEFINED);                                                \
+  }
+#define LEAF_VALUE2(name, fn)                                                                   \
+  static yk name(void *c, yk s, uint64_t argc, const yk *argv) {                                 \
+    (void)c, (void)s;                                                                            \
+    return fn(argc > 0 ? argv[0] : YK_UNDEFINED, argc > 1 ? argv[1] : YK_UNDEFINED);             \
+  }
+LEAF_VALUE2(leaf_v_i32mul, yk_leaf_i32mul)
+LEAF_VALUE1(leaf_v_u64, yk_leaf_u64)
+LEAF_VALUE1(leaf_v_i64, yk_leaf_i64)
+LEAF_VALUE1(leaf_v_num_to_big, yk_leaf_num_to_big)
+LEAF_VALUE1(leaf_v_big_to_i32, yk_leaf_big_to_i32)
+LEAF_VALUE1(leaf_v_big_to_u32, yk_leaf_big_to_u32)
+LEAF_VALUE1(leaf_v_big_to_f64, yk_leaf_big_to_f64)
+LEAF_VALUE1(leaf_v_f64_to_i64, yk_leaf_f64_to_i64)
+LEAF_VALUE1(leaf_v_f64_bits, yk_leaf_f64_bits)
+LEAF_VALUE1(leaf_v_f64_from_bits, yk_leaf_f64_from_bits)
+LEAF_VALUE1(leaf_v_f64_hi, yk_leaf_f64_hi)
+LEAF_VALUE1(leaf_v_f64_lo, yk_leaf_f64_lo)
+LEAF_VALUE2(leaf_v_f64_make, yk_leaf_f64_make)
+#define N_LEAVES 13
+static yk leaf_value(const char *name, uint64_t n) {
+  static const char *names[N_LEAVES] = {"__ykI32Mul", "__ykU64", "__ykI64", "__ykNumToBig",
+                                        "__ykBigToI32", "__ykBigToU32", "__ykBigToF64",
+                                        "__ykF64ToI64", "__ykF64Bits", "__ykF64FromBits",
+                                        "__ykF64Hi", "__ykF64Lo", "__ykF64Make"};
+  static const yk_code codes[N_LEAVES] = {leaf_v_i32mul, leaf_v_u64, leaf_v_i64, leaf_v_num_to_big,
+                                          leaf_v_big_to_i32, leaf_v_big_to_u32, leaf_v_big_to_f64,
+                                          leaf_v_f64_to_i64, leaf_v_f64_bits, leaf_v_f64_from_bits,
+                                          leaf_v_f64_hi, leaf_v_f64_lo, leaf_v_f64_make};
+  static yk fns[N_LEAVES];
+  for (int i = 0; i < N_LEAVES; i++)
+    if (strlen(names[i]) == n && memcmp(names[i], name, n) == 0)
+      return fns[i] != 0 ? fns[i] : (fns[i] = yk_closure_new(codes[i], 0, 0, NULL));
+  return 0;
+}
+
 #define N_GLOBALS 23
 yk yk_global(const char *name, uint64_t n) {
+  if (n > 4 && memcmp(name, "__yk", 4) == 0) {
+    yk leaf = leaf_value(name, n);
+    if (leaf != 0) return leaf;
+  }
   if (n == 3 && memcmp(name, "NaN", 3) == 0) return yk_number(NAN);
   if (n == 8 && memcmp(name, "Infinity", 8) == 0) return yk_number(INFINITY);
   static yk fns[N_GLOBALS];
@@ -3083,7 +3672,8 @@ yk yk_math_minmax(int max, uint64_t argc, const yk *argv) {
 
 /* --- the host boundary: values in a line-oriented text form --- */
 /*   n<16 hex digits>  a number, by its bits    s<count>:<4 hex digits per code unit>  a string
- *   u  undefined   l  null   t  true   f  false   a<count> then the elements             */
+ *   u  undefined   l  null   t  true   f  false   a<count> then the elements
+ *   b<decimal digits>  a BigInt                                                         */
 
 yk yk_read(FILE *in) {
   int c;
@@ -3128,6 +3718,17 @@ yk yk_read(FILE *in) {
     }
     return BOX(T_OBJECT, o);
   }
+  if (c == 'b') {
+    /* A BigInt: its decimal digits, a minus first if negative. */
+    char buf[4096];
+    if (fscanf(in, "%4095[-0-9]", buf) != 1) exit(65);
+    int neg = buf[0] == '-';
+    size_t n = strlen(buf + neg);
+    uint16_t *u = alloc(n * 2 + 2);
+    for (size_t i = 0; i < n; i++) u[i] = (uint8_t)buf[neg + i];
+    yk v = big_from_units(u, (uint32_t)n, 1);
+    return neg ? big_negate(v) : v;
+  }
   if (c == 'u') return YK_UNDEFINED;
   if (c == 'l') return YK_NULL;
   if (c == 't') return YK_TRUE;
@@ -3167,6 +3768,10 @@ void yk_write(FILE *out, yk v) {
     }
   } else if (is_closure(v))
     fputc('F', out);
-  else
+  else if (is_bigint(v)) {
+    yk_string *s = str(big_to_string_v(v));
+    fputc('b', out);
+    for (uint32_t i = 0; i < s->len; i++) fputc((char)s->units[i], out);
+  } else
     fputc(v == YK_UNDEFINED ? 'u' : v == YK_NULL ? 'l' : v == YK_TRUE ? 't' : 'f', out);
 }
