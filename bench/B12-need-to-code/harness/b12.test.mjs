@@ -288,6 +288,12 @@ describe("model-backed steps (no calls)", () => {
     );
     assert.deepEqual(extractJson('here:\n```json\n{"need": "x"}\n```'), { need: "x" });
     assert.equal(extractJson("no json"), null);
+    // Prose with braces before the answer (seen in a live reply).
+    assert.deepEqual(extractJson('They return {} objects.\n\n{"pick": 0, "reason": "none"}'), {
+      pick: 0,
+      reason: "none",
+    });
+    assert.deepEqual(extractJson('{"a": {"b": 1}}'), { a: { b: 1 } });
   });
   it("sample spreads across packages and skips what cannot be checked", () => {
     const mk = (pkg, i, extra = {}) => ({

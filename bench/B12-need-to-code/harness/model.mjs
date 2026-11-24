@@ -103,18 +103,26 @@ export async function modelClient({
   };
 }
 
-/** The first JSON object in a reply (fenced or bare), or null. */
+/**
+ * The JSON object a reply ends with (fenced or bare), or null. Prose before it may contain
+ * braces, so the last "{" that starts a parseable object wins.
+ */
 export function extractJson(text) {
   const fenced = /```(?:json)?\n([\s\S]*?)```/.exec(text);
   const body = fenced ? fenced[1] : text;
-  const start = body.indexOf("{");
   const end = body.lastIndexOf("}");
-  if (start < 0 || end <= start) return null;
-  try {
-    return JSON.parse(body.slice(start, end + 1));
-  } catch {
-    return null;
+  for (
+    let start = body.lastIndexOf("{", end);
+    start >= 0;
+    start = body.lastIndexOf("{", start - 1)
+  ) {
+    try {
+      const v = JSON.parse(body.slice(start, end + 1));
+      if (v !== null && typeof v === "object" && !Array.isArray(v)) return v;
+    } catch {}
+    if (start === 0) break;
   }
+  return null;
 }
 
 /** Replace a definition's own name with a neutral one, so a description cannot copy it. */

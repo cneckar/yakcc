@@ -161,7 +161,10 @@ async function main() {
     async ({ q, cards, prompt }) => {
       const r = await client.complete(SYSTEM, prompt);
       const parsed = extractJson(r.text);
-      const pick = Number.isInteger(parsed?.pick) ? parsed.pick : -1;
+      // A pick may come back as a number or a numeric string.
+      const n = Number(parsed?.pick);
+      const pick =
+        parsed?.pick !== null && parsed?.pick !== undefined && Number.isInteger(n) ? n : -1;
       const scored =
         pick < 0
           ? { outcome: "invalid", reachable: cards.some((c) => isTarget(c, q)) }
@@ -172,6 +175,7 @@ async function main() {
         pick,
         picked: pick > 0 ? (cards[pick - 1]?.id ?? null) : null,
         reason: parsed?.reason ?? null,
+        ...(pick < 0 ? { raw: r.text.slice(0, 500), stopReason: r.stopReason } : {}),
         ...scored,
         // What each request style costs the composing model, in tokens (real tokenizer).
         tokens: {
