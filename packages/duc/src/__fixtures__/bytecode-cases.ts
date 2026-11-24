@@ -319,6 +319,85 @@ export const numericText = fc.oneof(
 
 export const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
   [
+    "builtins as functions: filter(Boolean), map(String), map(Number), Math's one-argument functions, stored and called",
+    "export function f(xs: unknown[], n: number): unknown { const nums = [n, -n, 2.5, -0.5]; const fs: unknown[] = [String, Math.abs]; return [xs.filter(Boolean), xs.map(String), xs.map(Number), nums.map(Math.abs), nums.map(Math.floor), nums.map(Math.sqrt), nums.map(Math.round), Boolean(n), Boolean(), (fs[0] as any)(n), (fs[1] as any)(-3), typeof fs[0]]; }",
+    ["unknown[]", "number"],
+    "unknown",
+    fc.tuple(
+      fc.array(
+        fc.oneof(
+          fc.integer({ min: -2, max: 2 }),
+          fc.constantFrom("", "a", "1", null, undefined, true, false),
+        ),
+        {
+          maxLength: 5,
+        },
+      ),
+      fc.oneof(fc.integer({ min: -5, max: 5 }), fc.double()),
+    ),
+  ],
+  [
+    "instanceof Error and its subclasses, Array, Object and Function; Array.isArray; in a catch",
+    "export function f(x: unknown, n: number): unknown { const errs: unknown[] = [new Error('a'), new TypeError('b'), new RangeError('c'), x]; const out: unknown[] = []; for (const e of errs) out.push([e instanceof Error, e instanceof TypeError, e instanceof RangeError, e instanceof Object, e instanceof Array, Array.isArray(e)]); const g = (k: number) => k; let caught = ''; try { if (n > 0) (x as any).boom(); else throw new RangeError('r'); } catch (e) { caught = e instanceof TypeError ? 'type' : e instanceof RangeError ? 'range' : 'other'; } return [out, g instanceof Function, g instanceof Object, [1] instanceof Array, x instanceof Function, Array.isArray(x), caught]; }",
+    ["unknown", "number"],
+    "unknown",
+    fc.tuple(anyValue, fc.integer({ min: -1, max: 1 })),
+  ],
+  [
+    "closures that call each other: const arrows through a cell, read with the comma operator",
+    "export function f(n: number): unknown { const isEven = (k: number): boolean => (k === 0 ? true : isOdd(k - 1)); const isOdd = (k: number): boolean => (k === 0 ? false : isEven(k - 1)); const ping = (k: number, acc: string): string => (k <= 0 ? acc : pong(k - 1, acc + 'i')); const pong = (k: number, acc: string): string => (k <= 0 ? acc : ping(k - 1, acc + 'o')); return [isEven(n), isOdd(n), ping(n, '')]; }",
+    ["number"],
+    "unknown",
+    fc.tuple(fc.integer({ min: 0, max: 15 })),
+  ],
+  [
+    "JSON: stringify (key order, undefined and functions, errors, NaN, space, toJSON, a cycle's TypeError), parse (duplicates, escapes, a SyntaxError), and their round trip",
+    "export function f(x: unknown, s: string, n: number): unknown { const o: any = { a: [1, 'two', null, undefined, true], b: { c: x, 2: 'i', 1: s }, d: undefined, f: () => 1, e: new Error('m'), n: n }; const cyc: any = { z: 1 }; cyc.self = cyc; let circ = ''; try { JSON.stringify(cyc); } catch (e) { circ = (e as Error).name; } let parsed: unknown = 'none'; try { parsed = JSON.parse(s); } catch (e) { parsed = (e as Error).name; } const withTo = { v: 1, toJSON: () => 'custom' }; return [JSON.stringify(o), JSON.stringify(o, null, 2), JSON.stringify(x), JSON.stringify([x, s]), JSON.stringify(s), JSON.stringify(withTo), JSON.stringify({ k: withTo }), circ, parsed, JSON.parse(JSON.stringify(o)), JSON.parse('[1,\"a\\\\u0041\",{\"x\":-1.5e3,\"x\":2},true,null]'), JSON.stringify(o, undefined, '--')]; }",
+    ["unknown", "string", "number"],
+    "unknown",
+    fc.tuple(
+      anyValue,
+      fc.oneof(
+        text,
+        numericText,
+        fc.constantFrom('{"a":1}', "[1, 2]", '"x"', "nul", "{", "[1,]", "01", "-0", "1.", " true "),
+      ),
+      fc.oneof(fc.double(), fc.integer()),
+    ),
+  ],
+  [
+    "iteration: for-in keys in ECMAScript's order, for-of over arrays (one growing), strings by code point, mixed arrays, with break; Object.keys, values, entries",
+    "export function f(o: any, xs: number[], s: string): unknown { const keys: unknown[] = []; for (const k in o) keys.push(k); let sum = 0; for (const x of xs) sum = sum + x; const cps: unknown[] = []; for (const c of s) cps.push(c); const grow = [1, 2]; let seen = 0; for (const g of grow) { if (grow.length < 5) grow.push(g * 10); seen = seen + 1; } let found = -1; for (const x of xs) { if (x > 2) { found = x; break; } } const mixed: unknown[] = [s, 1, true]; const kinds: unknown[] = []; for (const m of mixed) kinds.push(typeof m); const ordered = { b: 1, 2: 'two', a: 3, 1: 'one' }; return [keys, sum, cps, seen, grow, found, kinds, Object.keys(ordered), Object.values(ordered), Object.keys(xs), Object.keys(s), Object.entries(o)]; }",
+    ["unknown", "number[]", "string"],
+    "unknown",
+    fc.tuple(
+      fc.oneof(
+        fc
+          .dictionary(
+            fc.constantFrom("a", "b", "1", "10", "02", "x"),
+            fc.integer({ min: 0, max: 9 }),
+            {
+              maxKeys: 4,
+            },
+          )
+          .map((d) => ({ ...d })),
+        fc.constantFrom(null, undefined),
+      ),
+      fc.array(fc.integer({ min: -3, max: 5 }), { maxLength: 5 }),
+      text,
+    ),
+  ],
+  [
+    "recursive closures: a const arrow, a function declaration, recursion over an array and with an accumulator, aliased and passed to map",
+    "export function f(n: number, xs: number[]): unknown { const fact = (k: number): number => (k <= 1 ? 1 : k * fact(k - 1)); function fib(k: number): number { return k < 2 ? k : fib(k - 1) + fib(k - 2); } const sum = (a: number[], i: number): number => (i >= a.length ? 0 : a[i] + sum(a, i + 1)); const countdown = (k: number, acc: string): string => (k <= 0 ? acc : countdown(k - 1, acc + k)); const powk = (e: number): number => (e <= 0 ? 1 : n * powk(e - 1)); const self = fact; return [powk(3), powk(n), fact(n), fib(n), sum(xs, 0), countdown(n, ''), self(3), [1, 2, 3].map(fact)]; }",
+    ["number", "number[]"],
+    "unknown",
+    fc.tuple(
+      fc.integer({ min: -1, max: 12 }),
+      fc.array(fc.integer({ min: -9, max: 9 }), { maxLength: 6 }),
+    ),
+  ],
+  [
     "function values: closures stored in an array and an object, chosen, returned, composed, called; typeof and ===; calling a non-function",
     "export function f(k: number, s: string): unknown { const fs: unknown[] = []; fs.push((x: number) => x + k); fs.push((x: number) => s + x); const o: any = { inc: (x: number) => x + 1, name: s }; const pick = (b: boolean) => (b ? (x: number) => x * 2 : (x: number) => x - k); const compose = (f: any, g: any) => (x: unknown) => f(g(x)); const h = compose(o.inc, pick(k > 0)); const out = fs.map((g: any) => g(3)); let thrown = ''; try { (o.name as any)(1); } catch (e) { thrown = (e as Error).name; } return [out, o.inc(k), pick(true)(k), pick(false)(k), h(5), typeof fs[0], fs[0] === fs[0], fs[0] === fs[1], thrown]; }",
     ["number", "string"],
