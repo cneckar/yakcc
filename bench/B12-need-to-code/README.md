@@ -17,7 +17,7 @@ reached a B11 slice. B12 is the harness for finding a better path.
    - parameter names, from the source;
    - the JSDoc description, where there is one (231 definitions);
    - whether the sandbox can call it (1,824 can);
-   - example calls and observed types, from running it on fixed probe inputs (626 have
+   - example calls and observed types, from running it on fixed probe inputs (634 have
      examples).
 3. **Stage 1, recall.** Text channels pick a shortlist of 50: dense embedding similarity
    (bge-small, as the registry uses) and BM25, fused by reciprocal rank.
@@ -46,12 +46,12 @@ which needs a key.
 | Configuration | Top-1 | Top-5 | Top-50 | MRR | Reuse: precision / recall / false on negatives | Unique-only rule | AUROC |
 |---|---|---|---|---|---|---|---|
 | `registry-spec` (production: canonical spec text, dense + BM25) | 0.13 | 0.42 | 0.68 | 0.26 | – | – | 0.64 |
-| `card-dense` (card text, dense) | 0.24 | 0.47 | 0.84 | 0.35 | – | – | 0.66 |
-| `card-hybrid` (+ BM25) | 0.32 | 0.61 | 0.87 | 0.45 | – | – | 0.54 |
-| `card-hybrid+examples` (example calls in both texts) | 0.32 | 0.66 | 0.84 | 0.45 | – | – | 0.76 |
-| **`+execution`** (shortlist reordered by execution) | **0.68** | 0.82 | 0.84 | 0.74 | 0.92 / 0.61 / 0.00 | 1.00 / 0.53 / 0.00 | 0.95 |
-| `+execution (package cap)` (at most 5 per package) | 0.61 | 0.68 | 0.74 | 0.64 | 0.91 / 0.53 / 0.00 | 0.95 / 0.50 / 0.00 | 0.95 |
-| `+execution (signature)` (shortlist reordered by signature first) | 0.71 | 0.76 | 0.84 | 0.74 | 0.96 / 0.63 / 0.00 | 1.00 / 0.53 / 0.00 | 0.99 |
+| `card-dense` (card text, dense) | 0.32 | 0.50 | 0.84 | 0.41 | – | – | 0.69 |
+| `card-hybrid` (+ BM25) | 0.39 | 0.63 | 0.87 | 0.50 | – | – | 0.59 |
+| `card-hybrid+examples` (example calls in both texts) | 0.37 | 0.68 | 0.84 | 0.50 | – | – | 0.74 |
+| **`+execution`** (shortlist reordered by execution) | **0.71** | 0.82 | 0.84 | 0.76 | 0.92 / 0.63 / 0.00 | 1.00 / 0.55 / 0.00 | 0.95 |
+| `+execution (package cap)` (at most 5 per package) | 0.66 | 0.74 | 0.76 | 0.69 | 0.92 / 0.58 / 0.00 | 0.95 / 0.53 / 0.00 | 0.95 |
+| `+execution (signature)` (shortlist reordered by signature first) | 0.74 | 0.76 | 0.84 | 0.75 | 0.96 / 0.66 / 0.00 | 1.00 / 0.55 / 0.00 | 0.99 |
 | `exec-all` (no retrieval: every callable, about 1 s per query) | 0.87 | 0.89 | 0.89 | 0.88 | 0.97 / 0.79 / 0.00 | 1.00 / 0.61 / 0.00 | 0.96 |
 
 How to read it:
@@ -68,10 +68,11 @@ How to read it:
 
 - **The production text is the weakest representation.** The spec text the registry
   embeds ranks the right function first for 13% of needs. A card built from the code
-  (name, parameters, JSDoc, observed types) more than doubles that, and BM25 adds more.
+  (name, parameters, JSDoc, observed types) more than doubles that, and BM25 lifts it to
+  0.39.
 - **Execution is the step change.** Running the shortlist on the query's examples lifts
-  top-1 from 0.32 to 0.68, with the same shortlist. The confidence then separates right
-  from wrong almost perfectly (AUROC 0.95, against 0.54 to 0.76 for text similarity).
+  top-1 from 0.37 to 0.71, with the same shortlist. The confidence then separates right
+  from wrong almost perfectly (AUROC 0.95, against 0.59 to 0.74 for text similarity).
   Text similarity finds candidates; it cannot decide between them.
 - **No wrong reuse on the negatives.** None of the 8 nothing-fits needs had a candidate
   that reproduced its examples, so none was accepted. Text scores alone cannot do this:
@@ -82,11 +83,11 @@ How to read it:
   with no examples. `exec-all` shows the ceiling when every callable function is tried:
   0.87 top-1. All 4 of its misses are those not-executable cases.
 - **The package cap hurts.** Capping each package at 5 shortlist slots drops top-50 from
-  0.84 to 0.74, because related functions cluster in a package (semver, uuid). B11's zod
+  0.84 to 0.76, because related functions cluster in a package (semver, uuid). B11's zod
   dominance needs a different fix: a better text representation, which the cards already
   give.
-- **Signature reordering helps a little,** but only once execution has run (top-1 0.71
-  against 0.68). Probed types are noisy in JavaScript, which accepts nearly any argument.
+- **Signature reordering helps a little,** but only once execution has run (top-1 0.74
+  against 0.71). Probed types are noisy in JavaScript, which accepts nearly any argument.
 - **Examples can be too weak to decide.** The accepted-but-not-target cases:
   - `validRange` reproduces the "normalize a semver string" examples;
   - `isCurrency` reproduces the "is an integer string" examples;
@@ -107,6 +108,31 @@ How to read it:
 
 Confirm this on the held-out set before changing the registry.
 
+## Asking without code: the confirm step
+
+Asking the composing model to write code, or even example calls, in order to find code
+makes it pay for what reuse is meant to save. `harness/confirm.mjs` tests the alternative:
+
+1. The model sends only what it needs: one or two sentences and the types. Measured in
+   real tokens, that is far smaller than writing the function.
+2. The library searches (card text, dense + BM25) and shows the top K candidates. Each
+   shows its name, package, doc and up to three example calls observed by running it.
+3. The model picks one, or says none fits. It reads; it does not write code or invent
+   examples.
+
+For each query the step records:
+- the pick and its outcome: right, wrong reuse, missed (it said none but the target was
+  shown), or correct-none;
+- the tokens of the request, of the examples the examples style would have added, and of
+  the confirm turn's input and output.
+
+Library-side work (cards, probes, descriptions) is paid once per function, not per
+request.
+
+**Status: built, not yet run.** The key in this environment (`CLAUDE_API_KEY`) is rejected
+by the API with 401 "invalid x-api-key". `--dry-run` shows the plan: 46 seed queries at
+K = 5 cost about $0.34 on Opus 5.5.
+
 ## Running
 
 ```sh
@@ -121,12 +147,13 @@ node harness/eval.mjs --no-exec-all           # skip the ~1 s/query brute-force 
 
 ### Steps that need a model (not run)
 
-Each refuses without `ANTHROPIC_API_KEY`, and `--dry-run` prints the plan and cost without
+Each reads `ANTHROPIC_API_KEY` (or `CLAUDE_API_KEY`) and refuses without one, and `--dry-run` prints the plan and cost without
 calling anything:
 
 | Step | What it makes | Calls | Estimated cost (Opus 5.5 / Sonnet 5.5 / Haiku 5.5) |
 |---|---|---|---|
 | `harness/generate-queries.mjs` | The held-out query set. One call describes the function from its code (name masked); a fresh call that sees only that description writes the need and the examples, as a composing model would. Targets are re-run on the examples. | 346 (173 functions across 14 packages) | $5.19 / $2.59 / $0.13 |
+| `harness/confirm.mjs` | The confirm step, on the seed set (or `--queries queries/generated.json`). | 46 at K = 5 | $0.34 / $0.17 / $0.01 |
 | `harness/describe-atoms.mjs` | A one-line behavior for each of the 2,754 definitions without JSDoc. The eval uses it via `--descriptions`. | 2,754 | $8.67 / $4.33 / $0.22 |
 
 Prices are first-party list prices as of 2026-11. The default model is Opus 5.5; `--model`

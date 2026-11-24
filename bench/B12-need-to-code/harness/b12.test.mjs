@@ -10,6 +10,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { degenerate, docAbove, paramNames, probe, trivial, typeOfTagged } from "./cards.mjs";
+import { confirmPrompt, requestText, scorePick, summarizePicks } from "./confirm.mjs";
 import { sample } from "./generate-queries.mjs";
 import {
   capPerPackage,
@@ -267,12 +268,18 @@ describe("seed queries", () => {
 });
 
 describe("model-backed steps (no calls)", () => {
-  it("refuse to run without a key", async () => {
-    const saved = process.env.ANTHROPIC_API_KEY;
-    // Assigning undefined would store the string "undefined" in process.env.
-    Reflect.deleteProperty(process.env, "ANTHROPIC_API_KEY");
-    await assert.rejects(modelClient(), /ANTHROPIC_API_KEY is not set/);
-    if (saved !== undefined) process.env.ANTHROPIC_API_KEY = saved;
+  it("refuse to run without a key (ANTHROPIC_API_KEY or CLAUDE_API_KEY)", async () => {
+    const saved = {};
+    for (const k of ["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"]) {
+      saved[k] = process.env[k];
+      // Assigning undefined would store the string "undefined" in process.env.
+      Reflect.deleteProperty(process.env, k);
+    }
+    try {
+      await assert.rejects(modelClient(), /ANTHROPIC_API_KEY is not set/);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) if (v !== undefined) process.env[k] = v;
+    }
   });
   it("mask a definition's own name, and read a JSON reply", () => {
     assert.equal(
@@ -309,5 +316,48 @@ describe("committed results", () => {
       assert.ok(r.summary[name], name);
       assert.equal(r.rows[name].length, seed.queries.length);
     }
+  });
+});
+
+describe("confirm step (no calls)", () => {
+  const dist = {
+    id: "d",
+    pkg: "fastest-levenshtein-1.0.16",
+    sourceFile: "fastest-levenshtein-1.0.16/esm/mod.js",
+    name: "distance",
+    params: ["a", "b"],
+    doc: null,
+    examples: [{ args: ["kitten", "sitting"], returns: 3 }],
+  };
+  const other = { ...dist, id: "o", name: "closest", examples: [] };
+  const q = {
+    need: "Count single-character edits between two strings.",
+    inputs: [{ name: "a", type: "string" }],
+    output: "number",
+    examples: [{ args: ["a", "b"], returns: 1 }],
+    targets: ["fastest-levenshtein-1.0.16:esm/mod.js#distance"],
+  };
+  it("the request carries no code and no examples; candidates show their observed calls", () => {
+    const p = confirmPrompt(q, [other, dist], {});
+    assert.equal(requestText(q).includes("f("), false);
+    assert.match(p, /2\. distance\(a, b\) from fastest-levenshtein/);
+    assert.match(p, /distance\("kitten", "sitting"\) = 3/);
+    assert.match(p, /could not be run on sample inputs/);
+  });
+  it("scores picks: right, wrong reuse, missed, correct none", () => {
+    assert.equal(scorePick(q, [other, dist], 2).outcome, "right");
+    assert.equal(scorePick(q, [other, dist], 1).outcome, "wrong-reuse");
+    assert.equal(scorePick(q, [other, dist], 0).outcome, "missed");
+    assert.equal(scorePick(q, [other], 0).outcome, "correct-none");
+    assert.equal(scorePick(q, [other], 3).outcome, "invalid");
+    const s = summarizePicks([
+      { positive: true, reachable: true, outcome: "right" },
+      { positive: true, reachable: false, outcome: "wrong-reuse" },
+      { positive: false, reachable: false, outcome: "correct-none" },
+    ]);
+    assert.equal(s.rightOfPositives, 0.5);
+    assert.equal(s.rightWhenShown, 1);
+    assert.equal(s.reusePrecision, 0.5);
+    assert.equal(s.correctNoneOnNegatives, 1);
   });
 });

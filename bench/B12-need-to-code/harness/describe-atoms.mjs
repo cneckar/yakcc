@@ -14,7 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { corpusDefinitions } from "../../B11-reuse-economics/harness/retrieve.mjs";
 import { buildCard } from "./cards.mjs";
-import { DEFAULT_MODEL, estimateCost, modelClient } from "./model.mjs";
+import { DEFAULT_MODEL, estimateCost, mapLimit, modelClient } from "./model.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const benchDir = resolve(here, "..");
@@ -55,10 +55,10 @@ async function main() {
   const model = arg("model", DEFAULT_MODEL);
   const client = await modelClient({ model, maxTokens: 1000 });
   const descriptions = {};
-  for (const c of todo) {
+  await mapLimit(todo, Number(arg("concurrency", "8")), async (c) => {
     const r = await client.complete(SYSTEM, (textOf.get(c.id) ?? "").slice(0, 6000));
     if (r.stopReason === "end_turn") descriptions[c.id] = r.text.trim().replace(/\s+/g, " ");
-  }
+  });
   writeFileSync(out, `${JSON.stringify({ model, usage: client.usage, descriptions }, null, 2)}\n`);
   console.log(
     `wrote ${Object.keys(descriptions).length} descriptions; usage ${JSON.stringify(client.usage)}`,

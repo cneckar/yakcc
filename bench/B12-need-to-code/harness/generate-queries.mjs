@@ -24,7 +24,14 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { corpusDefinitions } from "../../B11-reuse-economics/harness/retrieve.mjs";
 import { buildCard } from "./cards.mjs";
 import { runExamples } from "./match.mjs";
-import { DEFAULT_MODEL, estimateCost, extractJson, maskName, modelClient } from "./model.mjs";
+import {
+  DEFAULT_MODEL,
+  estimateCost,
+  extractJson,
+  mapLimit,
+  maskName,
+  modelClient,
+} from "./model.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const benchDir = resolve(here, "..");
@@ -93,30 +100,28 @@ async function main() {
 
   const model = arg("model", DEFAULT_MODEL);
   const client = await modelClient({ model });
-  const queries = [];
-  for (const c of chosen) {
+  const made = await mapLimit(chosen, Number(arg("concurrency", "6")), async (c) => {
     const code = maskName(textOf.get(c.id) ?? "", c.name);
     const d = await client.complete(DESCRIBE_SYSTEM, code);
-    if (d.stopReason !== "end_turn") continue;
+    if (d.stopReason !== "end_turn") return null;
     const a = await client.complete(ASK_SYSTEM, d.text);
     const q = extractJson(a.text);
-    if (!q || typeof q.need !== "string" || !Array.isArray(q.examples)) continue;
-    if (/[A-Z_$\d]/.test(c.name.slice(1)) && q.need.includes(c.name)) continue; // leaked name
-    const target = `${c.pkg}:${c.sourceFile.slice(c.pkg.length + 1)}#${c.name}`;
+    if (!q || typeof q.need !== "string" || !Array.isArray(q.examples)) return null;
+    if (/[A-Z_$\d]/.test(c.name.slice(1)) && q.need.includes(c.name)) return null; // leaked name
     const query = {
-      id: `gen-${queries.length + 1}`,
       origin: `generated:${model}`,
       need: q.need,
       inputs: Array.isArray(q.inputs) ? q.inputs : [],
       output: typeof q.output === "string" ? q.output : "",
       examples: q.examples,
-      targets: [target],
+      targets: [`${c.pkg}:${c.sourceFile.slice(c.pkg.length + 1)}#${c.name}`],
       description: d.text,
     };
     const r = runExamples(c, query.examples);
     query.targetReproduces = r.executable ? r.passed === r.total : null;
-    queries.push(query);
-  }
+    return query;
+  });
+  const queries = made.filter(Boolean).map((q, i) => ({ id: `gen-${i + 1}`, ...q }));
   writeFileSync(
     out,
     `${JSON.stringify({ set: "generated", model, usage: client.usage, queries }, null, 2)}\n`,

@@ -120,14 +120,17 @@ const PATTERNS = {
   ],
 };
 const MAX_EXAMPLES = 6;
-const MAX_CALLS = 40;
-const ROUNDS = 4;
+const MAX_CALLS = 64;
+// Rounds per arity: one-argument functions try every probe value of a kind; with more
+// arguments the combinations grow, so fewer rounds.
+const ROUNDS_BY_ARITY = [1, 8, 5, 4];
+const roundsFor = (arity) => ROUNDS_BY_ARITY[Math.min(arity, 3)];
 
 /** Probe argument lists for an arity: for each pattern, values by index, so calls vary. */
 export function probeArgs(arity) {
   const pats = PATTERNS[Math.min(arity, 3)] ?? PATTERNS[3];
   const out = [];
-  for (let i = 0; i < ROUNDS; i++)
+  for (let i = 0; i < roundsFor(arity); i++)
     for (const pat of pats) out.push(pat.map((k, j) => P[k][(i + j) % P[k].length]));
   return out.slice(0, MAX_CALLS);
 }
@@ -175,7 +178,8 @@ export function probe(callable, arity) {
   const byPattern = pats.map(() => ({ clean: [], all: 0, score: 0 }));
   let deterministic = true;
   let calls = 0;
-  for (let round = 0; round < ROUNDS; round++) {
+  const rounds = roundsFor(arity);
+  for (let round = 0; round < rounds; round++) {
     pats.forEach((pat, pi) => {
       if (calls >= MAX_CALLS) return;
       const args = pat.map((k, j) => P[k][(round + j) % P[k].length]);
@@ -201,7 +205,7 @@ export function probe(callable, arity) {
   // Every tied pattern is kept (at most three), so an ambiguous signature shows as a union.
   const chosen = best === 0 ? [] : byPattern.filter((p) => p.score === best).slice(0, 3);
   const examples = [];
-  for (let i = 0; examples.length < MAX_EXAMPLES && i < ROUNDS; i++)
+  for (let i = 0; examples.length < MAX_EXAMPLES && i < rounds; i++)
     for (const p of chosen)
       if (p.clean[i] && examples.length < MAX_EXAMPLES) examples.push(p.clean[i]);
   const params = Array.from({ length: arity }, (_, i) => [

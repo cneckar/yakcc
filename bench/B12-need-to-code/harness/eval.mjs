@@ -278,6 +278,8 @@ async function main() {
         targetRank: rankOf(final),
         shortlistRank: rankOf((L.stage1 ?? L.ids).slice(0, L.stage1 ? undefined : SHORTLIST)),
         top3: final.slice(0, 3),
+        // The first ten, for the confirm step (harness/confirm.mjs), on text-only configs.
+        ...(L.exec ? {} : { top10: final.slice(0, 10) }),
         top1Correct: final[0] !== undefined && isTarget(cardOf(final[0]), q),
         confidence,
         accept: d.accept,

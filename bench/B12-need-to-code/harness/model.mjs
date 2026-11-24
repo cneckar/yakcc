@@ -34,33 +34,65 @@ export function estimateCost(inputChars, outputTokens, calls) {
   );
 }
 
+/** The API key: ANTHROPIC_API_KEY, else CLAUDE_API_KEY. */
+export function apiKeyFromEnv() {
+  return process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || undefined;
+}
+
+/** Map with at most `limit` calls in flight; results keep input order. */
+export async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
 /** A client with complete(system, user) -> { text, inputTokens, outputTokens, stopReason }. */
 export async function modelClient({
   model = DEFAULT_MODEL,
   maxTokens = 4000,
   effort = "low",
 } = {}) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = apiKeyFromEnv();
   if (!apiKey)
-    throw new Error("ANTHROPIC_API_KEY is not set: this step needs a key and approved spend");
+    throw new Error(
+      "ANTHROPIC_API_KEY is not set (nor CLAUDE_API_KEY): this step needs a key and approved spend",
+    );
   const req = createRequire(join(repo, "packages/shave/package.json"));
   const { default: Anthropic } = await import(pathToFileURL(req.resolve("@anthropic-ai/sdk")).href);
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey, maxRetries: 6 });
   const usage = { inputTokens: 0, outputTokens: 0, calls: 0 };
+  let overhead;
+  const count = async (text) =>
+    (await client.messages.countTokens({ model, messages: [{ role: "user", content: text }] }))
+      .input_tokens;
   return {
     usage,
+    /** Tokens in a piece of text, by the model's tokenizer (message overhead removed). */
+    async countTokens(text) {
+      overhead ??= (await count(".")) - 1;
+      return (await count(text)) - overhead;
+    },
     async complete(system, user) {
       const m = await client.messages.create({
         model,
         max_tokens: maxTokens,
         system,
         messages: [{ role: "user", content: user }],
-        output_config: { effort },
+        ...(effort ? { output_config: { effort } } : {}),
       });
       usage.inputTokens += m.usage.input_tokens;
       usage.outputTokens += m.usage.output_tokens;
       usage.calls++;
       return {
+        inputTokens: m.usage.input_tokens,
+        outputTokens: m.usage.output_tokens,
         text: m.content
           .filter((b) => b.type === "text")
           .map((b) => b.text)
