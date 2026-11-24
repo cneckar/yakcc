@@ -207,6 +207,28 @@ export function parseAtomSource(source: string): { project: Project; file: Sourc
     if (diagnostics.length === 0) {
       project = sf.getProject();
       file = sf;
+      // A fragment of a generator's body yields: outside a generator, `yield* g()` is a name
+      // `yield` times g(), and `yield` is never a name in a module. It is the body of the
+      // generator it was sliced from (#1330), async when it awaits too.
+      const asName = sf
+        .getDescendantsOfKind(SyntaxKind.Identifier)
+        .some((id) => id.getText() === "yield" && isValueRead(id));
+      if (asName) {
+        const generator = new Project({
+          useInMemoryFileSystem: true,
+          compilerOptions: { allowJs: false, noEmit: true, noLib: true, skipLibCheck: true },
+        });
+        const awaits = /\bawait\b/.test(source) ? "async " : "";
+        const body = generator.createSourceFile(
+          "atom.ts",
+          `${awaits}function* __atom__() {\n${source}\n}`,
+          { scriptKind: ScriptKind.TS },
+        );
+        if (generator.getProgram().getSyntacticDiagnostics(body).length === 0) {
+          project = generator;
+          file = body;
+        }
+      }
       break;
     }
     if (index === 0) {
@@ -562,6 +584,11 @@ class Lifter {
   run(file: Node): void {
     for (const name of writtenFreeNames(file)) if (!this.imports.has(name)) this.bindings.add(name);
     const primary = findPrimaryFunction(file);
+    // The atom is the function: a name the file declares outside it, and the function writes, is a
+    // binding outside the atom too (#1330): `let d = function () { .. d = g; .. }`.
+    if (primary !== undefined)
+      for (const name of writtenFreeNames(primary))
+        if (!this.imports.has(name)) this.bindings.add(name);
     if (primary !== undefined) {
       this.mode = functionModeOf(primary);
       this.liftFunction(primary);
@@ -1727,6 +1754,12 @@ class Lifter {
       inner.derived = derived;
       inner.ownsArguments = !Node.isArrowFunction(fn);
       for (const name of captures) if (this.bindings.has(name)) inner.bindings.add(name);
+      // A binding outside the atom the closure only writes is still that binding inside it, for a
+      // closure within it that writes it too (#1330): `let d = function () { try { .. } catch {
+      // d = g; } }` at a module's top level.
+      for (const t of assignmentTargets(fn))
+        for (const name of assignedNames(t))
+          if (this.bindings.has(name) && !closureLocals(fn).has(name)) inner.bindings.add(name);
       graph = inner.liftClosureBody(
         fn,
         captures,
@@ -3903,9 +3936,10 @@ function closureLocals(fn: Node): Set<string> {
 
 /**
  * The names a scope declares that a closure inside it rebinds (#1276): they are held in cells. A name
- * bound by a loop's header, or a `var` inside a loop, is left out: JavaScript gives the first a binding
- * per iteration and the second one binding for all of them, and a cell made at the declaration is
- * neither.
+ * bound by a `for` header, or a `var` inside a loop, is left out: JavaScript copies the first from one
+ * pass's binding to the next and gives the second one binding for all passes, and a cell made at the
+ * declaration is neither. A `for-of` or `for-in` header's `let` is in: its binding is new each pass,
+ * and so is its cell, made where the element is bound (#1330).
  */
 function cellNames(scope: Node): Set<string> {
   // A try statement's blocks are closures once it is lowered (Lifter.lowerTry): they count as nested.
@@ -3940,11 +3974,14 @@ function cellNames(scope: Node): Set<string> {
     if (insideNested(decl)) continue;
     const list = decl.getParent();
     const header = list?.getParent();
+    // A for-of or for-in header's let is bound anew each pass, where bindPattern makes its cell
+    // (#1330); a for header's is copied from pass to pass, and a var header's is one for all passes.
+    if (header !== undefined && Node.isForStatement(header)) continue;
     if (
       header !== undefined &&
-      (Node.isForStatement(header) ||
-        Node.isForOfStatement(header) ||
-        Node.isForInStatement(header))
+      (Node.isForOfStatement(header) || Node.isForInStatement(header)) &&
+      Node.isVariableDeclarationList(list) &&
+      list.getDeclarationKind() === "var"
     )
       continue;
     if (Node.isVariableDeclarationList(list) && list.getDeclarationKind() === "var" && inLoop(decl))
