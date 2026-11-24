@@ -366,6 +366,11 @@ interface ModuleScope {
     fresh: () => string,
   ) => string | undefined;
   readonly write: (name: string, value: string, emit: (line: string) => void) => boolean;
+  /**
+   * A free name bound to a function declaration nothing in the program reassigns: the LLVM
+   * function its closure's code is, which a call may call directly (#1369). Undefined otherwise.
+   */
+  readonly direct?: (name: string) => string | undefined;
   /** For a statement: the globals its results (its graph's observations) are stored in, in order. */
   readonly outs?: readonly string[];
 }
@@ -1661,6 +1666,41 @@ function lowerFunction(
         return;
       }
       const fn = operand(ins[0] as ValueId);
+      const calleeName = freeValue.get(resolve(ins[0] as ValueId));
+      const direct = calleeName !== undefined ? scope?.direct?.(calleeName) : undefined;
+      if (direct !== undefined) {
+        // A function declaration's own code, called directly when the binding holds its closure (a
+        // module not yet evaluated, in a cycle, leaves it undefined: then the generic call's error).
+        const argv = list(args);
+        const tag = fresh();
+        emit(`${tag} = lshr i64 ${fn}, 48`);
+        const isClosure = fresh();
+        emit(`${isClosure} = icmp eq i64 ${tag}, 65533`);
+        const yes = freshLabel("direct");
+        const no = freshLabel("indirect");
+        const join = freshLabel("called");
+        emit(`br i1 ${isClosure}, label %${yes}, label %${no}`);
+        block(yes);
+        const addr = fresh();
+        emit(`${addr} = and i64 ${fn}, 281474976710655`);
+        const ptr = fresh();
+        emit(`${ptr} = inttoptr i64 ${addr} to ptr`);
+        const r1 = fresh();
+        emit(
+          `${r1} = call i64 @${direct}(ptr ${ptr}, i64 ${superRecv}, i64 ${args.length}, ptr ${argv})`,
+        );
+        const yesEnd = currentLabel();
+        emit(`br label %${join}`);
+        block(no);
+        const r2 = call("yk_call", `i64 ${fn}, i64 ${superRecv}, i64 ${args.length}, ptr ${argv}`);
+        const noEnd = currentLabel();
+        emit(`br label %${join}`);
+        block(join);
+        const r = fresh();
+        emit(`${r} = phi i64 [ ${r1}, %${yesEnd} ], [ ${r2}, %${noEnd} ]`);
+        set(out, r);
+        return;
+      }
       set(
         out,
         call("yk_call", `i64 ${fn}, i64 ${superRecv}, i64 ${args.length}, ptr ${list(args)}`),
@@ -2222,6 +2262,36 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     }
     return [...out];
   };
+  // Function declarations nothing reassigns (#1369): a binding a `binding=` writes anywhere in its
+  // module (a nested closure's included) is not one.
+  const writtenIn = (graph: DucGraph, out: Set<string>): void => {
+    const prod = new Map<ValueId, DucNode>();
+    for (const n of graph.nodes) for (const v of n.outputs) prod.set(v, n);
+    for (const n of graph.nodes) {
+      if (n.label === "binding=") {
+        const target = prod.get(n.inputs[0] as ValueId);
+        if (target?.kind === "diamond-source" && target.diamond?.symbol !== undefined)
+          out.add(target.diamond.symbol);
+      }
+      if (n.closure !== undefined) writtenIn(n.closure, out);
+    }
+  };
+  const directBySlot = new Map<string, string>();
+  modules.forEach((mod, i) => {
+    const written = new Set<string>();
+    for (const st of mod.statements) writtenIn(st.graph, written);
+    mod.statements.forEach((st, k) => {
+      const name = st.declares[0];
+      if (
+        st.kind !== "function" ||
+        name === undefined ||
+        written.has(name) ||
+        st.graph.mode !== undefined
+      )
+        return;
+      directBySlot.set(g(i, `b.${name}`), `m${i}_s${k}`);
+    });
+  });
   modules.forEach((mod, i) => {
     const names = new Set(mod.statements.flatMap((st) => st.declares));
     for (const what of ["module", "exports", "require"])
@@ -2266,6 +2336,13 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         if (!names.has(name)) return false;
         emit(`store i64 ${value}, ptr ${g(i, `b.${name}`)}`);
         return true;
+      },
+      direct: (name) => {
+        if (names.has(name)) return directBySlot.get(g(i, `b.${name}`));
+        const imp = mod.esm?.imports[name];
+        if (imp === undefined) return undefined;
+        const target = resolveImport(imp);
+        return target !== undefined && "slot" in target ? directBySlot.get(target.slot) : undefined;
       },
       ...(outs !== undefined ? { outs } : {}),
     });
