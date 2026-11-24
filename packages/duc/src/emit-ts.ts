@@ -14,7 +14,14 @@ import { parseType, typeToTypeScript } from "./infer-types.js";
  * that holds an opaque node (a closure, a class, a construct summarized by its text), or the return
  * state of returns on some paths, has no TypeScript form here: `emitTypeScript` throws EmitError.
  */
-import { DECLARES, declaredNamesOf } from "./lift.js";
+import {
+  COMPLETES,
+  DECLARES,
+  RETURNED_NAME,
+  RETURN_VALUE_NAME,
+  completionOf,
+  declaredNamesOf,
+} from "./lift.js";
 import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
 import { loweringView } from "./ordering.js";
 import { isRestParam, paramIndex } from "./params.js";
@@ -75,6 +82,13 @@ const COMPOUND = new Set([
 const PREFIX = new Set(["!", "-", "+", "~"]);
 const CALLS = new Set(["CallExpression", "CallExpression?.", "NewExpression"]);
 
+/** A value as a template's literal text: the characters a template would read otherwise escaped. */
+function templateText(value: string): string {
+  return value.replace(/\\|`|\$\{|\r/g, (m) =>
+    m === "\r" ? "\\r" : m === "${" ? "\\${" : `\\${m}`,
+  );
+}
+
 const isMemberRead = (label: string): boolean =>
   (label !== "..." && (label.startsWith(".") || label.startsWith("?.")) && !label.endsWith("=")) ||
   label.startsWith("super.") ||
@@ -107,7 +121,8 @@ export function emitTypeScript(
   const imports = new Map<string, Set<string>>();
   // A module statement's graph is a module: its statements, then the names it declares (#1290).
   const asModule =
-    declaredNamesOf(g) !== undefined && !g.nodes.some((n) => n.kind === "param-source");
+    (declaredNamesOf(g) !== undefined || completionOf(g) !== undefined) &&
+    !g.nodes.some((n) => n.kind === "param-source");
   const { params, body } = emitFunction(g, "", [], imports, asModule);
   const importLines = [...imports.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -414,9 +429,13 @@ function emitFunction(
     }
     if (label.startsWith("template:") || label.startsWith("tagged:")) {
       const tagged = label.startsWith("tagged:");
-      const parts = JSON.parse(
-        label.slice(tagged ? "tagged:".length : "template:".length),
-      ) as string[];
+      // A template's parts are values, written back with what a template needs escaped; a tagged
+      // template's are written as their raw text, which the tag sees (#1303).
+      const parts = tagged
+        ? (JSON.parse(label.slice("tagged:".length)) as [string | null, string][]).map(
+            ([, raw]) => raw,
+          )
+        : (JSON.parse(label.slice("template:".length)) as string[]).map(templateText);
       const exprs = tagged ? ins.slice(1) : ins;
       let text = `\`${parts[0] ?? ""}`;
       exprs.forEach((v, i) => {
@@ -441,7 +460,7 @@ function emitFunction(
     const arg = (i: number): string => ref(node.inputs[i] as ValueId);
     if (label === "throw") return [`throw ${arg(0)};`];
     // A module statement's one result: written below, as its declared names.
-    if (label.startsWith(DECLARES)) return [];
+    if (label.startsWith(DECLARES) || label.startsWith(COMPLETES)) return [];
     // A write to a binding outside the atom: `name = value` (#1276).
     if (label === "binding=") {
       const written = node.outputs[0];
@@ -796,7 +815,13 @@ function emitFunction(
   if (asModule) {
     // Each declared name is a module-level name, given its value at the end; the statements are in
     // a block, so the emitter's temporaries are not the module's (#1290, #1292).
-    const names = declaredNamesOf(g) as string[];
+    // A completion record (#1297) is written as two more module names, before the declared ones:
+    // whether the fragment returned, and what (lifted again, they are the record's first inputs).
+    const completion = completionOf(g);
+    const names =
+      completion !== undefined
+        ? [RETURNED_NAME, RETURN_VALUE_NAME, ...completion]
+        : (declaredNamesOf(g) as string[]);
     const declares = g.nodes.find((n) => n.outputs.includes(g.obs[0] as ValueId)) as DucNode;
     // `default` is not a variable: its value is held by the lowering's own name, exported as default.
     const local = (name: string): string => (name === "default" ? "__yakccExportDefault" : name);

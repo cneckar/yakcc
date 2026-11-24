@@ -14,6 +14,8 @@
  * `unpackGraph` puts the three back together.
  */
 import { constants, brotliCompressSync, brotliDecompressSync } from "node:zlib";
+import { blake3 } from "@noble/hashes/blake3.js";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { canonicalizeGraph, graphIdentity } from "./canonical.js";
 import { type CompactGraph, decodeGraph, encodeGraph } from "./compact.js";
 import type { DiamondLabel, DucGraph, DucNode, NodeOrigin } from "./types.js";
@@ -26,7 +28,7 @@ export const GRAPH_FORMAT_VERSION = 2;
  * same source (a new construct lifted, a canonical rule) changes identities, so it bumps this: a
  * stored graph from an older lifter is still valid, but relifting its source may give another.
  */
-export const LIFTER_VERSION = 38;
+export const LIFTER_VERSION = 40;
 
 /** One reference's link: the reference, by reason, symbol and module, and the contract it links to. */
 export interface StoredLink {
@@ -36,7 +38,62 @@ export interface StoredLink {
   readonly spec: string;
 }
 
+/**
+ * What a block's root commits to for its implementation (#1306): the graph's structure (its
+ * identity), the contracts its references link to, and the format the structure is written in.
+ * None of them can change without the root changing, so a graph cannot be swapped under a root.
+ *
+ *     links_hash = BLAKE3(canonical JSON of the sorted links)
+ *     graph_root = BLAKE3("yakcc-duc-graph" ‖ u32be format_version ‖ identity ‖ links_hash)
+ */
+export function graphRoot(
+  identity: string,
+  links: readonly StoredLink[],
+  formatVersion: number = GRAPH_FORMAT_VERSION,
+): string {
+  const sorted = [...links].sort((a, b) => (linkKey(a) < linkKey(b) ? -1 : 1));
+  const canonicalLinks = sorted.map((l) => [l.reason, l.symbol, l.module ?? "", l.spec]);
+  const linksHash = blake3(new TextEncoder().encode(JSON.stringify(canonicalLinks)));
+  const version = new Uint8Array(4);
+  new DataView(version.buffer).setUint32(0, formatVersion);
+  return bytesToHex(
+    blake3(
+      concat([
+        new TextEncoder().encode("yakcc-duc-graph"),
+        version,
+        hexToBytes(identity),
+        linksHash,
+      ]),
+    ),
+  );
+}
+
+/**
+ * A DUC block's root (#1306): its contract, its implementation's graph root, and its proof.
+ *
+ *     block_root = BLAKE3(spec_hash ‖ graph_root ‖ proof_root)
+ *
+ * The TypeScript text is a lowering of the graph, not part of the root.
+ */
+export function ducBlockRoot(specHash: string, root: string, proofRoot: string): string {
+  return bytesToHex(
+    blake3(concat([hexToBytes(specHash), hexToBytes(root), hexToBytes(proofRoot)])),
+  );
+}
+
+function concat(parts: readonly Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+}
+
 export interface PackedGraph {
+  /** The graph's root (#1306): its identity, its links and its format version, committed to. */
+  readonly root: string;
   /** The graph's identity: the key, with the contract's specHash, of the implementation. */
   readonly identity: string;
   readonly formatVersion: number;
@@ -111,12 +168,15 @@ export function packGraph(graph: DucGraph): PackedGraph {
   linksOf(canon, links);
   const notes = annotationsOf(canon);
   const hasNotes = JSON.stringify(notes).includes('"kind"');
+  const identity = graphIdentity(canon);
+  const sortedLinks = [...links.values()].sort((a, b) => (linkKey(a) < linkKey(b) ? -1 : 1));
   return {
-    identity: graphIdentity(canon),
+    root: graphRoot(identity, sortedLinks),
+    identity,
     formatVersion: GRAPH_FORMAT_VERSION,
     lifterVersion: LIFTER_VERSION,
     structure: compress(JSON.stringify(encodeGraph(structure))),
-    links: [...links.values()].sort((a, b) => (linkKey(a) < linkKey(b) ? -1 : 1)),
+    links: sortedLinks,
     ...(hasNotes ? { annotations: compress(JSON.stringify(notes)) } : {}),
   };
 }
