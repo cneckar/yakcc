@@ -10,6 +10,7 @@ import { liftAtom } from "../lift.js";
 import { Thrown } from "../lower-stack.js";
 import {
   BIGNUM_ATOMS,
+  COLLECTION_ATOMS,
   DYNAMIC_ATOMS,
   RUNTIME_ATOMS,
   RUNTIME_PRIMITIVES_JS,
@@ -60,10 +61,12 @@ export const position = fc.oneof(
   fc.double(),
 );
 
-export const ALL_ATOMS = { ...RUNTIME_ATOMS, ...BIGNUM_ATOMS, ...DYNAMIC_ATOMS } as Record<
-  string,
-  { source: string; inputs: readonly string[]; output: string }
->;
+export const ALL_ATOMS = {
+  ...RUNTIME_ATOMS,
+  ...BIGNUM_ATOMS,
+  ...DYNAMIC_ATOMS,
+  ...COLLECTION_ATOMS,
+} as Record<string, { source: string; inputs: readonly string[]; output: string }>;
 
 /**
  * The runtime atoms as JavaScript: each lifted and written back by `emitTypeScript`, run with the
@@ -222,6 +225,15 @@ export const NUMERIC_STRINGS: string[] = (() => {
   return out;
 })();
 
+/** Numbers for the bitwise operators: ToInt32's edges, fractions, and every range. */
+export const bitArg = fc.oneof(
+  fc.integer(),
+  fc.integer({ min: -40, max: 40 }),
+  fc.double(),
+  fc.constantFrom(2 ** 31, -(2 ** 31), 2 ** 31 - 1, 2 ** 32, 2 ** 32 + 5, -(2 ** 32) - 3, 2 ** 53),
+  fc.constantFrom(1e20, -1e20, -1.5, 4294967295.7, -0, Number.NaN, Number.POSITIVE_INFINITY, 0.5),
+);
+
 /** Every kind of value the WasmGC lowering represents. */
 export const anyValue = fc.oneof(
   fc.double(),
@@ -318,6 +330,27 @@ export const numericText = fc.oneof(
 );
 
 export const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
+  [
+    "Map and Set (SameValueZero keys, -0, NaN, iteration, forEach, delete, size), and methods of receivers of any kind (arrays, strings)",
+    "export function f(xs: unknown[], k: unknown, s: string): unknown { const m = new Map(); m.set('a', 1); m.set(k, s); m.set(NaN, 'nan'); m.set(-0, 'zero'); const st = new Set([1, 2, 2, s, NaN, NaN]); const out: unknown[] = []; m.forEach((v: unknown, key: unknown) => out.push([key, v])); const entries: unknown[] = []; for (const e of m) entries.push(e); const vals: unknown[] = []; for (const v of st) vals.push(v); const ks: unknown[] = []; for (const q of m.keys()) ks.push(q); const anyArr: any = xs; anyArr.push(s); const popped = anyArr.pop(); const sAny: any = s; return [m.get('a'), m.get(k), m.get(NaN), m.get(0), m.has(k), m.size, m.delete('a'), m.delete('zz'), m.size, st.size, st.has(NaN), st.has('x'), out, entries, vals, ks, String(m), JSON.stringify(m), Object.keys(st), m instanceof Map, st instanceof Set, m instanceof Error, popped, anyArr.length, anyArr.indexOf(s), anyArr.includes(NaN), anyArr.join('-'), anyArr.map((x: unknown) => typeof x), sAny.slice(1), sAny.indexOf('a'), sAny.trim(), sAny.charCodeAt(0)]; }",
+    ["unknown[]", "unknown", "string"],
+    "unknown",
+    fc.tuple(
+      fc.array(
+        fc.oneof(fc.integer({ min: -2, max: 2 }), fc.constantFrom("a", "", null, Number.NaN)),
+        { maxLength: 4 },
+      ),
+      anyValue,
+      text,
+    ),
+  ],
+  [
+    "bitwise operators: &, |, ^, <<, >>, >>>, ~ on every kind of number (ToInt32's modulo, a shift's count mod 32)",
+    "export function f(a: number, b: number): unknown { return [a & b, a | b, a ^ b, a << b, a >> b, a >>> b, ~a, ~~a, a | 0, a >>> 0, -1 >>> 0, 1 << 31, (a & 0xff) << 8, b >>> 32, a << -1]; }",
+    ["number", "number"],
+    "unknown",
+    fc.tuple(bitArg, bitArg),
+  ],
   [
     "builtins as functions: filter(Boolean), map(String), map(Number), Math's one-argument functions, stored and called",
     "export function f(xs: unknown[], n: number): unknown { const nums = [n, -n, 2.5, -0.5]; const fs: unknown[] = [String, Math.abs]; return [xs.filter(Boolean), xs.map(String), xs.map(Number), nums.map(Math.abs), nums.map(Math.floor), nums.map(Math.sqrt), nums.map(Math.round), Boolean(n), Boolean(), (fs[0] as any)(n), (fs[1] as any)(-3), typeof fs[0]]; }",

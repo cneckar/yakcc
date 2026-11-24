@@ -1149,6 +1149,298 @@ export const JSON_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
 };
 
 /**
+ * Map and Set (ECMA-262 24.1, 24.2), and the call of a method of a value of any kind. A Map or a
+ * Set is an object whose class is "Map" or "Set" and whose keys and values are its entries (a Set's
+ * values are unused), in the order they were added, compared by SameValueZero; it has no own
+ * properties. Its keys(), values() and entries() are arrays of a snapshot (an iterator's next() is
+ * not lowered). __ykInvoke calls a method: an object's own function property, else the builtin
+ * method of the receiver's kind (an array's, a string's, a Map's or a Set's), else a TypeError.
+ */
+export const COLLECTION_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
+  // Whether a class names an error (every error class's name ends in "Error").
+  __ykIsErrorCls: {
+    inputs: ["unknown"],
+    output: "boolean",
+    source: String.raw`export function f(c: unknown): boolean {
+  if (__ykTag(c) !== 4) return false;
+  return __ykEndsWith(__ykStr(c), "Error", Infinity);
+}`,
+  },
+  // SameValueZero: NaN is NaN, and -0 is 0.
+  __ykSameValueZero: {
+    inputs: ["unknown", "unknown"],
+    output: "boolean",
+    source: String.raw`export function f(a: unknown, b: unknown): boolean {
+  const t = __ykTag(a);
+  if (t !== __ykTag(b)) return false;
+  if (t === 3) {
+    const x = __ykNum(a);
+    const y = __ykNum(b);
+    return x === y || (x !== x && y !== y);
+  }
+  return __ykStrictEquals(a, b);
+}`,
+  },
+  // A Map's or a Set's entry index for a key, or -1.
+  __ykCollFind: {
+    inputs: ["YkObject", "unknown"],
+    output: "number",
+    source: String.raw`export function f(o: YkObject, k: unknown): number {
+  const keys = __ykObjKeys(o);
+  let i = 0;
+  while (i < keys.length) {
+    if (__ykSameValueZero(keys[i], k)) return i;
+    i = i + 1;
+  }
+  return -1;
+}`,
+  },
+  // Map.prototype.set (and, with v unused, Set.prototype.add): -0 is stored as 0.
+  __ykCollSet: {
+    inputs: ["YkObject", "unknown", "unknown"],
+    output: "YkObject",
+    source: String.raw`export function f(o: YkObject, k0: unknown, v: unknown): YkObject {
+  let k = k0;
+  if (__ykTag(k) === 3 && __ykNum(k) === 0) k = 0;
+  const i = __ykCollFind(o, k);
+  const vals = __ykObjVals(o);
+  if (i >= 0) {
+    vals[i] = v;
+    return o;
+  }
+  __ykObjKeys(o).push(k);
+  vals.push(v);
+  return o;
+}`,
+  },
+  // Map.prototype.delete and Set.prototype.delete: whether the key was there.
+  __ykCollDelete: {
+    inputs: ["YkObject", "unknown"],
+    output: "boolean",
+    source: String.raw`export function f(o: YkObject, k: unknown): boolean {
+  const i = __ykCollFind(o, k);
+  if (i < 0) return false;
+  const keys = __ykObjKeys(o);
+  const vals = __ykObjVals(o);
+  let j = i;
+  while (j + 1 < keys.length) {
+    keys[j] = keys[j + 1];
+    vals[j] = vals[j + 1];
+    j = j + 1;
+  }
+  keys.pop();
+  vals.pop();
+  return true;
+}`,
+  },
+  // new Map(iterable) and new Set(iterable): each [key, value] entry, or each value, added.
+  __ykCollNew: {
+    inputs: ["string", "unknown"],
+    output: "YkObject",
+    source: String.raw`export function f(cls: string, init: unknown): YkObject {
+  const o = __ykObjNew(cls);
+  const t = __ykTag(init);
+  if (t === 0 || t === 1) return o;
+  const src = __ykIterSource(init);
+  const n = __ykNum(__ykGetAny(src, "length"));
+  let i = 0;
+  while (i < n) {
+    const e = __ykIndex(src, i);
+    if (__ykStrEquals(cls, "Map")) __ykCollSet(o, __ykIndex(e, 0), __ykIndex(e, 1));
+    else __ykCollSet(o, e, __ykUndef());
+    i = i + 1;
+  }
+  return o;
+}`,
+  },
+  // A Map's entries ([key, value] arrays), keys or values, or a Set's values: a snapshot.
+  __ykCollList: {
+    inputs: ["YkObject", "number"],
+    output: "unknown[]",
+    source: String.raw`export function f(o: YkObject, which: number): unknown[] {
+  const keys = __ykObjKeys(o);
+  const vals = __ykObjVals(o);
+  const out = [];
+  out.push(__ykUndef());
+  out.pop();
+  let i = 0;
+  while (i < keys.length) {
+    if (which === 0) out.push([keys[i], vals[i]]);
+    else if (which === 3) out.push([keys[i], keys[i]]);
+    else if (which === 1) out.push(keys[i]);
+    else out.push(vals[i]);
+    i = i + 1;
+  }
+  return out;
+}`,
+  },
+  // A builtin method of an array (of numbers or of any values), by name: the result, or
+  // __ykNoMethod when the array has no such method.
+  __ykArrayMethod: {
+    inputs: ["unknown", "string", "unknown[]"],
+    output: "unknown",
+    source: String.raw`export function f(a: unknown, name: string, args: unknown[]): unknown {
+  const n = __ykNum(__ykGetAny(a, "length"));
+  const arg = (i: number): unknown => (i < args.length ? args[i] : __ykUndef());
+  if (__ykStrEquals(name, "push")) {
+    let i = 0;
+    let len = n;
+    while (i < args.length) {
+      if (__ykTag(a) === 5) len = __ykArr(a).push(__ykNum(args[i]));
+      else len = __ykArrAny(a).push(args[i]);
+      i = i + 1;
+    }
+    return len;
+  }
+  if (__ykStrEquals(name, "pop")) {
+    if (n === 0) return __ykUndef();
+    if (__ykTag(a) === 5) return __ykArr(a).pop();
+    return __ykArrAny(a).pop();
+  }
+  if (__ykStrEquals(name, "indexOf") || __ykStrEquals(name, "includes")) {
+    const x = arg(0);
+    let i = 0;
+    while (i < n) {
+      const e = __ykIndex(a, i);
+      const hit = __ykStrEquals(name, "includes") ? __ykSameValueZero(e, x) : __ykStrictEquals(e, x);
+      if (hit) return __ykStrEquals(name, "includes") ? true : i;
+      i = i + 1;
+    }
+    return __ykStrEquals(name, "includes") ? false : -1;
+  }
+  if (__ykStrEquals(name, "join")) {
+    const sepArg = arg(0);
+    const sep = __ykTag(sepArg) === 0 ? "," : __ykToString(sepArg);
+    let out = "";
+    let i = 0;
+    while (i < n) {
+      if (i > 0) out = out + sep;
+      const e = __ykIndex(a, i);
+      const t = __ykTag(e);
+      if (t !== 0 && t !== 1) out = out + __ykToString(e);
+      i = i + 1;
+    }
+    return out;
+  }
+  const g = arg(0);
+  if (__ykStrEquals(name, "forEach") || __ykStrEquals(name, "map") || __ykStrEquals(name, "filter") || __ykStrEquals(name, "some") || __ykStrEquals(name, "every") || __ykStrEquals(name, "find") || __ykStrEquals(name, "findIndex")) {
+    if (__ykTag(g) !== 8) return __ykNotAFunction();
+    const out = [];
+    out.push(__ykUndef());
+    out.pop();
+    let i = 0;
+    while (i < n) {
+      const x = __ykIndex(a, i);
+      const r = __ykCallWith(g, [x, i, a]);
+      if (__ykStrEquals(name, "map")) out.push(r);
+      else if (__ykStrEquals(name, "filter")) {
+        if (__ykTruthy(r)) out.push(x);
+      } else if (__ykStrEquals(name, "some")) {
+        if (__ykTruthy(r)) return true;
+      } else if (__ykStrEquals(name, "every")) {
+        if (!__ykTruthy(r)) return false;
+      } else if (__ykStrEquals(name, "find")) {
+        if (__ykTruthy(r)) return x;
+      } else if (__ykStrEquals(name, "findIndex")) {
+        if (__ykTruthy(r)) return i;
+      }
+      i = i + 1;
+    }
+    if (__ykStrEquals(name, "map") || __ykStrEquals(name, "filter")) return out;
+    if (__ykStrEquals(name, "some")) return false;
+    if (__ykStrEquals(name, "every")) return true;
+    if (__ykStrEquals(name, "findIndex")) return -1;
+    return __ykUndef();
+  }
+  return __ykNoMethod();
+}`,
+  },
+  // A builtin method of a string, by name (the runtime's string atoms), or __ykNoMethod.
+  __ykStringMethod: {
+    inputs: ["string", "string", "unknown[]"],
+    output: "unknown",
+    source: String.raw`export function f(s: string, name: string, args: unknown[]): unknown {
+  const arg = (i: number): unknown => (i < args.length ? args[i] : __ykUndef());
+  const num = (i: number, d: number): number => (__ykTag(arg(i)) === 0 ? d : __ykToNumber(arg(i)));
+  if (__ykStrEquals(name, "charCodeAt")) return __ykCharCodeAt(s, num(0, 0));
+  if (__ykStrEquals(name, "charAt")) return __ykCharAt(s, num(0, 0));
+  if (__ykStrEquals(name, "slice")) return __ykSlice(s, num(0, 0), num(1, Infinity));
+  if (__ykStrEquals(name, "substring")) return __ykSubstring(s, num(0, 0), num(1, Infinity));
+  if (__ykStrEquals(name, "indexOf")) return __ykIndexOf(s, __ykToString(arg(0)), num(1, 0));
+  if (__ykStrEquals(name, "includes")) return __ykIndexOf(s, __ykToString(arg(0)), num(1, 0)) !== -1;
+  if (__ykStrEquals(name, "startsWith")) return __ykStartsWith(s, __ykToString(arg(0)), num(1, 0));
+  if (__ykStrEquals(name, "endsWith")) return __ykEndsWith(s, __ykToString(arg(0)), num(1, Infinity));
+  if (__ykStrEquals(name, "trim")) return __ykTrim(s);
+  if (__ykStrEquals(name, "toString")) return s;
+  return __ykNoMethod();
+}`,
+  },
+  // A method that is not there: a TypeError.
+  __ykNoMethod: {
+    inputs: [],
+    output: "unknown",
+    source: String.raw`export function f(): unknown {
+  throw __ykMakeError("TypeError", "is not a function");
+}`,
+  },
+  // recv.name(...args) for a receiver of any kind.
+  __ykInvoke: {
+    inputs: ["unknown", "string", "unknown[]"],
+    output: "unknown",
+    source: String.raw`export function f(recv: unknown, name: string, args: unknown[]): unknown {
+  const t = __ykTag(recv);
+  if (t === 0 || t === 1) return __ykTypeError();
+  const arg = (i: number): unknown => (i < args.length ? args[i] : __ykUndef());
+  if (t === 7) {
+    const o = __ykObj(recv);
+    const cls = __ykObjCls(o);
+    const coll = __ykTag(cls) === 4 && (__ykStrEquals(__ykStr(cls), "Map") || __ykStrEquals(__ykStr(cls), "Set"));
+    if (!coll && __ykHas(o, name)) return __ykCallWith(__ykGet(o, name), args);
+    if (coll) {
+      const isMap = __ykStrEquals(__ykStr(cls), "Map");
+      if (__ykStrEquals(name, "get")) {
+        const i = __ykCollFind(o, arg(0));
+        return i < 0 ? __ykUndef() : __ykObjVals(o)[i];
+      }
+      if (__ykStrEquals(name, "has")) return __ykCollFind(o, arg(0)) >= 0;
+      if (isMap && __ykStrEquals(name, "set")) return __ykCollSet(o, arg(0), arg(1));
+      if (!isMap && __ykStrEquals(name, "add")) return __ykCollSet(o, arg(0), __ykUndef());
+      if (__ykStrEquals(name, "delete")) return __ykCollDelete(o, arg(0));
+      if (__ykStrEquals(name, "clear")) {
+        const keys = __ykObjKeys(o);
+        const vals = __ykObjVals(o);
+        while (keys.length > 0) {
+          keys.pop();
+          vals.pop();
+        }
+        return __ykUndef();
+      }
+      if (__ykStrEquals(name, "entries")) return isMap ? __ykCollList(o, 0) : __ykCollList(o, 3);
+      if (__ykStrEquals(name, "keys")) return __ykCollList(o, 1);
+      if (__ykStrEquals(name, "values")) return isMap ? __ykCollList(o, 2) : __ykCollList(o, 1);
+      if (__ykStrEquals(name, "forEach")) {
+        const g = arg(0);
+        if (__ykTag(g) !== 8) return __ykNotAFunction();
+        const keys = __ykObjKeys(o);
+        let i = 0;
+        while (i < keys.length) {
+          const k = keys[i];
+          __ykCallWith(g, [isMap ? __ykObjVals(o)[i] : k, k, o]);
+          i = i + 1;
+        }
+        return __ykUndef();
+      }
+    }
+    return __ykNoMethod();
+  }
+  if (t === 5 || t === 6) return __ykArrayMethod(recv, name, args);
+  if (t === 4) return __ykStringMethod(__ykStr(recv), name, args);
+  return __ykNoMethod();
+}`,
+  },
+};
+
+/**
  * ECMAScript's conversions and generic operators as atoms over dynamic values (`unknown`). A
  * dynamic value is inspected by primitives: `__ykTag` (0 undefined, 1 null, 2 boolean, 3 number,
  * 4 string, 5 an array of numbers, 6 an array of any values, 7 an object), and `__ykNum`, `__ykBool`,
@@ -1304,9 +1596,14 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   if (t === 0 || t === 1) return __ykTypeError();
   if (t === 7) {
     const o = __ykObj(x);
-    if (__ykHas(o, k)) return __ykGet(o, k);
     const c = __ykObjCls(o);
-    if (__ykTag(c) === 4) {
+    // A Map or a Set: no own properties; its size.
+    if (__ykTag(c) === 4 && (__ykStrEquals(__ykStr(c), "Map") || __ykStrEquals(__ykStr(c), "Set"))) {
+      if (__ykStrEquals(k, "size")) return __ykObjKeys(o).length;
+      return __ykUndef();
+    }
+    if (__ykHas(o, k)) return __ykGet(o, k);
+    if (__ykIsErrorCls(c)) {
       if (__ykStrEquals(k, "name")) return c;
       if (__ykStrEquals(k, "message")) return "";
     }
@@ -1337,6 +1634,19 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     output: "unknown",
     source: `export function f(): unknown {
   throw __ykMakeError("TypeError", "Cannot read properties of undefined or null");
+}`,
+  },
+  // ToInt32 (ECMA-262 7.1.6) of a number: modulo 2^32, as a signed 32-bit integer; NaN and the
+  // infinities are 0. Each step is exact: a power of two divides exactly, and the difference of
+  // two integers that is below 2^32 is a double.
+  __ykToInt32: {
+    inputs: ["number"],
+    output: "number",
+    source: `export function f(x: number): number {
+  const n = Math.trunc(x);
+  const m = n - Math.floor(n / 4294967296) * 4294967296;
+  if (m !== m) return 0;
+  return m >= 2147483648 ? m - 4294967296 : m;
 }`,
   },
   // A property key that is an array index (a canonical numeric string below 2^32 - 1): its
@@ -1418,8 +1728,12 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   if (t === 7) {
     // An error's message is its own, but not enumerable.
     const o = __ykObj(x);
+    const c = __ykObjCls(o);
+    // A Map or a Set has no own properties.
+    if (__ykTag(c) === 4 && (__ykStrEquals(__ykStr(c), "Map") || __ykStrEquals(__ykStr(c), "Set")))
+      return out;
     const own = __ykOwnKeys(o);
-    if (__ykTag(__ykObjCls(o)) !== 4) return own;
+    if (!__ykIsErrorCls(c)) return own;
     let i = 0;
     while (i < own.length) {
       if (!__ykStrEquals(__ykStr(own[i]), "message")) out.push(own[i]);
@@ -1475,6 +1789,13 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   const t = __ykTag(x);
   if (t === 5 || t === 6) return x;
   if (t === 4) return __ykCodePoints(__ykStr(x));
+  // A Map's entries, a Set's values (a snapshot).
+  if (t === 7) {
+    const o = __ykObj(x);
+    const c = __ykObjCls(o);
+    if (__ykTag(c) === 4 && __ykStrEquals(__ykStr(c), "Map")) return __ykCollList(o, 0);
+    if (__ykTag(c) === 4 && __ykStrEquals(__ykStr(c), "Set")) return __ykCollList(o, 1);
+  }
   throw __ykMakeError("TypeError", "is not iterable");
 }`,
   },
@@ -1515,7 +1836,7 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   if (t !== 7) return false;
   const cls = __ykObjCls(__ykObj(x));
   if (__ykTag(cls) !== 4) return false;
-  if (__ykStrEquals(c, "Error")) return true;
+  if (__ykStrEquals(c, "Error")) return __ykIsErrorCls(cls);
   return __ykStrEquals(__ykStr(cls), c);
 }`,
   },
@@ -1549,7 +1870,10 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     inputs: ["YkObject"],
     output: "string",
     source: `export function f(o: YkObject): string {
-  if (__ykTag(__ykObjCls(o)) !== 4) return "[object Object]";
+  const c = __ykObjCls(o);
+  if (__ykTag(c) === 4 && __ykStrEquals(__ykStr(c), "Map")) return "[object Map]";
+  if (__ykTag(c) === 4 && __ykStrEquals(__ykStr(c), "Set")) return "[object Set]";
+  if (!__ykIsErrorCls(c)) return "[object Object]";
   const n = __ykGetAny(o, "name");
   const m = __ykGetAny(o, "message");
   const name = __ykTag(n) === 0 ? "Error" : __ykToString(n);
