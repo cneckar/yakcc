@@ -13,6 +13,7 @@ import { shaveMathAtoms } from "./atoms/shave-math.js";
 import { graphIdentity } from "./canonical.js";
 import { closureOf } from "./closure.js";
 import { emitTypeScript } from "./emit-ts.js";
+import { liftFidelity } from "./fidelity.js";
 import { isLeafFunction, leafFunctionsJs } from "./leaves.js";
 import { liftAtom } from "./lift.js";
 import { printLineForm } from "./line-form.js";
@@ -83,6 +84,16 @@ describe("lifting Math's functions as operations that reference atoms", () => {
     expect(ts).toContain("Math.sin(");
     expect(ts).toContain("Math.atan2(");
     expect(graphIdentity(liftAtom(ts))).toBe(graphIdentity(g));
+  });
+
+  it("the lift is faithful: the reference counts as the source's read of Math", () => {
+    for (const source of [
+      "return row.score * Math.pow(0.5, halfLives);",
+      "export function f(n: number, d: number): number { return Math.log(1 + (n - d) / d); }",
+    ]) {
+      const fidelity = liftFidelity(source, liftAtom(source));
+      expect(fidelity, source).toEqual({ holds: true, missing: [], extra: [] });
+    }
   });
 
   it("inside a closure too", () => {
