@@ -17,7 +17,7 @@
  * the reason.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { emitLlvmBoxed } from "./emit-llvm-boxed.js";
@@ -696,6 +696,43 @@ uint32_t testSetjmp(uintptr_t id, yk_sjlj_entry *table, uint32_t size) {
 }
 `;
 
+/**
+ * WASI has no `ucontext`. The runtime gives async functions and generators their own stacks with it
+ * (#1295), and wasm has no stack switching without the stack-switching proposal or a transform
+ * such as Asyncify. So the wasm build compiles the runtime against this header. Its functions
+ * trap, and `emitWasmBoxed` refuses any graph that would reach them: one with an async function or
+ * a generator.
+ */
+export const WASM_UCONTEXT_SHIM = `#ifndef YK_WASM_UCONTEXT_H
+#define YK_WASM_UCONTEXT_H
+#include <stddef.h>
+typedef struct { void *ss_sp; size_t ss_size; int ss_flags; } stack_t;
+typedef struct ucontext_t { struct ucontext_t *uc_link; stack_t uc_stack; } ucontext_t;
+static inline int getcontext(ucontext_t *c) { (void)c; __builtin_trap(); }
+static inline void makecontext(ucontext_t *c, void (*f)(void), int n, ...) { (void)c; (void)f; (void)n; __builtin_trap(); }
+static inline int swapcontext(ucontext_t *a, const ucontext_t *b) { (void)a; (void)b; __builtin_trap(); }
+static inline int setcontext(const ucontext_t *c) { (void)c; __builtin_trap(); }
+#endif
+`;
+
+/** The first async function or generator in a graph or a closure inside it, if any. */
+function coroutineMode(g: DucGraph): string | undefined {
+  if (g.mode !== undefined) return g.mode;
+  for (const n of g.nodes) {
+    // A closure's mode is in its label: `async closure`, `function*`, `async function*`.
+    const label = n.label ?? "";
+    if (n.closure !== undefined && (/\basync\b/.test(label) || label.includes("*")))
+      return label.includes("*")
+        ? /\basync\b/.test(label)
+          ? "async generator"
+          : "generator"
+        : "async";
+    const inner = n.closure !== undefined ? coroutineMode(n.closure) : undefined;
+    if (inner !== undefined) return inner;
+  }
+  return undefined;
+}
+
 const WASM_TRIPLE = "wasm32-unknown-wasi";
 
 function runTool(tool: string, args: readonly string[], what: string): void {
@@ -712,9 +749,21 @@ function wasmRuntimeObjects(tc: WasmToolchain, dir: string): string[] {
   const shim = join(dir, "sjlj.o");
   if (!existsSync(yk)) {
     const common = [`--target=${WASM_TRIPLE}`, `--sysroot=${tc.sysroot}`, "-O2", "-c"];
+    mkdirSync(join(dir, "include"), { recursive: true });
+    writeFileSync(join(dir, "include", "ucontext.h"), WASM_UCONTEXT_SHIM);
     runTool(
       tc.clang ?? "clang",
-      [...common, "-std=c11", "-mllvm", "-wasm-enable-sjlj", RUNTIME_SOURCE, "-o", yk],
+      [
+        ...common,
+        "-std=c11",
+        "-I",
+        join(dir, "include"),
+        "-mllvm",
+        "-wasm-enable-sjlj",
+        RUNTIME_SOURCE,
+        "-o",
+        yk,
+      ],
       "the runtime",
     );
     writeFileSync(join(dir, "sjlj.c"), WASM_SJLJ_SHIM);
@@ -731,6 +780,11 @@ function wasmRuntimeObjects(tc: WasmToolchain, dir: string): string[] {
  * values. Refusals are emitLlvmBoxed's (LlvmEmitError); a missing tool is a WasmEmitError.
  */
 export function emitWasmBoxed(source: DucGraph, tc: WasmToolchain, work?: string): Uint8Array {
+  const coroutine = coroutineMode(source);
+  if (coroutine !== undefined)
+    throw new WasmEmitError(
+      `an ${coroutine} function needs its own stack, and wasm has no stack switching here (WASI has no ucontext)`,
+    );
   const m = emitLlvmBoxed(source);
   const dir = work ?? mkdtempSync(join(tmpdir(), "duc-wasm-"));
   const [yk, shim] = wasmRuntimeObjects(tc, dir);

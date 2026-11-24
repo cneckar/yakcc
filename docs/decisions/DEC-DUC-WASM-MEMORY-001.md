@@ -116,3 +116,4 @@ Also checked:
 | A collector's roots | (a) | Shadow-stack spills in the lowering, or WasmGC |
 | One runtime module shared by many atoms | (a) | A linking convention for memory and the table |
 | LLVM 18's setjmp names | (a) | The shim, until LLVM 19 |
+| Async functions and generators, which the runtime runs on stacks of their own (`ucontext`, #1295) | (a) | wasm stack switching (the stack-switching proposal, or JSPI in JavaScript hosts), or a transform such as Asyncify. WASI has no `ucontext`. So the wasm build compiles the runtime against a header whose context functions trap (`WASM_UCONTEXT_SHIM`), and `emitWasmBoxed` refuses such graphs with the reason |

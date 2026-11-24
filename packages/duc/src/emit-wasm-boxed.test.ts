@@ -25,7 +25,7 @@ import { FUNCTION, decode, encode } from "./__fixtures__/native-harness.js";
 import { runnable } from "./__fixtures__/runnable.js";
 import { LlvmEmitError } from "./emit-llvm.js";
 import { emitTypeScript } from "./emit-ts.js";
-import { emitWasmBoxed, wasmToolchainFromEnv } from "./emit-wasm.js";
+import { WasmEmitError, emitWasmBoxed, wasmToolchainFromEnv } from "./emit-wasm.js";
 import { liftAtom } from "./lift.js";
 
 const tc = wasmToolchainFromEnv();
@@ -221,16 +221,20 @@ describe("what the boxed wasm lowering refuses, with the reason (#1300)", () => 
     try {
       emitWasmBoxed(liftAtom(source), none, work);
     } catch (e) {
-      if (e instanceof LlvmEmitError) return e.message;
+      if (e instanceof LlvmEmitError || e instanceof WasmEmitError) return e.message;
       throw e;
     }
     return "lowered";
   };
-  it("free names, async functions, and Math an engine may approximate", () => {
+  it("free names, async functions and generators, and Math an engine may approximate", () => {
     expect(refusal("export function f(x) { return helper(x); }")).toMatch(
       /"helper" is not in the native base set/,
     );
-    expect(refusal("export function f(x) { return async () => x; }")).toMatch(/not in the subset/);
+    expect(refusal("export function f(x) { return async () => x; }")).toMatch(/no stack switching/);
+    expect(refusal("export function* f(x) { yield x; }")).toMatch(/no stack switching/);
+    expect(refusal("export function f(x) { return function* () { yield x; }; }")).toMatch(
+      /no stack switching/,
+    );
     expect(refusal("export function f(x) { return Math.sin(x); }")).toMatch(
       /implementation-approximated/,
     );
