@@ -214,7 +214,7 @@ describe("what the WasmGC lowering refuses, with the reason (#1300)", () => {
     }
     return "lowered";
   };
-  it("a method not yet an atom, a variadic builtin passed as a function, an element write in a program", () => {
+  it("a method not yet an atom, a binary Math function passed as a function, an element write in a program", () => {
     expect(
       refusal(
         "export function f(s: string): string { return s.toUpperCase(); }",
@@ -224,7 +224,7 @@ describe("what the WasmGC lowering refuses, with the reason (#1300)", () => {
     ).toMatch(/toUpperCase is not in the subset yet/);
     expect(
       refusal(
-        "export function f(xs: number[]): unknown { return xs.map(Math.max); }",
+        "export function f(xs: number[]): unknown { return xs.map(Math.atan2); }",
         ["number[]"],
         "unknown",
       ),

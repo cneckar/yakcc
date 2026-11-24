@@ -900,16 +900,19 @@ export const JSON_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
 }`,
   },
   // SerializeJSONProperty: a value's JSON text, or undefined (undefined, a function). stack holds
-  // the objects being written (a cycle is a TypeError); indent and gap the space argument's.
+  // the objects being written (a cycle is a TypeError); indent and gap the space argument's; rep
+  // the replacer function, or undefined; plist the property list (an array replacer's), or
+  // undefined.
   __ykJsonValue: {
-    inputs: ["unknown", "string", "unknown[]", "string", "string"],
+    inputs: ["unknown", "string", "unknown[]", "string", "string", "unknown", "unknown"],
     output: "unknown",
-    source: String.raw`export function f(v: unknown, key: string, stack: unknown[], indent: string, gap: string): unknown {
+    source: String.raw`export function f(v: unknown, key: string, stack: unknown[], indent: string, gap: string, rep: unknown, plist: unknown): unknown {
   let x = v;
   if (__ykTag(x) === 7) {
     const tj = __ykGetAny(x, "toJSON");
     if (__ykTag(tj) === 8) x = tj(key);
   }
+  if (__ykTag(rep) === 8) x = rep(key, x);
   const t = __ykTag(x);
   if (t === 1) return "null";
   if (t === 2) return __ykBool(x) ? "true" : "false";
@@ -934,7 +937,7 @@ export const JSON_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     let parts = "";
     let i = 0;
     while (i < n) {
-      const e = __ykJsonValue(__ykIndex(x, i), __ykNumberToString(i), stack, inner, gap);
+      const e = __ykJsonValue(__ykIndex(x, i), __ykNumberToString(i), stack, inner, gap, rep, plist);
       if (i > 0) parts = parts + sep;
       parts = parts + (__ykTag(e) === 0 ? "null" : __ykStr(e));
       i = i + 1;
@@ -943,13 +946,13 @@ export const JSON_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     else if (gap.length > 0) out = "[\n" + inner + parts + "\n" + indent + "]";
     else out = "[" + parts + "]";
   } else {
-    const keys = __ykKeysOf(x, false);
+    const keys = __ykTag(plist) === 0 ? __ykKeysOf(x, false) : __ykArrAny(plist);
     let parts = "";
     let count = 0;
     let i = 0;
     while (i < keys.length) {
       const k = __ykStr(keys[i]);
-      const e = __ykJsonValue(__ykGetAny(x, k), k, stack, inner, gap);
+      const e = __ykJsonValue(__ykGetAny(x, k), k, stack, inner, gap, rep, plist);
       if (__ykTag(e) !== 0) {
         if (count > 0) parts = parts + sep;
         parts = parts + __ykJsonQuote(k) + (gap.length > 0 ? ": " : ":") + __ykStr(e);
@@ -965,11 +968,37 @@ export const JSON_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   return out;
 }`,
   },
-  // JSON.stringify(value, undefined, space).
+  // JSON.stringify(value, replacer, space): a function replacer called for every property, or an
+  // array's strings and numbers (as strings, once each) the properties written of objects.
   __ykJsonStringify: {
-    inputs: ["unknown", "unknown"],
+    inputs: ["unknown", "unknown", "unknown"],
     output: "unknown",
-    source: String.raw`export function f(x: unknown, space: unknown): unknown {
+    source: String.raw`export function f(x: unknown, replacer: unknown, space: unknown): unknown {
+  let rep = __ykUndef();
+  let plist = __ykUndef();
+  const tr = __ykTag(replacer);
+  if (tr === 8) rep = replacer;
+  else if (tr === 5 || tr === 6) {
+    const names: unknown[] = [];
+    const n = __ykNum(__ykGetAny(replacer, "length"));
+    let j = 0;
+    while (j < n) {
+      const e = __ykIndex(replacer, j);
+      const te = __ykTag(e);
+      if (te === 3 || te === 4) {
+        const item = te === 3 ? __ykNumberToString(__ykNum(e)) : __ykStr(e);
+        let seen = false;
+        let m = 0;
+        while (m < names.length) {
+          if (__ykStrEquals(__ykStr(names[m]), item)) seen = true;
+          m = m + 1;
+        }
+        if (!seen) names.push(item);
+      }
+      j = j + 1;
+    }
+    plist = names;
+  }
   let gap = "";
   const ts = __ykTag(space);
   if (ts === 3) {
@@ -986,7 +1015,7 @@ export const JSON_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   const stack = [];
   stack.push(__ykUndef());
   stack.pop();
-  return __ykJsonValue(x, "", stack, "", gap);
+  return __ykJsonValue(x, "", stack, "", gap, rep, plist);
 }`,
   },
   // JSON's whitespace, skipped from pos[0].
@@ -1166,17 +1195,48 @@ export const JSON_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   return __ykJsonError();
 }`,
   },
-  // JSON.parse(text): the whole text one JSON value, else a SyntaxError.
+  // JSON.parse(text, reviver): the whole text one JSON value, else a SyntaxError; then, with a
+  // reviver, InternalizeJSONProperty from the root.
   __ykJsonParse: {
-    inputs: ["unknown"],
+    inputs: ["unknown", "unknown"],
     output: "unknown",
-    source: String.raw`export function f(text: unknown): unknown {
+    source: String.raw`export function f(text: unknown, reviver: unknown): unknown {
   const s = __ykToString(text);
   const pos = [0];
   const v = __ykJsonParseValue(s, pos);
   __ykJsonWs(s, pos);
   if (pos[0] !== s.length) return __ykJsonError();
-  return v;
+  if (__ykTag(reviver) !== 8) return v;
+  return __ykJsonRevive(v, "", reviver);
+}`,
+  },
+  // InternalizeJSONProperty, of the value of a property named name: its elements' or properties'
+  // values revived first (a property revived to undefined deleted), then it.
+  __ykJsonRevive: {
+    inputs: ["unknown", "string", "unknown"],
+    output: "unknown",
+    source: String.raw`export function f(val: unknown, name: string, reviver: unknown): unknown {
+  const t = __ykTag(val);
+  if (t === 6) {
+    const a = __ykArrAny(val);
+    const n = a.length;
+    let i = 0;
+    while (i < n) {
+      a[i] = __ykJsonRevive(a[i], __ykNumberToString(i), reviver);
+      i = i + 1;
+    }
+  } else if (t === 7) {
+    const keys = __ykKeysOf(val, false);
+    let i = 0;
+    while (i < keys.length) {
+      const k = __ykStr(keys[i]);
+      const e = __ykJsonRevive(__ykGetAny(val, k), k, reviver);
+      if (__ykTag(e) === 0) __ykObjDelete(val, k);
+      else __ykPut(val, k, e);
+      i = i + 1;
+    }
+  }
+  return reviver(name, val);
 }`,
   },
 };
@@ -1535,6 +1595,44 @@ export const COLLECTION_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
 }`,
   },
   // recv.name(...args) for a receiver of any kind.
+  // An optional chain's link (a?.k, a?.[key], a?.m(...), f?.(...)): undefined when what it reads
+  // is undefined or null, else the plain link's result.
+  __ykOptGet: {
+    inputs: ["unknown", "string"],
+    output: "unknown",
+    source: String.raw`export function f(x: unknown, k: string): unknown {
+  const t = __ykTag(x);
+  if (t === 0 || t === 1) return __ykUndef();
+  return __ykGetAny(x, k);
+}`,
+  },
+  __ykOptGetKey: {
+    inputs: ["unknown", "unknown"],
+    output: "unknown",
+    source: String.raw`export function f(x: unknown, key: unknown): unknown {
+  const t = __ykTag(x);
+  if (t === 0 || t === 1) return __ykUndef();
+  return __ykGetKey(x, key);
+}`,
+  },
+  __ykOptInvoke: {
+    inputs: ["unknown", "string", "unknown[]"],
+    output: "unknown",
+    source: String.raw`export function f(x: unknown, name: string, args: unknown[]): unknown {
+  const t = __ykTag(x);
+  if (t === 0 || t === 1) return __ykUndef();
+  return __ykInvoke(x, name, args);
+}`,
+  },
+  __ykOptCall: {
+    inputs: ["unknown", "unknown[]"],
+    output: "unknown",
+    source: String.raw`export function f(g: unknown, args: unknown[]): unknown {
+  const t = __ykTag(g);
+  if (t === 0 || t === 1) return __ykUndef();
+  return __ykCallWith(g, args);
+}`,
+  },
   __ykInvoke: {
     inputs: ["unknown", "string", "unknown[]"],
     output: "unknown",
@@ -1582,10 +1680,14 @@ export const COLLECTION_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
         return __ykUndef();
       }
     }
+    if (__ykStrEquals(name, "toString")) return __ykToString(recv);
     return __ykNoMethod();
   }
+  if ((t === 5 || t === 6) && __ykStrEquals(name, "toString")) return __ykToString(recv);
   if (t === 5 || t === 6) return __ykArrayMethod(recv, name, args);
   if (t === 4) return __ykStringMethod(__ykStr(recv), name, args);
+  if (t === 3 && __ykStrEquals(name, "toString")) return __ykNumberToStringRadix(__ykNum(recv), arg(0));
+  if (t === 2 && __ykStrEquals(name, "toString")) return __ykBool(recv) ? "true" : "false";
   return __ykNoMethod();
 }`,
   },
@@ -1749,6 +1851,95 @@ export const METHOD_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     k = k + 1;
   }
   return out;
+}`,
+  },
+  // Number.prototype.toString(radix) for a radix other than 10, as V8 writes it
+  // (DoubleToRadixCString): fraction digits while they are above half a unit in the last place of
+  // the value (scaled with them), rounded to even with a carry back through the digits written;
+  // integer digits by repeated division, those below the double's precision zeros.
+  __ykNumberToRadix: {
+    inputs: ["number", "number"],
+    output: "string",
+    source: String.raw`export function f(x: number, radix: number): string {
+  const chars = "0123456789abcdefghijklmnopqrstuvwxyz";
+  if (x !== x) return "NaN";
+  if (x === Infinity) return "Infinity";
+  if (x === -Infinity) return "-Infinity";
+  const negative = x < 0;
+  const value = negative ? -x : x;
+  let integer = Math.floor(value);
+  let fraction = value - integer;
+  const biased = Math.floor(__ykF64Hi(value) / 1048576) % 2048;
+  const ulp = biased === 0 ? __ykPow2(-1074) : __ykPow2(biased - 1075);
+  let delta = 0.5 * (value + ulp - value);
+  delta = Math.max(__ykPow2(-1074), delta);
+  const digits: number[] = [];
+  if (fraction >= delta) {
+    let going = true;
+    while (going) {
+      fraction = fraction * radix;
+      delta = delta * radix;
+      const digit = Math.floor(fraction);
+      digits.push(digit);
+      fraction = fraction - digit;
+      if (fraction > 0.5 || (fraction === 0.5 && digit % 2 === 1)) {
+        if (fraction + delta > 1) {
+          let carrying = true;
+          while (carrying) {
+            if (digits.length === 0) {
+              integer = integer + 1;
+              carrying = false;
+            } else {
+              const d = digits[digits.length - 1] as number;
+              digits.pop();
+              if (d + 1 < radix) {
+                digits.push(d + 1);
+                carrying = false;
+              }
+            }
+          }
+          going = false;
+        }
+      }
+      if (going && !(fraction >= delta)) going = false;
+    }
+  }
+  let intPart = "";
+  while (integer / radix >= 9007199254740992) {
+    integer = integer / radix;
+    intPart = "0" + intPart;
+  }
+  let more = true;
+  while (more) {
+    const remainder = integer % radix;
+    intPart = __ykSub(chars, remainder, remainder + 1) + intPart;
+    integer = (integer - remainder) / radix;
+    more = integer > 0;
+  }
+  let out = negative ? "-" + intPart : intPart;
+  if (digits.length > 0) {
+    out = out + ".";
+    let i = 0;
+    while (i < digits.length) {
+      const d = digits[i] as number;
+      out = out + __ykSub(chars, d, d + 1);
+      i = i + 1;
+    }
+  }
+  return out;
+}`,
+  },
+  // Number.prototype.toString(radix): radix 10 (or undefined) NumberToString, else a RangeError
+  // outside 2..36.
+  __ykNumberToStringRadix: {
+    inputs: ["number", "unknown"],
+    output: "string",
+    source: String.raw`export function f(x: number, radix: unknown): string {
+  if (__ykTag(radix) === 0) return __ykNumberToString(x);
+  const r = __ykToInteger(radix);
+  if (r < 2 || r > 36) throw __ykMakeError("RangeError", "toString() radix must be between 2 and 36");
+  if (r === 10) return __ykNumberToString(x);
+  return __ykNumberToRadix(x, r);
 }`,
   },
   // A RangeError: Invalid count value.
@@ -1958,6 +2149,26 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   return __ykUndef();
 }`,
   },
+  // x[key] for a value of any kind and a key of any kind: a string's or an array's element at an
+  // index (a number, or a string that is one's canonical form), else the property ToPropertyKey
+  // names (an object's own, a length).
+  __ykGetKey: {
+    inputs: ["unknown", "unknown"],
+    output: "unknown",
+    source: `export function f(x: unknown, key: unknown): unknown {
+  const t = __ykTag(x);
+  if (t === 0 || t === 1) return __ykTypeError();
+  const tk = __ykTag(key);
+  const indexed = t === 4 || t === 5 || t === 6;
+  if (tk === 3 && indexed) return __ykIndex(x, __ykNum(key));
+  const k = tk === 3 ? __ykNumberToString(__ykNum(key)) : __ykToString(key);
+  if (indexed) {
+    const n = __ykToNumber(k);
+    if (__ykStrEquals(__ykNumberToString(n), k)) return __ykIndex(x, n);
+  }
+  return __ykGetAny(x, k);
+}`,
+  },
   // An array of values of any kind, each a number, as an array of numbers.
   __ykArrToNums: {
     inputs: ["unknown[]"],
@@ -2014,6 +2225,30 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     i = i + 1;
   }
   return false;
+}`,
+  },
+  // delete o[k]: the property removed, the others in their order.
+  __ykObjDelete: {
+    inputs: ["YkObject", "string"],
+    output: "unknown",
+    source: `export function f(o: YkObject, k: string): unknown {
+  const keys = __ykObjKeys(o);
+  const vals = __ykObjVals(o);
+  let i = 0;
+  let found = false;
+  while (i < keys.length) {
+    if (!found && __ykStrEquals(__ykStr(keys[i]), k)) found = true;
+    if (found && i + 1 < keys.length) {
+      keys[i] = keys[i + 1];
+      vals[i] = vals[i + 1];
+    }
+    i = i + 1;
+  }
+  if (found) {
+    keys.pop();
+    vals.pop();
+  }
+  return __ykUndef();
 }`,
   },
   // o[k] = v: the property replaced, or added at the end; the object.

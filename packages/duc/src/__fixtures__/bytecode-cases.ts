@@ -333,6 +333,94 @@ export const numericText = fc.oneof(
 
 export const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
   [
+    "Number.prototype.toString in every radix (V8's digits, fractions included), and toString of values of any kind",
+    "export function f(x: number, r: number, a: any): unknown { let t: unknown = 'thrown'; try { t = x.toString(r); } catch (e) { t = (e as Error).name; } let u: unknown = 'thrown'; try { u = a.toString(); } catch (e) { u = (e as Error).name; } return [t, x.toString(2), x.toString(16), x.toString(36), x.toString(10), x.toString(), true.toString(), u]; }",
+    ["number", "number", "unknown"],
+    "unknown",
+    fc.tuple(
+      fc.oneof(
+        fc.double(),
+        fc.integer(),
+        fc.double({ min: -1000, max: 1000 }),
+        fc.constantFrom(
+          0.1,
+          -0,
+          0.5,
+          1 / 3,
+          255.5,
+          2 ** 60,
+          1e21,
+          Number.MIN_VALUE,
+          Number.MAX_VALUE,
+          2 ** -1022,
+          0.000001,
+        ),
+      ),
+      fc.oneof(fc.integer({ min: 2, max: 36 }), fc.constantFrom(1, 37, 10, 16.9, Number.NaN)),
+      anyValue,
+    ),
+  ],
+  [
+    "optional chain links (a?.k, a?.[key], a?.m(...), f?.(...)), and element reads of values of any kind by keys of any kind",
+    "export function f(a: any, key: unknown, g: any): unknown { const o: any = { y: 1, 0: 'z', length: 3 }; let r: unknown = 'thrown'; try { r = a[key as any]; } catch (e) { r = (e as Error).name; } return [a?.y, a?.length, a?.[key as any], a?.toString(), g?.(a), ((x: unknown) => [x, key])?.(a), o[key as any], o['length'], o[0], 'abc'[key as any], [7, 8][key as any], r]; }",
+    ["unknown", "unknown", "unknown"],
+    "unknown",
+    fc.tuple(
+      fc.oneof(anyValue, fc.constantFrom(null, undefined, "abc", [1, 2])),
+      fc.oneof(
+        fc.constantFrom("y", "0", "1", 0, 1, -0, "length", "01", 1.5, null, undefined),
+        anyValue,
+      ),
+      fc.constantFrom(null, undefined),
+    ),
+  ],
+  [
+    "increments, decrements and compound assignments, of numbers and of values of any kind (a string's ++ its ToNumber's)",
+    "export function f(a: number, b: unknown, s: string): unknown { let i = a; const j = i++; const k = ++i; let m = i--; --m; let x: any = b; const y = x++; let t: any = s; t++; let u: any = s; u += b; let v = a; v -= 2; v *= a; v /= 3; let w = a; w %= 4; w *= w; let z = a; z &= 7; z |= 8; z ^= 3; z <<= 2; z >>= 1; z >>>= 1; let q = 0; for (let n = 0; n < 4; n++) q += n; return [i, j, k, m, x, y, t, u, v, w, z, q]; }",
+    ["number", "unknown", "string"],
+    "unknown",
+    fc.tuple(
+      fc.oneof(fc.integer({ min: -9, max: 9 }), fc.double(), fc.constantFrom(-0, Number.NaN)),
+      anyValue,
+      numericText,
+    ),
+  ],
+  [
+    "variadic builtins as function values (Math.max and Math.min with every argument they are given), and String and Number called with none",
+    "export function f(xs: unknown[], n: number): unknown { const mx: any = Math.max; const mn = Math.min; const s: any = String; const num: any = Number; const fs: unknown[] = [String, Number, Math.max, Math.min]; return [xs.map(Math.max), xs.map(mn), xs.reduce(Math.max, -Infinity), mx(), mx(...xs), mn(n, ...xs), s(), s(n), num(), num(xs[0]), xs.map(String), xs.map(Number), fs.map((g: any) => [g(), g(n)])]; }",
+    ["unknown[]", "number"],
+    "unknown",
+    fc.tuple(
+      fc.array(
+        fc.oneof(
+          fc.integer({ min: -9, max: 9 }),
+          fc.constantFrom(-0, Number.NaN, "3", "", null, "x"),
+        ),
+        { maxLength: 4 },
+      ),
+      fc.oneof(fc.integer({ min: -3, max: 3 }), fc.constantFrom(-0, Number.NaN)),
+    ),
+  ],
+  [
+    "JSON.stringify with a replacer function or a property list, and JSON.parse with a reviver (a property revived to undefined deleted)",
+    "export function f(x: unknown, names: unknown[], k: string, text: string): unknown { const r1 = JSON.stringify(x, (key: string, v: unknown) => (key === k ? undefined : typeof v === 'number' ? v * 2 : v)); const r2 = [JSON.stringify(x, names, 1), JSON.stringify({ y: x, z: [1, { w: k, y: 2 }], 1: k }, names)]; const seen: unknown[] = []; let p: unknown = 'bad'; try { p = JSON.parse(text, (key: string, v: unknown) => { seen.push(key); return key === k ? undefined : Array.isArray(v) ? v.length : v; }); } catch (e) { p = (e as Error).name; } return [r1, r2, p, seen]; }",
+    ["unknown", "unknown[]", "string", "string"],
+    "unknown",
+    fc.tuple(
+      anyValue,
+      fc.array(
+        fc.oneof(fc.constantFrom("y", "z", "w", "0", "1", null), fc.integer({ min: 0, max: 2 })),
+        { maxLength: 4 },
+      ),
+      fc.constantFrom("y", "z", "0", "", "w"),
+      fc.oneof(
+        fc.json().filter((t) => t.length < 200),
+        anyValue.map((v) => JSON.stringify(v) ?? "u"),
+        fc.constantFrom('{"y":1,"z":[1,{"w":2}],"q":null}', "[1,[2,3],{}]", "{bad"),
+      ),
+    ),
+  ],
+  [
     "rest parameters: called with arguments, with a spread, as a function value, and as an array method's callback",
     "export function f(xs: unknown[], n: number): unknown { const g = (a: unknown, ...r: unknown[]) => [a, r.length, r]; const h = (...r: unknown[]) => r.length + n; const v: any = n > 1 ? g : h; const p = (a: unknown, b: unknown) => [b, a, n]; return [g(1), g(1, 2, 3), g(n, ...xs), h(...xs, ...xs), h(), v(xs, n), v(...xs), xs.map(g), xs.map((x: unknown, ...more: unknown[]) => more.length), g(...xs), g(...xs, n), p(...xs), p(n, ...xs)]; }",
     ["unknown[]", "number"],
