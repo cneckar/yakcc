@@ -1092,7 +1092,7 @@ class Lifter {
   private lowerTry(t: import("ts-morph").TryStatement): Node | undefined {
     const shape = tryShape(t);
     if (shape === undefined) return undefined;
-    const { parts, vars, awaits } = shape;
+    const { parts, vars, awaits, yields } = shape;
     const handler = t.getCatchClause();
     const finalizer = t.getFinallyBlock();
     const returns = parts.flatMap((part) =>
@@ -1138,20 +1138,36 @@ class Lifter {
     };
     const n = this.tryCount++;
     const tmp = `$try${n}`;
-    // A block that awaits is an async closure, and the call is of the async primitive, awaited.
-    const a = awaits ? "async " : "";
-    const body = `${a}() => {\n${rewrite(t.getTryBlock())}\n}`;
+    // A block that awaits is an async closure, and the call is of the async primitive, awaited. A
+    // block that yields is a generator closure, and the call is of the generator primitive,
+    // delegated to (#1330): next, throw and return reach the blocks as they reach the statement.
+    const owner = t.getAncestors().find((x) => isFunctionLikeNode(x));
+    const ownerAsync =
+      (Node.isFunctionDeclaration(owner) ||
+        Node.isFunctionExpression(owner) ||
+        Node.isMethodDeclaration(owner)) &&
+      owner.isAsync();
+    const inAsync = awaits || (yields && ownerAsync);
+    const a = inAsync ? "async " : "";
+    const closure = (params: string, block: import("ts-morph").Block): string =>
+      yields
+        ? `${a}function* (${params}) {\n${rewrite(block)}\n}`
+        : `${a}(${params}) => {\n${rewrite(block)}\n}`;
+    const body = closure("", t.getTryBlock());
     const caught =
       handler !== undefined
-        ? `${a}(${handler.getVariableDeclaration()?.getText() ?? ""}) => {\n${rewrite(handler.getBlock())}\n}`
+        ? closure(handler.getVariableDeclaration()?.getText() ?? "", handler.getBlock())
         : "undefined";
-    const last = finalizer !== undefined ? `, ${a}() => {\n${rewrite(finalizer)}\n}` : "";
-    const call = awaits
-      ? `(await ${ASYNC_TRY_PRIMITIVE}(${body}, ${caught}${last}))`
-      : `${TRY_PRIMITIVE}(${body}, ${caught}${last})`;
+    const last = finalizer !== undefined ? `, ${closure("", finalizer)}` : "";
+    const call = yields
+      ? `(yield* ${inAsync ? ASYNC_GEN_TRY_PRIMITIVE : GEN_TRY_PRIMITIVE}(${body}, ${caught}${last}))`
+      : awaits
+        ? `(await ${ASYNC_TRY_PRIMITIVE}(${body}, ${caught}${last}))`
+        : `${TRY_PRIMITIVE}(${body}, ${caught}${last})`;
+    const wrapper = `${a}function${yields ? "*" : ""} __try()`;
     const source = completes
-      ? `${a}function __try() {\n{\nconst ${tmp} = ${call};\nif (${tmp}[0] === 1) return ${tmp}[1];\n}\n}`
-      : `${a}function __try() {\n${call};\n}`;
+      ? `${wrapper} {\n{\nconst ${tmp} = ${call};\nif (${tmp}[0] === 1) return ${tmp}[1];\n}\n}`
+      : `${wrapper} {\n${call};\n}`;
     // The function's own names declared in the blocks are bound before the call, as JavaScript
     // hoists them; the closures assign them, so they are cells.
     for (const name of vars) {
@@ -1477,7 +1493,12 @@ class Lifter {
     // parent's member, with this function's receiver (#1294). A write through `super` is not.
     const superMember = (k: Node): boolean => {
       const access = k.getParent();
-      if (!Node.isPropertyAccessExpression(access) || access.getExpression() !== k) return false;
+      // `super.name`, or `super[key]` (#1330).
+      if (
+        !(Node.isPropertyAccessExpression(access) || Node.isElementAccessExpression(access)) ||
+        access.getExpression() !== k
+      )
+        return false;
       const up = access.getParent();
       if (
         Node.isBinaryExpression(up) &&
@@ -3067,13 +3088,19 @@ class Lifter {
         inputs.push(method as ValueId, ...args);
       } else if (callee !== undefined && Node.isElementAccessExpression(callee)) {
         // So is a method looked up by a key, `o[k](args)`: the object and the key first, then the
-        // arguments, then the lookup.
-        const base = this.liftExpr(callee.getExpression());
+        // arguments, then the lookup. `super[k](args)` is the parent's member k, called with this
+        // function's receiver (#1330).
+        const viaSuper = Node.isSuperExpression(callee.getExpression());
+        const base = viaSuper ? this.thisValue() : this.liftExpr(callee.getExpression());
         const key = this.liftExpr(callee.getArgumentExpressionOrThrow());
         const args = this.liftElements(node.getArguments() as Node[]);
         const [method] = this.emit("op", [base, key], 1, {
           origin: { kind: "ElementAccess" },
-          ...(callee.hasQuestionDotToken() ? { label: "ElementAccess?." } : {}),
+          ...(viaSuper
+            ? { label: "super[]" }
+            : callee.hasQuestionDotToken()
+              ? { label: "ElementAccess?." }
+              : {}),
         });
         inputs.push(method as ValueId, ...args);
       } else if (
@@ -3110,6 +3137,15 @@ class Lifter {
         label: `super.${node.getName()}`,
       })[0] as ValueId;
     }
+    if (Node.isElementAccessExpression(node) && Node.isSuperExpression(node.getExpression())) {
+      // `super[k]`: the parent's member k, read with this function's receiver (#1330).
+      return this.emit(
+        "op",
+        [this.thisValue(), this.liftExpr(node.getArgumentExpressionOrThrow())],
+        1,
+        { origin: { kind: "ElementAccess", text: truncate(node.getText()) }, label: "super[]" },
+      )[0] as ValueId;
+    }
     if (Node.isPropertyAccessExpression(node)) {
       // The member name is structure: `o.a` and `o.b` are different reads.
       return this.emit("op", [this.liftExpr(node.getExpression())], 1, {
@@ -3134,8 +3170,14 @@ class Lifter {
       })[0] as ValueId;
     }
     if (Node.isArrayLiteralExpression(node)) {
-      const inputs = this.liftElements(node.getElements());
-      return this.emit("op", inputs, 1, { origin: { kind: "ArrayLiteral" } })[0] as ValueId;
+      const elements = node.getElements();
+      const holes = elements.flatMap((el, i) => (Node.isOmittedExpression(el) ? [i] : []));
+      const inputs = this.liftElements(elements.filter((el) => !Node.isOmittedExpression(el)));
+      // A hole (`[, a]`) is no element at all, not `undefined`: its positions are structure (#1330).
+      return this.emit("op", inputs, 1, {
+        origin: { kind: "ArrayLiteral" },
+        ...(holes.length > 0 ? { label: `array-with-holes:${JSON.stringify(holes)}` } : {}),
+      })[0] as ValueId;
     }
     if (Node.isObjectLiteralExpression(node)) {
       return this.liftObjectLiteral(node);
@@ -4760,7 +4802,18 @@ function containsLoopJump(stmt: Node, loop: Node): boolean {
  */
 function tryShape(
   t: import("ts-morph").TryStatement,
-): { parts: import("ts-morph").Block[]; vars: string[]; awaits: boolean } | undefined {
+):
+  | { parts: import("ts-morph").Block[]; vars: string[]; awaits: boolean; yields: boolean }
+  | undefined {
+  // The function the try is in: a yield inside moves into a generator closure, delegated to.
+  const owner = t.getAncestors().find((a) => isFunctionLikeNode(a));
+  const generator =
+    owner !== undefined &&
+    (Node.isFunctionDeclaration(owner) ||
+      Node.isFunctionExpression(owner) ||
+      Node.isMethodDeclaration(owner)) &&
+    owner.isGenerator();
+  let yields = false;
   const handler = t.getCatchClause();
   const finalizer = t.getFinallyBlock();
   const parts = [
@@ -4782,8 +4835,20 @@ function tryShape(
         if (!vars.includes(d.getName())) vars.push(d.getName());
       }
     }
-    // A yield cannot move into a closure; an await can, into an async one.
-    if (part.getDescendantsOfKind(SyntaxKind.YieldExpression).some(own)) return undefined;
+    // A yield moves into a generator closure, delegated to with yield* (#1330); an await moves into
+    // an async one. A generator closure is a function: it does not see the receiver or arguments.
+    if (part.getDescendantsOfKind(SyntaxKind.YieldExpression).some(own)) {
+      if (!generator) return undefined;
+      const usesOwn = [
+        ...part.getDescendantsOfKind(SyntaxKind.ThisKeyword),
+        ...part.getDescendantsOfKind(SyntaxKind.SuperKeyword),
+      ].some((k) => receiverOwner(k) === owner);
+      const readsArguments = part
+        .getDescendantsOfKind(SyntaxKind.Identifier)
+        .some((id) => id.getText() === "arguments" && receiverOwner(id) === owner);
+      if (usesOwn || readsArguments) return undefined;
+      yields = true;
+    }
     if (part.getDescendantsOfKind(SyntaxKind.AwaitExpression).some(own)) awaits = true;
     if (part.getDescendantsOfKind(SyntaxKind.ForOfStatement).some((f) => own(f) && f.isAwaited()))
       awaits = true;
@@ -4801,7 +4866,7 @@ function tryShape(
       if (!inside(target)) return undefined;
     }
   }
-  return { parts, vars, awaits };
+  return { parts, vars, awaits, yields };
 }
 
 /** The outermost try statement between a node and `boundary`, if any. */
@@ -4881,7 +4946,14 @@ const HEAP = "%heap";
 /** The platform primitive a try statement is a call of (#1276); see runtime.ts. */
 const TRY_PRIMITIVE = "__yakccTry";
 const ASYNC_TRY_PRIMITIVE = "__yakccTryAsync";
-const RUNTIME_PRIMITIVES = new Set([TRY_PRIMITIVE, ASYNC_TRY_PRIMITIVE]);
+const GEN_TRY_PRIMITIVE = "__yakccTryGen";
+const ASYNC_GEN_TRY_PRIMITIVE = "__yakccTryAsyncGen";
+const RUNTIME_PRIMITIVES = new Set([
+  TRY_PRIMITIVE,
+  ASYNC_TRY_PRIMITIVE,
+  GEN_TRY_PRIMITIVE,
+  ASYNC_GEN_TRY_PRIMITIVE,
+]);
 
 const HEAP_SYNTAX = new Set([
   SyntaxKind.CallExpression,

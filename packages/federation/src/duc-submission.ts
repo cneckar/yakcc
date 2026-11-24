@@ -41,7 +41,7 @@ import {
   requireSpecifiers,
   unpackGraph,
 } from "@yakcc/duc";
-import { __yakccTry, __yakccTryAsync } from "@yakcc/duc/runtime";
+import { __yakccTry, __yakccTryAsync, __yakccTryAsyncGen, __yakccTryGen } from "@yakcc/duc/runtime";
 
 /** One input vector and the output the contract requires for it. Values are JSON. */
 export interface ConformanceVector {
@@ -419,7 +419,9 @@ export function lowerForConformance(
   moduleContext?: vm.Context,
 ): (inputs: readonly unknown[]) => Promise<RunResult> {
   // In a module's context, the module defines what its statements read (#1290).
-  const context = moduleContext ?? vm.createContext({ __yakccTry, __yakccTryAsync });
+  const context =
+    moduleContext ??
+    vm.createContext({ __yakccTry, __yakccTryAsync, __yakccTryGen, __yakccTryAsyncGen });
   const defined = new Set<string>();
   const define = (g: DucGraph): void => {
     for (const [symbol, spec] of linksOf(g)) {
@@ -502,7 +504,12 @@ function moduleRunner(
     if (known !== undefined) return known;
     const record = records.find((r) => r.id === id);
     if (record === undefined) return { unrunnable: `the module ${id} is not in the submission` };
-    const context = vm.createContext({ __yakccTry, __yakccTryAsync });
+    const context = vm.createContext({
+      __yakccTry,
+      __yakccTryAsync,
+      __yakccTryGen,
+      __yakccTryAsyncGen,
+    });
     const moduleObject = { exports: {} as Record<string, unknown> };
     context.module = moduleObject;
     context.exports = moduleObject.exports;

@@ -35,6 +35,7 @@ export function isHeapLabel(named: string): boolean {
     label.startsWith("?.") ||
     label.startsWith("delete.") ||
     label.startsWith("super.") ||
+    label === "super[]" ||
     label.startsWith("ElementAccess") ||
     (label.startsWith(".") && label.length > 1)
   );

@@ -6,8 +6,10 @@
 import { describe, expect, it } from "vitest";
 import { runnable } from "./__fixtures__/runnable.js";
 import { graphIdentity } from "./canonical.js";
+import { decodeGraph, encodeGraph } from "./compact.js";
 import { emitTypeScript } from "./emit-ts.js";
 import { liftAtom } from "./lift.js";
+import { parseLineForm, printLineForm } from "./line-form.js";
 import type { DucGraph } from "./types.js";
 
 const opaque = (g: DucGraph): string[] =>
@@ -108,6 +110,18 @@ describe("class fields, static blocks and computed names (#1330)", () => {
       "export function f(c) { class B {} class A extends B { constructor() { if (c) { super(); } this.y = 1; } } return A; }",
     );
     expect(opaque(g).length).toBeGreaterThan(0);
+  });
+
+  it("super[key], read and called, as Node's AbortSignal writes it (#1330)", () => {
+    const source =
+      "export function f() { const kA = Symbol('a'); class P { [kA](n) { return n + this.base; } get g() { return 'pk'; } } class C extends P { constructor() { super(); this.base = 10; } [kA](n) { return super[kA](n) * 2; } read(k) { return [super[k], (() => super[kA](1))()]; } } const c = new C(); return [c[kA](1), c.read('g')]; }";
+    const g = liftAtom(source);
+    expect(opaque(g)).toEqual([]);
+    const code = emitTypeScript(g);
+    expect(run(code), code).toEqual(run(source));
+    expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    expect(graphIdentity(parseLineForm(printLineForm(g)))).toBe(graphIdentity(g));
+    expect(graphIdentity(decodeGraph(encodeGraph(g)))).toBe(graphIdentity(g));
   });
 
   it("a parameter property is not lifted yet: it stays a summary", () => {
