@@ -136,7 +136,11 @@ const RUNTIME_DECLS: Readonly<Record<string, string>> = {
   yk_call_spread: "declare i64 @yk_call_spread(i64, i64, i64)",
   yk_call_method_spread: "declare i64 @yk_call_method_spread(i64, ptr, i64, i64)",
   yk_new_spread: "declare i64 @yk_new_spread(i64, i64)",
-  yk_class_new: "declare i64 @yk_class_new(i64, i64, ptr, ptr, ptr, ptr)",
+  yk_class_new: "declare i64 @yk_class_new(ptr, i64, i64, ptr, ptr, ptr, ptr)",
+  yk_private_key: "declare i64 @yk_private_key(ptr, ptr, i64)",
+  yk_private_get: "declare i64 @yk_private_get(i64, i64)",
+  yk_private_set: "declare i64 @yk_private_set(i64, i64, i64)",
+  yk_private_has: "declare i64 @yk_private_has(i64, i64)",
   yk_super_construct: "declare i64 @yk_super_construct(ptr, i64, i64, ptr)",
   yk_await: "declare i64 @yk_await(i64)",
   yk_yield: "declare i64 @yk_yield(i64)",
@@ -511,10 +515,35 @@ function lowerFunction(
       throw new LlvmEmitError(
         "an array with holes is not in the native subset yet: the runtime's arrays have no holes (#1330)",
       );
-    if (lbl.startsWith("in:#") || /^(\?)?\.#/.test(lbl))
-      throw new LlvmEmitError(
-        `the private name in "${lbl}" is not in the native subset yet: the runtime does not resolve a private name to its class (#1330)`,
+    // A private name (#1330): its key is the nearest class around this function that declares it,
+    // and the member is in the object's private table.
+    const privateKey = (name: string): string => {
+      const k = m.constant(name);
+      return call(
+        "yk_private_key",
+        `ptr ${closure === undefined ? "null" : "%closure"}, ptr ${k.ptr}, i64 ${k.length}`,
       );
+    };
+    if (lbl.startsWith("in:#") && ins.length === 1) {
+      const key = privateKey(lbl.slice("in:".length));
+      set(out, call("yk_private_has", `i64 ${operand(ins[0] as ValueId)}, i64 ${key}`));
+      return;
+    }
+    if (/^\.#[\w$]+$/.test(lbl) && ins.length === 1) {
+      const key = privateKey(lbl.slice(1));
+      set(out, call("yk_private_get", `i64 ${operand(ins[0] as ValueId)}, i64 ${key}`));
+      return;
+    }
+    if (/^\.#[\w$]+=$/.test(lbl) && ins.length === 2) {
+      // The write's value is the object, as a named write's is.
+      const key = privateKey(lbl.slice(1, -1));
+      const obj = operand(ins[0] as ValueId);
+      call("yk_private_set", `i64 ${obj}, i64 ${key}, i64 ${operand(ins[1] as ValueId)}`);
+      set(out, obj);
+      return;
+    }
+    if (/^\?\.#/.test(lbl))
+      throw new LlvmEmitError(`"${lbl}" is not in the native subset yet (#1330)`);
     if (lbl === "...") {
       // The value spread, iterated here, where the spread is in heap order: a copy of its elements,
       // which the list it is in (an array literal, a call's arguments) expands. The list may be made
@@ -606,13 +635,6 @@ function lowerFunction(
       const unknown = members.find(([k]) => KIND[k] === undefined);
       if (unknown !== undefined)
         throw new LlvmEmitError(`a class member of kind ${unknown[0]} is not in the subset yet`);
-      const privateName = members.find(
-        ([, name]) => typeof name === "string" && name.startsWith("#"),
-      );
-      if (privateName !== undefined)
-        throw new LlvmEmitError(
-          `the private name ${privateName[1]} is not in the native subset yet: the runtime does not resolve a private name to its class (#1330)`,
-        );
       const names: string[] = [];
       const fns: string[] = [];
       let at = 0;
@@ -629,13 +651,18 @@ function lowerFunction(
       }
       if (at !== memberIns.length)
         throw new LlvmEmitError("a class's inputs are not its members' keys and functions");
-      const kinds = members.map(([k]) => boxedNumber(KIND[k] as number));
+      // A private name's kind is 8 more: a computed key that is a string "#x" is not one.
+      const kinds = members.map(([k, name]) =>
+        boxedNumber(
+          (KIND[k] as number) + (typeof name === "string" && name.startsWith("#") ? 8 : 0),
+        ),
+      );
       const statics = members.map(([, , isStatic]) => (isStatic === true ? TRUE : FALSE));
       set(
         out,
         call(
           "yk_class_new",
-          `i64 ${parent}, i64 ${members.length}, ptr ${list(kinds)}, ptr ${list(names)}, ptr ${list(statics)}, ptr ${list(fns)}`,
+          `ptr ${closure === undefined ? "null" : "%closure"}, i64 ${parent}, i64 ${members.length}, ptr ${list(kinds)}, ptr ${list(names)}, ptr ${list(statics)}, ptr ${list(fns)}`,
         ),
       );
       return;
@@ -842,7 +869,8 @@ function lowerFunction(
         (readLabel.startsWith("super.") ||
           readLabel === "super[]" ||
           readLabel === "ElementAccess" ||
-          readLabel === "ElementAccess?.")
+          readLabel === "ElementAccess?." ||
+          /^\.#[\w$]+$/.test(readLabel))
           ? operand(viaSuper.inputs[0] as ValueId)
           : UNDEFINED;
       if (callee === undefined && ins.slice(1).some(isSpread)) {
