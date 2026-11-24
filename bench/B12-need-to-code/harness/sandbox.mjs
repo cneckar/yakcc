@@ -222,3 +222,20 @@ export function taggedEqual(a, b) {
   const kb = Object.keys(b).sort();
   return ka.length === kb.length && ka.every((k, i) => k === kb[i] && taggedEqual(a[k], b[k]));
 }
+
+/**
+ * A fresh, uncached context holding one corpus module, with the named top-level binding (a
+ * function or a class) picked out. Task code that reuses the module runs in this same context,
+ * so values never cross realms (instanceof Date, Array prototypes) between glue and module.
+ * Returns null when the module does not load or the name is not top level.
+ */
+export function freshModule(sourceFile, name) {
+  try {
+    const mod = loadModule(join(FIXTURES, sourceFile));
+    const binding = mod.picked[name];
+    if (binding === undefined) return null;
+    return { context: mod.context, binding };
+  } catch {
+    return null;
+  }
+}

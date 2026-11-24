@@ -51,7 +51,13 @@ const { Project, Node, ScriptKind } = createRequire(join(repo, "packages/shave/p
 );
 
 /** Every named definition in the corpus, de-duplicated by source text (first path wins). */
-export function corpusDefinitions() {
+/**
+ * Every named definition in the corpus. By default, definitions whose source text repeats one
+ * already seen are dropped (the first path wins); `{ dedupe: false }` keeps every copy, for
+ * packages that ship several builds (uuid's cjs, esm and browser copies) where only some run
+ * in a given runtime.
+ */
+export function corpusDefinitions({ dedupe = true } = {}) {
   const files = [];
   const walk = (d) => {
     for (const f of readdirSync(d).sort()) {
@@ -89,7 +95,7 @@ export function corpusDefinitions() {
       }
       if (!name) return;
       const text = target.getText();
-      if (seen.has(text)) return;
+      if (dedupe && seen.has(text)) return;
       seen.add(text);
       defs.push({
         pkg: rel.split("/")[0],
