@@ -53,6 +53,7 @@ typedef struct {
   yk *regex;     /* kind 3, a RegExp: its source, flags, matcher, and group names */
   yk_array *entries; /* a Map's [key, value] pairs, a Set's values, in insertion order */
   void *ext;         /* kind 4: its promise state; kind 5: its coroutine */
+  void *privates;    /* its private members (#1330): a yk_object no enumeration sees, or NULL */
 } yk_object;
 
 /* Every function has one calling convention: the closure, the receiver, the arguments. */
@@ -70,6 +71,12 @@ typedef struct {
   uint32_t nfields;  /* a class: its instance fields, defined on each instance it makes (#1330) */
   yk *field_keys;
   yk *field_inits;   /* each a method: run with the instance as its receiver, its result the value */
+  uint8_t *field_kind; /* 0 a field, 1 a private field, 2 a private method, 3 a private getter,
+                          4 a private setter: the private methods and accessors first */
+  yk outer;          /* a class: the class whose member made it, for private names (#1330), or 0 */
+  uint32_t npriv;    /* a class: the private names it declares, and its key for each */
+  yk *priv_names;
+  yk *priv_keys;
   uint32_t n;
   yk captures[];
 } yk_closure;
@@ -843,8 +850,9 @@ yk yk_define_accessor(yk obj, yk key, yk getter, yk setter) {
   return obj;
 }
 
-/* A class (kinds: 0 constructor, 1 method, 2 getter, 3 setter, 4 field, 5 static block; each static
-   or not). A field's member is its initializer; a computed name is the key's value (#1330). */
+/* A class (kinds: 0 constructor, 1 method, 2 getter, 3 setter, 4 field, 5 static block, 8 more for
+   a private name; each static or not). A field's member is its initializer; a computed name is the
+   key's value (#1330). */
 static yk default_constructor(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self, (void)argc, (void)argv;
   return YK_UNDEFINED;
@@ -862,12 +870,100 @@ static int is_error_constructor(yk f) {
 /* A class's instance fields, defined on a receiver in order, each initializer run with it as its
    receiver: by `new` for a base class before its constructor's body, and for a derived class when
    its super(..) returns (#1330). A field is defined, not assigned: a setter does not see it. */
+/* --- private names (#1330): a private member is in its object's private table, keyed by the
+   private name of one evaluation of one class; no enumeration, `in` or JSON sees the table --- */
+
+/* A private method's slot: the method, not writable. */
+typedef struct {
+  int32_t internal; /* 3: a private method */
+  yk method;
+} yk_private_method;
+static int is_private_method(yk v) { return TAG(v) == T_INTERNAL && *(int32_t *)PTR(v) == 3; }
+
+static yk_object *privates_of(yk v, int create) {
+  if (!is_object(v) && !is_closure(v)) return NULL;
+  yk_object *o = own_props(v);
+  if (o->privates == NULL && create) o->privates = PTR(yk_object_of(0, NULL, NULL));
+  return (yk_object *)o->privates;
+}
+
+/* The key a private name means where it is written: that of the nearest class around the
+   closure that declares it, as ECMAScript resolves it lexically. */
+yk yk_private_key(void *closure, const char *name, uint64_t n) {
+  yk want = yk_string_utf8(name, n);
+  for (yk cls = closure == NULL ? 0 : ((yk_closure *)closure)->class_self; cls != 0;
+       cls = ((yk_closure *)PTR(cls))->outer) {
+    yk_closure *c = (yk_closure *)PTR(cls);
+    for (uint32_t i = 0; i < c->npriv; i++)
+      if (string_equal(str(c->priv_names[i]), str(want))) return c->priv_keys[i];
+  }
+  type_error("a private name is used outside a class that declares it");
+  return YK_UNDEFINED;
+}
+
+yk yk_private_get(yk obj, yk key) {
+  yk_object *p = privates_of(obj, 0);
+  yk slot = 0;
+  if (p == NULL || !own_get(p, key, &slot))
+    type_error("Cannot read private member from an object whose class did not declare it");
+  if (is_private_method(slot)) return ((yk_private_method *)PTR(slot))->method;
+  if (is_accessor(slot)) {
+    yk getter = ((yk_accessor *)PTR(slot))->get;
+    if (getter == 0) type_error("'#' was defined without a getter");
+    return call_value(getter, obj, 0, NULL);
+  }
+  return slot;
+}
+
+yk yk_private_set(yk obj, yk key, yk value) {
+  yk_object *p = privates_of(obj, 0);
+  yk slot = 0;
+  if (p == NULL || !own_get(p, key, &slot))
+    type_error("Cannot write private member to an object whose class did not declare it");
+  if (is_private_method(slot)) type_error("Private method is not writable");
+  if (is_accessor(slot)) {
+    yk setter = ((yk_accessor *)PTR(slot))->set;
+    if (setter == 0) type_error("'#' was defined without a setter");
+    call_value(setter, obj, 1, &value);
+    return value;
+  }
+  own_set(p, key, value);
+  return value;
+}
+
+/* #x in o: whether o has the private member (its class's brand). */
+yk yk_private_has(yk obj, yk key) {
+  if (!is_object(obj) && !is_closure(obj)) type_error("Cannot use 'in' operator to search for a private field in a value that is not an object");
+  yk_object *p = privates_of(obj, 0);
+  yk slot;
+  return yk_bool(p != NULL && own_get(p, key, &slot));
+}
+
+/* A private member of kind 2 (method), 3 (getter) or 4 (setter), or a private field's value. */
+static void define_private(yk target, int kind, yk key, yk value) {
+  yk_object *p = privates_of(target, 1);
+  if (kind == 2) {
+    yk_private_method *m = alloc(sizeof(yk_private_method));
+    m->internal = 3;
+    m->method = value;
+    own_set(p, key, BOX(T_INTERNAL, m));
+  } else if (kind == 3 || kind == 4)
+    define_accessor(p, key, kind == 3 ? value : 0, kind == 4 ? value : 0);
+  else
+    own_set(p, key, value);
+}
+
 static void init_fields(yk cls, yk self) {
   yk_closure *c = (yk_closure *)PTR(cls);
+  /* The private methods and accessors are the instance's before any field is (its brand). */
+  for (uint32_t i = 0; i < c->nfields; i++)
+    if (c->field_kind[i] >= 2) define_private(self, c->field_kind[i], c->field_keys[i], c->field_inits[i]);
   for (uint32_t i = 0; i < c->nfields; i++) {
+    if (c->field_kind[i] >= 2) continue;
     yk_closure *init = (yk_closure *)PTR(c->field_inits[i]);
     yk v = init->code(init, self, 0, NULL);
-    own_set((yk_object *)PTR(self), c->field_keys[i], v);
+    if (c->field_kind[i] == 1) define_private(self, 1, c->field_keys[i], v);
+    else own_set((yk_object *)PTR(self), c->field_keys[i], v);
   }
 }
 /* super(args) in a derived constructor: the parent's constructor run on this receiver (#1294). */
@@ -923,8 +1019,33 @@ yk yk_super_get(void *closure, yk self, const char *name, uint64_t n) {
   if (base == 0 || !chain_get(base, key, &slot)) return YK_UNDEFINED;
   return resolve_slot(slot, self);
 }
-yk yk_class_new(yk parent, uint64_t n, const yk *kinds, const yk *names, const yk *statics,
-                const yk *members) {
+static void add_field(yk_closure *c, uint8_t kind, yk key, yk member) {
+  c->field_keys = realloc(c->field_keys, (c->nfields + 1) * sizeof(yk));
+  c->field_inits = realloc(c->field_inits, (c->nfields + 1) * sizeof(yk));
+  c->field_kind = realloc(c->field_kind, (c->nfields + 1) * sizeof(uint8_t));
+  if (c->field_keys == NULL || c->field_inits == NULL || c->field_kind == NULL) abort();
+  c->field_keys[c->nfields] = key;
+  c->field_inits[c->nfields] = member;
+  c->field_kind[c->nfields++] = kind;
+}
+/* The key of a private name this class declares: made once per evaluation of the class. */
+static yk private_key_of(yk_closure *c, yk cls, yk name) {
+  for (uint32_t i = 0; i < c->npriv; i++)
+    if (string_equal(str(c->priv_names[i]), str(name))) return c->priv_keys[i];
+  char suffix[40];
+  int len = snprintf(suffix, sizeof suffix, "@%llx", (unsigned long long)cls);
+  yk_string *nm = str(name), *k = new_string(nm->len + (uint32_t)len);
+  memcpy(k->units, nm->units, (size_t)nm->len * 2);
+  for (int j = 0; j < len; j++) k->units[nm->len + (uint32_t)j] = (uint16_t)suffix[j];
+  c->priv_names = realloc(c->priv_names, (c->npriv + 1) * sizeof(yk));
+  c->priv_keys = realloc(c->priv_keys, (c->npriv + 1) * sizeof(yk));
+  if (c->priv_names == NULL || c->priv_keys == NULL) abort();
+  c->priv_names[c->npriv] = name;
+  c->priv_keys[c->npriv] = string_of(k);
+  return c->priv_keys[c->npriv++];
+}
+yk yk_class_new(void *creator, yk parent, uint64_t n, const yk *kinds, const yk *names,
+                const yk *statics, const yk *members) {
   if (parent != 0 && !is_closure(parent))
     type_error("Class extends value is not a constructor or null");
   if (parent != 0 && !is_error_constructor(parent)) {
@@ -933,30 +1054,40 @@ yk yk_class_new(yk parent, uint64_t n, const yk *kinds, const yk *names, const y
   }
   yk cls = 0;
   for (uint64_t i = 0; i < n; i++)
-    if (num(kinds[i]) == 0) cls = members[i];
+    if (((int)num(kinds[i]) & 7) == 0) cls = members[i];
   if (cls == 0)
     cls = yk_closure_new(parent != 0 ? default_derived_constructor : default_constructor, 1, 0, NULL);
   yk_closure *c = (yk_closure *)PTR(cls);
   c->is_class = 1;
   c->has_this = 1;
   c->parent = parent;
+  c->outer = creator == NULL ? 0 : ((yk_closure *)creator)->class_self;
+  /* Its private names first: every member's code may use any of them. A member's kind is 8 more
+     when its name is private (a computed key is a value, never a private name). */
+  for (uint64_t i = 0; i < n; i++)
+    if (num(kinds[i]) >= 8) private_key_of(c, cls, names[i]);
   yk proto = ensure_prototype(cls);
   if (parent != 0 && !is_error_constructor(parent))
     ((yk_object *)PTR(proto))->proto = ensure_prototype(parent);
   for (uint64_t i = 0; i < n; i++) {
-    int kind = (int)num(kinds[i]);
+    int kind = (int)num(kinds[i]) & 7;
     ((yk_closure *)PTR(members[i]))->class_self = cls;
     ((yk_closure *)PTR(members[i]))->home_static =
         kind != 0 && (statics[i] == YK_TRUE || kind == 5);
     if (kind == 0 || kind == 5) continue;
+    int private = num(kinds[i]) >= 8;
+    yk key = private ? private_key_of(c, cls, names[i]) : 0;
     if (kind == 4) {
       if (statics[i] == YK_TRUE) continue;
       /* An instance field: kept, in order, for each instance. */
-      c->field_keys = realloc(c->field_keys, (c->nfields + 1) * sizeof(yk));
-      c->field_inits = realloc(c->field_inits, (c->nfields + 1) * sizeof(yk));
-      if (c->field_keys == NULL || c->field_inits == NULL) abort();
-      c->field_keys[c->nfields] = to_string(names[i]);
-      c->field_inits[c->nfields++] = members[i];
+      add_field(c, private ? 1 : 0, private ? key : to_string(names[i]), members[i]);
+      continue;
+    }
+    if (private) {
+      /* A private method or accessor: each instance's, or the class's own when static. */
+      int pkind = kind == 1 ? 2 : kind == 2 ? 3 : 4;
+      if (statics[i] == YK_TRUE) define_private(cls, pkind, key, members[i]);
+      else add_field(c, (uint8_t)pkind, key, members[i]);
       continue;
     }
     yk_object *target = statics[i] == YK_TRUE ? own_props(cls) : (yk_object *)PTR(proto);
@@ -967,11 +1098,12 @@ yk yk_class_new(yk parent, uint64_t n, const yk *kinds, const yk *names, const y
   c->class_self = cls;
   /* The static fields and blocks run now, in order, with the class as their receiver. */
   for (uint64_t i = 0; i < n; i++) {
-    int kind = (int)num(kinds[i]);
+    int kind = (int)num(kinds[i]) & 7;
     if (!(kind == 5 || (kind == 4 && statics[i] == YK_TRUE))) continue;
     yk_closure *m = (yk_closure *)PTR(members[i]);
     yk v = m->code(m, cls, 0, NULL);
-    if (kind == 4) own_set(own_props(cls), to_string(names[i]), v);
+    if (kind == 4 && num(kinds[i]) >= 8) define_private(cls, 1, private_key_of(c, cls, names[i]), v);
+    else if (kind == 4) own_set(own_props(cls), to_string(names[i]), v);
   }
   return cls;
 }

@@ -32,6 +32,7 @@ import {
   COLLECTION_ATOMS,
   DYNAMIC_ATOMS,
   JSON_ATOMS,
+  METHOD_ATOMS,
   RUNTIME_ATOMS,
   type RuntimeAtom,
 } from "./wasm-runtime-atoms.js";
@@ -97,6 +98,7 @@ export const ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   ...ARRAY_FN_ATOMS,
   ...JSON_ATOMS,
   ...COLLECTION_ATOMS,
+  ...METHOD_ATOMS,
 };
 
 /**
@@ -191,7 +193,16 @@ export type Ins =
   | { readonly op: "catch" };
 
 /** The array methods called through __ykInvoke when not lowered directly. */
-const INVOKED_ARRAY_METHODS: ReadonlySet<string> = new Set(["indexOf", "includes", "join"]);
+const INVOKED_ARRAY_METHODS: ReadonlySet<string> = new Set([
+  "indexOf",
+  "includes",
+  "join",
+  "slice",
+  "reverse",
+  "at",
+  "concat",
+  "lastIndexOf",
+]);
 
 /** The array methods that take a function: each a runtime atom, lowered once per callback. */
 const ARRAY_FN_METHODS: ReadonlySet<string> = new Set([
@@ -381,7 +392,15 @@ export const ARRAY_PRIMITIVES: Readonly<Record<string, { params: WT[]; result: W
 const STRING_METHODS: Readonly<
   Record<
     string,
-    { atom: string; args: readonly ("str" | number)[]; negate?: boolean; notFound?: boolean }
+    {
+      atom: string;
+      /** Each argument: a string, a number default, or "any" (passed as it is, or undefined). */
+      args: readonly ("str" | "any" | number)[];
+      negate?: boolean;
+      notFound?: boolean;
+      /** Booleans passed after the arguments (which of a pair of methods the atom is). */
+      extra?: readonly number[];
+    }
   >
 > = {
   charCodeAt: { atom: "__ykCharCodeAt", args: [0] },
@@ -393,6 +412,16 @@ const STRING_METHODS: Readonly<
   startsWith: { atom: "__ykStartsWith", args: ["str", 0] },
   endsWith: { atom: "__ykEndsWith", args: ["str", Number.POSITIVE_INFINITY] },
   trim: { atom: "__ykTrim", args: [] },
+  trimStart: { atom: "__ykTrimSide", args: [], extra: [1] },
+  trimEnd: { atom: "__ykTrimSide", args: [], extra: [0] },
+  split: { atom: "__ykSplit", args: ["any", "any"] },
+  repeat: { atom: "__ykRepeat", args: ["any"] },
+  padStart: { atom: "__ykPad", args: ["any", "any"], extra: [1] },
+  padEnd: { atom: "__ykPad", args: ["any", "any"], extra: [0] },
+  lastIndexOf: { atom: "__ykLastIndexOf", args: ["any", "any"] },
+  at: { atom: "__ykStrAt", args: ["any"] },
+  replace: { atom: "__ykReplace", args: ["any", "any"], extra: [0] },
+  replaceAll: { atom: "__ykReplace", args: ["any", "any"], extra: [1] },
 };
 
 // --- the program: functions by key, each lowered once ---
@@ -1959,13 +1988,26 @@ function lowerFunction(
       } else {
         const m = STRING_METHODS[callee.name] as (typeof STRING_METHODS)[string];
         const atom = mod.atom(m.atom);
+        if (m.args.includes("any") || m.extra !== undefined) {
+          // Arguments as they are (converted by the atom, as the method does); then the flags.
+          push(callee.recv, "str");
+          m.args.forEach((_, i) => {
+            const a = args[i];
+            if (a === undefined) emit({ op: "const.undef" });
+            else push(a, "any");
+          });
+          for (const x of m.extra ?? []) emit({ op: "const.i32", x });
+          emit({ op: "call", fn: atom.fn });
+          set(out);
+          return;
+        }
         const given: (ValueId | number)[] = [callee.recv];
         m.args.forEach((d, i) => {
           const a = args[i];
           if (a !== undefined) given.push(a);
           else if (d === "str")
             throw new LoweringError(`.${callee.name} without a string to search for`);
-          else given.push(d);
+          else given.push(d as number);
         });
         call(atom, given, `.${callee.name}`);
         if (m.notFound === true) emit({ op: "const.f64", x: -1 }, { op: "f64", name: "ne" });

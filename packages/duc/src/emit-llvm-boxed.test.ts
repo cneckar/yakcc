@@ -195,6 +195,11 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "private names: fields, statics, methods, accessors, brand checks, per class and per evaluation (#1330)",
+    "export function f(a, b) { class A { #x = a; static #n = 0; ['#x'] = 'public'; #inc() { this.#x = typeof this.#x === 'number' ? this.#x + 1 : this.#x + '+'; A.#n++; return this; } get #g() { return this.#x; } set #g(v) { this.#x = v; } bump(v) { this.#inc(); const before = this.#g; this.#g = v; return [before, this.#g, A.#n, #x in this, this['#x']]; } static has(o) { return #x in o; } read(o) { return o.#x; } } class B { #x = 'b'; } const o = new A(); let crossed; try { o.read(new B()); } catch (e) { crossed = e.name; } class Outer { #secret = b; make() { const self = this; return class { peek() { return self.#secret; } }; } } const I = new Outer().make(); const mk = () => class { #v = 1; static check(o) { return #v in o; } }; const C1 = mk(), C2 = mk(); return [o.bump(b), A.has(o), A.has({}), Object.keys(o), crossed, new I().peek(), C1.check(new C1()), C2.check(new C1())]; }",
+    2,
+  ],
+  [
     "a spread is copied where it is in order, before what follows writes the array (#1330)",
     "export function f(a, b) { const log = [a]; const before = [...log]; log.push(b); const after = [...log]; log.push(3); function* g() { yield a; yield b; } return [before, after, log.length, [0, ...g()], [...'ab']]; }",
     2,
@@ -334,7 +339,7 @@ describe("what the boxed lowering refuses, for now (#1292)", () => {
     }
     return "lowered";
   };
-  it("free names, new, async generators, private names, array holes, approximated Math", () => {
+  it("free names, new, async generators, array holes, approximated Math", () => {
     expect(refusal("export function f(x) { return helper(x); }")).toMatch(
       /"helper" is not in the native base set/,
     );
@@ -344,11 +349,6 @@ describe("what the boxed lowering refuses, for now (#1292)", () => {
     expect(refusal("export function f(x) { async function* g() { yield x; } return g; }")).toMatch(
       /not in the subset/,
     );
-    expect(
-      refusal(
-        "export function f(x) { class A { #y = 1; get y() { return this.#y; } } return new A().y + x; }",
-      ),
-    ).toMatch(/private name.*#y.*is not in the native subset yet/);
     expect(refusal("export function f(x) { return [, x]; }")).toMatch(/an array with holes/);
     expect(refusal("export function f(x) { return Math.sin(x); }")).toMatch(
       /implementation-approximated/,
