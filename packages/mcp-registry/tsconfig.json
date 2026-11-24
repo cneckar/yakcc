@@ -10,6 +10,7 @@
   "references": [
     { "path": "../compile" },
     { "path": "../contracts" },
+    { "path": "../discovery-search" },
     { "path": "../hooks-base" },
     { "path": "../registry" },
     { "path": "../seeds" }

@@ -20,6 +20,7 @@ import { getProvenance } from "./get-provenance.js";
 import { getShaveStatus } from "./get-shave-status.js";
 import { getSpec } from "./get-spec.js";
 import { listSpecs } from "./list-specs.js";
+import { findModulesTool, getModuleTool } from "./modules.js";
 import { referenceTool } from "./reference.js";
 import { requestShave } from "./request-shave.js";
 import { resolveTool } from "./resolve.js";
@@ -33,6 +34,12 @@ export { getProvenance } from "./get-provenance.js";
 export { getShaveStatus } from "./get-shave-status.js";
 export { getSpec } from "./get-spec.js";
 export { listSpecs } from "./list-specs.js";
+export {
+  findModulesTool,
+  getModuleTool,
+  makeFindModulesTool,
+  makeGetModuleTool,
+} from "./modules.js";
 export { referenceTool } from "./reference.js";
 export { requestShave } from "./request-shave.js";
 export { resolveTool } from "./resolve.js";
@@ -46,6 +53,7 @@ export type { ToolModule } from "./types.js";
  * resolveTool added per wi-953 (DEC-HOOK-PROACTIVE-A-001).
  * compileTool added per wi-1007 (DEC-MCP-COMPILE-EXEC-1007-001).
  * referenceTool added per wi-1047 (DEC-COMPOSE-BY-REF-REFERENCE-TOOL-001).
+ * findModulesTool and getModuleTool added by lane:reuse (DEC-MCP-MODULES-001).
  */
 export const TOOLS: ToolModule[] = [
   resolveTool,
@@ -59,4 +67,6 @@ export const TOOLS: ToolModule[] = [
   requestShave,
   getShaveStatus,
   getProvenance,
+  findModulesTool,
+  getModuleTool,
 ];

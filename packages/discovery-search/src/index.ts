@@ -46,3 +46,15 @@ export {
   type RankedResult,
   type RankResult,
 } from "./search.js";
+
+// Module discovery — hybrid search over large graph roots (DEC-DISCOVERY-MODULES-001)
+export {
+  searchModules,
+  moduleSource,
+  parseModuleIndex,
+  bm25Rank,
+  denseRank,
+  type ModuleEntry,
+  type ModuleIndex,
+  type ModuleHit,
+} from "./modules.js";
