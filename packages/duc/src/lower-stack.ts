@@ -270,6 +270,10 @@ export const PRIMITIVES: Readonly<Record<string, { params: WT[]; result: WT }>> 
   __ykObjVals: { params: ["obj"], result: "arr" },
   __ykObjCls: { params: ["obj"], result: "any" },
   __ykSame: { params: ["any", "any"], result: "i32" },
+  // A function value (tag 8): its trampoline's id and its captures; made, and read.
+  __ykFnNew: { params: ["f64", "arr"], result: "any" },
+  __ykFnId: { params: ["any"], result: "f64" },
+  __ykFnCaps: { params: ["any"], result: "arr" },
 };
 
 /** The array operations, written directly: what an array of numbers is made of. */
@@ -406,6 +410,97 @@ export class StackProgram {
     }
   }
 
+  /** The trampolines of function values, by id: each unpacks captures and arguments. */
+  private readonly trampolines: string[] = [];
+  private readonly trampolineIds = new Map<string, number>();
+  /**
+   * A function value's trampoline: for a closure with captures of these types, a function of its
+   * captures and its arguments (arrays of any values) that calls the closure's function. Its id.
+   */
+  trampoline(graph: DucGraph, capTypes: readonly WT[], trusted: boolean): number {
+    const key = `${this.graphId(graph)}:${capTypes.join(",")}`;
+    const known = this.trampolineIds.get(key);
+    if (known !== undefined) return known;
+    const id = this.trampolines.length;
+    const fkey = `tramp:${id}`;
+    this.trampolines.push(fkey);
+    this.trampolineIds.set(key, id);
+    const at = this.primitive("arrAt").fn;
+    const nargs = paramCount(graph) - capTypes.length;
+    const sig: WT[] = [...capTypes, ...Array.from({ length: nargs }, () => "any" as const)];
+    const { fn, result } = this.closure(graph, sig, trusted);
+    const code: Ins[] = [];
+    capTypes.forEach((t, i) => {
+      code.push({ op: "get", i: 0 }, { op: "const.f64", x: i }, { op: "call", fn: at });
+      if (t !== "any") code.push({ op: "from.any", to: t });
+    });
+    for (let j = 0; j < nargs; j++)
+      code.push({ op: "get", i: 1 }, { op: "const.f64", x: j }, { op: "call", fn: at });
+    code.push({ op: "call", fn });
+    if (result !== "any") code.push({ op: "to.any", from: result });
+    this.funcs.set(fkey, {
+      kind: "lowered",
+      params: ["arr", "arr"],
+      result: "any",
+      locals: [],
+      code,
+    });
+    return id;
+  }
+  /** The call of a value of any kind: a function value's trampoline, else a TypeError. */
+  dynCall(): string {
+    const fkey = "dyn:call";
+    if (!this.funcs.has(fkey))
+      this.funcs.set(fkey, {
+        kind: "lowered",
+        params: ["any", "arr"],
+        result: "any",
+        locals: [],
+        code: [],
+      });
+    return fkey;
+  }
+  /** What can only be written once everything is lowered: the dispatch of function values. */
+  finish(): void {
+    const f = this.funcs.get("dyn:call");
+    if (f === undefined || f.kind !== "lowered") return;
+    const tag = this.primitive("__ykTag").fn;
+    const code: Ins[] = [
+      { op: "get", i: 0 },
+      { op: "call", fn: tag },
+      { op: "const.f64", x: 8 },
+      { op: "f64", name: "ne" },
+      { op: "if" },
+      { op: "call", fn: this.atom("__ykNotAFunction").fn },
+      { op: "drop", t: "any" },
+      { op: "end" },
+      { op: "get", i: 0 },
+      { op: "call", fn: this.primitive("__ykFnId").fn },
+      { op: "set", i: 2 },
+      { op: "get", i: 0 },
+      { op: "call", fn: this.primitive("__ykFnCaps").fn },
+      { op: "set", i: 3 },
+      { op: "const.undef" },
+      { op: "set", i: 4 },
+    ];
+    this.trampolines.forEach((t, k) => {
+      code.push(
+        { op: "get", i: 2 },
+        { op: "const.f64", x: k },
+        { op: "f64", name: "eq" },
+        { op: "if" },
+        { op: "get", i: 3 },
+        { op: "get", i: 1 },
+        { op: "call", fn: t },
+        { op: "set", i: 4 },
+        { op: "end" },
+      );
+    });
+    code.push({ op: "get", i: 4 });
+    f.locals = ["f64", "arr", "any"];
+    f.code = code;
+  }
+
   /** A primitive: written by each target. */
   primitive(key: string): { fn: string; params: readonly WT[]; result: WT } {
     const p = (PRIMITIVES[key] ?? ARRAY_PRIMITIVES[key]) as
@@ -458,6 +553,7 @@ export function lowerProgram(
   const lowered = topLevel(() => lowerFunction(ecmaScriptView(input), params, result, prog));
   f.locals = lowered.locals;
   f.code = lowered.code;
+  prog.finish();
   return prog;
 }
 
@@ -586,12 +682,26 @@ function lowerFunction(
    * runtime atom an undefined is never observed (the atoms are tested against the builtins they
    * define): it stands for the other type's default.
    */
+  const sameCallee = (a: Callee, b: Callee): boolean =>
+    a.k === b.k &&
+    (a.k === "closure"
+      ? a.node === (b as typeof a).node
+      : a.k === "fnparam"
+        ? a.index === (b as typeof a).index
+        : JSON.stringify(a) === JSON.stringify(b));
   const unify = (a: VT | "?", b: VT | "?", what: string): VT | "?" => {
     if (a === "?") return b;
     if (b === "?") return a;
     if (typeof a === "object" || typeof b === "object") {
-      if (a === b) return a;
-      throw new LoweringError(`${what} mixes ${show(a)} and ${show(b)}`);
+      if (typeof a === "object" && typeof b === "object" && sameCallee(a.call, b.call)) return a;
+      // Two different functions, or a function and a value: a value of any kind (a function
+      // value where a function is).
+      if (
+        (typeof a === "object" && a.call.k !== "closure" && a.call.k !== "fnparam") ||
+        (typeof b === "object" && b.call.k !== "closure" && b.call.k !== "fnparam")
+      )
+        throw new LoweringError(`${what} mixes ${show(a)} and ${show(b)}`);
+      return "any";
     }
     if (a === b) return a;
     if (trusted && a === "undef") return b;
@@ -878,6 +988,8 @@ function lowerFunction(
     if (label === "CallExpression") {
       const t0 = operand(0);
       if (t0 === "?") return "?";
+      // A call of a value of any kind: a function value's, else a TypeError.
+      if (t0 === "any") return "any";
       if (typeof t0 !== "object")
         throw new LoweringError("a call of a value that is not a known function");
       const callee = t0.call;
@@ -955,8 +1067,8 @@ function lowerFunction(
       return "f64";
     }
     if (label.startsWith("object:")) {
-      if (ins.some((_, i) => typeof operand(i) === "object"))
-        throw new LoweringError("an object of functions is not in the subset yet");
+      // A function stored in an object is a function value.
+      for (let i = 0; i < ins.length; i++) operand(i);
       return "obj";
     }
     if (/^\.\w+=$/.test(label) && ins.length === 2) {
@@ -964,8 +1076,7 @@ function lowerFunction(
       if (t0 === "?") return "?";
       if (t0 !== "obj")
         throw new LoweringError(`a property write to ${show(t0)} is not in the subset yet`);
-      if (typeof operand(1) === "object")
-        throw new LoweringError("a function stored in an object is not in the subset yet");
+      operand(1);
       return "obj";
     }
     if (label === "NewExpression") {
@@ -977,9 +1088,8 @@ function lowerFunction(
     if (label === "ArrayLiteral") {
       // As TypeScript types it: numbers make an array of numbers; anything else, or nothing in a
       // program (an array that grows), an array of any values. In a runtime atom, [] is of numbers.
+      // A function in an array is a function value: the array holds values of any kind.
       const ts = ins.map((_, i) => operand(i));
-      if (ts.some((t) => typeof t === "object"))
-        throw new LoweringError("an array of functions is not in the subset yet");
       // An empty array is of numbers until something else is stored in it (TypeScript's evolving
       // array): then it holds values of any kind.
       if (ins.length === 0) return grown.has(v) ? "arr" : "nums";
@@ -1193,7 +1303,11 @@ function lowerFunction(
       pushDefault(orDefault);
       return orDefault;
     }
-    if (typeof t === "object") throw new LoweringError("a function is used as a value");
+    if (typeof t === "object") {
+      if (orDefault !== "any") throw new LoweringError("a function is used as a value here");
+      materialize(v);
+      return "any";
+    }
     const p = producer.get(v);
     if (p?.kind === "literal-source") {
       const text = p.label ?? "";
@@ -1357,6 +1471,44 @@ function lowerFunction(
     emit({ op: "end" }, { op: "get", i: r });
   };
 
+  /** The capture types a function value's trampoline unpacks: a function's is a value of any kind. */
+  const capTypesOf = (caps: readonly PT[]): WT[] =>
+    caps.map((c) => (typeof c === "string" ? c : "any"));
+  /** Push a passed function (its captures in slots from `base`) as a function value. */
+  const materializeFrom = (arg: FnArg, base: number): void => {
+    emit({ op: "const.f64", x: mod.trampoline(arg.fn, capTypesOf(arg.caps), trusted) });
+    let slot = base;
+    for (const c of arg.caps) {
+      if (typeof c === "string") {
+        emit({ op: "get", i: slot });
+        if (c !== "any") emit({ op: "to.any", from: c });
+        slot += 1;
+      } else {
+        materializeFrom(c, slot);
+        slot += flatPT(c).length;
+      }
+    }
+    emit({ op: "arr.of", n: arg.caps.length }, { op: "call", fn: mod.primitive("__ykFnNew").fn });
+  };
+  /**
+   * Push a known function as a function value (a value of any kind): its trampoline's id and its
+   * captures, each a value of any kind (a captured function, a function value too).
+   */
+  const materialize = (v: ValueId): void => {
+    const k = known(v);
+    if (k === "?" || k === undefined)
+      throw new LoweringError("a builtin function used as a value is not in the subset yet");
+    if (k.capValues === undefined) {
+      const c = (ty(v) as { call: { arg: FnArg; base: number } }).call;
+      materializeFrom(c.arg, c.base);
+      return;
+    }
+    const values = k.capValues;
+    emit({ op: "const.f64", x: mod.trampoline(k.fn, capTypesOf(k.caps), trusted) });
+    k.caps.forEach((c, i) => push(values[i] as ValueId, "any"));
+    emit({ op: "arr.of", n: k.caps.length }, { op: "call", fn: mod.primitive("__ykFnNew").fn });
+  };
+
   const emitNode = (n: DucNode): void => {
     if (n.kind === "literal-source" || n.kind === "param-source" || n.kind === "carry-source")
       return;
@@ -1432,6 +1584,14 @@ function lowerFunction(
     if (label === "NewExpression") {
       const callee = (ty(ins[0] as ValueId) as { call: Callee }).call as { name: string };
       makeError(callee.name, ins[1]);
+      set(out);
+      return;
+    }
+    if (label === "CallExpression" && typeof opType(ins[0] as ValueId) === "string") {
+      // A call of a value of any kind: its arguments as an array of any values, then __ykCall.
+      push(ins[0] as ValueId, "any");
+      for (const x of ins.slice(1)) push(x, "any");
+      emit({ op: "arr.of", n: ins.length - 1 }, { op: "call", fn: mod.dynCall() });
       set(out);
       return;
     }
@@ -1815,8 +1975,10 @@ function lowerFunction(
     emit({ op: "const.undef" });
     return { result, locals, code };
   }
-  // The result as the contract types it: a value of any kind is read as the kind it says.
-  const computed = opType(g.obs[0] as ValueId);
+  // The result as the contract types it: a value of any kind is read as the kind it says. A
+  // function returned is a function value.
+  const computedT = opType(g.obs[0] as ValueId);
+  const computed = typeof computedT === "object" ? "any" : computedT;
   if (typeof computed !== "string" || computed === "undef")
     throw new LoweringError("the result has no value here");
   const result = declared ?? computed;

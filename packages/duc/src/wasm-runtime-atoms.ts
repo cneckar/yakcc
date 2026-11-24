@@ -902,6 +902,8 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   if (t === 5) return __ykJoinNums(__ykArr(x));
   if (t === 6) return __ykJoinAny(__ykArrAny(x));
   if (t === 7) return __ykObjToString(__ykObj(x));
+  // A function's source text, which a lowering does not keep: the text of a native function.
+  if (t === 8) return "function () { [native code] }";
   return x;
 }`,
   },
@@ -1000,6 +1002,14 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   throw __ykMakeError("TypeError", "Cannot read properties of undefined or null");
 }`,
   },
+  // The call of a value that is not a function: a TypeError.
+  __ykNotAFunction: {
+    inputs: [],
+    output: "unknown",
+    source: `export function f(): unknown {
+  throw __ykMakeError("TypeError", "is not a function");
+}`,
+  },
   // Whether a finally block's completion is a return ([1, value]): it replaces the try's result.
   __ykIsReturn: {
     inputs: ["unknown"],
@@ -1070,6 +1080,7 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   if (t === 2) return "boolean";
   if (t === 3) return "number";
   if (t === 4) return "string";
+  if (t === 8) return "function";
   return "object";
 }`,
   },
@@ -1166,11 +1177,13 @@ export const RUNTIME_PRIMITIVES_JS = {
             ? 3
             : typeof x === "string"
               ? 4
-              : !Array.isArray(x)
-                ? 7
-                : (x as unknown[]).every((e) => typeof e === "number")
-                  ? 5
-                  : 6,
+              : typeof x === "function"
+                ? 8
+                : !Array.isArray(x)
+                  ? 7
+                  : (x as unknown[]).every((e) => typeof e === "number")
+                    ? 5
+                    : 6,
   __ykNum: (x: unknown): number => x as number,
   __ykBool: (x: unknown): boolean => x as boolean,
   __ykStr: (x: unknown): string => x as string,
