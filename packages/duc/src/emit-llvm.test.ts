@@ -368,8 +368,9 @@ describe("what the native lowering refuses (#1292)", () => {
     );
   });
   it("what ECMAScript lets an engine approximate: a libm need not give the reference's last bit", () => {
+    // Math.sin is a reference to V8's shaved atom (#1362), not lowered here yet.
     expect(refusal("export function f(x: number): number { return Math.sin(x); }")).toMatch(
-      /implementation-approximated/,
+      /"Math.sin" is not in the subset/,
     );
     expect(refusal("export function f(x: number, y: number): number { return x ** y; }")).toMatch(
       /implementation-approximated/,

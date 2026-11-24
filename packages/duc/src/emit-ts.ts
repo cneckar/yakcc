@@ -24,6 +24,7 @@ import {
   declaredNamesOf,
 } from "./lift.js";
 import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
+import { operationReference } from "./operations.js";
 import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
 import { isRestParam, paramIndex } from "./params.js";
@@ -388,6 +389,9 @@ function emitFunction(
     if (label === "binding") return arg(0);
     // A derived constructor's `super(..)`: its value is the receiver it makes (#1276).
     if (label === "super") return `super(${ins.map((v) => ref(v)).join(", ")})`;
+    // An operation that is a reference to an atom, written as the source writes it (#1362).
+    if (operationReference(label) !== undefined)
+      return `${label}(${ins.map((v) => ref(v)).join(", ")})`;
     if (label === "AwaitExpression") return `(await ${arg(0)})`;
     if (label === "YieldExpression") return ins.length === 0 ? "(yield)" : `(yield ${arg(0)})`;
     if (label === "YieldExpression*") return `(yield* ${arg(0)})`;
