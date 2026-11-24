@@ -7,7 +7,7 @@
 //            (@yakcc/discovery-search searchModules over the module index), the model picks one
 //            or none, then writes glue around lib.<name> (or everything, if none)
 //   routed   the model writes it at once when it is small (one call), else continues as reuse
-//            (--arms picks a subset; default all three)
+//            (--arms picks a subset; default all three; --route-lines sets the threshold)
 // Scored by held-out tests in a vm sandbox; the reused module is bound in the same realm.
 //
 //   node harness/run.mjs --dry-run [--seeds 3]          plan and cost, no calls
@@ -32,6 +32,7 @@ import {
 } from "../../B12-need-to-code/harness/model.mjs";
 import { tasks as allTasks } from "../tasks.mjs";
 import {
+  ROUTE_LINES,
   clientView,
   confirmPrompt,
   gluePrompt,
@@ -174,6 +175,7 @@ async function main() {
   const only = arg("tasks", null);
   const tasks = only ? allTasks.filter((t) => only.split(",").includes(t.id)) : allTasks;
   const arms = arg("arms", ARMS.join(",")).split(",");
+  const routeLines = Number(arg("route-lines", String(ROUTE_LINES)));
   for (const a of arms) if (!ARMS.includes(a)) throw new Error(`unknown arm ${a}`);
   const library = await moduleLibrary(indexFile);
   const plan = planRun({ tasks, seeds, index: library.index, arms });
@@ -206,6 +208,7 @@ async function main() {
             search: library.search,
             rootSourceOf: library.rootSourceOf,
             route: arm === "routed",
+            routeLines,
           })),
         });
     }
@@ -233,7 +236,7 @@ async function main() {
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(
     out,
-    `${JSON.stringify({ client: clientName, model, seeds, tasks: tasks.length, summary, bySize, usage: client.usage ?? null, rows }, null, 2)}\n`,
+    `${JSON.stringify({ client: clientName, model, seeds, routeLines, tasks: tasks.length, summary, bySize, usage: client.usage ?? null, rows }, null, 2)}\n`,
   );
   console.log(JSON.stringify({ summary, bySize }, null, 2));
   console.log(`wrote ${relative(bench, out)}`);
