@@ -56,6 +56,18 @@ const CASES: [string, string][] = [
     "export function f() { const log = []; class G { [(log.push('a'), 'a')] = log.push('init'); static [(log.push('b'), 'b')] = log.push('static'); } const before = [...log]; new G(); return [before, log]; }",
   ],
   [
+    "private fields, methods, accessors and statics, read and written",
+    "export function f() { class A { #x = 1; static #n = 0; #inc() { this.#x = this.#x + 1; A.#n = A.#n + 1; return this; } bump() { return this.#inc().#inc(); } get x() { return this.#x; } static get count() { return A.#n; } } const a = new A().bump(); return [a.x, Object.keys(a), A.count]; }",
+  ],
+  [
+    "a private name increments and compound-assigns, and arrows read it",
+    "export function f() { class A { #x = 1; bump() { this.#x++; this.#x += 2; const g = () => this.#x * 10; return [this.#x, g()]; } } return new A().bump(); }",
+  ],
+  [
+    "a private brand check",
+    "export function f() { class A { #x = 1; static has(o) { return #x in o; } } return [A.has(new A()), A.has({})]; }",
+  ],
+  [
     "a class expression with fields, assigned and returned",
     "export function f(n) { const K = class { v = n; double() { return this.v * 2; } }; return new K().double(); }",
   ],
@@ -82,10 +94,27 @@ describe("class fields, static blocks and computed names (#1330)", () => {
     expect(graphIdentity(field)).not.toBe(graphIdentity(set));
   });
 
-  it("a private name is not lifted yet: it stays a summary", () => {
+  it("a parameter property is not lifted yet: it stays a summary", () => {
     const g = liftAtom(
-      "export function f() { class A { #x = 1; get() { return this.#x; } } return new A().get(); }",
+      "export function f() { class A { constructor(public x: number) {} } return new A(1).x; }",
     );
     expect(opaque(g).length).toBeGreaterThan(0);
+  });
+
+  it("o.x++ and o[k]-- write the member, as += does (#1330)", () => {
+    for (const source of [
+      "export function f() { const o = { x: 1 }; o.x++; o.x += 2; return o.x; }",
+      "export function f(k) { const o = { a: 5 }; const before = o[k]--; --o[k]; return [before, o.a]; }",
+      "export function f() { class A { constructor() { this.n = 0; } tick() { return this.n++; } } const a = new A(); a.tick(); return [a.tick(), a.n]; }",
+    ]) {
+      const g = liftAtom(source);
+      const code = emitTypeScript(g);
+      const go = (c: string): unknown =>
+        (new Function(`${c.replace(/^export /m, "")}; return f;`)() as (k?: string) => unknown)(
+          "a",
+        );
+      expect(go(code), code).toEqual(go(source));
+      expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
+    }
   });
 });

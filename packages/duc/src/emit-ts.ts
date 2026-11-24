@@ -381,6 +381,7 @@ function emitFunction(
     if (label === "," && ins.length === 2) return `(${arg(0)}, ${arg(1)})`;
     if (PREFIX.has(label) && ins.length === 1) return `${label}${arg(0)}`;
     if (label === "TypeOfExpression") return `typeof ${arg(0)}`;
+    if (label.startsWith("in:#")) return `(${label.slice("in:".length)} in ${arg(0)})`;
     if (label === "VoidExpression") return `void ${arg(0)}`;
     // A binding outside the atom, read by its name (#1276).
     if (label === "binding") return arg(0);
@@ -706,7 +707,7 @@ function emitFunction(
     const guarded = guardLoops.has(loop.id);
     const header =
       rec.iterate !== undefined
-        ? `for (const ${nameOf(rec.iterate.element)} ${rec.iterate.of === "values" ? "of" : "in"} ${ref(loop.inputs[count] as ValueId)}) {`
+        ? `for ${rec.iterate.of === "async values" ? "await " : ""}(const ${nameOf(rec.iterate.element)} ${rec.iterate.of === "keys" ? "in" : "of"} ${ref(loop.inputs[count] as ValueId)}) {`
         : guarded
           ? "while (true) {"
           : `while (${ref(rec.cond as ValueId)}) {`;

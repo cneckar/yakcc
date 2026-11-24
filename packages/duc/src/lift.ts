@@ -43,9 +43,11 @@ import type {
   DucLoop,
   DucNode,
   FunctionMode,
+  IterateKind,
   NodeId,
   ValueId,
 } from "./types.js";
+import { ITERATE_LABEL } from "./types.js";
 
 /** Thrown when the source cannot be parsed into a graph (syntax error). */
 export class DucLiftError extends Error {
@@ -774,7 +776,7 @@ class Lifter {
         if (
           Node.isIfStatement(stmt) &&
           full !== undefined &&
-          containsLoopJump(stmt, this.bodyExits.node)
+          this.holdsLoopExit(stmt, this.bodyExits.node)
         ) {
           const elseNode = stmt.getElseStatement();
           this.liftIf(
@@ -896,7 +898,32 @@ class Lifter {
       .getSourceFile()
       .getProject()
       .createSourceFile(`__switch${this.switchCount}.ts`, source, { overwrite: true });
-    return file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0];
+    return this.noteExits(
+      file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0],
+    );
+  }
+
+  /**
+   * A lowered statement's returns are the function's: in a loop's body, exits of the loop, as the
+   * returns of the statement it was lowered from are (#1330).
+   */
+  private noteExits(lowered: Node | undefined): Node | undefined {
+    for (const r of lowered?.getDescendantsOfKind(SyntaxKind.ReturnStatement) ?? [])
+      if (!isInsideNestedFunction(r, lowered as Node)) this.loweredExits.add(r.compilerNode);
+    return lowered;
+  }
+
+  /** The returns of lowered statements (see noteExits). */
+  private readonly loweredExits = new Set<import("ts-morph").ts.Node>();
+
+  /** Whether a statement holds an exit of the loop whose body is being lifted. */
+  private holdsLoopExit(stmt: Node, loop: Node): boolean {
+    return (
+      containsLoopJump(stmt, loop) ||
+      stmt
+        .getDescendantsOfKind(SyntaxKind.ReturnStatement)
+        .some((r) => this.loweredExits.has(r.compilerNode))
+    );
   }
 
   private tryCount = 0;
@@ -918,8 +945,11 @@ class Lifter {
    *   value: an input before the member's closure, evaluated when the class is defined, in member
    *   order. Its entry's name is null.
    *
-   * Undefined when it is not that: a private name, a parameter property, a decorator, or a member
-   * that is not one of these.
+   * - A private name (`#x`) is the member's name: reads and writes of it (`o.#x`) are labelled with
+   *   it, and resolve to the nearest enclosing class that declares it.
+   *
+   * Undefined when it is not that: a parameter property, a decorator, or a member that is not one
+   * of these.
    */
   private liftClass(
     node: import("ts-morph").ClassDeclaration | import("ts-morph").ClassExpression,
@@ -942,7 +972,6 @@ class Lifter {
         )
       )
         return undefined;
-      if (Node.isPrivateIdentifier(m.getNameNode())) return undefined;
       if (!Node.isPropertyDeclaration(m) && m.getBody() === undefined) return undefined;
     }
     // Fields and static blocks are lifted as the methods they mean, and a computed name as an
@@ -977,7 +1006,10 @@ class Lifter {
       const nameNode = m.getNameNode();
       // A computed or literal name: the key's value, now, in member order.
       let name: string | null = null;
-      if (Node.isIdentifier(nameNode)) name = nameNode.getText();
+      // A private name (`#x`) is a name, not a key: it is its class's own, resolved where it is
+      // written to the nearest class that declares it.
+      if (Node.isIdentifier(nameNode) || Node.isPrivateIdentifier(nameNode))
+        name = nameNode.getText();
       else
         values.push(
           this.liftExpr(
@@ -1031,7 +1063,7 @@ class Lifter {
       ((Node.isMethodDeclaration(m) ||
         Node.isGetAccessorDeclaration(m) ||
         Node.isSetAccessorDeclaration(m)) &&
-        Node.isIdentifier(m.getNameNode()));
+        (Node.isIdentifier(m.getNameNode()) || Node.isPrivateIdentifier(m.getNameNode())));
     if (members.every(plain)) return members.map((m) => m as FunctionLike);
     const file = node.getSourceFile();
     let text = file.getFullText();
@@ -1425,6 +1457,19 @@ class Lifter {
     return this.throughLoop(this.receiver);
   }
 
+  /** Whether the function being lifted has its own `arguments` (it is not an arrow). */
+  ownsArguments = true;
+
+  /**
+   * The function's `arguments` (#1330): a captured one (an arrow's, the enclosing function's) is a
+   * name; otherwise the platform's source for it in this graph, as it has always been read
+   * (#1173), which is the function's own.
+   */
+  private argumentsValue(): ValueId {
+    if (this.env.has(ARGUMENTS)) return this.resolveIdentifier(ARGUMENTS);
+    return this.resolveIdentifier("arguments");
+  }
+
   private liftClosure(
     fn: FunctionLike,
     givenSelf?: string,
@@ -1493,9 +1538,25 @@ class Lifter {
         receiverOwner(t) === fn ||
         (Node.isArrowFunction(fn) && receiverOwner(t) === receiverOwner(fn)),
     );
+    // `arguments` is a function's own (#1330): read in it, or in an arrow inside it, which captures
+    // it as it captures `this`. An arrow with no function around it has none.
+    const argumentsUses = closureLocals(fn).has("arguments")
+      ? []
+      : fn
+          .getDescendantsOfKind(SyntaxKind.Identifier)
+          .filter(
+            (id) =>
+              id.getText() === "arguments" &&
+              isValueRead(id) &&
+              (receiverOwner(id) === fn ||
+                (Node.isArrowFunction(fn) && receiverOwner(id) === receiverOwner(fn))),
+          );
+    const lexicalArguments = Node.isArrowFunction(fn) && argumentsUses.length > 0;
+    if (lexicalArguments && !this.env.has(ARGUMENTS) && !this.ownsArguments) return undefined;
     const lexicalThis = Node.isArrowFunction(fn) && thisUses.length > 0;
     // A derived constructor has its own receiver, made by its `super(..)`, used or not.
-    const dynamicThis = !Node.isArrowFunction(fn) && (thisUses.length > 0 || derived);
+    const dynamicThis =
+      !Node.isArrowFunction(fn) && (thisUses.length > 0 || derived || argumentsUses.length > 0);
     const locals = closureLocals(fn);
     // A member's own name (a method's, an accessor's) names it; it is not a read.
     const ownName =
@@ -1507,8 +1568,6 @@ class Lifter {
     const reads = fn
       .getDescendantsOfKind(SyntaxKind.Identifier)
       .filter((id) => id.compilerNode !== ownName);
-    if (reads.some((id) => id.getText() === "arguments" && !locals.has("arguments")))
-      return undefined;
     // A closure that rebinds a name outside itself needs a shared cell, which the graph does not
     // have. A write to a member of an outer object or of the receiver keeps the binding: it changes
     // the shared object, as a call that changes its argument does.
@@ -1552,8 +1611,11 @@ class Lifter {
       !this.env.has(name) &&
       !this.imports.has(name) &&
       (this.ambient.has(name) || RUNTIME_PRIMITIVES.has(name));
-    const captures = outerReads.filter((name) => !platform(name));
+    const captures = outerReads.filter(
+      (name) => !platform(name) && !(name === "arguments" && !locals.has("arguments")),
+    );
     if (lexicalThis) captures.push(THIS);
+    if (lexicalArguments) captures.push(ARGUMENTS);
     // A captured name reassigned outside the closure could change after it is made. A write to a
     // member keeps the same object, so the closure still holds it. A reassignment that is certainly
     // done before the closure is made (earlier, in the same function, not in another closure, with
@@ -1615,6 +1677,7 @@ class Lifter {
       inner.classSelf = classSelf;
       inner.functionSelf = selfOf;
       inner.derived = derived;
+      inner.ownsArguments = !Node.isArrowFunction(fn);
       for (const name of captures) if (this.bindings.has(name)) inner.bindings.add(name);
       graph = inner.liftClosureBody(
         fn,
@@ -1627,11 +1690,13 @@ class Lifter {
     const inputs = captures.map((name) =>
       name === THIS
         ? this.thisValue()
-        : this.bindings.has(name)
-          ? this.throughLoop(this.resolveName(name))
-          : this.cells.has(name) && this.env.has(name)
-            ? this.throughLoop(this.env.get(name) as ValueId)
-            : this.resolveIdentifier(name),
+        : name === ARGUMENTS
+          ? this.argumentsValue()
+          : this.bindings.has(name)
+            ? this.throughLoop(this.resolveName(name))
+            : this.cells.has(name) && this.env.has(name)
+              ? this.throughLoop(this.env.get(name) as ValueId)
+              : this.resolveIdentifier(name),
     );
     const [value] = this.emit("op", inputs, 1, {
       origin: { kind: "Closure", text: truncate(selfName ?? fn.getText()) },
@@ -2439,7 +2504,11 @@ class Lifter {
     const list = existing ? undefined : (initializer as import("ts-morph").VariableDeclarationList);
     const decl = list?.getDeclarations()[0];
     const declared = decl !== undefined ? patternNames(decl.getNameNode()) : [];
-    const of: "values" | "keys" = Node.isForOfStatement(node) ? "values" : "keys";
+    const of: IterateKind = Node.isForOfStatement(node)
+      ? node.isAwaited()
+        ? "async values"
+        : "values"
+      : "keys";
     const body = node.getStatement();
 
     const iterable = this.liftExpr(node.getExpression());
@@ -2526,7 +2595,7 @@ class Lifter {
 
     const results = this.emit("loop", [...inits, iterable, ...frame.invariants], carried.length, {
       origin: { kind: node.getKindName(), text: truncate(node.getText()) },
-      label: of === "values" ? "for-of" : "for-in",
+      label: ITERATE_LABEL[of],
     });
     const loopNode = this.nodes[this.nodes.length - 1] as MutableNode;
     loopNode.loop = {
@@ -2871,6 +2940,14 @@ class Lifter {
       // `undefined`, unless a binding shadows it, is the literal: the same value a bare `return;` has.
       if (node.getText() === "undefined" && !this.env.has("undefined"))
         return this.undefinedValue();
+      // `arguments`, unless a binding shadows it, is the function's own (#1330).
+      if (
+        node.getText() === "arguments" &&
+        !this.env.has("arguments") &&
+        !this.bindings.has("arguments") &&
+        (this.ownsArguments || this.env.has(ARGUMENTS))
+      )
+        return this.argumentsValue();
       return this.resolveIdentifier(node.getText());
     }
     if (isLiteralExpression(node)) {
@@ -2914,9 +2991,15 @@ class Lifter {
         origin: { kind: node.getKindName() },
         label: Node.isPrefixUnaryExpression(node) ? token : `post${token}`,
       });
-      // ++/-- on a bound identifier reassigns it. No other unary operator does: `-x` leaves x as it is.
+      // ++/-- writes its operand: a binding is reassigned, a member written (`o.x++`, `o[k]--`,
+      // `this.#n++`), as `x += 1` would. No other unary operator does: `-x` leaves x as it is.
       const steps = token === "++" || token === "--";
-      if (steps && Node.isIdentifier(operand) && this.isBinding(operand.getText()))
+      if (
+        steps &&
+        (Node.isPropertyAccessExpression(operand) || Node.isElementAccessExpression(operand))
+      )
+        this.assignTo(operand, out as ValueId);
+      else if (steps && Node.isIdentifier(operand) && this.isBinding(operand.getText()))
         this.writeBinding(operand.getText(), out as ValueId);
       else if (steps && Node.isIdentifier(operand) && this.env.has(operand.getText())) {
         if (this.cells.has(operand.getText())) this.writeCell(operand.getText(), out as ValueId);
@@ -3240,6 +3323,13 @@ class Lifter {
   private liftBinary(node: import("ts-morph").BinaryExpression): ValueId {
     const op = node.getOperatorToken().getKind();
     const left = node.getLeft();
+    // `#x in o`: whether o has the private name of the nearest class that declares it (#1330).
+    if (op === SyntaxKind.InKeyword && Node.isPrivateIdentifier(left))
+      return this.emit("op", [this.liftExpr(node.getRight())], 1, {
+        origin: { kind: "Binary", text: truncate(node.getText()) },
+        label: `in:${left.getText()}`,
+        heap: true,
+      })[0] as ValueId;
     if (op === SyntaxKind.EqualsToken) {
       const value = this.liftExpr(node.getRight());
       this.assignTo(left, value);
@@ -4548,11 +4638,18 @@ function whileGuard(loop: Node): WhileGuard | undefined {
   return { prefix: statements.slice(0, at), cond: c, rest: statements.slice(at + 1) };
 }
 
-/** Whether an iterating loop has a form the lifter expresses: not `for await`, one declared variable. */
+/**
+ * Whether an iterating loop has a form the lifter expresses: one declared variable; `for await`
+ * only where it can be, in an async function (#1330).
+ */
 function iterateLiftable(
   node: import("ts-morph").ForOfStatement | import("ts-morph").ForInStatement,
 ): boolean {
-  if (Node.isForOfStatement(node) && node.isAwaited()) return false;
+  if (Node.isForOfStatement(node) && node.isAwaited()) {
+    const fn = node.getAncestors().find(isFunctionLikeNode);
+    if (fn === undefined || !(fn as import("ts-morph").FunctionDeclaration).isAsync?.())
+      return false;
+  }
   const init = node.getInitializer();
   // One declared variable, or an existing name the loop assigns each element to (#1276).
   return (
@@ -4654,10 +4751,13 @@ function jumpsSupported(loop: Node): boolean {
       p !== undefined && p.compilerNode !== body.compilerNode;
       p = p.getParent()
     ) {
-      // A jump inside an inner loop, or a switch, try or label of the body, is not one this lifts.
+      // A jump inside an inner loop, or a try or label of the body, is not one this lifts; nor
+      // one inside a switch, unless it is a return and the switch is the chain of ifs it lowers to
+      // (#1330): a return leaves the function wherever it is written.
       if (
         isLoopStatement(p) ||
-        Node.isSwitchStatement(p) ||
+        (Node.isSwitchStatement(p) &&
+          (switchArms(p) === undefined || !Node.isReturnStatement(j))) ||
         Node.isTryStatement(p) ||
         Node.isLabeledStatement(p)
       )
@@ -4685,6 +4785,8 @@ function jumpsSupported(loop: Node): boolean {
 
 /** The env name of the receiver (not a valid source name). */
 const THIS = "%this";
+/** A function's `arguments`, as a name an arrow captures (#1330). */
+const ARGUMENTS = "%arguments";
 /** The heap token (#1285): the last heap operation on the path, or the start. */
 const HEAP = "%heap";
 /** The platform primitive a try statement is a call of (#1276); see runtime.ts. */

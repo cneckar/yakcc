@@ -2,6 +2,7 @@ import { canonicalizeGraph } from "./canonical.js";
 import { isHeapLabel } from "./heap-labels.js";
 import { normalizeLiteral } from "./literal.js";
 import { namedOperation } from "./ops.js";
+import { isRestParam } from "./params.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The line form: the authoring format a model writes (#1275). One directive per line, in
@@ -62,7 +63,7 @@ import { namedOperation } from "./ops.js";
  * inside a branch or a loop is not visible after its end: only a join or a loop's results carry a
  * value out. A free or ambient source is one per symbol, so it is top level wherever it is written.
  */
-import { isRestParam } from "./params.js";
+import { ITERATE_LABEL } from "./types.js";
 import type {
   DiamondLabel,
   DiamondReason,
@@ -71,6 +72,7 @@ import type {
   DucLoop,
   DucNode,
   FunctionMode,
+  IterateKind,
   NodeId,
   ValueId,
 } from "./types.js";
@@ -118,7 +120,7 @@ interface LoopFrame {
   withValues: ValueId[];
   /** An iterating loop: what it iterates, and whether over values (`of`) or keys (`in`). */
   readonly iterable: ValueId | undefined;
-  readonly of: "values" | "keys" | undefined;
+  readonly of: IterateKind | undefined;
   /** Still on the header lines (carry, invariant, element), before the first line of the body. */
   header: boolean;
   /** The header and closing directives already written: each comes at most once. */
@@ -458,17 +460,17 @@ export function parseLineForm(text: string): DucGraph {
     }
 
     if (head === "loop") {
-      const usage = "expected: loop <name> ... [of|in <name>] [with <name> ...]";
+      const usage = "expected: loop <name> ... [of|await-of|in <name>] [with <name> ...]";
       const withAt = rest.indexOf("with");
       const head1 = withAt === -1 ? rest : rest.slice(0, withAt);
       const invNames = withAt === -1 ? [] : rest.slice(withAt + 1);
       if (
         rest.filter((n) => n === "with").length > 1 ||
-        invNames.some((n) => n === "of" || n === "in")
+        invNames.some((n) => n === "of" || n === "in" || n === "await-of")
       ) {
         throw new LineFormError(line, usage);
       }
-      const iterAt = head1.findIndex((n) => n === "of" || n === "in");
+      const iterAt = head1.findIndex((n) => n === "of" || n === "in" || n === "await-of");
       const initNames = iterAt === -1 ? head1 : head1.slice(0, iterAt);
       if (iterAt !== -1 && head1.length !== iterAt + 2) throw new LineFormError(line, usage);
       const of =
@@ -476,7 +478,9 @@ export function parseLineForm(text: string): DucGraph {
           ? undefined
           : head1[iterAt] === "of"
             ? ("values" as const)
-            : ("keys" as const);
+            : head1[iterAt] === "await-of"
+              ? ("async values" as const)
+              : ("keys" as const);
       const within = currentRegion();
       const frame: LoopFrame = {
         kind: "loop",
@@ -632,9 +636,7 @@ export function parseLineForm(text: string): DucGraph {
               ...frame.invariantOuter,
             ],
             outputs,
-            ...(frame.of !== undefined
-              ? { label: frame.of === "values" ? "for-of" : "for-in" }
-              : {}),
+            ...(frame.of !== undefined ? { label: ITERATE_LABEL[frame.of] } : {}),
             loop: {
               id: frame.id,
               carry: frame.carry,
@@ -1071,7 +1073,10 @@ export function printLineForm(g: DucGraph): string {
     if (rec.iterate !== undefined) printed.add(producerOf(rec.iterate.element).id);
     const header = ["loop", ...loop.inputs.slice(0, count)];
     if (rec.iterate !== undefined)
-      header.push(rec.iterate.of === "values" ? "of" : "in", loop.inputs[count] as ValueId);
+      header.push(
+        rec.iterate.of === "values" ? "of" : rec.iterate.of === "keys" ? "in" : "await-of",
+        loop.inputs[count] as ValueId,
+      );
     if (rec.invariant.length > 0) header.push("with", ...loop.inputs.slice(offset));
     const body = printScope(bodyPathOf(loop));
     return [

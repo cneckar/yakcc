@@ -13,6 +13,7 @@ import type {
   DucLoop,
   DucNode,
   FunctionMode,
+  IterateKind,
   NodeOrigin,
   ValueId,
 } from "./types.js";
@@ -117,7 +118,7 @@ export function encodeGraph(g: DucGraph): CompactGraph {
             node.loop.next.map(valueIndex),
             node.loop.cond === undefined ? -1 : valueIndex(node.loop.cond),
             node.loop.iterate === undefined ? -1 : valueIndex(node.loop.iterate.element),
-            node.loop.iterate === undefined ? -1 : node.loop.iterate.of === "values" ? 0 : 1,
+            node.loop.iterate === undefined ? -1 : ITERATE_KINDS.indexOf(node.loop.iterate.of),
           ];
     return [
       intern(node.kind),
@@ -193,7 +194,7 @@ export function decodeGraph(c: CompactGraph): DucGraph {
           next: loop[3].map(value),
           ...(loop[4] !== -1 ? { cond: value(loop[4]) } : {}),
           ...(loop[5] !== -1
-            ? { iterate: { element: value(loop[5]), of: loop[6] === 0 ? "values" : "keys" } }
+            ? { iterate: { element: value(loop[5]), of: iterateKind(loop[6]) } }
             : {}),
         } as DucLoop;
       }
@@ -221,4 +222,14 @@ export function decodeGraph(c: CompactGraph): DucGraph {
     ...(branches.length > 0 ? { branches } : {}),
     ...(c.m !== undefined ? { mode: c.m } : {}),
   };
+}
+
+/** The iteration kinds, by their encoded index (#1330: `async values` is 2). */
+const ITERATE_KINDS: readonly IterateKind[] = ["values", "keys", "async values"];
+
+function iterateKind(index: unknown): IterateKind {
+  const kind = ITERATE_KINDS[index as number];
+  if (kind === undefined)
+    throw new Error(`an iteration of kind ${String(index)} is not one this reads`);
+  return kind;
 }
