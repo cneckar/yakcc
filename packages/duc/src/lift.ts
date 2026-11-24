@@ -3014,9 +3014,42 @@ class Lifter {
       ...(Node.isBinaryExpression(node) ? [node] : []),
       ...node.getDescendantsOfKind(SyntaxKind.BinaryExpression),
     ];
+    // A destructuring assignment's targets are every name its pattern writes (`({ a: x, b } = o)`,
+    // `[x, , ...y] = xs`, defaults and nested patterns included).
+    const considerPattern = (target: Node): void => {
+      if (Node.isParenthesizedExpression(target)) {
+        considerPattern(target.getExpression());
+        return;
+      }
+      if (Node.isObjectLiteralExpression(target)) {
+        for (const p of target.getProperties()) {
+          if (Node.isShorthandPropertyAssignment(p)) consider(p.getNameNode());
+          else if (Node.isPropertyAssignment(p)) {
+            const init = p.getInitializer();
+            if (init !== undefined) considerPattern(init);
+          } else if (Node.isSpreadAssignment(p)) considerPattern(p.getExpression());
+        }
+        return;
+      }
+      if (Node.isArrayLiteralExpression(target)) {
+        for (const el of target.getElements()) {
+          if (Node.isSpreadElement(el)) considerPattern(el.getExpression());
+          else if (!Node.isOmittedExpression(el)) considerPattern(el);
+        }
+        return;
+      }
+      // A default (`x = 1` in a pattern) writes its left side.
+      if (
+        Node.isBinaryExpression(target) &&
+        target.getOperatorToken().getKind() === SyntaxKind.EqualsToken
+      )
+        considerPattern(target.getLeft());
+      else consider(target);
+    };
     for (const bin of bins) {
       const op = bin.getOperatorToken().getKind();
-      if (op === SyntaxKind.EqualsToken || COMPOUND_ASSIGN.has(op)) consider(bin.getLeft());
+      if (op === SyntaxKind.EqualsToken) considerPattern(bin.getLeft());
+      else if (COMPOUND_ASSIGN.has(op)) consider(bin.getLeft());
     }
     const unaries = [
       ...(Node.isPostfixUnaryExpression(node) || Node.isPrefixUnaryExpression(node) ? [node] : []),

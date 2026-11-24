@@ -101,6 +101,21 @@ const GLOBALS = new Set([
   "Set",
   "Object",
   "JSON",
+  "BigInt",
+  "ArrayBuffer",
+  "DataView",
+  "TextEncoder",
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
 ]);
 /**
  * The fixed-width and float64-bits leaves (DEC-DUC-OPERATIONS-AS-ATOMS-001) that raised C calls:
@@ -968,6 +983,18 @@ function lowerFunction(
       );
       return;
     }
+    if (ins.length === 2 && lbl === "**") {
+      // Two integer literals whose power is an integer a double holds exactly (2 ** 32): that
+      // value, which every pow that is right on exact cases gives.
+      const exact = exactPower(
+        producer.get(resolve(ins[0] as ValueId)),
+        producer.get(resolve(ins[1] as ValueId)),
+      );
+      if (exact !== undefined) {
+        set(out, boxedNumber(exact));
+        return;
+      }
+    }
     if (ins.length === 2 && lbl === "**")
       throw new LlvmEmitError(
         "** is implementation-approximated in ECMAScript: a native pow need not give the reference's last bit",
@@ -1229,6 +1256,20 @@ function lowerFunction(
   );
 }
 
+/**
+ * b ** e for two literals, when both are integers (e >= 0) and the power is an integer below 2^53:
+ * exact, so no implementation's approximation is involved. Otherwise undefined.
+ */
+function exactPower(b: DucNode | undefined, e: DucNode | undefined): number | undefined {
+  const lit = (n: DucNode | undefined): number | undefined =>
+    n?.kind === "literal-source" && /^\d+$/.test(n.label ?? "") ? Number(n.label) : undefined;
+  const x = lit(b);
+  const y = lit(e);
+  if (x === undefined || y === undefined || !Number.isSafeInteger(x) || y > 64) return undefined;
+  const p = BigInt(x) ** BigInt(y);
+  return p <= 2n ** 53n ? Number(p) : undefined;
+}
+
 /** The graph lowered to an LLVM module of boxed values, calling the runtime. */
 export function emitLlvmBoxed(input: DucGraph, symbol = "f"): LlvmModule {
   // ECMAScript's operations: each generic operation as the case of them it is (#1310).
@@ -1286,6 +1327,27 @@ export interface NativeModule {
   readonly id: string;
   readonly statements: readonly NativeModuleStatement[];
   readonly requires?: Readonly<Record<string, string>>;
+  /** An ECMAScript module's linking (#1333): its imports, exports and dependencies. */
+  readonly esm?: NativeEsm;
+}
+
+/** Where a name an ECMAScript module imports or re-exports comes from: a module, and its export. */
+export interface NativeImport {
+  readonly module: string;
+  /** An export name; `*` is the module's namespace. */
+  readonly name: string;
+}
+
+/**
+ * An ECMAScript module's linking (ECMA-262 16.2): each imported local name's module and export; each
+ * export, a local binding or a re-export; the modules `export *` takes names from; and the modules
+ * evaluated before its body, in the order its import and export declarations name them.
+ */
+export interface NativeEsm {
+  readonly imports: Readonly<Record<string, NativeImport>>;
+  readonly exports: Readonly<Record<string, { readonly local: string } | NativeImport>>;
+  readonly stars: readonly string[];
+  readonly deps: readonly string[];
 }
 
 export interface NativeModules {
@@ -1313,6 +1375,56 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
   const globals: string[] = [];
   const symbols: Record<string, string> = {};
   const g = (i: number, what: string): string => `@"m${i}.${what}"`;
+  // An export of an ECMAScript module, to the binding that holds it (a live binding: read where it
+  // is used), or to a module's namespace; through re-exports and `export *`.
+  const resolveExport = (
+    i: number,
+    name: string,
+    seen: Set<string> = new Set(),
+  ): { slot: string } | { ns: number } | undefined => {
+    const mod = modules[i] as NativeModule;
+    const key = `${i}:${name}`;
+    if (seen.has(key)) return undefined;
+    seen.add(key);
+    if (name === "*") return { ns: i };
+    const esm = mod.esm;
+    if (esm === undefined) return undefined;
+    const ex = esm.exports[name];
+    if (ex !== undefined && "local" in ex) {
+      const imported = esm.imports[ex.local];
+      if (imported !== undefined) return resolveImport(imported, seen);
+      return { slot: g(i, `b.${ex.local}`) };
+    }
+    if (ex !== undefined) return resolveImport(ex, seen);
+    if (name === "default") return undefined;
+    for (const star of esm.stars) {
+      const t = index.get(star);
+      const hit = t === undefined ? undefined : resolveExport(t, name, seen);
+      if (hit !== undefined) return hit;
+    }
+    return undefined;
+  };
+  const resolveImport = (
+    imp: NativeImport,
+    seen: Set<string> = new Set(),
+  ): { slot: string } | { ns: number } | undefined => {
+    const t = index.get(imp.module);
+    if (t === undefined) throw new LlvmEmitError(`the module ${imp.module} is not in the program`);
+    return resolveExport(t, imp.name, seen);
+  };
+  /** Every name a module exports, `export *`'s included (not their default). */
+  const exportNames = (i: number, seen: Set<number> = new Set()): string[] => {
+    if (seen.has(i)) return [];
+    seen.add(i);
+    const esm = (modules[i] as NativeModule).esm;
+    if (esm === undefined) return [];
+    const out = new Set(Object.keys(esm.exports));
+    for (const star of esm.stars) {
+      const t = index.get(star);
+      if (t !== undefined) for (const n of exportNames(t, seen)) if (n !== "default") out.add(n);
+    }
+    return [...out];
+  };
   modules.forEach((mod, i) => {
     const names = new Set(mod.statements.flatMap((st) => st.declares));
     for (const what of ["module", "exports", "require"])
@@ -1330,7 +1442,20 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
               : names.has(name)
                 ? g(i, `b.${name}`)
                 : undefined;
-        if (slot === undefined) return undefined;
+        if (slot === undefined) {
+          const imp = mod.esm?.imports[name];
+          if (imp === undefined) return undefined;
+          const target = resolveImport(imp);
+          if (target === undefined)
+            throw new LlvmEmitError(
+              `${imp.module} has no export ${imp.name} (imported by ${mod.id})`,
+            );
+          const r = fresh();
+          // A live binding: the exporting module's own variable, read where it is used.
+          if ("slot" in target) emit(`${r} = load i64, ptr ${target.slot}`);
+          else emit(`${r} = call i64 ${g(target.ns, "init")}()`);
+          return r;
+        }
         const r = fresh();
         emit(`${r} = load i64, ptr ${slot}`);
         return r;
@@ -1397,6 +1522,22 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     const missing = m.constant(`Error: Cannot find module (required from ${mod.id})`, true);
     req.push(`  call void @yk_fail(ptr ${missing.ptr})`, "  unreachable", "}", "");
     m.functions.push(req.join("\n"));
+    // An ECMAScript module's exports object is its namespace: each export's value, once its body
+    // has run.
+    const namespace: string[] = [];
+    if (mod.esm !== undefined) {
+      m.used.add("yk_set_named");
+      exportNames(i).forEach((name, k) => {
+        const target = resolveExport(i, name);
+        if (target === undefined) return;
+        const key = m.constant(name);
+        if ("slot" in target) namespace.push(`  %nv${k} = load i64, ptr ${target.slot}`);
+        else namespace.push(`  %nv${k} = call i64 ${g(target.ns, "init")}()`);
+        namespace.push(
+          `  call i64 @yk_set_named(i64 %ex, ptr ${key.ptr}, i64 ${key.length}, i64 %nv${k})`,
+        );
+      });
+    }
     // The initializer: once; a second call (a cycle, or another require) gets the exports so far.
     const exportsKey = m.constant("exports");
     m.used.add("yk_object_of");
@@ -1421,7 +1562,15 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         `  store i64 %mod, ptr ${g(i, "module")}`,
         `  %req = call i64 @yk_closure_new(ptr ${g(i, "require.fn")}, i32 0, i64 0, ptr null)`,
         `  store i64 %req, ptr ${g(i, "require")}`,
+        // An ECMAScript module's dependencies are evaluated first, in order (a cycle sees a module
+        // still being evaluated, as ECMA-262's does).
+        ...(mod.esm?.deps ?? []).map((d, k) => {
+          const t = index.get(d);
+          if (t === undefined) throw new LlvmEmitError(`the module ${d} is not in the program`);
+          return `  %dep${k} = call i64 ${g(t, "init")}()`;
+        }),
         ...init,
+        ...namespace,
         "  br label %done",
         "done:",
         `  %m = load i64, ptr ${g(i, "module")}`,

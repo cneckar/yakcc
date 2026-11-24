@@ -230,6 +230,11 @@ static yk big_negate(yk a);
 static yk big_add_small(yk a, int64_t k);
 static uint32_t to_uint32(yk v);
 static int32_t to_int32(yk v);
+static int buffer_get(yk obj, yk key, yk *out);
+static void range_error(const char *what);
+static yk buffer_primitive(yk v);
+static int buffer_set(yk obj, yk key, yk value);
+static int buffer_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
 
 /* --- ToString --- */
 
@@ -285,6 +290,69 @@ static yk number_to_string(double d) {
 
 static yk to_string(yk v);
 
+/*
+ * Number::toString(radix) for a radix other than 10, as V8 writes it (DoubleToRadixCString): the
+ * fraction's digits while they are above half a unit in the last place of the value (scaled with
+ * them), rounded half to even with a carry back through the digits written; the integer's digits by
+ * repeated division, those below the double's precision zeros.
+ */
+static yk number_to_radix(double value, int radix) {
+  static const char chars[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+  if (value != value) return ascii("NaN");
+  if (isinf(value)) return ascii(value < 0 ? "-Infinity" : "Infinity");
+  enum { kBufferSize = 2200 };
+  char buffer[kBufferSize];
+  int integer_cursor = kBufferSize / 2;
+  int fraction_cursor = integer_cursor;
+  int negative = value < 0;
+  if (negative) value = -value;
+  double integer = floor(value);
+  double fraction = value - integer;
+  double delta = 0.5 * (nextafter(value, INFINITY) - value);
+  double min_delta = nextafter(0.0, 1.0);
+  if (delta < min_delta) delta = min_delta;
+  if (fraction >= delta) {
+    buffer[fraction_cursor++] = '.';
+    do {
+      fraction *= radix;
+      delta *= radix;
+      int digit = (int)fraction;
+      buffer[fraction_cursor++] = chars[digit];
+      fraction -= digit;
+      if (fraction > 0.5 || (fraction == 0.5 && (digit & 1))) {
+        if (fraction + delta > 1) {
+          for (;;) {
+            fraction_cursor--;
+            if (fraction_cursor == kBufferSize / 2) {
+              integer += 1;
+              break;
+            }
+            char c = buffer[fraction_cursor];
+            int d = c > '9' ? (c - 'a' + 10) : (c - '0');
+            if (d + 1 < radix) {
+              buffer[fraction_cursor++] = chars[d + 1];
+              break;
+            }
+          }
+          break;
+        }
+      }
+    } while (fraction >= delta);
+  }
+  while (integer / radix >= 9007199254740992.0) {
+    integer /= radix;
+    buffer[--integer_cursor] = '0';
+  }
+  do {
+    double remainder = fmod(integer, radix);
+    buffer[--integer_cursor] = chars[(int)remainder];
+    integer = (integer - remainder) / radix;
+  } while (integer > 0);
+  if (negative) buffer[--integer_cursor] = '-';
+  buffer[fraction_cursor] = 0;
+  return ascii(buffer + integer_cursor);
+}
+
 static yk array_join(yk_array *a, yk_string *sep) {
   yk s = ascii("");
   for (uint32_t i = 0; i < a->len; i++) {
@@ -318,6 +386,10 @@ static yk to_primitive(yk v) {
   if (is_closure(v)) return ascii("function () { [native code] }");
   if (!is_object(v)) return v;
   yk_object *self = (yk_object *)PTR(v);
+  /* A typed array's toString is its join; a buffer's and a view's, their tag. */
+  if (self->kind == 7) return buffer_primitive(v);
+  if (self->kind == 6) return ascii("[object ArrayBuffer]");
+  if (self->kind == 8) return ascii("[object DataView]");
   if (self->kind == 3)
     return concat(str(concat(str(concat(str(ascii("/")), str(self->regex[0]))), str(ascii("/")))), str(self->regex[1]));
   static const char *names[2] = {"valueOf", "toString"};
@@ -607,6 +679,10 @@ yk yk_get(yk obj, yk key) {
   }
   if (is_object(obj)) {
     yk_object *o = (yk_object *)PTR(obj);
+    if (o->kind >= 6 && o->kind <= 8) {
+      yk got;
+      if (buffer_get(obj, key, &got)) return got;
+    }
     if ((o->kind == 1 || o->kind == 2) && key_is(key, "size")) return yk_number(o->entries->len);
     if (o->kind == 4 || o->kind == 5) {
       yk m = async_member(o, key);
@@ -655,6 +731,10 @@ yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk
       yk m = async_member(o, key);
       if (m != 0) return call_value(m, recv, argc, argv);
     }
+    if (o->kind >= 6 && o->kind <= 8) {
+      yk out;
+      if (buffer_method(recv, key, argc, argv, &out)) return out;
+    }
     if (o->kind == 1 || o->kind == 2) {
       yk out;
       if (collection_method(o, recv, key, argc, argv, &out)) return out;
@@ -688,6 +768,54 @@ yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk
       for (int64_t i = from; i + t->len <= len; i++)
         if (memcmp(s0->units + i, t->units, (size_t)t->len * 2) == 0) return YK_TRUE;
       return YK_FALSE;
+    }
+    if (key_is(key, "padStart") || key_is(key, "padEnd")) {
+      /* StringPad: to ToLength(maxLength) units, with the filler (default " ") repeated, cut. */
+      double max = to_number(arg0);
+      if (max != max) max = 0;
+      yk_string *fill = str(arg1 == YK_UNDEFINED ? ascii(" ") : to_string(arg1));
+      if (max <= s0->len || fill->len == 0) return recv;
+      if (max > 536870888) range_error("Invalid string length");
+      uint32_t total = (uint32_t)max, pad = total - s0->len;
+      yk_string *r = new_string(total);
+      int start = key_is(key, "padStart");
+      uint32_t at = start ? 0 : s0->len;
+      for (uint32_t i = 0; i < pad; i++) r->units[at + i] = fill->units[i % fill->len];
+      memcpy(r->units + (start ? pad : 0), s0->units, (size_t)s0->len * 2);
+      return string_of(r);
+    }
+    if (key_is(key, "repeat")) {
+      double c = to_number(arg0);
+      if (c != c) c = 0;
+      c = trunc(c);
+      if (c < 0 || isinf(c)) range_error("Invalid count value");
+      if (s0->len == 0 || c == 0) return ascii("");
+      if (c * s0->len > 536870888) range_error("Invalid string length");
+      yk_string *r = new_string((uint32_t)c * s0->len);
+      for (uint32_t i = 0; i < (uint32_t)c; i++) memcpy(r->units + (size_t)i * s0->len, s0->units, (size_t)s0->len * 2);
+      return string_of(r);
+    }
+    if (key_is(key, "lastIndexOf")) {
+      yk_string *t = str(to_string(arg0));
+      double p = arg1 == YK_UNDEFINED ? NAN : to_number(arg1);
+      int64_t len = s0->len, from = p != p ? len : p < 0 ? 0 : p > len ? len : (int64_t)trunc(p);
+      if (from > len - (int64_t)t->len) from = len - (int64_t)t->len;
+      for (int64_t i = from; i >= 0; i--)
+        if (memcmp(s0->units + i, t->units, (size_t)t->len * 2) == 0) return yk_number((double)i);
+      return yk_number(-1);
+    }
+    if (key_is(key, "concat")) {
+      yk r = recv;
+      for (uint64_t i = 0; i < argc; i++) r = concat(str(r), str(to_string(argv[i])));
+      return r;
+    }
+    if (key_is(key, "trimStart") || key_is(key, "trimEnd")) {
+      uint32_t a = 0, b = s0->len;
+      if (key_is(key, "trimStart")) while (a < b && is_space(s0->units[a])) a++;
+      else while (b > a && is_space(s0->units[b - 1])) b--;
+      yk_string *r = new_string(b - a);
+      memcpy(r->units, s0->units + a, (size_t)(b - a) * 2);
+      return string_of(r);
     }
     if (key_is(key, "trim")) {
       uint32_t a = 0, b = s0->len;
@@ -795,6 +923,15 @@ yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk
     if (key_is(key, "join"))
       return array_join(a, str(arg0 == YK_UNDEFINED ? ascii(",") : to_string(arg0)));
   }
+  if ((is_number(recv) || is_bool(recv) || is_bigint(recv)) && key_is(key, "toString")) {
+    if (is_number(recv) && arg0 != YK_UNDEFINED) {
+      double r = trunc(to_number(arg0));
+      if (!(r >= 2 && r <= 36)) range_error("toString() radix must be between 2 and 36");
+      if (r != 10) return number_to_radix(num(recv), (int)r);
+    }
+    return to_string(recv);
+  }
+  if ((is_number(recv) || is_bool(recv) || is_bigint(recv)) && key_is(key, "valueOf")) return recv;
   fprintf(stderr, "TypeError: %.*s is not a function here\n", (int)n, name);
   exit(70);
 }
@@ -1259,6 +1396,7 @@ static int protected_call(yk f, uint64_t argc, const yk *argv, yk *result) {
 
 /* obj[key] = value. The graph's write yields the object, as written. */
 yk yk_set(yk obj, yk key, yk value) {
+  if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 7 && buffer_set(obj, key, value)) return obj;
   if (is_object(obj) || is_closure(obj)) {
     yk k = to_string(key), slot;
     /* A setter along the chain is called; otherwise the property is the object's own. */
@@ -2112,7 +2250,9 @@ static int collection_method(yk_object *o, yk recv, yk key, uint64_t argc, const
 
 /* The items of an iterable, as for…of gives them: an array's, a string's code points, a Map's
  * [key, value] pairs, a Set's values. */
+static yk_array *typed_items_v(yk v);
 static yk_array *iterable_items(yk v) {
+  if (is_object(v) && ((yk_object *)PTR(v))->kind == 7) return typed_items_v(v);
   yk_array *r = new_array(4);
   if (is_object(v) && ((yk_object *)PTR(v))->kind == 5) {
     yk e;
@@ -2690,6 +2830,41 @@ static yk builtin_is_finite(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
   double d = to_number(argc > 0 ? argv[0] : YK_UNDEFINED);
   return yk_bool(d == d && !isinf(d));
+}
+/* Object.is: SameValue (NaN is NaN; 0 is not -0). */
+static yk builtin_object_is(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  yk a = argc > 0 ? argv[0] : YK_UNDEFINED, b = argc > 1 ? argv[1] : YK_UNDEFINED;
+  if (is_number(a) && is_number(b)) {
+    double x = num(a), y = num(b);
+    if (x != x && y != y) return YK_TRUE;
+    if (x == 0 && y == 0) return yk_bool((1 / x < 0) == (1 / y < 0));
+    return yk_bool(x == y);
+  }
+  return yk_bool(strict_equal(a, b));
+}
+/* Number.isFinite, isInteger, isSafeInteger and isNaN: false for anything but a number. */
+static yk builtin_number_is_finite(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  if (argc == 0 || !is_number(argv[0])) return YK_FALSE;
+  double d = num(argv[0]);
+  return yk_bool(d == d && !isinf(d));
+}
+static yk builtin_number_is_integer(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  if (argc == 0 || !is_number(argv[0])) return YK_FALSE;
+  double d = num(argv[0]);
+  return yk_bool(d == d && !isinf(d) && trunc(d) == d);
+}
+static yk builtin_number_is_safe_integer(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  if (argc == 0 || !is_number(argv[0])) return YK_FALSE;
+  double d = num(argv[0]);
+  return yk_bool(d == d && !isinf(d) && trunc(d) == d && fabs(d) <= 9007199254740991.0);
+}
+static yk builtin_number_is_nan(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  return yk_bool(argc > 0 && is_number(argv[0]) && num(argv[0]) != num(argv[0]));
 }
 /* Array(n) and new Array(n): n holes, read as undefined; Array(a, b, …): those elements. */
 static yk builtin_array(void *c, yk self, uint64_t argc, const yk *argv) {
@@ -3418,6 +3593,635 @@ yk yk_settle(yk v) {
  * A global the platform gives, by name: a function value, NaN or Infinity, or undefined when the
  * runtime has none (so a `typeof` probe for it sees what a platform without it gives).
  */
+/* --- ArrayBuffer, the typed arrays, DataView and TextEncoder (ECMA-262 25.1-25.3, 23.2; WHATWG
+ * Encoding) -----------------------------------------------------------------------------------
+ *
+ * An ArrayBuffer (object kind 6) owns its bytes; a typed array (kind 7) and a DataView (kind 8) are
+ * views of one: its buffer, a byte offset and a length (elements, or bytes for a DataView), so views
+ * of one buffer see each other's writes. Elements are stored as the platform's bytes; every target
+ * is little-endian, and a DataView reads and writes the order it is told. A typed array's element
+ * write converts as ECMA-262's does (ToInt8 … ToUint8Clamp, ToBigInt64 …); an index that is not one
+ * of its elements reads undefined and writes nothing.
+ */
+
+typedef struct {
+  uint32_t len;
+  uint8_t *data;
+} yk_buffer;
+typedef struct {
+  yk buffer;
+  uint32_t offset, length;
+  int32_t type;
+} yk_view;
+
+enum { TA_I8, TA_U8, TA_U8C, TA_I16, TA_U16, TA_I32, TA_U32, TA_F32, TA_F64, TA_BI64, TA_BU64, TA_COUNT };
+static const char *const ta_names[TA_COUNT] = {"Int8Array",   "Uint8Array",    "Uint8ClampedArray",
+                                               "Int16Array",  "Uint16Array",   "Int32Array",
+                                               "Uint32Array", "Float32Array",  "Float64Array",
+                                               "BigInt64Array", "BigUint64Array"};
+static const uint32_t ta_size[TA_COUNT] = {1, 1, 1, 2, 2, 4, 4, 4, 8, 8, 8};
+#define K_BUFFER 6
+#define K_TYPED 7
+#define K_DATAVIEW 8
+
+static yk_object *object_of_kind(yk v, int32_t kind) {
+  if (!is_object(v)) return NULL;
+  yk_object *o = (yk_object *)PTR(v);
+  return o->kind == kind ? o : NULL;
+}
+static yk_buffer *buffer_of(yk v) {
+  yk_object *o = object_of_kind(v, K_BUFFER);
+  return o == NULL ? NULL : (yk_buffer *)o->ext;
+}
+static yk_view *typed_of(yk v) {
+  yk_object *o = object_of_kind(v, K_TYPED);
+  return o == NULL ? NULL : (yk_view *)o->ext;
+}
+static yk_view *dataview_of(yk v) {
+  yk_object *o = object_of_kind(v, K_DATAVIEW);
+  return o == NULL ? NULL : (yk_view *)o->ext;
+}
+static yk new_kind(int32_t kind, void *ext) {
+  yk v = yk_object_of(0, NULL, NULL);
+  yk_object *o = (yk_object *)PTR(v);
+  o->kind = kind;
+  o->ext = ext;
+  return v;
+}
+static yk new_buffer(uint32_t len) {
+  yk_buffer *b = alloc(sizeof(yk_buffer));
+  b->len = len;
+  b->data = alloc(len + 1);
+  memset(b->data, 0, len + 1);
+  return new_kind(K_BUFFER, b);
+}
+static yk new_typed(int32_t type, yk buffer, uint32_t offset, uint32_t length) {
+  yk_view *t = alloc(sizeof(yk_view));
+  *t = (yk_view){buffer, offset, length, type};
+  return new_kind(K_TYPED, t);
+}
+static uint8_t *view_bytes(yk_view *t) { return buffer_of(t->buffer)->data + t->offset; }
+static int is_bigint_type(int32_t type) { return type == TA_BI64 || type == TA_BU64; }
+
+/* ToIndex: a RangeError for a negative or too large value. */
+static uint32_t to_index(yk v, const char *what) {
+  if (v == YK_UNDEFINED) return 0;
+  double d = to_number(v);
+  if (d != d) d = 0;
+  d = trunc(d);
+  if (d < 0 || d > 4294967295.0) range_error(what);
+  return (uint32_t)d;
+}
+
+/* The bits of ToUint32 of a double (modulo 2^32). */
+static uint32_t double_to_u32(double d) {
+  if (d != d || isinf(d)) return 0;
+  d = fmod(trunc(d), 4294967296.0);
+  if (d < 0) d += 4294967296.0;
+  return (uint32_t)d;
+}
+static yk_bigint *want_bigint(yk v) {
+  v = to_primitive(v);
+  if (v == YK_TRUE) return big(big_from_u64(1, 0));
+  if (v == YK_FALSE) return big(big_from_u64(0, 0));
+  if (is_string(v)) {
+    yk b = big_from_string_v(v);
+    if (b == 0) yk_throw(make_error("SyntaxError", ascii("Cannot convert the string to a BigInt")));
+    return big(b);
+  }
+  if (!is_bigint(v)) type_error("Cannot convert the value to a BigInt");
+  return big(v);
+}
+
+static yk ta_get(yk_view *t, uint32_t i) {
+  uint8_t *p = view_bytes(t) + (size_t)i * ta_size[t->type];
+  switch (t->type) {
+  case TA_I8: return yk_number(*(int8_t *)p);
+  case TA_U8:
+  case TA_U8C: return yk_number(*p);
+  case TA_I16: { int16_t x; memcpy(&x, p, 2); return yk_number(x); }
+  case TA_U16: { uint16_t x; memcpy(&x, p, 2); return yk_number(x); }
+  case TA_I32: { int32_t x; memcpy(&x, p, 4); return yk_number(x); }
+  case TA_U32: { uint32_t x; memcpy(&x, p, 4); return yk_number(x); }
+  case TA_F32: { float x; memcpy(&x, p, 4); return yk_number(x); }
+  case TA_F64: { double x; memcpy(&x, p, 8); return yk_number(x); }
+  case TA_BI64: { int64_t x; memcpy(&x, p, 8); return big_from_i64(x); }
+  default: { uint64_t x; memcpy(&x, p, 8); return big_from_u64(x, 0); }
+  }
+}
+/* A value converted as an element of the type: its bytes. */
+static void ta_encode(int32_t type, yk value, uint8_t *p) {
+  if (is_bigint_type(type)) {
+    uint64_t x = big_low64(want_bigint(value));
+    memcpy(p, &x, 8);
+    return;
+  }
+  double d = to_number(value);
+  switch (type) {
+  case TA_I8:
+  case TA_U8: *p = (uint8_t)double_to_u32(d); return;
+  case TA_U8C: {
+    /* ToUint8Clamp: NaN 0; clamped to [0, 255]; rounded half to even. */
+    uint8_t c;
+    if (d != d || d <= 0) c = 0;
+    else if (d >= 255) c = 255;
+    else {
+      double f = floor(d);
+      c = (uint8_t)(f + 0.5 < d ? f + 1 : d < f + 0.5 ? f : ((uint32_t)f % 2 == 0 ? f : f + 1));
+    }
+    *p = c;
+    return;
+  }
+  case TA_I16:
+  case TA_U16: { uint16_t x = (uint16_t)double_to_u32(d); memcpy(p, &x, 2); return; }
+  case TA_I32:
+  case TA_U32: { uint32_t x = double_to_u32(d); memcpy(p, &x, 4); return; }
+  case TA_F32: { float x = (float)d; memcpy(p, &x, 4); return; }
+  default: memcpy(p, &d, 8); return;
+  }
+}
+static void ta_set(yk_view *t, uint32_t i, yk value) {
+  uint8_t tmp[8];
+  /* The value converts first (which may throw), then is stored. */
+  ta_encode(t->type, value, tmp);
+  memcpy(view_bytes(t) + (size_t)i * ta_size[t->type], tmp, ta_size[t->type]);
+}
+
+/* A key of an integer-indexed object: 1 and its index if it is a CanonicalNumericIndexString (or
+   a number) that names an element; -1 if it is numeric but names none; 0 if it is not numeric. */
+static int typed_index(yk key, uint32_t length, uint32_t *out) {
+  double d;
+  if (is_number(key)) d = num(key);
+  else if (is_string(key)) {
+    yk_string *s = str(key);
+    if (s->len == 2 && s->units[0] == '-' && s->units[1] == '0') return -1;
+    d = string_to_number(s);
+    if (!string_equal(str(number_to_string(d)), s)) return 0;
+  } else
+    return 0;
+  if (d != d || d != trunc(d) || d < 0 || (d == 0 && 1 / d < 0) || d >= length) return -1;
+  *out = (uint32_t)d;
+  return 1;
+}
+
+/* A typed array made from a source: its elements, each converted. */
+static yk typed_from_items(int32_t type, yk_array *items) {
+  yk buf = new_buffer(items->len * ta_size[type]);
+  yk v = new_typed(type, buf, 0, items->len);
+  yk_view *t = typed_of(v);
+  for (uint32_t i = 0; i < items->len; i++) ta_set(t, i, items->items[i]);
+  return v;
+}
+static yk_array *typed_items(yk_view *t) {
+  yk_array *a = new_array(t->length);
+  for (uint32_t i = 0; i < t->length; i++) push(a, ta_get(t, i));
+  return a;
+}
+
+/* new T(), new T(length), new T(typedArray | arrayLike | iterable), new T(buffer, offset, length). */
+static yk typed_construct(int32_t type, uint64_t argc, const yk *argv) {
+  yk a0 = argc > 0 ? argv[0] : YK_UNDEFINED;
+  uint32_t size = ta_size[type];
+  yk_buffer *b = buffer_of(a0);
+  if (b != NULL) {
+    uint32_t offset = to_index(argc > 1 ? argv[1] : YK_UNDEFINED, "Start offset is out of bounds");
+    if (offset % size != 0) range_error("start offset of the typed array should be a multiple of its element size");
+    uint32_t length;
+    if (argc > 2 && argv[2] != YK_UNDEFINED) {
+      length = to_index(argv[2], "Invalid typed array length");
+      if ((uint64_t)offset + (uint64_t)length * size > b->len) range_error("Invalid typed array length");
+    } else {
+      if (b->len % size != 0) range_error("byte length of the typed array should be a multiple of its element size");
+      if (offset > b->len) range_error("Start offset is outside the bounds of the buffer");
+      length = (b->len - offset) / size;
+    }
+    return new_typed(type, a0, offset, length);
+  }
+  yk_view *src = typed_of(a0);
+  if (src != NULL) {
+    if (is_bigint_type(type) != is_bigint_type(src->type)) type_error("Content types of the typed arrays differ");
+    return typed_from_items(type, typed_items(src));
+  }
+  if (is_reference(a0)) return typed_from_items(type, iterable_items(a0));
+  uint32_t n = to_index(a0, "Invalid typed array length");
+  return new_typed(type, new_buffer(n * size), 0, n);
+}
+
+static int32_t type_of_code(yk_code code);
+
+/* T.from(source, mapFn) and T.of(...items). */
+static yk typed_from(int32_t type, uint64_t argc, const yk *argv) {
+  yk_array *items = iterable_items(argc > 0 ? argv[0] : YK_UNDEFINED);
+  if (argc > 1 && argv[1] != YK_UNDEFINED) {
+    if (!is_closure(argv[1])) type_error("the map function is not a function");
+    yk_array *mapped = new_array(items->len);
+    for (uint32_t i = 0; i < items->len; i++) {
+      yk args[2] = {items->items[i], yk_number(i)};
+      push(mapped, call_value(argv[1], argc > 2 ? argv[2] : YK_UNDEFINED, 2, args));
+    }
+    items = mapped;
+  }
+  return typed_from_items(type, items);
+}
+static yk typed_of_items(int32_t type, uint64_t argc, const yk *argv) {
+  yk_array *items = new_array((uint32_t)argc);
+  for (uint64_t i = 0; i < argc; i++) push(items, argv[i]);
+  return typed_from_items(type, items);
+}
+
+#define TYPED_BUILTINS(k)                                                                       \
+  static yk builtin_ta_##k(void *c, yk s, uint64_t argc, const yk *argv) {                       \
+    (void)c, (void)s;                                                                            \
+    return typed_construct(k, argc, argv);                                                       \
+  }                                                                                              \
+  static yk builtin_ta_from_##k(void *c, yk s, uint64_t argc, const yk *argv) {                  \
+    (void)c, (void)s;                                                                            \
+    return typed_from(k, argc, argv);                                                            \
+  }                                                                                              \
+  static yk builtin_ta_of_##k(void *c, yk s, uint64_t argc, const yk *argv) {                    \
+    (void)c, (void)s;                                                                            \
+    return typed_of_items(k, argc, argv);                                                        \
+  }
+TYPED_BUILTINS(0)
+TYPED_BUILTINS(1)
+TYPED_BUILTINS(2)
+TYPED_BUILTINS(3)
+TYPED_BUILTINS(4)
+TYPED_BUILTINS(5)
+TYPED_BUILTINS(6)
+TYPED_BUILTINS(7)
+TYPED_BUILTINS(8)
+TYPED_BUILTINS(9)
+TYPED_BUILTINS(10)
+static const yk_code ta_codes[TA_COUNT] = {builtin_ta_0, builtin_ta_1, builtin_ta_2, builtin_ta_3,
+                                           builtin_ta_4, builtin_ta_5, builtin_ta_6, builtin_ta_7,
+                                           builtin_ta_8, builtin_ta_9, builtin_ta_10};
+static const yk_code ta_from_codes[TA_COUNT] = {
+    builtin_ta_from_0, builtin_ta_from_1, builtin_ta_from_2, builtin_ta_from_3,
+    builtin_ta_from_4, builtin_ta_from_5, builtin_ta_from_6, builtin_ta_from_7,
+    builtin_ta_from_8, builtin_ta_from_9, builtin_ta_from_10};
+static const yk_code ta_of_codes[TA_COUNT] = {builtin_ta_of_0, builtin_ta_of_1, builtin_ta_of_2,
+                                              builtin_ta_of_3, builtin_ta_of_4, builtin_ta_of_5,
+                                              builtin_ta_of_6, builtin_ta_of_7, builtin_ta_of_8,
+                                              builtin_ta_of_9, builtin_ta_of_10};
+static int32_t type_of_code(yk_code code) {
+  for (int32_t k = 0; k < TA_COUNT; k++)
+    if (ta_codes[k] == code) return k;
+  return -1;
+}
+
+static yk builtin_array_buffer(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return new_buffer(to_index(argc > 0 ? argv[0] : YK_UNDEFINED, "Array buffer allocation failed"));
+}
+static yk builtin_array_buffer_is_view(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk v = argc > 0 ? argv[0] : YK_UNDEFINED;
+  return yk_bool(typed_of(v) != NULL || dataview_of(v) != NULL);
+}
+static yk builtin_data_view(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk_buffer *b = buffer_of(argc > 0 ? argv[0] : YK_UNDEFINED);
+  if (b == NULL) type_error("First argument to DataView constructor must be an ArrayBuffer");
+  uint32_t offset = to_index(argc > 1 ? argv[1] : YK_UNDEFINED, "Start offset is outside the bounds of the buffer");
+  if (offset > b->len) range_error("Start offset is outside the bounds of the buffer");
+  uint32_t length = b->len - offset;
+  if (argc > 2 && argv[2] != YK_UNDEFINED) {
+    length = to_index(argv[2], "Invalid DataView length");
+    if ((uint64_t)offset + length > b->len) range_error("Invalid DataView length");
+  }
+  yk_view *v = alloc(sizeof(yk_view));
+  *v = (yk_view){argv[0], offset, length, 0};
+  return new_kind(K_DATAVIEW, v);
+}
+
+/* UTF-8 of a string's units: a lone surrogate is U+FFFD. */
+static yk utf8_bytes(yk_string *s) {
+  uint8_t *out = alloc((size_t)s->len * 3 + 1);
+  uint32_t n = 0;
+  for (uint32_t i = 0; i < s->len; i++) {
+    uint32_t c = s->units[i];
+    if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s->len && s->units[i + 1] >= 0xDC00 && s->units[i + 1] <= 0xDFFF) {
+      c = 0x10000 + ((c - 0xD800) << 10) + (s->units[i + 1] - 0xDC00);
+      i++;
+    } else if (c >= 0xD800 && c <= 0xDFFF)
+      c = 0xFFFD;
+    if (c < 0x80) out[n++] = (uint8_t)c;
+    else if (c < 0x800) {
+      out[n++] = (uint8_t)(0xC0 | (c >> 6));
+      out[n++] = (uint8_t)(0x80 | (c & 63));
+    } else if (c < 0x10000) {
+      out[n++] = (uint8_t)(0xE0 | (c >> 12));
+      out[n++] = (uint8_t)(0x80 | ((c >> 6) & 63));
+      out[n++] = (uint8_t)(0x80 | (c & 63));
+    } else {
+      out[n++] = (uint8_t)(0xF0 | (c >> 18));
+      out[n++] = (uint8_t)(0x80 | ((c >> 12) & 63));
+      out[n++] = (uint8_t)(0x80 | ((c >> 6) & 63));
+      out[n++] = (uint8_t)(0x80 | (c & 63));
+    }
+  }
+  yk buf = new_buffer(n);
+  memcpy(buffer_of(buf)->data, out, n);
+  return new_typed(TA_U8, buf, 0, n);
+}
+static yk text_encoder_encode(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk v = argc > 0 ? argv[0] : YK_UNDEFINED;
+  return utf8_bytes(str(v == YK_UNDEFINED ? ascii("") : to_string(v)));
+}
+static yk builtin_text_encoder(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s, (void)argc, (void)argv;
+  yk o = yk_object_of(0, NULL, NULL);
+  own_set((yk_object *)PTR(o), ascii("encoding"), ascii("utf-8"));
+  own_set((yk_object *)PTR(o), ascii("encode"), yk_closure_new(text_encoder_encode, 1, 0, NULL));
+  return o;
+}
+
+/* A property of a buffer or a view: its element, or its own accessors' values; 0 if none. */
+static int buffer_get(yk obj, yk key, yk *out) {
+  yk_view *t = typed_of(obj);
+  if (t != NULL) {
+    uint32_t i;
+    int k = typed_index(key, t->length, &i);
+    if (k == 1) return *out = ta_get(t, i), 1;
+    if (k == -1) return *out = YK_UNDEFINED, 1;
+    if (key_is(key, "length")) return *out = yk_number(t->length), 1;
+    if (key_is(key, "byteLength")) return *out = yk_number((double)t->length * ta_size[t->type]), 1;
+    if (key_is(key, "byteOffset")) return *out = yk_number(t->offset), 1;
+    if (key_is(key, "buffer")) return *out = t->buffer, 1;
+    if (key_is(key, "BYTES_PER_ELEMENT")) return *out = yk_number(ta_size[t->type]), 1;
+    return 0;
+  }
+  yk_buffer *b = buffer_of(obj);
+  if (b != NULL && key_is(key, "byteLength")) return *out = yk_number(b->len), 1;
+  yk_view *d = dataview_of(obj);
+  if (d != NULL) {
+    if (key_is(key, "byteLength")) return *out = yk_number(d->length), 1;
+    if (key_is(key, "byteOffset")) return *out = yk_number(d->offset), 1;
+    if (key_is(key, "buffer")) return *out = d->buffer, 1;
+  }
+  return 0;
+}
+/* A write to a typed array's element (or a numeric key that names none: nothing); 0 otherwise. */
+static int buffer_set(yk obj, yk key, yk value) {
+  yk_view *t = typed_of(obj);
+  if (t == NULL) return 0;
+  uint32_t i;
+  int k = typed_index(key, t->length, &i);
+  if (k == 1) ta_set(t, i, value);
+  else if (k == -1) {
+    /* Still converted (which may throw), as IntegerIndexedElementSet does. */
+    uint8_t tmp[8];
+    ta_encode(t->type, value, tmp);
+  }
+  return k != 0;
+}
+
+/* RelativeIndex as slice and fill clamp it. */
+static uint32_t clamp_relative(yk v, uint32_t len, uint32_t dflt) {
+  if (v == YK_UNDEFINED) return dflt;
+  double d = to_number(v);
+  if (d != d) d = 0;
+  d = trunc(d);
+  if (d < 0) d = d + len < 0 ? 0 : d + len;
+  return d > len ? len : (uint32_t)d;
+}
+
+static int dataview_method(yk_view *d, yk key, uint64_t argc, const yk *argv, yk *out) {
+  static const char *const get_names[TA_COUNT] = {"getInt8",   "getUint8",   NULL,         "getInt16",
+                                                  "getUint16", "getInt32",   "getUint32",  "getFloat32",
+                                                  "getFloat64", "getBigInt64", "getBigUint64"};
+  static const char *const set_names[TA_COUNT] = {"setInt8",   "setUint8",   NULL,         "setInt16",
+                                                  "setUint16", "setInt32",   "setUint32",  "setFloat32",
+                                                  "setFloat64", "setBigInt64", "setBigUint64"};
+  for (int32_t type = 0; type < TA_COUNT; type++) {
+    int get = get_names[type] != NULL && key_is(key, get_names[type]);
+    int set = set_names[type] != NULL && key_is(key, set_names[type]);
+    if (!get && !set) continue;
+    uint32_t at = to_index(argc > 0 ? argv[0] : YK_UNDEFINED, "Offset is outside the bounds of the DataView");
+    yk little = argc > (uint64_t)(get ? 1 : 2) ? argv[get ? 1 : 2] : YK_UNDEFINED;
+    uint8_t bytes[8];
+    if (set) ta_encode(type, argc > 1 ? argv[1] : YK_UNDEFINED, bytes);
+    uint32_t size = ta_size[type];
+    if ((uint64_t)at + size > d->length) range_error("Offset is outside the bounds of the DataView");
+    uint8_t *p = buffer_of(d->buffer)->data + d->offset + at;
+    int le = yk_truthy(little);
+    if (set) {
+      for (uint32_t i = 0; i < size; i++) p[i] = bytes[le ? i : size - 1 - i];
+      return *out = YK_UNDEFINED, 1;
+    }
+    for (uint32_t i = 0; i < size; i++) bytes[le ? i : size - 1 - i] = p[i];
+    yk_view tmp = {0, 0, 1, type};
+    (void)tmp;
+    uint8_t *saved = bytes;
+    switch (type) {
+    case TA_I8: return *out = yk_number(*(int8_t *)saved), 1;
+    case TA_U8: return *out = yk_number(*saved), 1;
+    case TA_I16: { int16_t x; memcpy(&x, saved, 2); return *out = yk_number(x), 1; }
+    case TA_U16: { uint16_t x; memcpy(&x, saved, 2); return *out = yk_number(x), 1; }
+    case TA_I32: { int32_t x; memcpy(&x, saved, 4); return *out = yk_number(x), 1; }
+    case TA_U32: { uint32_t x; memcpy(&x, saved, 4); return *out = yk_number(x), 1; }
+    case TA_F32: { float x; memcpy(&x, saved, 4); return *out = yk_number(x), 1; }
+    case TA_F64: { double x; memcpy(&x, saved, 8); return *out = yk_number(x), 1; }
+    case TA_BI64: { int64_t x; memcpy(&x, saved, 8); return *out = big_from_i64(x), 1; }
+    default: { uint64_t x; memcpy(&x, saved, 8); return *out = big_from_u64(x, 0), 1; }
+    }
+  }
+  return 0;
+}
+
+/* The methods of a buffer, a typed array and a DataView; 0 if the key is none of them. */
+static int buffer_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out) {
+  yk a0 = argc > 0 ? argv[0] : YK_UNDEFINED, a1 = argc > 1 ? argv[1] : YK_UNDEFINED;
+  yk_buffer *b = buffer_of(recv);
+  if (b != NULL && key_is(key, "slice")) {
+    uint32_t from = clamp_relative(a0, b->len, 0), to = clamp_relative(a1, b->len, b->len);
+    uint32_t n = to > from ? to - from : 0;
+    yk r = new_buffer(n);
+    memcpy(buffer_of(r)->data, b->data + from, n);
+    return *out = r, 1;
+  }
+  yk_view *d = dataview_of(recv);
+  if (d != NULL) return dataview_method(d, key, argc, argv, out);
+  yk_view *t = typed_of(recv);
+  if (t == NULL) return 0;
+  uint32_t len = t->length, size = ta_size[t->type];
+  if (key_is(key, "subarray")) {
+    uint32_t from = clamp_relative(a0, len, 0), to = clamp_relative(a1, len, len);
+    uint32_t n = to > from ? to - from : 0;
+    return *out = new_typed(t->type, t->buffer, t->offset + from * size, n), 1;
+  }
+  if (key_is(key, "slice")) {
+    uint32_t from = clamp_relative(a0, len, 0), to = clamp_relative(a1, len, len);
+    uint32_t n = to > from ? to - from : 0;
+    yk r = new_typed(t->type, new_buffer(n * size), 0, n);
+    memcpy(view_bytes(typed_of(r)), view_bytes(t) + (size_t)from * size, (size_t)n * size);
+    return *out = r, 1;
+  }
+  if (key_is(key, "set")) {
+    double off = a1 == YK_UNDEFINED ? 0 : trunc(to_number(a1));
+    if (off != off) off = 0;
+    if (off < 0) range_error("offset is out of bounds");
+    yk_view *src = typed_of(a0);
+    if (src != NULL) {
+      if (is_bigint_type(src->type) != is_bigint_type(t->type)) type_error("Content types of the typed arrays differ");
+      if (off + src->length > len) range_error("offset is out of bounds");
+      /* Read every element first: the source may share the target's buffer. */
+      yk_array *items = typed_items(src);
+      for (uint32_t i = 0; i < items->len; i++) ta_set(t, (uint32_t)off + i, items->items[i]);
+      return *out = YK_UNDEFINED, 1;
+    }
+    if (is_nullish(a0)) type_error("Cannot convert undefined or null to object");
+    yk lv = yk_get(a0, ascii("length"));
+    double n = lv == YK_UNDEFINED ? 0 : to_number(lv);
+    if (n != n) n = 0;
+    if (off + n > len) range_error("offset is out of bounds");
+    for (uint32_t i = 0; i < (uint32_t)n; i++) ta_set(t, (uint32_t)off + i, yk_get(a0, yk_number(i)));
+    return *out = YK_UNDEFINED, 1;
+  }
+  if (key_is(key, "fill")) {
+    uint8_t tmp[8];
+    ta_encode(t->type, a0, tmp);
+    uint32_t from = clamp_relative(a1, len, 0), to = clamp_relative(argc > 2 ? argv[2] : YK_UNDEFINED, len, len);
+    for (uint32_t i = from; i < to; i++) memcpy(view_bytes(t) + (size_t)i * size, tmp, size);
+    return *out = recv, 1;
+  }
+  if (key_is(key, "join") || key_is(key, "toString")) {
+    yk sep = key_is(key, "join") && a0 != YK_UNDEFINED ? to_string(a0) : ascii(",");
+    return *out = array_join(typed_items(t), str(sep)), 1;
+  }
+  if (key_is(key, "at")) {
+    double d0 = a0 == YK_UNDEFINED ? 0 : trunc(to_number(a0));
+    if (d0 != d0) d0 = 0;
+    if (d0 < 0) d0 += len;
+    return *out = d0 < 0 || d0 >= len ? YK_UNDEFINED : ta_get(t, (uint32_t)d0), 1;
+  }
+  if (key_is(key, "indexOf") || key_is(key, "includes")) {
+    int inc = key_is(key, "includes");
+    for (uint32_t i = clamp_relative(a1, len, 0); i < len; i++) {
+      yk e = ta_get(t, i);
+      if (inc ? same_value_zero(e, a0) : strict_equal(e, a0)) return *out = inc ? YK_TRUE : yk_number(i), 1;
+    }
+    return *out = inc ? YK_FALSE : yk_number(-1), 1;
+  }
+  if (key_is(key, "reverse")) {
+    yk_array *items = typed_items(t);
+    for (uint32_t i = 0; i < len; i++) ta_set(t, i, items->items[len - 1 - i]);
+    return *out = recv, 1;
+  }
+  if (key_is(key, "forEach") || key_is(key, "map") || key_is(key, "every") || key_is(key, "some") ||
+      key_is(key, "reduce")) {
+    if (!is_closure(a0)) type_error("the callback is not a function");
+    if (key_is(key, "reduce")) {
+      uint32_t i = 0;
+      yk acc;
+      if (argc > 1) acc = a1;
+      else {
+        if (len == 0) type_error("Reduce of empty array with no initial value");
+        acc = ta_get(t, i++);
+      }
+      for (; i < len; i++) {
+        yk args[4] = {acc, ta_get(t, i), yk_number(i), recv};
+        acc = call_value(a0, YK_UNDEFINED, 4, args);
+      }
+      return *out = acc, 1;
+    }
+    int map = key_is(key, "map"), every = key_is(key, "every"), some = key_is(key, "some");
+    yk r = map ? new_typed(t->type, new_buffer(len * size), 0, len) : YK_UNDEFINED;
+    for (uint32_t i = 0; i < len; i++) {
+      yk args[3] = {ta_get(t, i), yk_number(i), recv};
+      yk got = call_value(a0, a1, 3, args);
+      if (map) ta_set(typed_of(r), i, got);
+      if (every && !yk_truthy(got)) return *out = YK_FALSE, 1;
+      if (some && yk_truthy(got)) return *out = YK_TRUE, 1;
+    }
+    return *out = map ? r : every ? YK_TRUE : some ? YK_FALSE : YK_UNDEFINED, 1;
+  }
+  return 0;
+}
+
+static yk_array *typed_items_v(yk v) { return typed_items(typed_of(v)); }
+static yk buffer_primitive(yk v) { return array_join(typed_items(typed_of(v)), str(ascii(","))); }
+
+/* BigInt(x): a number (an integer, else a RangeError), a string (StringToBigInt, else a
+   SyntaxError), a boolean, or a BigInt. */
+static yk builtin_bigint(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk v = to_primitive(argc > 0 ? argv[0] : YK_UNDEFINED);
+  if (is_number(v)) return big_from_double(num(v));
+  return BOX(T_BIGINT, want_bigint(v));
+}
+/* BigInt.asUintN(bits, x) and asIntN: x modulo 2^bits, then (asIntN) the upper half negative. */
+static yk big_as_n(uint64_t argc, const yk *argv, int is_signed) {
+  uint32_t bits = to_index(argc > 0 ? argv[0] : YK_UNDEFINED, "Invalid value: not (convertible to) a safe integer");
+  yk_bigint *x = want_bigint(argc > 1 ? argv[1] : YK_UNDEFINED);
+  if (bits == 0) return big_from_u64(0, 0);
+  uint32_t n = (bits + 31) / 32;
+  uint32_t m = (x->len > n ? x->len : n) + 1;
+  uint32_t *w = alloc((size_t)m * 4);
+  twos(x, w, m);
+  if (bits % 32 != 0) w[n - 1] &= (1u << (bits % 32)) - 1;
+  for (uint32_t i = n; i < m; i++) w[i] = 0;
+  yk_bigint *r = big_new(n);
+  memcpy(r->d, w, (size_t)n * 4);
+  yk u = big_box(r);
+  if (is_signed && mag_bit(big(u), bits - 1)) {
+    yk_bigint *p = big(big_shl_mag(big(big_from_u64(1, 0)), 0, bits));
+    return big_add_signed(big(u), 0, p, 1);
+  }
+  return u;
+}
+static yk builtin_bigint_as_uint_n(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return big_as_n(argc, argv, 0);
+}
+static yk builtin_bigint_as_int_n(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return big_as_n(argc, argv, 1);
+}
+
+/* The constructors of the buffers and views, and TextEncoder, as global values; 0 if none. */
+static yk buffer_global(const char *name, uint64_t n) {
+  static yk fns[TA_COUNT + 3];
+  for (int32_t k = 0; k < TA_COUNT; k++)
+    if (strlen(ta_names[k]) == n && memcmp(ta_names[k], name, n) == 0) {
+      if (fns[k] != 0) return fns[k];
+      const char *const names[2] = {"from", "of"};
+      const yk_code codes[2] = {ta_from_codes[k], ta_of_codes[k]};
+      yk f = with_methods(ta_codes[k], 2, names, codes);
+      yk_set(f, ascii("BYTES_PER_ELEMENT"), yk_number(ta_size[k]));
+      return fns[k] = f;
+    }
+  if (n == 11 && memcmp(name, "ArrayBuffer", 11) == 0) {
+    if (fns[TA_COUNT] == 0) {
+      static const char *const names[1] = {"isView"};
+      static const yk_code codes[1] = {builtin_array_buffer_is_view};
+      fns[TA_COUNT] = with_methods(builtin_array_buffer, 1, names, codes);
+    }
+    return fns[TA_COUNT];
+  }
+  if (n == 6 && memcmp(name, "BigInt", 6) == 0) {
+    static yk bigint_fn;
+    if (bigint_fn == 0) {
+      static const char *const names[2] = {"asUintN", "asIntN"};
+      static const yk_code codes[2] = {builtin_bigint_as_uint_n, builtin_bigint_as_int_n};
+      bigint_fn = with_methods(builtin_bigint, 2, names, codes);
+    }
+    return bigint_fn;
+  }
+  if (n == 8 && memcmp(name, "DataView", 8) == 0)
+    return fns[TA_COUNT + 1] != 0 ? fns[TA_COUNT + 1] : (fns[TA_COUNT + 1] = yk_closure_new(builtin_data_view, 0, 0, NULL));
+  if (n == 11 && memcmp(name, "TextEncoder", 11) == 0)
+    return fns[TA_COUNT + 2] != 0 ? fns[TA_COUNT + 2] : (fns[TA_COUNT + 2] = yk_closure_new(builtin_text_encoder, 0, 0, NULL));
+  return 0;
+}
+/* A buffer or view constructor's code: what `new` calls. */
+static int is_buffer_code(yk_code code) {
+  return type_of_code(code) >= 0 || code == builtin_array_buffer || code == builtin_data_view ||
+         code == builtin_text_encoder;
+}
+
 /* The leaves as function values: each calls the leaf with its arguments (undefined past argc). */
 #define LEAF_VALUE1(name, fn)                                                                   \
   static yk name(void *c, yk s, uint64_t argc, const yk *argv) {                                 \
@@ -3465,6 +4269,10 @@ yk yk_global(const char *name, uint64_t n) {
     yk leaf = leaf_value(name, n);
     if (leaf != 0) return leaf;
   }
+  {
+    yk b = buffer_global(name, n);
+    if (b != 0) return b;
+  }
   if (n == 3 && memcmp(name, "NaN", 3) == 0) return yk_number(NAN);
   if (n == 8 && memcmp(name, "Infinity", 8) == 0) return yk_number(INFINITY);
   static yk fns[N_GLOBALS];
@@ -3502,11 +4310,24 @@ yk yk_global(const char *name, uint64_t n) {
         static const yk_code k[2] = {builtin_array_from, builtin_array_is_array};
         return fns[i] = with_methods(builtin_array, 2, m, k);
       }
+      if (codes[i] == builtin_number) {
+        static const char *const m[6] = {"isFinite", "isInteger", "isSafeInteger", "isNaN", "parseFloat", "parseInt"};
+        static const yk_code k[6] = {builtin_number_is_finite, builtin_number_is_integer,
+                                     builtin_number_is_safe_integer, builtin_number_is_nan,
+                                     builtin_parse_float, builtin_parse_int};
+        yk f = with_methods(builtin_number, 6, m, k);
+        static const char *const cn[8] = {"MAX_SAFE_INTEGER", "MIN_SAFE_INTEGER", "EPSILON", "MAX_VALUE",
+                                          "MIN_VALUE", "POSITIVE_INFINITY", "NEGATIVE_INFINITY", "NaN"};
+        const double cv[8] = {9007199254740991.0, -9007199254740991.0, 2.220446049250313e-16, 1.7976931348623157e308,
+                              5e-324, INFINITY, -INFINITY, NAN};
+        for (int j = 0; j < 8; j++) yk_set(f, ascii(cn[j]), yk_number(cv[j]));
+        return fns[i] = f;
+      }
       if (codes[i] == builtin_object) {
-        static const char *const m[5] = {"keys", "values", "entries", "assign", "freeze"};
-        static const yk_code k[5] = {builtin_object_keys, builtin_object_values, builtin_object_entries,
-                                     builtin_object_assign, builtin_identity};
-        return fns[i] = with_methods(builtin_object, 5, m, k);
+        static const char *const m[6] = {"keys", "values", "entries", "assign", "freeze", "is"};
+        static const yk_code k[6] = {builtin_object_keys, builtin_object_values, builtin_object_entries,
+                                     builtin_object_assign, builtin_identity, builtin_object_is};
+        return fns[i] = with_methods(builtin_object, 6, m, k);
       }
       return fns[i] = yk_closure_new(codes[i], 0, 0, NULL);
     }
@@ -3519,6 +4340,7 @@ yk yk_new(yk f, uint64_t argc, const yk *argv) {
     yk_code code = ((yk_closure *)PTR(f))->code;
     if (code == builtin_promise) return promise_construct(argc, argv);
     if (((yk_closure *)PTR(f))->mode != 0) type_error("this function is not a constructor");
+    if (is_buffer_code(code)) return code(NULL, YK_UNDEFINED, argc, argv);
     if (code == builtin_array || code == builtin_error || code == builtin_type_error ||
         code == builtin_range_error || code == builtin_syntax_error || code == builtin_map ||
         code == builtin_set || code == builtin_object)
@@ -3543,6 +4365,9 @@ yk yk_instanceof(yk v, yk f) {
   if (!is_closure(f)) type_error("Right-hand side of 'instanceof' is not callable");
   yk_code code = ((yk_closure *)PTR(f))->code;
   if (code == builtin_array) return yk_bool(is_array(v));
+  if (type_of_code(code) >= 0) return yk_bool(typed_of(v) != NULL && typed_of(v)->type == type_of_code(code));
+  if (code == builtin_array_buffer) return yk_bool(buffer_of(v) != NULL);
+  if (code == builtin_data_view) return yk_bool(dataview_of(v) != NULL);
   if (code == builtin_promise) return yk_bool(is_promise(v));
   if (code == builtin_error || code == builtin_type_error || code == builtin_range_error ||
       code == builtin_syntax_error) {
@@ -3753,6 +4578,9 @@ void yk_write(FILE *out, yk v) {
       fputc(' ', out);
       yk_write(out, a->items[i]);
     }
+  } else if (is_object(v) && ((yk_object *)PTR(v))->kind == 7) {
+    /* A typed array: its elements, as an array's. */
+    yk_write(out, BOX(T_ARRAY, typed_items_v(v)));
   } else if (is_object(v)) {
     yk_object *o = (yk_object *)PTR(v);
     yk_array *keys = ordered_keys(o);
