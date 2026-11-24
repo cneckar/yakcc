@@ -14,6 +14,7 @@
  * Implements: yakcc#944
  */
 
+import { checkDuplicatesTool } from "./check-duplicates.js";
 import { compileTool } from "./compile.js";
 import { getAtom } from "./get-atom.js";
 import { getProvenance } from "./get-provenance.js";
@@ -28,6 +29,10 @@ import { searchAtoms } from "./search-atoms.js";
 import { submitAtom } from "./submit-atom.js";
 import type { ToolModule } from "./types.js";
 
+export {
+  checkDuplicatesTool,
+  makeCheckDuplicatesTool,
+} from "./check-duplicates.js";
 export { compileTool } from "./compile.js";
 export { getAtom } from "./get-atom.js";
 export { getProvenance } from "./get-provenance.js";
@@ -54,6 +59,7 @@ export type { ToolModule } from "./types.js";
  * compileTool added per wi-1007 (DEC-MCP-COMPILE-EXEC-1007-001).
  * referenceTool added per wi-1047 (DEC-COMPOSE-BY-REF-REFERENCE-TOOL-001).
  * findModulesTool and getModuleTool added by lane:reuse (DEC-MCP-MODULES-001).
+ * checkDuplicatesTool added by lane:reuse (DEC-MCP-CHECK-DUPLICATES-001).
  */
 export const TOOLS: ToolModule[] = [
   resolveTool,
@@ -69,4 +75,5 @@ export const TOOLS: ToolModule[] = [
   getProvenance,
   findModulesTool,
   getModuleTool,
+  checkDuplicatesTool,
 ];

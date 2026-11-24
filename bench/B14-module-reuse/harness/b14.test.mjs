@@ -13,6 +13,7 @@ import {
   gluePrompt,
   needPrompt,
   parsePick,
+  routePrompt,
   runReuse,
   runScratch,
   scoreSolution,
@@ -60,6 +61,7 @@ describe("prompts", () => {
         needPrompt(t),
         confirmPrompt(t, "need", [{ text: "a › b" }]),
         gluePrompt(t, "f", "function f() {}"),
+        routePrompt(t),
       ];
       for (const p of prompts) {
         if (t.check) assert.equal(p.includes(t.check), false);
@@ -142,6 +144,40 @@ describe("arms (scripted client)", () => {
     });
     assert.equal(r.turns, 2);
   });
+  it("routed: a reply with code is the solution, in one call, with no search", async () => {
+    const s = byId["build-order"];
+    const c = scripted([`\`\`\`ts\n${s.referenceScratch}\n\`\`\``]);
+    const r = await runReuse({
+      task: s,
+      client: c,
+      search: async () => assert.fail("searched"),
+      rootSourceOf: () => "",
+      route: true,
+    });
+    assert.equal(r.arm, "routed");
+    assert.equal(r.routedTo, "write");
+    assert.equal(r.turns, 1);
+    assert.equal(r.pass, true);
+    assert.match(c.prompts[0], /about 60 lines/);
+  });
+  it("routed: a reply without code is the need, and the reuse path continues", async () => {
+    const c = scripted([
+      "highest version matching a range",
+      '{"pick": 2}',
+      `\`\`\`ts\n${t.referenceGlue}\n\`\`\``,
+    ]);
+    const r = await runReuse({
+      task: t,
+      client: c,
+      search,
+      rootSourceOf: () => "function maxSatisfying() {}",
+      route: true,
+    });
+    assert.equal(r.routedTo, "search");
+    assert.equal(r.turns, 3);
+    assert.equal(r.pass, true);
+    assert.equal(r.pickedTarget, true);
+  });
   it("scratch: one call, scored without lib", async () => {
     const s = byId["build-order"];
     const r = await runScratch({
@@ -171,5 +207,22 @@ describe("arms (scripted client)", () => {
     assert.equal(s.scratch.meanDollars, 1);
     assert.equal(s.reuse.meanDollars, 5);
     assert.equal(s.reuse.reuseRate, 1);
+    const r = summarize(
+      [
+        { arm: "routed", pass: true, inputTokens: 1, outputTokens: 1, turns: 1, routedTo: "write" },
+        {
+          arm: "routed",
+          pass: true,
+          inputTokens: 1,
+          outputTokens: 1,
+          turns: 3,
+          routedTo: "search",
+          picked: "x",
+        },
+      ],
+      [1, 5],
+    );
+    assert.equal(r.routed.routedToWrite, 0.5);
+    assert.equal(r.routed.reuseRate, 0.5);
   });
 });
