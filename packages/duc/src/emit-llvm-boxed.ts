@@ -264,7 +264,10 @@ function lowerFunction(
 
   const alias = new Map<ValueId, ValueId>();
   for (const loop of g.nodes.filter((n) => n.kind === "loop")) {
-    const rec = loop.loop as DucLoop;
+    const rec = loop.loop;
+    // An opaque loop (a summary the lifter could not decompose) has no body to lower.
+    if (rec === undefined)
+      throw new LlvmEmitError(`the opaque loop ${loop.label ?? ""} is not in the subset`);
     if (rec.iterate === undefined && rec.cond === undefined)
       throw new LlvmEmitError("a loop with no condition");
     // An iteration's iterable is the input after the carries; the invariants come after it.
@@ -1010,7 +1013,8 @@ function lowerFunction(
     if (fn === undefined) {
       fn = m.closureName(`${name.replace(/"/g, "")}.regex`);
       m.matchers.set(text, fn);
-      lowerFunction(m, compiled.graph, fn, { captures: 0 });
+      // The matcher is lifted here, so it is read as ECMAScript reads it, as every graph is (#1310).
+      lowerFunction(m, ecmaScriptView(compiled.graph), fn, { captures: 0 });
     }
     m.used.add("yk_closure_new");
     const matcher = fresh();
