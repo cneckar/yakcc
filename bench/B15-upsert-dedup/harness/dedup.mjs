@@ -129,6 +129,8 @@ const kindOf = (v) =>
 export function kindsOf(type) {
   const t = String(type ?? "").trim();
   if (!t || /\bany\b|\bunknown\b|^[A-Z]$|^T\b/.test(t)) return null;
+  // An array type (string[], [a, b][], Array<T>, readonly T[]) that is not a union: arrays only.
+  if (!/\|/.test(t) && /(\[\]|^Array<.*>|^readonly .*|^\[.*\])$/.test(t)) return new Set(["array"]);
   const kinds = new Set();
   if (/\bstring\b|["'`]/.test(t)) kinds.add("string");
   if (/\bnumber\b|\bbigint\b/.test(t)) kinds.add("number");
@@ -145,10 +147,23 @@ export function kindsOf(type) {
  * it (a number passed where a string is declared); those differences are not the spec's.
  */
 export function probeInputs(arity, paramTypes = []) {
-  const kinds = paramTypes.map(kindsOf);
-  return probeArgs(arity).filter((args) =>
-    args.every((v, i) => !kinds[i] || kinds[i].has(kindOf(v))),
-  );
+  return probeArgs(arity).filter((args) => fitsTypes(args, paramTypes));
+}
+
+/** Whether an argument list fits the declared parameter types (unknown types admit anything). */
+export function fitsTypes(args, paramTypes = []) {
+  return args.every((v, i) => fitsType(v, paramTypes[i]));
+}
+
+/** Whether a value fits a declared type; for `T[]`, each element must fit T. */
+export function fitsType(v, type) {
+  const kinds = kindsOf(type);
+  if (!kinds) return true;
+  if (!kinds.has(kindOf(v))) return false;
+  const t = String(type).trim();
+  const elem = /^(?:readonly\s+)?(.+)\[\]$/.exec(t)?.[1] ?? /^Array<(.+)>$/.exec(t)?.[1];
+  if (Array.isArray(v) && elem && !/\|/.test(t)) return v.every((x) => fitsType(x, elem.replace(/^\((.*)\)$/, "$1")));
+  return true;
 }
 
 /**
@@ -246,7 +261,7 @@ export function upsertCheck({
     const inputs = uniqueInputs([
       ...probes,
       ...exampleArgs,
-      ...(a.card.examples ?? []).map((e) => e.args),
+      ...(a.card.examples ?? []).map((e) => e.args).filter((args) => fitsTypes(args, paramTypes)),
     ]);
     const all = compareRuns(inputs, runInputs(newCallable, inputs), runInputs(a.callable, inputs));
     const ex =

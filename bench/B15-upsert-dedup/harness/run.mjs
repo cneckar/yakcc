@@ -23,6 +23,7 @@ import { isTarget } from "../../B12-need-to-code/harness/match.mjs";
 import { resolveCallable, taggedEqual } from "../../B12-need-to-code/harness/sandbox.mjs";
 import {
   compareRuns,
+  fitsTypes,
   probeInputs,
   runInputs,
   standaloneCallable,
@@ -99,7 +100,8 @@ async function main() {
   );
 
   const rows = [];
-  for (const q of queries) {
+  for (const [qi, q] of queries.entries()) {
+    if (qi % 10 === 0) console.error(`${qi}/${queries.length} ${Math.round((Date.now() - t0) / 1000)}s`);
     const impl = impls[q.id];
     const nc = standaloneCallable(impl.code, impl.name);
     const row = { query: q.id, name: impl.name };
@@ -159,7 +161,7 @@ async function main() {
     }
     const inputs = uniqueInputs([
       ...probeInputs(arity, types),
-      ...(target.card.examples ?? []).map((e) => e.args),
+      ...(target.card.examples ?? []).map((e) => e.args).filter((args) => fitsTypes(args, types)),
     ]);
     const targetRun = runInputs(target.callable, inputs);
     row.mutants = killed.map((mc) => verdict(compareRuns(inputs, runInputs(mc, inputs), targetRun)));

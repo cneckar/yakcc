@@ -10,6 +10,7 @@ import { describe, it } from "node:test";
 import { probeArgs } from "../../B12-need-to-code/harness/cards.mjs";
 import {
   compareRuns,
+  fitsType,
   kindsOf,
   probeInputs,
   runInputs,
@@ -68,6 +69,10 @@ describe("verdicts", () => {
     assert.ok(probeInputs(1, ["string"]).every(([v]) => typeof v === "string"));
     assert.equal(probeInputs(1, ["unknown"]).length, probeArgs(1).length);
     assert.deepEqual([...kindsOf("string[] | number")].sort(), ["array", "number", "string"]);
+    assert.deepEqual([...kindsOf("[string, string][]")], ["array"]);
+    assert.equal(fitsType([["a", "b"]], "[string, string][]"), true);
+    assert.equal(fitsType([1, 2, 3], "[string, string][]"), false);
+    assert.equal(fitsType([], "number[]"), true);
   });
   it("functions that return nothing useful are inconclusive, not equivalent", () => {
     assert.equal(verdict(cmp(nothing, nothing)), "inconclusive");
