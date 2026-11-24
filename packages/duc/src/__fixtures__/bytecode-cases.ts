@@ -319,6 +319,38 @@ export const numericText = fc.oneof(
 
 export const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
   [
+    "iteration: for-in keys in ECMAScript's order, for-of over arrays (one growing), strings by code point, mixed arrays, with break; Object.keys, values, entries",
+    "export function f(o: any, xs: number[], s: string): unknown { const keys: unknown[] = []; for (const k in o) keys.push(k); let sum = 0; for (const x of xs) sum = sum + x; const cps: unknown[] = []; for (const c of s) cps.push(c); const grow = [1, 2]; let seen = 0; for (const g of grow) { if (grow.length < 5) grow.push(g * 10); seen = seen + 1; } let found = -1; for (const x of xs) { if (x > 2) { found = x; break; } } const mixed: unknown[] = [s, 1, true]; const kinds: unknown[] = []; for (const m of mixed) kinds.push(typeof m); const ordered = { b: 1, 2: 'two', a: 3, 1: 'one' }; return [keys, sum, cps, seen, grow, found, kinds, Object.keys(ordered), Object.values(ordered), Object.keys(xs), Object.keys(s), Object.entries(o)]; }",
+    ["unknown", "number[]", "string"],
+    "unknown",
+    fc.tuple(
+      fc.oneof(
+        fc
+          .dictionary(
+            fc.constantFrom("a", "b", "1", "10", "02", "x"),
+            fc.integer({ min: 0, max: 9 }),
+            {
+              maxKeys: 4,
+            },
+          )
+          .map((d) => ({ ...d })),
+        fc.constantFrom(null, undefined),
+      ),
+      fc.array(fc.integer({ min: -3, max: 5 }), { maxLength: 5 }),
+      text,
+    ),
+  ],
+  [
+    "recursive closures: a const arrow, a function declaration, recursion over an array and with an accumulator, aliased and passed to map",
+    "export function f(n: number, xs: number[]): unknown { const fact = (k: number): number => (k <= 1 ? 1 : k * fact(k - 1)); function fib(k: number): number { return k < 2 ? k : fib(k - 1) + fib(k - 2); } const sum = (a: number[], i: number): number => (i >= a.length ? 0 : a[i] + sum(a, i + 1)); const countdown = (k: number, acc: string): string => (k <= 0 ? acc : countdown(k - 1, acc + k)); const powk = (e: number): number => (e <= 0 ? 1 : n * powk(e - 1)); const self = fact; return [powk(3), powk(n), fact(n), fib(n), sum(xs, 0), countdown(n, ''), self(3), [1, 2, 3].map(fact)]; }",
+    ["number", "number[]"],
+    "unknown",
+    fc.tuple(
+      fc.integer({ min: -1, max: 12 }),
+      fc.array(fc.integer({ min: -9, max: 9 }), { maxLength: 6 }),
+    ),
+  ],
+  [
     "function values: closures stored in an array and an object, chosen, returned, composed, called; typeof and ===; calling a non-function",
     "export function f(k: number, s: string): unknown { const fs: unknown[] = []; fs.push((x: number) => x + k); fs.push((x: number) => s + x); const o: any = { inc: (x: number) => x + 1, name: s }; const pick = (b: boolean) => (b ? (x: number) => x * 2 : (x: number) => x - k); const compose = (f: any, g: any) => (x: unknown) => f(g(x)); const h = compose(o.inc, pick(k > 0)); const out = fs.map((g: any) => g(3)); let thrown = ''; try { (o.name as any)(1); } catch (e) { thrown = (e as Error).name; } return [out, o.inc(k), pick(true)(k), pick(false)(k), h(5), typeof fs[0], fs[0] === fs[0], fs[0] === fs[1], thrown]; }",
     ["number", "string"],
