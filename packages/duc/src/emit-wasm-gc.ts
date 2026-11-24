@@ -105,6 +105,8 @@ const ANYS = 4;
 const ARR = 5;
 /** An object: type 6, a struct of its keys, its values (arrays of any values) and its class. */
 const OBJ = 6;
+/** A function value: type 7, a struct of its trampoline's id and its captures. */
+const FN = 7;
 const BASE_TYPES: number[][] = [
   [0x5e, 0x77, 0x01],
   [0x5e, 0x7c, 0x01],
@@ -113,6 +115,7 @@ const BASE_TYPES: number[][] = [
   [0x5e, 0x63, 0x6e, 0x01],
   [0x5f, 0x02, 0x7f, 0x01, 0x63, ANYS, 0x01],
   [0x5f, 0x03, 0x63, ARR, 0x01, 0x63, ARR, 0x01, 0x63, 0x6e, 0x01],
+  [0x5f, 0x02, 0x7c, 0x00, 0x63, ARR, 0x00],
 ];
 /** Abstract heap types. */
 const HT_I31 = 0x6c;
@@ -912,6 +915,13 @@ function primitiveBody(key: string): { locals: number[][]; code: Tok[] } {
           ...f64(4),
           I.else,
           ...get(0),
+          ...GC.refTest(FN),
+          I.if,
+          0x7c,
+          I.f64const,
+          ...f64(8),
+          I.else,
+          ...get(0),
           ...GC.refTest(OBJ),
           I.if,
           0x7c,
@@ -934,6 +944,7 @@ function primitiveBody(key: string): { locals: number[][]; code: Tok[] } {
           I.end,
           I.end,
           I.end,
+          I.end,
         ],
       };
     case "__ykNum":
@@ -944,6 +955,14 @@ function primitiveBody(key: string): { locals: number[][]; code: Tok[] } {
       return { locals: [], code: [...get(0), ...GC.refCastNull(STR), I.end] };
     case "__ykArr":
       return { locals: [], code: [...get(0), ...GC.refCastNull(NUMS), I.end] };
+    case "__ykFnNew":
+      return { locals: [], code: [...get(0), ...get(1), 0xfb, 0x00, FN, I.end] };
+    case "__ykFnId":
+    case "__ykFnCaps":
+      return {
+        locals: [],
+        code: [...get(0), ...GC.refCast(FN), 0xfb, 0x02, FN, key === "__ykFnId" ? 0 : 1, I.end],
+      };
     case "__ykObj":
       return { locals: [], code: [...get(0), ...GC.refCastNull(OBJ), I.end] };
     case "__ykObjNew": {
@@ -1133,6 +1152,11 @@ export async function instantiateWasmGc(m: WasmGcModule): Promise<(...args: unkn
       if (tag === 3) return fn("__ykNum")(v);
       if (tag === 6) return fromWasm(fn("__ykArrAny")(v), "arr");
       if (tag === 7) return fromWasm(fn("__ykObj")(v), "obj");
+      // A function value's code stays in the module: a function that says so.
+      if (tag === 8)
+        return () => {
+          throw new Error("a function value of the module is not callable from outside");
+        };
       return fromWasm(v, tag === 4 ? "str" : "nums");
     }
     const n = fn("strLen")(v) as number;

@@ -694,6 +694,124 @@ export const BIGNUM_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
 };
 
 /**
+ * The array methods that take a function (Array.prototype.map, filter, forEach, some, every, find,
+ * findIndex, reduce), for an array of numbers and an array of any values. The function is passed as
+ * it is: each atom is lowered once per function (lower-stack.ts). As the specification does, each
+ * reads the length once, before it starts; the methods but find and findIndex skip an index the
+ * function removed, and those two read it as undefined.
+ */
+function arrayFnAtoms(kind: "Nums" | "Any", elem: string): Record<string, RuntimeAtom> {
+  const arr = `${elem}[]`;
+  const loop = (body: string, after: string): string => `  const n = a.length;
+  let i = 0;
+  while (i < n) {
+    if (i < a.length) {
+${body}
+    }
+    i = i + 1;
+  }
+${after}`;
+  const fn = "(x: unknown, i: number, a: unknown) => unknown";
+  return {
+    [`__ykMap${kind}`]: {
+      inputs: [arr, "function"],
+      output: "unknown",
+      source: `export function f(a: ${arr}, g: ${fn}): unknown[] {
+  const out = [];
+${loop("      out.push(g(a[i], i, a));", "  return out;")}
+}`,
+    },
+    [`__ykFilter${kind}`]: {
+      inputs: [arr, "function"],
+      output: "unknown",
+      source: `export function f(a: ${arr}, g: ${fn}): ${arr} {
+  const out = [];
+${loop("      const x = a[i];\n      if (__ykTruthy(g(x, i, a))) out.push(x);", "  return out;")}
+}`,
+    },
+    [`__ykForEach${kind}`]: {
+      inputs: [arr, "function"],
+      output: "unknown",
+      source: `export function f(a: ${arr}, g: ${fn}): void {
+${loop("      g(a[i], i, a);", "")}
+}`,
+    },
+    [`__ykSome${kind}`]: {
+      inputs: [arr, "function"],
+      output: "unknown",
+      source: `export function f(a: ${arr}, g: ${fn}): boolean {
+${loop("      if (__ykTruthy(g(a[i], i, a))) return true;", "  return false;")}
+}`,
+    },
+    [`__ykEvery${kind}`]: {
+      inputs: [arr, "function"],
+      output: "unknown",
+      source: `export function f(a: ${arr}, g: ${fn}): boolean {
+${loop("      if (!__ykTruthy(g(a[i], i, a))) return false;", "  return true;")}
+}`,
+    },
+    [`__ykFind${kind}`]: {
+      inputs: [arr, "function"],
+      output: "unknown",
+      source: `export function f(a: ${arr}, g: ${fn}): unknown {
+  const n = a.length;
+  let i = 0;
+  while (i < n) {
+    const x = i < a.length ? a[i] : __ykUndef();
+    if (__ykTruthy(g(x, i, a))) return x;
+    i = i + 1;
+  }
+  return __ykUndef();
+}`,
+    },
+    [`__ykFindIndex${kind}`]: {
+      inputs: [arr, "function"],
+      output: "unknown",
+      source: `export function f(a: ${arr}, g: ${fn}): number {
+  const n = a.length;
+  let i = 0;
+  while (i < n) {
+    const x = i < a.length ? a[i] : __ykUndef();
+    if (__ykTruthy(g(x, i, a))) return i;
+    i = i + 1;
+  }
+  return -1;
+}`,
+    },
+    [`__ykReduceInit${kind}`]: {
+      inputs: [arr, "function", "unknown"],
+      output: "unknown",
+      source: `export function f(a: ${arr}, g: (acc: unknown, x: unknown, i: number, a: unknown) => unknown, init: unknown): unknown {
+  let acc = init;
+${loop("      acc = g(acc, a[i], i, a);", "  return acc;")}
+}`,
+    },
+    [`__ykReduce${kind}`]: {
+      inputs: [arr, "function"],
+      output: "unknown",
+      source: `export function f(a: ${arr}, g: (acc: unknown, x: unknown, i: number, a: unknown) => unknown): unknown {
+  const n = a.length;
+  let i = 0;
+  while (i < n && i >= a.length) i = i + 1;
+  if (i >= n) throw __ykMakeError("TypeError", "Reduce of empty array with no initial value");
+  let acc = a[i];
+  i = i + 1;
+  while (i < n) {
+    if (i < a.length) acc = g(acc, a[i], i, a);
+    i = i + 1;
+  }
+  return acc;
+}`,
+    },
+  };
+}
+
+export const ARRAY_FN_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
+  ...arrayFnAtoms("Nums", "number"),
+  ...arrayFnAtoms("Any", "unknown"),
+};
+
+/**
  * ECMAScript's conversions and generic operators as atoms over dynamic values (`unknown`). A
  * dynamic value is inspected by primitives: `__ykTag` (0 undefined, 1 null, 2 boolean, 3 number,
  * 4 string, 5 an array of numbers, 6 an array of any values, 7 an object), and `__ykNum`, `__ykBool`,
@@ -784,6 +902,8 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   if (t === 5) return __ykJoinNums(__ykArr(x));
   if (t === 6) return __ykJoinAny(__ykArrAny(x));
   if (t === 7) return __ykObjToString(__ykObj(x));
+  // A function's source text, which a lowering does not keep: the text of a native function.
+  if (t === 8) return "function () { [native code] }";
   return x;
 }`,
   },
@@ -882,6 +1002,14 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   throw __ykMakeError("TypeError", "Cannot read properties of undefined or null");
 }`,
   },
+  // The call of a value that is not a function: a TypeError.
+  __ykNotAFunction: {
+    inputs: [],
+    output: "unknown",
+    source: `export function f(): unknown {
+  throw __ykMakeError("TypeError", "is not a function");
+}`,
+  },
   // Whether a finally block's completion is a return ([1, value]): it replaces the try's result.
   __ykIsReturn: {
     inputs: ["unknown"],
@@ -952,6 +1080,7 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   if (t === 2) return "boolean";
   if (t === 3) return "number";
   if (t === 4) return "string";
+  if (t === 8) return "function";
   return "object";
 }`,
   },
@@ -1048,11 +1177,13 @@ export const RUNTIME_PRIMITIVES_JS = {
             ? 3
             : typeof x === "string"
               ? 4
-              : !Array.isArray(x)
-                ? 7
-                : (x as unknown[]).every((e) => typeof e === "number")
-                  ? 5
-                  : 6,
+              : typeof x === "function"
+                ? 8
+                : !Array.isArray(x)
+                  ? 7
+                  : (x as unknown[]).every((e) => typeof e === "number")
+                    ? 5
+                    : 6,
   __ykNum: (x: unknown): number => x as number,
   __ykBool: (x: unknown): boolean => x as boolean,
   __ykStr: (x: unknown): string => x as string,

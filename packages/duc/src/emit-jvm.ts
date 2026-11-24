@@ -47,6 +47,7 @@ const MAIN = "Yk";
 const NUMS = "YkNums";
 const ARR = "YkArr";
 const OBJ = "YkObj";
+const FN = "YkFn";
 /** What a program throws, as a JVM exception: a RuntimeException that carries the value. */
 const THROW = "YkThrow";
 const OBJECT = "java/lang/Object";
@@ -937,6 +938,7 @@ function primitiveCode(pool: Pool, key: string, params: readonly WT[], result: W
         ["java/lang/String", 4],
         [NUMS, 5],
         [OBJ, 7],
+        [FN, 8],
       ];
       const notNull = a.label();
       p(0);
@@ -984,6 +986,26 @@ function primitiveCode(pool: Pool, key: string, params: readonly WT[], result: W
     case "__ykArr":
       p(0);
       a.checkcast(NUMS);
+      ret();
+      break;
+    case "__ykFnNew":
+      a.op([OP.new, ...u2(pool.cls(FN))], 1);
+      a.op([OP.dup], 1);
+      a.invokespecial(FN, "<init>", "()V");
+      a.op([OP.dup], 1);
+      p(0);
+      a.putfield(FN, "id", "D");
+      a.op([OP.dup], 1);
+      p(1);
+      a.putfield(FN, "caps", DESC.arr);
+      ret();
+      break;
+    case "__ykFnId":
+    case "__ykFnCaps":
+      p(0);
+      a.checkcast(FN);
+      if (key === "__ykFnId") a.getfield(FN, "id", "D");
+      else a.getfield(FN, "caps", DESC.arr);
       ret();
       break;
     case "__ykObj":
@@ -1362,6 +1384,13 @@ export function emitJvm(
       [ARR, arrayClass(ARR, `[L${OBJECT};`)],
       [THROW, throwClass()],
       [
+        FN,
+        dataClass(FN, [
+          { name: "id", desc: "D" },
+          { name: "caps", desc: DESC.arr },
+        ]),
+      ],
+      [
         OBJ,
         dataClass(OBJ, [
           { name: "keys", desc: DESC.arr },
@@ -1489,6 +1518,7 @@ public class YkHarness {
       for (int i = 0; i < s.length(); i++) b.append(String.format("%04x", (int) s.charAt(i)));
       return b.toString();
     }
+    if (v.getClass().getName().equals("YkFn")) return "F";
     if (obj.isInstance(v)) {
       Object keys = obj.getField("keys").get(v), vals = obj.getField("vals").get(v);
       int n = arr.getField("len").getInt(keys);
@@ -1602,6 +1632,11 @@ function decodeValue(s: string): unknown {
     }
     return jsObjectFrom(keys, vals, kv[0]);
   }
+  // A function value's code stays in the classes: a function that says so.
+  if (k === "F")
+    return () => {
+      throw new Error("a function value of the classes is not callable from outside");
+    };
   // A call that threw a value: a Thrown of it.
   if (k === "!") return new Thrown(decodeValue(r));
   if (k === "A") {
