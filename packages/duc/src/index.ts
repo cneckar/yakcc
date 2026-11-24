@@ -31,7 +31,15 @@ export { isWellFormed } from "./wellformed.js";
 
 export type { LiftOptions } from "./lift.js";
 export type { AtomShape } from "./lift.js";
-export { DECLARES, DucLiftError, atomShape, declaredNamesOf, liftAtom } from "./lift.js";
+export {
+  COMPLETES,
+  DECLARES,
+  DucLiftError,
+  atomShape,
+  completionOf,
+  declaredNamesOf,
+  liftAtom,
+} from "./lift.js";
 export type { LiftFidelity } from "./fidelity.js";
 export {
   graphFreeNames,
