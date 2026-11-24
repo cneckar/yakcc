@@ -77,6 +77,14 @@ atom is checked by the same differential tests against the TypeScript reference.
 - **Exceptions** become wasm exception handling.
 - **Async functions and generators** need stack switching (the stack-switching proposal, or JSPI in JavaScript hosts) or a transform; until then they are refused with the reason.
 
+**Progress, slice 1 (strings):** `emitWasmGc` (`packages/duc/src/emit-wasm-gc.ts`).
+- **Values:** a string is an `(array (mut i16))`.
+- **Primitives:** only three are written in wasm: a unit at an index, a substring by checked bounds, and the join of two strings. Plus `length`.
+- **Runtime atoms:** `charCodeAt`, `charAt`, `slice`, `substring`, `indexOf`, `includes`, `startsWith`, `endsWith`, `trim`, and string `===` and `<` (`wasm-runtime-atoms.ts`). Each is lifted from its TypeScript and lowered by the same lowerer, and each equals the engine's builtin exactly on 400 generated inputs, as JavaScript and as WasmGC.
+- **Programs** over strings and numbers, with loops that return early, agree exactly with the TypeScript reference.
+- **The typed subset:** every emit case `emitWasm` lowers, `emitWasmGc` lowers too, with the same results.
+- **Refused for now, with reasons:** ToString of a number, `==` across types, string methods not yet written as atoms, objects, arrays, closures and throws.
+
 **What stays from B:** its tests. Every program the linear-memory build passes, the WasmGC build must pass on the same inputs. After that, B is removed.
 
 ## Evidence
