@@ -124,6 +124,8 @@ export const ECMASCRIPT: BaseSet = {
     // A try statement whose blocks yield: the same, over generator closures, delegated to (#1330).
     __yakccTryGen: {},
     __yakccTryAsyncGen: {},
+    // An object rest as the TypeScript lowering writes it (#1330).
+    __yakccObjectRest: {},
   },
 };
 
@@ -176,6 +178,7 @@ export const NODE: BaseSet = {
       "URL",
       "URLSearchParams",
       "structuredClone",
+      "WebAssembly",
       "atob",
       "btoa",
       "AbortController",
@@ -225,6 +228,7 @@ export const WEB: BaseSet = {
       "URL",
       "URLSearchParams",
       "structuredClone",
+      "WebAssembly",
       "atob",
       "btoa",
       "AbortController",

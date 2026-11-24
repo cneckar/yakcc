@@ -30,7 +30,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 /** The vendored library: one file per builtin id. */
 export const NODE_LIB = join(here, "..", "vendor", `node-${NODE_VERSION}`, "lib");
 
-/** The parameters of Node's module wrapper: bound names in every module of the library. */
+/**
+ * The parameters of Node's module wrappers: bound names in the modules of the library. A builtin
+ * module's are `exports, require, module, process, internalBinding, primordials`; the bootstrap
+ * scripts' (`internal/bootstrap/realm`) add `getLinkedBinding` and `getInternalBinding`; the
+ * per-context scripts' are `exports, primordials, privateSymbols, perIsolateSymbols`.
+ */
 export const WRAPPER_PARAMS: ReadonlySet<string> = new Set([
   "exports",
   "require",
@@ -38,6 +43,10 @@ export const WRAPPER_PARAMS: ReadonlySet<string> = new Set([
   "process",
   "internalBinding",
   "primordials",
+  "getLinkedBinding",
+  "getInternalBinding",
+  "privateSymbols",
+  "perIsolateSymbols",
   "__filename",
   "__dirname",
 ]);
