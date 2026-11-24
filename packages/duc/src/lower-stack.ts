@@ -207,6 +207,9 @@ export class StackProgram {
   /** The host functions reached, with the most arguments any call passes. */
   readonly hosts = new Map<string, number>();
   readonly atoms: string[] = [];
+  private readonly graphIds = new WeakMap<DucGraph, number>();
+  private nextGraphId = 0;
+  private readonly lowering = new Set<string>();
 
   /** A host function (`%`, `**`, a `Math` function), by name. */
   host(name: string, arity: number): string {
@@ -231,6 +234,31 @@ export class StackProgram {
       f.code = lowered.code;
     }
     return { fn: fkey, params, result };
+  }
+
+  /**
+   * A closure's function, for one signature: its captures, then its parameters. Lowered once per
+   * signature, the first time a call needs it; its result type is the lowering's.
+   */
+  closure(graph: DucGraph, params: readonly WT[], trusted: boolean): { fn: string; result: WT } {
+    let id = this.graphIds.get(graph);
+    if (id === undefined) {
+      id = this.nextGraphId++;
+      this.graphIds.set(graph, id);
+    }
+    const fkey = `closure:${id}:${params.join(",")}`;
+    const known = this.funcs.get(fkey);
+    if (known !== undefined) return { fn: fkey, result: known.result };
+    if (this.lowering.has(fkey))
+      throw new LoweringError("a closure that calls itself is not in the subset yet");
+    this.lowering.add(fkey);
+    try {
+      const lowered = lowerFunction(graph, params, undefined, this, trusted);
+      this.funcs.set(fkey, { kind: "lowered", params, ...lowered });
+      return { fn: fkey, result: lowered.result };
+    } finally {
+      this.lowering.delete(fkey);
+    }
   }
 
   /** A primitive: written by each target. */
@@ -306,7 +334,9 @@ type Callee =
   | { readonly k: "number-of" }
   | { readonly k: "method"; readonly recv: ValueId; readonly name: string }
   | { readonly k: "prim"; readonly name: string }
-  | { readonly k: "atom"; readonly name: string };
+  | { readonly k: "atom"; readonly name: string }
+  /** A closure the graph makes: called, it is its own function with its captures passed first. */
+  | { readonly k: "closure"; readonly node: DucNode };
 
 /** One function of the program, lowered from a graph. */
 function lowerFunction(
@@ -388,6 +418,27 @@ function lowerFunction(
     if (trusted && b === "undef") return a;
     return "any";
   };
+  /**
+   * A closure call's signature: its captures' types, then its arguments' (a missing argument is
+   * undefined). Undefined while any is unknown. Undefined is a value of any kind here; a function is
+   * not passed.
+   */
+  const closureSignature = (node: DucNode, args: readonly ValueId[]): WT[] | undefined => {
+    const inner = node.closure as DucGraph;
+    const count = inner.nodes.filter((n) => n.kind === "param-source").length;
+    const captures = node.inputs as readonly ValueId[];
+    const given = [...captures, ...args].slice(0, count);
+    const sig: WT[] = [];
+    for (let i = 0; i < count; i++) {
+      const v = given[i];
+      const t = v === undefined ? "undef" : get(v);
+      if (t === "?") return undefined;
+      if (typeof t === "object")
+        throw new LoweringError("a function passed to a closure is not in the subset yet");
+      sig.push(t === "undef" ? "any" : t);
+    }
+    return sig;
+  };
   const computeType = (v: ValueId): VT | "?" => {
     const carry = carryOf.get(v);
     if (carry !== undefined) {
@@ -428,7 +479,11 @@ function lowerFunction(
     if (p.kind === "sel" || owners.get(p.id) !== undefined)
       return unify(get(ins[1] as ValueId), get(ins[2] as ValueId), "a choice between two values");
     if (p.kind !== "op") throw new LoweringError(`a ${p.kind} node is not in the subset`);
-    if (p.closure !== undefined) throw new LoweringError("a closure is not in the subset");
+    if (p.closure !== undefined) {
+      if (p.label !== "closure")
+        throw new LoweringError(`a "${p.label}" with a body is not in the subset`);
+      return { call: { k: "closure", node: p } };
+    }
     const label = p.label ?? "";
     const operand = (i: number): VT | "?" => {
       const t = get(ins[i] as ValueId);
@@ -478,6 +533,12 @@ function lowerFunction(
       if (callee.k === "method" && callee.name === "toString") return "str";
       if (callee.k === "atom")
         return wt(parseType((ATOMS[callee.name] as { output: string }).output), callee.name);
+      if (callee.k === "closure") {
+        const sig = closureSignature(callee.node, ins.slice(1));
+        return sig === undefined
+          ? "?"
+          : mod.closure(callee.node.closure as DucGraph, sig, trusted).result;
+      }
       const m = STRING_METHODS[callee.name] as { atom: string; notFound?: boolean };
       if (m.notFound === true) return "i32";
       return wt(parseType((ATOMS[m.atom] as { output: string }).output), m.atom);
@@ -845,7 +906,17 @@ function lowerFunction(
         call(mod.primitive("numsPop"), [callee.recv], "pop");
       } else if (callee.k === "prim") call(mod.primitive(callee.name), args, callee.name);
       else if (callee.k === "atom") call(mod.atom(callee.name), args, callee.name);
-      else {
+      else if (callee.k === "closure") {
+        const sig = closureSignature(callee.node, args) as WT[];
+        const { fn } = mod.closure(callee.node.closure as DucGraph, sig, trusted);
+        const given = [...(callee.node.inputs as readonly ValueId[]), ...args];
+        sig.forEach((t, i) => {
+          const v = given[i];
+          if (v === undefined) emit({ op: "const.undef" });
+          else push(v, t);
+        });
+        emit({ op: "call", fn });
+      } else {
         const m = STRING_METHODS[callee.name] as (typeof STRING_METHODS)[string];
         const atom = mod.atom(m.atom);
         const given: (ValueId | number)[] = [callee.recv];

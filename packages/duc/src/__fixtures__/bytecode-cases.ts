@@ -263,6 +263,23 @@ export const numericText = fc.oneof(
 
 export const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
   [
+    "closures called where they are made: captures, one closure at several argument types, a missing argument",
+    "export function f(k: number, s: string, b: boolean): string { const add = (v: number) => v + k; const tag = (x: unknown) => s + ':' + x; let acc = 0; let i = 0; while (i < 3) { acc = add(acc) * 2; i = i + 1; } return tag(acc) + tag(add(0.5)) + tag(undefined) + tag(b) + tag(s) + tag(); }",
+    ["number", "string", "boolean"],
+    "string",
+    fc.tuple(fc.oneof(fc.integer({ min: -5, max: 5 }), fc.double()), text, fc.boolean()),
+  ],
+  [
+    "a closure with a loop that returns early, and its result used",
+    "export function f(xs: number[], t: number): number { const find = (ys: number[], u: number) => { let i = 0; while (i < ys.length) { if (ys[i] === u) return i; i = i + 1; } return -1; }; return find(xs, t) * 10 + find(xs, t + 1); }",
+    ["number[]", "number"],
+    "number",
+    fc.tuple(
+      fc.array(fc.integer({ min: 0, max: 4 }), { maxLength: 6 }),
+      fc.integer({ min: 0, max: 4 }),
+    ),
+  ],
+  [
     "values of any kind: +, ==, ===, relational, typeof, truthiness, arithmetic, templates, ??, ||, &&",
     "export function f(a: any, b: any): string { return String(a + b) + '|' + (a == b) + (a === b) + (a < b) + (a >= b) + (a > b) + (a <= b) + (a != b) + (a !== b) + typeof a + typeof b + (!a) + (a ? 1 : 2) + (a - b) + a * 2 + -b + `<${a}>` + (a ?? 'n') + (a || b) + (b && a) + (a == null) + (b === undefined); }",
     ["unknown", "unknown"],
