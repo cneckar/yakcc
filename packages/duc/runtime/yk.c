@@ -20,12 +20,14 @@
  * that round-trip), ToPrimitive for arrays (join), +, the arithmetic and relational operators, == and
  * ===, typeof, truthiness, `.length`, indexing, and the string and array methods listed below.
  */
+#define _GNU_SOURCE /* ucontext: an async function's or a generator's own stack (#1295) */
 #include <math.h>
 #include <setjmp.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ucontext.h>
 
 typedef uint64_t yk;
 
@@ -45,10 +47,12 @@ typedef struct {
   yk *keys; /* strings */
   yk *values;
   int32_t error; /* made by Error / TypeError / …: its ToString is Error.prototype.toString's */
-  int32_t kind;  /* 0 a plain object; 1 a Map, 2 a Set: their entries in `entries` */
+  int32_t kind;  /* 0 a plain object; 1 a Map, 2 a Set: their entries in `entries`; 3 a RegExp;
+                    4 a Promise, 5 a generator: their state in `ext` */
   yk proto;      /* the object it inherits from (a class's prototype), or 0 */
   yk *regex;     /* kind 3, a RegExp: its source, flags, matcher, and group names */
   yk_array *entries; /* a Map's [key, value] pairs, a Set's values, in insertion order */
+  void *ext;         /* kind 4: its promise state; kind 5: its coroutine */
 } yk_object;
 
 /* Every function has one calling convention: the closure, the receiver, the arguments. */
@@ -59,6 +63,10 @@ typedef struct {
   int32_t is_class;  /* a class: called only with `new` */
   yk props;          /* its own properties (an object), or 0 until one is written */
   yk class_self;     /* for a class's member (and closures inside it): the class, or 0 */
+  yk parent;         /* a derived class: the class it extends (its statics' fallback), or 0 */
+  int32_t home_static; /* a static member (or a closure inside one): `super` is the parent itself */
+  int32_t mode;      /* 0 a function; 1 async: a call runs it as a coroutine, giving a promise;
+                        2 a generator: a call gives the generator object (#1295) */
   uint32_t n;
   yk captures[];
 } yk_closure;
@@ -104,7 +112,7 @@ yk yk_number(double d) {
 yk yk_bool(int b) { return b ? YK_TRUE : YK_FALSE; }
 
 static void *alloc(size_t n) {
-  void *p = malloc(n);
+  void *p = calloc(1, n);
   if (p == NULL) abort();
   return p;
 }
@@ -174,6 +182,10 @@ yk yk_array_of(uint64_t n, const yk *items) {
 }
 
 static yk call_value(yk f, yk self, uint64_t argc, const yk *argv);
+static yk async_member(void *o, yk key);
+static yk async_call(void *c, yk self, uint64_t argc, const yk *argv);
+static yk generator_new(void *c, yk self, uint64_t argc, const yk *argv);
+static int generator_step(yk gen, yk *out);
 static void type_error(const char *what);
 yk yk_object_of(uint64_t n, const yk *keys, const yk *values);
 yk yk_closure_new(yk_code code, int32_t has_this, uint64_t n, const yk *captures);
@@ -529,7 +541,11 @@ yk yk_get(yk obj, yk key) {
   }
   if (is_object(obj)) {
     yk_object *o = (yk_object *)PTR(obj);
-    if (o->kind != 0 && key_is(key, "size")) return yk_number(o->entries->len);
+    if ((o->kind == 1 || o->kind == 2) && key_is(key, "size")) return yk_number(o->entries->len);
+    if (o->kind == 4 || o->kind == 5) {
+      yk m = async_member(o, key);
+      if (m != 0) return m;
+    }
     yk v;
     return chain_get(obj, to_string(key), &v) ? resolve_slot(v, obj) : YK_UNDEFINED;
   }
@@ -569,7 +585,11 @@ yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk
   if (is_object(recv)) {
     yk_object *o = (yk_object *)PTR(recv);
     yk f;
-    if (o->kind != 0 && o->kind != 3) {
+    if (o->kind == 4 || o->kind == 5) {
+      yk m = async_member(o, key);
+      if (m != 0) return call_value(m, recv, argc, argv);
+    }
+    if (o->kind == 1 || o->kind == 2) {
       yk out;
       if (collection_method(o, recv, key, argc, argv, &out)) return out;
     } else if (chain_get(recv, key, &f))
@@ -681,6 +701,20 @@ yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk
       for (uint64_t i = 0; i < argc; i++) push(a, argv[i]);
       return yk_number(a->len);
     }
+    if (key_is(key, "pop")) return a->len == 0 ? YK_UNDEFINED : a->items[--a->len];
+    if (key_is(key, "shift")) {
+      if (a->len == 0) return YK_UNDEFINED;
+      yk first = a->items[0];
+      memmove(a->items, a->items + 1, (size_t)(a->len - 1) * sizeof(yk));
+      a->len--;
+      return first;
+    }
+    if (key_is(key, "unshift")) {
+      for (uint64_t i = 0; i < argc; i++) push(a, YK_UNDEFINED);
+      memmove(a->items + argc, a->items, (size_t)(a->len - argc) * sizeof(yk));
+      for (uint64_t i = 0; i < argc; i++) a->items[i] = argv[i];
+      return yk_number(a->len);
+    }
     if (key_is(key, "indexOf")) {
       for (int64_t i = relative(arg1, a->len, 0); i < a->len; i++)
         if (strict_equal(a->items[i], arg0)) return yk_number((double)i);
@@ -760,7 +794,9 @@ static int chain_get(yk obj, yk key, yk *out) {
     yk_closure *c = (yk_closure *)PTR(obj);
     /* A function's prototype exists from its first use, as `F.prototype.m = …` needs. */
     if ((c->has_this || c->is_class) && key_is(key, "prototype")) ensure_prototype(obj);
-    return c->props != 0 && own_get((yk_object *)PTR(c->props), key, out);
+    if (c->props != 0 && own_get((yk_object *)PTR(c->props), key, out)) return 1;
+    /* A derived class inherits its parent's statics. */
+    return c->parent != 0 && is_closure(c->parent) && chain_get(c->parent, key, out);
   }
   for (yk v = obj; v != 0 && is_object(v); v = ((yk_object *)PTR(v))->proto)
     if (own_get((yk_object *)PTR(v), key, out)) return 1;
@@ -809,18 +845,75 @@ static yk default_constructor(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self, (void)argc, (void)argv;
   return YK_UNDEFINED;
 }
-yk yk_class_new(uint64_t n, const yk *kinds, const yk *names, const yk *statics, const yk *members) {
+static yk builtin_error(void *, yk, uint64_t, const yk *);
+static yk builtin_type_error(void *, yk, uint64_t, const yk *);
+static yk builtin_range_error(void *, yk, uint64_t, const yk *);
+static yk builtin_syntax_error(void *, yk, uint64_t, const yk *);
+static int is_error_constructor(yk f) {
+  if (!is_closure(f)) return 0;
+  yk_code code = ((yk_closure *)PTR(f))->code;
+  return code == builtin_error || code == builtin_type_error || code == builtin_range_error ||
+         code == builtin_syntax_error;
+}
+/* super(args) in a derived constructor: the parent's constructor run on this receiver (#1294). */
+yk yk_super_construct(void *closure, yk self, uint64_t argc, const yk *argv) {
+  yk cls = ((yk_closure *)closure)->class_self;
+  yk parent = cls == 0 ? 0 : ((yk_closure *)PTR(cls))->parent;
+  if (parent == 0) type_error("'super' keyword unexpected here");
+  if (is_error_constructor(parent)) {
+    /* An Error subclass: the receiver is made an error, with the parent's name and message. */
+    yk made = ((yk_closure *)PTR(parent))->code(NULL, YK_UNDEFINED, argc, argv);
+    yk_object *o = (yk_object *)PTR(self), *e = (yk_object *)PTR(made);
+    o->error = 1;
+    for (uint32_t i = 0; i < e->len; i++) own_set(o, e->keys[i], e->values[i]);
+    return self;
+  }
+  yk_closure *p = (yk_closure *)PTR(parent);
+  yk r = p->code(p, self, argc, argv);
+  return is_reference(r) ? r : self;
+}
+/* A derived class with no constructor of its own passes its arguments to its parent's. */
+static yk default_derived_constructor(void *c, yk self, uint64_t argc, const yk *argv) {
+  yk_super_construct(c, self, argc, argv);
+  return YK_UNDEFINED;
+}
+/* super.name: the parent's member (its prototype's, or for a static member the parent's own),
+   read with this function's receiver (#1294). */
+yk yk_super_get(void *closure, yk self, const char *name, uint64_t n) {
+  yk_closure *c = (yk_closure *)closure;
+  yk cls = c->class_self;
+  yk parent = cls == 0 ? 0 : ((yk_closure *)PTR(cls))->parent;
+  if (parent == 0 || !is_closure(parent)) return YK_UNDEFINED;
+  yk key = yk_string_utf8(name, n), slot;
+  yk_closure *p = (yk_closure *)PTR(parent);
+  yk base = c->home_static ? parent : (p->is_class || p->has_this) ? ensure_prototype(parent) : 0;
+  if (base == 0 || !chain_get(base, key, &slot)) return YK_UNDEFINED;
+  return resolve_slot(slot, self);
+}
+yk yk_class_new(yk parent, uint64_t n, const yk *kinds, const yk *names, const yk *statics,
+                const yk *members) {
+  if (parent != 0 && !is_closure(parent))
+    type_error("Class extends value is not a constructor or null");
+  if (parent != 0 && !is_error_constructor(parent)) {
+    yk_closure *p = (yk_closure *)PTR(parent);
+    if (!p->is_class && !p->has_this) type_error("extending this constructor is not in the runtime yet");
+  }
   yk cls = 0;
   for (uint64_t i = 0; i < n; i++)
     if (num(kinds[i]) == 0) cls = members[i];
-  if (cls == 0) cls = yk_closure_new(default_constructor, 1, 0, NULL);
+  if (cls == 0)
+    cls = yk_closure_new(parent != 0 ? default_derived_constructor : default_constructor, 1, 0, NULL);
   yk_closure *c = (yk_closure *)PTR(cls);
   c->is_class = 1;
   c->has_this = 1;
+  c->parent = parent;
   yk proto = ensure_prototype(cls);
+  if (parent != 0 && !is_error_constructor(parent))
+    ((yk_object *)PTR(proto))->proto = ensure_prototype(parent);
   for (uint64_t i = 0; i < n; i++) {
     int kind = (int)num(kinds[i]);
     ((yk_closure *)PTR(members[i]))->class_self = cls;
+    ((yk_closure *)PTR(members[i]))->home_static = kind != 0 && statics[i] == YK_TRUE;
     if (kind == 0) continue;
     yk_object *target = statics[i] == YK_TRUE ? own_props(cls) : (yk_object *)PTR(proto);
     yk name = to_string(names[i]);
@@ -837,6 +930,7 @@ yk yk_closure_class(void *closure) {
 /* A closure made inside a class's member knows the class too. */
 yk yk_closure_inherit(yk child, void *parent) {
   ((yk_closure *)PTR(child))->class_self = ((yk_closure *)parent)->class_self;
+  ((yk_closure *)PTR(child))->home_static = ((yk_closure *)parent)->home_static;
   return child;
 }
 
@@ -1009,6 +1103,7 @@ typedef struct {
   yk src;
   uint32_t i;
   yk_array *keys; /* for…in: the keys, taken when the loop starts */
+  yk gen;         /* for…of over a generator: the generator, or 0 */
 } yk_iter;
 
 yk yk_iter_new(yk v, int32_t keys) {
@@ -1025,6 +1120,8 @@ yk yk_iter_new(yk v, int32_t keys) {
       uint32_t n = is_array(v) ? arr(v)->len : is_string(v) ? str(v)->len : 0;
       for (uint32_t i = 0; i < n; i++) push(it->keys, to_string(yk_number(i)));
     }
+  } else if (is_object(v) && ((yk_object *)PTR(v))->kind == 5) {
+    it->gen = v; /* a generator: drawn from one next() at a time */
   } else if (is_object(v) && ((yk_object *)PTR(v))->kind != 0) {
     it->src = BOX(T_ARRAY, iterable_items(v));
   } else if (!is_array(v) && !is_string(v))
@@ -1034,6 +1131,7 @@ yk yk_iter_new(yk v, int32_t keys) {
 
 int yk_iter_next(yk itv, yk *out) {
   yk_iter *it = (yk_iter *)PTR(itv);
+  if (it->gen != 0) return generator_step(it->gen, out);
   if (it->keys != NULL) {
     if (it->i >= it->keys->len) return 0;
     *out = it->keys->items[it->i++];
@@ -1068,6 +1166,9 @@ yk yk_closure_new(yk_code code, int32_t has_this, uint64_t n, const yk *captures
   c->is_class = 0;
   c->props = 0;
   c->class_self = 0;
+  c->parent = 0;
+  c->home_static = 0;
+  c->mode = 0;
   c->n = (uint32_t)n;
   memcpy(c->captures, captures, (size_t)n * sizeof(yk));
   return BOX(T_CLOSURE, c);
@@ -1082,6 +1183,8 @@ static yk call_value(yk f, yk self, uint64_t argc, const yk *argv) {
   if (!is_closure(f)) type_error("not a function");
   yk_closure *c = (yk_closure *)PTR(f);
   if (c->is_class) type_error("Class constructor cannot be invoked without 'new'");
+  if (c->mode == 1) return async_call(c, self, argc, argv);
+  if (c->mode == 2) return generator_new(c, self, argc, argv);
   return c->code(c, c->has_this ? self : YK_UNDEFINED, argc, argv);
 }
 yk yk_call(yk f, yk self, uint64_t argc, const yk *argv) { return call_value(f, self, argc, argv); }
@@ -1287,7 +1390,12 @@ static int collection_method(yk_object *o, yk recv, yk key, uint64_t argc, const
  * [key, value] pairs, a Set's values. */
 static yk_array *iterable_items(yk v) {
   yk_array *r = new_array(4);
-  if (is_object(v) && ((yk_object *)PTR(v))->kind != 0) {
+  if (is_object(v) && ((yk_object *)PTR(v))->kind == 5) {
+    yk e;
+    while (generator_step(v, &e)) push(r, e);
+    return r;
+  }
+  if (is_object(v) && (((yk_object *)PTR(v))->kind == 1 || ((yk_object *)PTR(v))->kind == 2)) {
     yk out, key = ascii(((yk_object *)PTR(v))->kind == 1 ? "entries" : "values");
     collection_method((yk_object *)PTR(v), v, key, 0, NULL, &out);
     return arr(out);
@@ -1374,7 +1482,9 @@ static yk builtin_array_from(void *c, yk self, uint64_t argc, const yk *argv) {
   yk v = argc > 0 ? argv[0] : YK_UNDEFINED;
   if (is_nullish(v)) type_error("Array.from needs an iterable or array-like");
   yk_array *items;
-  if (is_array(v) || is_string(v) || (is_object(v) && ((yk_object *)PTR(v))->kind != 0))
+  if (is_array(v) || is_string(v) ||
+      (is_object(v) && ((yk_object *)PTR(v))->kind != 0 && ((yk_object *)PTR(v))->kind != 3 &&
+       ((yk_object *)PTR(v))->kind != 4))
     items = iterable_items(v);
   else {
     /* array-like: length, then each index */
@@ -1747,13 +1857,14 @@ static int string_pattern_method(yk recv, yk key, uint64_t argc, const yk *argv,
 
 /* --- the global functions, as values --- */
 
+static int is_generator_return(yk v);
 /* __yakccTry(body, handler, finalizer): a try statement, as the TypeScript lowering's runtime has it. */
 static yk builtin_try(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
   yk body = argv[0], handler_fn = argc > 1 ? argv[1] : YK_UNDEFINED, fin = argc > 2 ? argv[2] : YK_UNDEFINED;
   yk r;
   int threw = protected_call(body, 0, NULL, &r);
-  if (threw && is_closure(handler_fn)) {
+  if (threw && is_closure(handler_fn) && !is_generator_return(r)) {
     yk exc = r;
     threw = protected_call(handler_fn, 1, &exc, &r);
   }
@@ -1885,11 +1996,637 @@ static yk builtin_boolean(void *c, yk self, uint64_t argc, const yk *argv) {
   return yk_bool(argc > 0 && yk_truthy(argv[0]));
 }
 
+/* --- promises, async functions and generators (#1295) ---
+ *
+ * A Promise follows ECMA-262 §27.2: resolving functions with their already-resolved flag, a thenable
+ * resolved through a NewPromiseResolveThenableJob, reactions run as jobs in one FIFO queue. An async
+ * function and a generator run on a stack of their own (a coroutine): `await` and `yield` suspend it,
+ * and a job (for await) or next() (for a generator) resumes it, so the lowering of their bodies is
+ * the lowering of any function's. `await v` is PerformPromiseThen(PromiseResolve(v), resume), as the
+ * specification has it since ES2019: one job after v settles.
+ */
+
+typedef struct reaction {
+  int kind;           /* 0 on fulfilment, 1 on rejection */
+  yk handler;         /* a function, or 0: the value passes on */
+  yk derived;         /* the promise its result settles, or 0 */
+  struct coro *resume; /* an await's coroutine, resumed with the value (or with it thrown) */
+} reaction;
+
+typedef struct {
+  int state; /* 0 pending, 1 fulfilled, 2 rejected */
+  yk value;
+  reaction **on_fulfil, **on_reject;
+  uint32_t n, cap;
+} promise_state;
+
+typedef struct coro {
+  ucontext_t ctx, back;
+  handler *handlers;   /* its own handler chain while it is suspended */
+  int state;           /* 0 not started, 1 suspended, 2 running, 3 done */
+  int kind;            /* 0 an async function's, 1 a generator's */
+  int mode;            /* how it is resumed: 0 with a value, 1 with it thrown, 2 returning it */
+  yk transfer;         /* the value it is resumed with, or yields */
+  yk_closure *fn;
+  yk self;
+  uint64_t argc;
+  yk *argv;
+  yk promise;          /* an async function's result */
+  yk result;           /* when done: what it returned, or threw */
+  int threw;
+  yk returning;        /* a generator's return(v): the v */
+  void *stack;
+} coro;
+
+#define CORO_STACK (256 * 1024)
+static coro *current_coro, *starting_coro;
+/* A generator's return() unwinds its body as a throw no catch sees, and finally blocks do. */
+static yk generator_return_token;
+static int is_generator_return(yk v) { return generator_return_token != 0 && v == generator_return_token; }
+
+static int is_promise(yk v) { return is_object(v) && ((yk_object *)PTR(v))->kind == 4; }
+static promise_state *pstate(yk p) { return (promise_state *)((yk_object *)PTR(p))->ext; }
+
+static yk promise_new(void) {
+  yk p = yk_object_of(0, NULL, NULL);
+  ((yk_object *)PTR(p))->kind = 4;
+  ((yk_object *)PTR(p))->ext = alloc(sizeof(promise_state));
+  return p;
+}
+
+/* The job queue. */
+typedef struct {
+  int type;     /* 0 a reaction, 1 a thenable to resolve a promise with */
+  reaction *r;
+  yk argument;
+  yk promise, thenable, then;
+} job;
+static job *jobs;
+static size_t jobs_head, jobs_tail, jobs_cap;
+static void enqueue(job j) {
+  if (jobs_tail == jobs_cap) {
+    if (jobs_head > 0) {
+      memmove(jobs, jobs + jobs_head, (jobs_tail - jobs_head) * sizeof(job));
+      jobs_tail -= jobs_head;
+      jobs_head = 0;
+    } else {
+      jobs_cap = jobs_cap == 0 ? 64 : jobs_cap * 2;
+      jobs = realloc(jobs, jobs_cap * sizeof(job));
+      if (jobs == NULL) abort();
+    }
+  }
+  jobs[jobs_tail++] = j;
+}
+
+static void settle(yk p, int state, yk value) {
+  promise_state *s = pstate(p);
+  if (s->state != 0) return;
+  s->state = state;
+  s->value = value;
+  /* TriggerPromiseReactions: each of the settled side, in order, as a job. */
+  for (uint32_t i = 0; i < s->n; i++)
+    enqueue((job){0, state == 1 ? s->on_fulfil[i] : s->on_reject[i], value, 0, 0, 0});
+  s->n = 0;
+}
+static void reject_promise(yk p, yk reason) { settle(p, 2, reason); }
+
+static yk then_of(yk x, int *threw);
+/* The promise's resolve function, without its flag: a thenable is resolved through a job. */
+static void resolve_promise(yk p, yk x) {
+  if (x == p) {
+    reject_promise(p, make_error("TypeError", ascii("Chaining cycle detected for promise #<Promise>")));
+    return;
+  }
+  if (!is_object(x) && !is_closure(x)) {
+    settle(p, 1, x);
+    return;
+  }
+  int threw;
+  yk then = then_of(x, &threw);
+  if (threw) {
+    reject_promise(p, then);
+    return;
+  }
+  if (!is_closure(then)) {
+    settle(p, 1, x);
+    return;
+  }
+  enqueue((job){1, NULL, 0, p, x, then});
+}
+
+/* CreateResolvingFunctions: resolve and reject sharing one already-resolved flag. */
+static yk resolving_code(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)self;
+  yk_closure *k = (yk_closure *)c;
+  yk_array *flag = arr(k->captures[1]);
+  if (flag->items[0] == YK_TRUE) return YK_UNDEFINED;
+  flag->items[0] = YK_TRUE;
+  yk v = argc > 0 ? argv[0] : YK_UNDEFINED;
+  if (k->captures[2] == YK_TRUE) reject_promise(k->captures[0], v);
+  else resolve_promise(k->captures[0], v);
+  return YK_UNDEFINED;
+}
+static void resolving_functions(yk p, yk *resolve, yk *reject) {
+  yk flag = yk_array_of(1, (yk[]){YK_FALSE});
+  *resolve = yk_closure_new(resolving_code, 0, 3, (yk[]){p, flag, YK_FALSE});
+  *reject = yk_closure_new(resolving_code, 0, 3, (yk[]){p, flag, YK_TRUE});
+}
+
+static int protected_call_with(yk f, yk self, uint64_t argc, const yk *argv, yk *result) {
+  handler h;
+  h.prev = handlers;
+  handlers = &h;
+  if (setjmp(h.env) == 0) {
+    yk r = call_value(f, self, argc, argv);
+    handlers = h.prev;
+    *result = r;
+    return 0;
+  }
+  handlers = h.prev;
+  *result = thrown;
+  return 1;
+}
+
+/* PerformPromiseThen. */
+static void perform_then(yk p, yk on_fulfil, yk on_reject, yk derived, coro *resume) {
+  reaction *f = alloc(sizeof(reaction)), *r = alloc(sizeof(reaction));
+  *f = (reaction){0, is_closure(on_fulfil) ? on_fulfil : 0, derived, resume};
+  *r = (reaction){1, is_closure(on_reject) ? on_reject : 0, derived, resume};
+  promise_state *s = pstate(p);
+  if (s->state == 0) {
+    if (s->n == s->cap) {
+      s->cap = s->cap == 0 ? 2 : s->cap * 2;
+      s->on_fulfil = realloc(s->on_fulfil, s->cap * sizeof(reaction *));
+      s->on_reject = realloc(s->on_reject, s->cap * sizeof(reaction *));
+    }
+    s->on_fulfil[s->n] = f;
+    s->on_reject[s->n++] = r;
+  } else
+    enqueue((job){0, s->state == 1 ? f : r, s->value, 0, 0, 0});
+}
+
+/* PromiseResolve(%Promise%, x): a promise is itself; anything else a promise resolved with it. */
+static yk promise_resolve(yk x) {
+  if (is_promise(x)) return x;
+  yk p = promise_new();
+  resolve_promise(p, x);
+  return p;
+}
+
+static void coro_resume(coro *co, yk value, int mode);
+static void async_finish(coro *co);
+
+static void run_job(job j) {
+  if (j.type == 1) {
+    /* NewPromiseResolveThenableJob: then.call(thenable, resolve, reject). */
+    yk resolve, reject, r;
+    resolving_functions(j.promise, &resolve, &reject);
+    if (protected_call_with(j.then, j.thenable, 2, (yk[]){resolve, reject}, &r))
+      call_value(reject, YK_UNDEFINED, 1, &r);
+    return;
+  }
+  reaction *re = j.r;
+  if (re->resume != NULL) {
+    coro_resume(re->resume, j.argument, re->kind);
+    if (re->resume->state == 3) async_finish(re->resume);
+    return;
+  }
+  if (re->handler == 0) {
+    if (re->derived != 0) {
+      if (re->kind == 0) resolve_promise(re->derived, j.argument);
+      else reject_promise(re->derived, j.argument);
+    }
+    return;
+  }
+  yk r;
+  int threw = protected_call_with(re->handler, YK_UNDEFINED, 1, &j.argument, &r);
+  if (re->derived == 0) return;
+  if (threw) reject_promise(re->derived, r);
+  else resolve_promise(re->derived, r);
+}
+
+/* Runs the jobs until there are none. */
+void yk_drain(void) {
+  while (jobs_head < jobs_tail) {
+    job j = jobs[jobs_head++];
+    run_job(j);
+  }
+  jobs_head = jobs_tail = 0;
+}
+
+/* --- coroutines --- */
+
+static void coro_main(void) {
+  coro *co = starting_coro;
+  handler h;
+  h.prev = NULL;
+  handlers = &h;
+  if (setjmp(h.env) == 0) {
+    co->result = co->fn->code(co->fn, co->fn->has_this ? co->self : YK_UNDEFINED, co->argc, co->argv);
+    co->threw = 0;
+  } else if (is_generator_return(thrown)) {
+    co->result = co->returning;
+    co->threw = 0;
+  } else {
+    co->result = thrown;
+    co->threw = 1;
+  }
+  handlers = NULL;
+  co->state = 3;
+  setcontext(&co->back);
+}
+
+static void coro_resume(coro *co, yk value, int mode) {
+  coro *prev = current_coro;
+  handler *saved = handlers;
+  co->transfer = value;
+  co->mode = mode;
+  current_coro = co;
+  if (co->state == 0) {
+    co->stack = alloc(CORO_STACK);
+    getcontext(&co->ctx);
+    co->ctx.uc_stack.ss_sp = co->stack;
+    co->ctx.uc_stack.ss_size = CORO_STACK;
+    co->ctx.uc_link = NULL;
+    makecontext(&co->ctx, coro_main, 0);
+    starting_coro = co;
+  } else
+    handlers = co->handlers;
+  co->state = 2;
+  swapcontext(&co->back, &co->ctx);
+  current_coro = prev;
+  handlers = saved;
+  if (co->state == 3 && co->stack != NULL) {
+    free(co->stack);
+    co->stack = NULL;
+  }
+}
+
+/* Suspends the running coroutine; what it is resumed with is returned, thrown, or returned through. */
+static yk coro_suspend(yk out) {
+  coro *co = current_coro;
+  co->transfer = out;
+  co->handlers = handlers;
+  co->state = 1;
+  swapcontext(&co->ctx, &co->back);
+  if (co->mode == 1) yk_throw(co->transfer);
+  if (co->mode == 2) {
+    co->returning = co->transfer;
+    if (generator_return_token == 0) generator_return_token = BOX(T_INTERNAL, alloc(sizeof(int32_t) * 2));
+    yk_throw(generator_return_token);
+  }
+  return co->transfer;
+}
+
+static coro *coro_new(int kind, yk_closure *c, yk self, uint64_t argc, const yk *argv) {
+  coro *co = alloc(sizeof(coro));
+  co->kind = kind;
+  co->fn = c;
+  co->self = self;
+  co->argc = argc;
+  co->argv = alloc((argc > 0 ? argc : 1) * sizeof(yk));
+  memcpy(co->argv, argv, (size_t)argc * sizeof(yk));
+  return co;
+}
+
+/* --- async functions --- */
+
+static void async_finish(coro *co) {
+  if (co->threw) reject_promise(co->promise, co->result);
+  else resolve_promise(co->promise, co->result);
+}
+
+static yk async_call(void *c, yk self, uint64_t argc, const yk *argv) {
+  coro *co = coro_new(0, (yk_closure *)c, self, argc, argv);
+  co->promise = promise_new();
+  coro_resume(co, YK_UNDEFINED, 0);
+  if (co->state == 3) async_finish(co);
+  return co->promise;
+}
+
+/* await v. */
+yk yk_await(yk v) {
+  coro *co = current_coro;
+  if (co == NULL || co->kind != 0) type_error("await is only valid in async functions here");
+  perform_then(promise_resolve(v), 0, 0, 0, co);
+  return coro_suspend(YK_UNDEFINED);
+}
+
+/* --- generators --- */
+
+static yk generator_new(void *c, yk self, uint64_t argc, const yk *argv) {
+  yk g = yk_object_of(0, NULL, NULL);
+  ((yk_object *)PTR(g))->kind = 5;
+  ((yk_object *)PTR(g))->ext = coro_new(1, (yk_closure *)c, self, argc, argv);
+  return g;
+}
+
+static yk iter_result(yk value, int done) {
+  yk keys[2] = {ascii("value"), ascii("done")};
+  yk values[2] = {value, yk_bool(done)};
+  return yk_object_of(2, keys, values);
+}
+
+/* Resumes a generator; 1 with what it yielded, 0 with what it returned; a throw propagates. */
+static int generator_resume(yk g, yk value, int mode, yk *out) {
+  coro *co = (coro *)((yk_object *)PTR(g))->ext;
+  if (co->state == 2) type_error("Generator is already running");
+  if (co->state == 3 || (co->state == 0 && mode != 0)) {
+    co->state = 3;
+    if (mode == 1) yk_throw(value);
+    *out = mode == 2 ? value : YK_UNDEFINED;
+    return 0;
+  }
+  coro_resume(co, value, mode);
+  if (co->state == 3) {
+    if (co->threw) yk_throw(co->result);
+    *out = co->result;
+    return 0;
+  }
+  *out = co->transfer;
+  return 1;
+}
+static int generator_step(yk g, yk *out) { return generator_resume(g, YK_UNDEFINED, 0, out); }
+
+/* yield v. */
+yk yk_yield(yk v) {
+  coro *co = current_coro;
+  if (co == NULL || co->kind != 1) type_error("yield is only valid in generators here");
+  return coro_suspend(v);
+}
+
+/* yield* v: each value v's iteration gives, yielded in turn; its return value is the result. */
+yk yk_yield_star(yk v) {
+  if (is_object(v) && ((yk_object *)PTR(v))->kind == 5) {
+    yk sent = YK_UNDEFINED, out;
+    while (generator_resume(v, sent, 0, &out)) sent = yk_yield(out);
+    return out;
+  }
+  yk it = yk_iter_new(v, 0), e;
+  while (yk_iter_next(it, &e)) yk_yield(e);
+  return YK_UNDEFINED;
+}
+
+/* --- the methods of promises and generators --- */
+
+static yk promise_then(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c;
+  if (!is_promise(self)) type_error("Method Promise.prototype.then called on incompatible receiver");
+  yk derived = promise_new();
+  perform_then(self, argc > 0 ? argv[0] : 0, argc > 1 ? argv[1] : 0, derived, NULL);
+  return derived;
+}
+static yk promise_catch(void *c, yk self, uint64_t argc, const yk *argv) {
+  yk args[2] = {YK_UNDEFINED, argc > 0 ? argv[0] : YK_UNDEFINED};
+  return promise_then(c, self, 2, args);
+}
+/* finally(f): thenFinally / catchFinally, each running f, then passing the value (or reason) on
+   after the promise f's result resolves to. */
+static yk value_thunk(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)self, (void)argc, (void)argv;
+  return ((yk_closure *)c)->captures[0];
+}
+static yk thrower(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)self, (void)argc, (void)argv;
+  yk_throw(((yk_closure *)c)->captures[0]);
+  return YK_UNDEFINED;
+}
+static yk finally_step(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)self;
+  yk_closure *k = (yk_closure *)c;
+  yk v = argc > 0 ? argv[0] : YK_UNDEFINED;
+  yk result = call_value(k->captures[0], YK_UNDEFINED, 0, NULL);
+  yk p = promise_resolve(result);
+  yk next = yk_closure_new(k->captures[1] == YK_TRUE ? thrower : value_thunk, 0, 1, &v);
+  return promise_then(NULL, p, 1, &next);
+}
+static yk promise_finally(void *c, yk self, uint64_t argc, const yk *argv) {
+  yk f = argc > 0 ? argv[0] : YK_UNDEFINED;
+  if (!is_closure(f)) return promise_then(c, self, 2, (yk[]){f, f});
+  yk on_fulfil = yk_closure_new(finally_step, 0, 2, (yk[]){f, YK_FALSE});
+  yk on_reject = yk_closure_new(finally_step, 0, 2, (yk[]){f, YK_TRUE});
+  return promise_then(c, self, 2, (yk[]){on_fulfil, on_reject});
+}
+static yk generator_next(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c;
+  yk out;
+  int more = generator_resume(self, argc > 0 ? argv[0] : YK_UNDEFINED, 0, &out);
+  return iter_result(out, !more);
+}
+static yk generator_throw(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c;
+  yk out;
+  int more = generator_resume(self, argc > 0 ? argv[0] : YK_UNDEFINED, 1, &out);
+  return iter_result(out, !more);
+}
+static yk generator_return(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c;
+  yk out;
+  int more = generator_resume(self, argc > 0 ? argv[0] : YK_UNDEFINED, 2, &out);
+  return iter_result(out, !more);
+}
+
+/* A promise's or a generator's method by name, or 0. */
+static yk async_member(void *obj, yk key) {
+  yk_object *o = (yk_object *)obj;
+  static yk fns[6];
+  static const char *const names[6] = {"then", "catch", "finally", "next", "throw", "return"};
+  static const yk_code codes[6] = {promise_then, promise_catch, promise_finally,
+                                   generator_next, generator_throw, generator_return};
+  for (int i = o->kind == 4 ? 0 : 3; i < (o->kind == 4 ? 3 : 6); i++)
+    if (key_is(key, names[i])) {
+      if (fns[i] == 0) fns[i] = yk_closure_new(codes[i], 1, 0, NULL);
+      return fns[i];
+    }
+  return 0;
+}
+
+/* Get(x, "then"), as resolving a promise with x does: a getter may throw. */
+static yk then_of(yk x, int *threw) {
+  *threw = 0;
+  if (is_promise(x)) return async_member(PTR(x), ascii("then"));
+  if (is_object(x) && ((yk_object *)PTR(x))->kind != 0) return YK_UNDEFINED;
+  handler h;
+  h.prev = handlers;
+  handlers = &h;
+  if (setjmp(h.env) == 0) {
+    yk slot, r = chain_get(x, ascii("then"), &slot) ? resolve_slot(slot, x) : YK_UNDEFINED;
+    handlers = h.prev;
+    return r;
+  }
+  handlers = h.prev;
+  *threw = 1;
+  return thrown;
+}
+
+/* --- the Promise constructor and its statics --- */
+
+static yk builtin_promise(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self, (void)argc, (void)argv;
+  type_error("Promise constructor cannot be invoked without 'new'");
+  return YK_UNDEFINED;
+}
+/* new Promise(executor). */
+static yk promise_construct(uint64_t argc, const yk *argv) {
+  yk executor = argc > 0 ? argv[0] : YK_UNDEFINED;
+  if (!is_closure(executor)) type_error("Promise resolver is not a function");
+  yk p = promise_new(), resolve, reject, r;
+  resolving_functions(p, &resolve, &reject);
+  if (protected_call_with(executor, YK_UNDEFINED, 2, (yk[]){resolve, reject}, &r))
+    call_value(reject, YK_UNDEFINED, 1, &r);
+  return p;
+}
+static yk promise_static_resolve(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  return promise_resolve(argc > 0 ? argv[0] : YK_UNDEFINED);
+}
+static yk promise_static_reject(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  yk p = promise_new();
+  reject_promise(p, argc > 0 ? argv[0] : YK_UNDEFINED);
+  return p;
+}
+/* Promise.all / allSettled: each element's settling recorded at its index, once. */
+static yk combinator_element(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)self;
+  /* captures: the result promise, the values, the index, the remaining count, the called flag,
+     the shape (0 all, 1 allSettled fulfilled, 2 allSettled rejected) */
+  yk_closure *k = (yk_closure *)c;
+  yk_array *called = arr(k->captures[4]);
+  if (called->items[0] == YK_TRUE) return YK_UNDEFINED;
+  called->items[0] = YK_TRUE;
+  yk v = argc > 0 ? argv[0] : YK_UNDEFINED;
+  int shape = (int)num(k->captures[5]);
+  if (shape != 0) {
+    yk keys[2] = {ascii("status"), ascii(shape == 1 ? "value" : "reason")};
+    yk values[2] = {ascii(shape == 1 ? "fulfilled" : "rejected"), v};
+    v = yk_object_of(2, keys, values);
+  }
+  arr(k->captures[1])->items[(uint32_t)num(k->captures[2])] = v;
+  yk_array *remaining = arr(k->captures[3]);
+  remaining->items[0] = yk_number(num(remaining->items[0]) - 1);
+  if (num(remaining->items[0]) == 0) resolve_promise(k->captures[0], k->captures[1]);
+  return YK_UNDEFINED;
+}
+static yk promise_combine(uint64_t argc, const yk *argv, int settled) {
+  yk result = promise_new(), resolve, reject;
+  resolving_functions(result, &resolve, &reject);
+  yk_array *items = iterable_items(argc > 0 ? argv[0] : YK_UNDEFINED);
+  yk values = BOX(T_ARRAY, new_array(items->len > 0 ? items->len : 1));
+  arr(values)->len = items->len;
+  for (uint32_t i = 0; i < items->len; i++) arr(values)->items[i] = YK_UNDEFINED;
+  yk remaining = yk_array_of(1, (yk[]){yk_number(1)});
+  for (uint32_t i = 0; i < items->len; i++) {
+    yk next = promise_resolve(items->items[i]);
+    yk called = yk_array_of(1, (yk[]){YK_FALSE});
+    yk caps[6] = {result, values, yk_number(i), remaining, called, yk_number(settled ? 1 : 0)};
+    yk on_fulfil = yk_closure_new(combinator_element, 0, 6, caps);
+    yk on_reject = reject;
+    if (settled) {
+      caps[5] = yk_number(2);
+      on_reject = yk_closure_new(combinator_element, 0, 6, caps);
+    }
+    arr(remaining)->items[0] = yk_number(num(arr(remaining)->items[0]) + 1);
+    promise_then(NULL, next, 2, (yk[]){on_fulfil, on_reject});
+  }
+  arr(remaining)->items[0] = yk_number(num(arr(remaining)->items[0]) - 1);
+  if (num(arr(remaining)->items[0]) == 0) resolve_promise(result, values);
+  return result;
+}
+static yk promise_static_all(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  return promise_combine(argc, argv, 0);
+}
+static yk promise_static_all_settled(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  return promise_combine(argc, argv, 1);
+}
+static yk promise_static_race(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  yk result = promise_new(), resolve, reject;
+  resolving_functions(result, &resolve, &reject);
+  yk_array *items = iterable_items(argc > 0 ? argv[0] : YK_UNDEFINED);
+  for (uint32_t i = 0; i < items->len; i++)
+    promise_then(NULL, promise_resolve(items->items[i]), 2, (yk[]){resolve, reject});
+  return result;
+}
+
+/* __yakccTryAsync(body, handler, finalizer): the async try primitive, as the TypeScript lowering's
+   runtime defines it: try { try { return await body() } catch (t) { …; return await handler(t) } }
+   finally { const done = await finalizer(); if (done is [1, …]) return done }. */
+static yk try_async_body(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  yk body = argv[0], handler_fn = argc > 1 ? argv[1] : YK_UNDEFINED, fin = argc > 2 ? argv[2] : YK_UNDEFINED;
+  yk r;
+  int threw;
+  {
+    handler h;
+    h.prev = handlers;
+    handlers = &h;
+    if (setjmp(h.env) == 0) {
+      r = yk_await(call_value(body, YK_UNDEFINED, 0, NULL));
+      threw = 0;
+    } else {
+      r = thrown;
+      threw = 1;
+    }
+    handlers = h.prev;
+  }
+  if (threw && is_closure(handler_fn) && !is_generator_return(r)) {
+    yk exc = r;
+    handler h;
+    h.prev = handlers;
+    handlers = &h;
+    if (setjmp(h.env) == 0) {
+      r = yk_await(call_value(handler_fn, YK_UNDEFINED, 1, &exc));
+      threw = 0;
+    } else {
+      r = thrown;
+      threw = 1;
+    }
+    handlers = h.prev;
+  }
+  if (is_closure(fin)) {
+    yk done = yk_await(call_value(fin, YK_UNDEFINED, 0, NULL));
+    if (is_array(done) && arr(done)->len > 0 && strict_equal(arr(done)->items[0], yk_number(1))) return done;
+  }
+  if (threw) yk_throw(r);
+  return r;
+}
+
+static yk builtin_queue_microtask(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  yk f = argc > 0 ? argv[0] : YK_UNDEFINED;
+  if (!is_closure(f)) type_error("The callback must be a function");
+  /* A reaction with no derived promise: the job calls f. */
+  reaction *r = alloc(sizeof(reaction));
+  *r = (reaction){0, f, 0, NULL};
+  enqueue((job){0, r, YK_UNDEFINED, 0, 0, 0});
+  return YK_UNDEFINED;
+}
+
+/* A closure's mode, set where it is made: async (1) or a generator (2). */
+yk yk_closure_mode(yk f, int32_t mode) {
+  ((yk_closure *)PTR(f))->mode = mode;
+  return f;
+}
+
+/* After a call: the jobs run; a promise is its value, or ["rejected", String(reason)], or
+   ["pending"] if nothing settles it. */
+yk yk_settle(yk v) {
+  yk_drain();
+  if (!is_promise(v)) return v;
+  promise_state *s = pstate(v);
+  if (s->state == 1) return s->value;
+  if (s->state == 2) return yk_array_of(2, (yk[]){ascii("rejected"), to_string(s->value)});
+  return yk_array_of(1, (yk[]){ascii("pending")});
+}
+
 /*
  * A global the platform gives, by name: a function value, NaN or Infinity, or undefined when the
  * runtime has none (so a `typeof` probe for it sees what a platform without it gives).
  */
-#define N_GLOBALS 19
+#define N_GLOBALS 22
 yk yk_global(const char *name, uint64_t n) {
   if (n == 3 && memcmp(name, "NaN", 3) == 0) return yk_number(NAN);
   if (n == 8 && memcmp(name, "Infinity", 8) == 0) return yk_number(INFINITY);
@@ -1897,13 +2634,15 @@ yk yk_global(const char *name, uint64_t n) {
   static const char *names[N_GLOBALS] = {"String", "Number", "Boolean", "parseFloat", "parseInt",
                                          "isNaN", "isFinite", "Array", "globalThis", "__yakccTry",
                                          "Error", "TypeError", "RangeError", "SyntaxError",
-                                         "Map", "Set", "Object", "JSON", "Symbol"};
+                                         "Map", "Set", "Object", "JSON", "Symbol", "Promise",
+                                         "__yakccTryAsync", "queueMicrotask"};
   static yk_code codes[N_GLOBALS] = {builtin_string, builtin_number, builtin_boolean,
                                      builtin_parse_float, builtin_parse_int, builtin_is_nan,
                                      builtin_is_finite, builtin_array, NULL, builtin_try,
                                      builtin_error, builtin_type_error, builtin_range_error,
                                      builtin_syntax_error, builtin_map, builtin_set, builtin_object,
-                                     NULL, NULL};
+                                     NULL, NULL, builtin_promise, try_async_body,
+                                     builtin_queue_microtask};
   for (int i = 0; i < N_GLOBALS; i++)
     if (strlen(names[i]) == n && memcmp(names[i], name, n) == 0) {
       if (fns[i] != 0) return fns[i];
@@ -1913,6 +2652,13 @@ yk yk_global(const char *name, uint64_t n) {
         return fns[i] = with_methods(NULL, 1, m, k);
       }
       if (codes[i] == NULL) return YK_UNDEFINED;
+      if (codes[i] == builtin_promise) {
+        static const char *const m[5] = {"resolve", "reject", "all", "allSettled", "race"};
+        static const yk_code k[5] = {promise_static_resolve, promise_static_reject, promise_static_all,
+                                     promise_static_all_settled, promise_static_race};
+        return fns[i] = with_methods(builtin_promise, 5, m, k);
+      }
+      if (codes[i] == try_async_body) return fns[i] = yk_closure_mode(yk_closure_new(try_async_body, 0, 0, NULL), 1);
       if (codes[i] == builtin_array) {
         static const char *const m[2] = {"from", "isArray"};
         static const yk_code k[2] = {builtin_array_from, builtin_array_is_array};
@@ -1933,6 +2679,8 @@ yk yk_global(const char *name, uint64_t n) {
 yk yk_new(yk f, uint64_t argc, const yk *argv) {
   if (is_closure(f)) {
     yk_code code = ((yk_closure *)PTR(f))->code;
+    if (code == builtin_promise) return promise_construct(argc, argv);
+    if (((yk_closure *)PTR(f))->mode != 0) type_error("this function is not a constructor");
     if (code == builtin_array || code == builtin_error || code == builtin_type_error ||
         code == builtin_range_error || code == builtin_syntax_error || code == builtin_map ||
         code == builtin_set || code == builtin_object)
@@ -1955,6 +2703,7 @@ yk yk_instanceof(yk v, yk f) {
   if (!is_closure(f)) type_error("Right-hand side of 'instanceof' is not callable");
   yk_code code = ((yk_closure *)PTR(f))->code;
   if (code == builtin_array) return yk_bool(is_array(v));
+  if (code == builtin_promise) return yk_bool(is_promise(v));
   if (code == builtin_error || code == builtin_type_error || code == builtin_range_error ||
       code == builtin_syntax_error) {
     if (!is_object(v) || !((yk_object *)PTR(v))->error) return YK_FALSE;

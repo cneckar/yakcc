@@ -164,6 +164,16 @@ const PROGRAMS: [string, string, number][] = [
     "export function f(a, b) { const xs = [a, ...(typeof b === 'string' ? b : [b]), a]; const join = (...parts) => parts.join('/'); const o = { first: 1, ...(typeof b === 'object' && b !== null ? b : {}), last: a, get both() { return [this.first, this.last]; } }; delete o.first; delete o['nope']; return [xs, join(...xs), xs.length, Object.keys(o), o.both, Math.max(...xs.filter((x) => typeof x === 'number'), -1)]; }",
     2,
   ],
+  [
+    "derived classes: super calls, super getters, static super, super in an arrow, default constructors (#1294)",
+    "export function f(a, b) { class Shape { constructor(n) { this.n = n; } area() { return 0; } describe() { return this.n + ':' + this.area(); } get label() { return 'shape ' + this.n; } static make(n) { return new this(n); } } class Sq extends Shape { constructor(s) { super('sq'); this.s = s; } area() { return this.s * this.s; } describe() { return '[' + super.describe() + ']'; } get label() { return super.label + '!'; } static make(s) { return super.make(s * 2); } } class Big extends Sq { area() { const up = () => super.area() * 10; return up(); } } class Plain extends Shape {} const q = new Sq(a); const g = new Big(b); const p = new Plain(a); return [q.describe(), q.label, g.describe(), g.label, g instanceof Sq, g instanceof Shape, q instanceof Big, Sq.make(3).s, Big.make(2).area(), Object.keys(g), p.n, p.describe(), p instanceof Shape]; }",
+    2,
+  ],
+  [
+    "an Error subclass: thrown, caught, its name, message and instanceof (#1294)",
+    "export function f(a, b) { class Bad extends Error { constructor(m, code) { super(m); this.name = 'Bad'; this.code = code; } } class Worse extends Bad {} try { if (typeof a === 'number' && a > 0) throw new Worse('too big: ' + a, b); throw new Bad(String(a), 1); } catch (e) { return [e.message, e.name, e.code, e instanceof Bad, e instanceof Worse, e instanceof Error, e instanceof TypeError, String(e)]; } }",
+    2,
+  ],
 ];
 
 describe.skipIf(!canRun("x86_64-linux"))("boxed values, natively on this host (#1292)", () => {
@@ -176,6 +186,71 @@ describe.skipIf(!canRun("x86_64-linux"))("boxed values, natively on this host (#
       expect(disagreements(source, inputs)).toEqual([]);
     }, 180_000);
   }
+});
+
+/** The async programs (#1295): Node's result awaited, a rejection as ["rejected", String(reason)]. */
+const ASYNC_PROGRAMS: [string, string, number][] = [
+  [
+    "job order: interleaved awaits, then chains, queueMicrotask, all, allSettled, race, finally, a caught rejection",
+    "export async function f(a, b) { const log = []; const t = async (name, n) => { log.push(name + 0); for (let i = 1; i <= n; i++) { await null; log.push(name + i); } return name; }; const p1 = t('a', typeof a === 'number' ? ((a % 3) + 3) % 3 : 1); const p2 = t('b', 2); Promise.resolve(1).then(() => log.push('then1')).then(() => log.push('then2')); queueMicrotask(() => log.push('micro')); const both = await Promise.all([p1, p2, 7]); const settled = await Promise.allSettled([Promise.reject(new Error('x' + b)), Promise.resolve(b)]); const raced = await Promise.race([new Promise((r) => r('slow')), 'fast']); const fin = await Promise.resolve(5).finally(() => log.push('fin')); let caught; try { await Promise.reject(new TypeError('no ' + b)); } catch (e) { caught = String(e); } return [log, both, settled.map((x) => x.status + ':' + (x.status === 'fulfilled' ? x.value : String(x.reason))), raced, fin, caught]; }",
+    2,
+  ],
+  [
+    "thenables and an async function returning a promise take the jobs the specification gives them",
+    "export async function f(a) { const log = []; const inner = async () => { log.push('in'); return Promise.resolve(a); }; const thenable = { then(res) { log.push('thenable'); res(typeof a); } }; const p = inner().then((v) => log.push('inner:' + v)); const q = (async () => { const v = await thenable; log.push('after ' + v); })(); Promise.resolve().then(() => log.push('t1')).then(() => log.push('t2')).then(() => log.push('t3')).then(() => log.push('t4')); await Promise.all([p, q]); return log; }",
+    1,
+  ],
+  [
+    "a rejection: thrown in an async function, before and after an await",
+    "export async function f(a) { const early = async () => { throw new RangeError('early ' + a); }; const late = async () => { await 1; throw new Error('late ' + typeof a); }; const r1 = await early().catch((e) => 'caught ' + e.message); if (typeof a === 'number' && a > 0) await late(); return r1; }",
+    1,
+  ],
+  [
+    "a limiter in the style of p-limit: tasks queued past the concurrency, started as others finish",
+    "export async function f(c, n) { const concurrency = typeof c === 'number' && c >= 1 && c < 5 ? Math.floor(c) : 2; const count = typeof n === 'number' && n >= 0 && n < 8 ? Math.floor(n) : 4; const log = []; const queue = []; let active = 0; const next = () => { active--; if (queue.length > 0) queue.shift()(); }; const run = async (fn, resolve) => { active++; const result = (async () => fn())(); resolve(result); await result.then(() => {}, () => {}); next(); }; const limit = (fn) => new Promise((resolve) => { const go = () => run(fn, resolve); if (active < concurrency) go(); else queue.push(go); }); const job = (i) => limit(async () => { log.push('start' + i); for (let k = 0; k < (i % 3) + 1; k++) await null; log.push('end' + i); if (i === 2) throw new Error('job' + i); return i * 10; }); const all = []; for (let i = 0; i < count; i++) all.push(job(i)); const settled = await Promise.allSettled(all); return [log, settled.map((x) => (x.status === 'fulfilled' ? x.value : x.reason.message))]; }",
+    2,
+  ],
+];
+
+describe.skipIf(!canRun("x86_64-linux"))("async functions and promises, natively (#1295)", () => {
+  for (const [name, source, arity] of ASYNC_PROGRAMS) {
+    it(`computes what Node computes: ${name}`, async () => {
+      const inputs = fc.sample(fc.array(value, { minLength: arity, maxLength: arity }), {
+        numRuns: 200,
+        seed: 1295,
+      });
+      const run = harness(emitLlvmBoxed(liftAtom(source)), work);
+      const ref = reference(source);
+      const wants: unknown[] = [];
+      for (const args of inputs) {
+        try {
+          wants.push(await (ref(...structuredClone(args)) as Promise<unknown>));
+        } catch (e) {
+          wants.push(["rejected", String(e)]);
+        }
+      }
+      const { results, stderr } = run(inputs.map((args) => structuredClone(args)));
+      expect(stderr).toBe("");
+      const bad = inputs.flatMap((args, i) =>
+        same(results[i], wants[i])
+          ? []
+          : [
+              `${JSON.stringify(args)} → native ${JSON.stringify(results[i])}, node ${JSON.stringify(wants[i])}`,
+            ],
+      );
+      expect(bad).toEqual([]);
+    }, 180_000);
+  }
+
+  it("computes what Node computes: generators, yield*, next(v), return(), throw(), spread and Array.from", () => {
+    const source =
+      "export function f(n, s) { function* range(k) { for (let i = 0; i < k; i++) { const back = yield i * 2; if (back === 'stop') return 'stopped'; } return 'done'; } function* outer() { const r = yield* range(3); yield r; yield* ['x', 'y']; } const k = typeof n === 'number' && n >= 0 && n < 20 ? Math.floor(n) : 2; const g = range(k); const steps = []; let r = g.next(); while (!r.done) { steps.push(r.value); r = g.next(r.value > 2 ? 'stop' : s); } steps.push(r.value); const h = range(5); h.next(); const ret = h.return('early'); const after = h.next(); const t = range(5); t.next(); let threw; try { t.throw(new Error('boom')); } catch (e) { threw = e.message; } const fresh = range(2); const unstarted = fresh.return('never'); return [steps, [...range(k)], [...outer()], ret, after, threw, Array.from(range(3)), unstarted, fresh.next()]; }";
+    const inputs = fc.sample(fc.array(value, { minLength: 2, maxLength: 2 }), {
+      numRuns: 300,
+      seed: 1295,
+    });
+    expect(disagreements(source, inputs)).toEqual([]);
+  }, 180_000);
 });
 
 describe("boxed values on other architectures, under QEMU (#1292)", () => {
@@ -192,6 +267,26 @@ describe("boxed values on other architectures, under QEMU (#1292)", () => {
       },
       180_000,
     );
+  for (const target of ["aarch64-linux", "arm-linux", "riscv64-linux"])
+    it.skipIf(!canRun(target))(
+      `${target}: async functions run as coroutines, in Node's job order (#1295)`,
+      async () => {
+        const source = ASYNC_PROGRAMS[0]?.[1] as string;
+        const inputs = fc.sample(fc.array(value, { minLength: 2, maxLength: 2 }), {
+          numRuns: 40,
+          seed: 9,
+        });
+        const run = harness(emitLlvmBoxed(liftAtom(source)), work, target);
+        const ref = reference(source);
+        const wants: unknown[] = [];
+        for (const args of inputs)
+          wants.push(await (ref(...structuredClone(args)) as Promise<unknown>));
+        const { results, stderr } = run(inputs.map((args) => structuredClone(args)));
+        expect(stderr).toBe("");
+        expect(results.every((r, i) => same(r, wants[i]))).toBe(true);
+      },
+      180_000,
+    );
 });
 
 describe("what the boxed lowering refuses, for now (#1292)", () => {
@@ -204,19 +299,19 @@ describe("what the boxed lowering refuses, for now (#1292)", () => {
     }
     return "lowered";
   };
-  it("free names, new, async functions, derived classes, approximated Math", () => {
+  it("free names, new, async generators, class fields, approximated Math", () => {
     expect(refusal("export function f(x) { return helper(x); }")).toMatch(
       /"helper" is not in the native base set/,
     );
     expect(refusal("export function f(x) { return new Date(); }")).toMatch(
       /not in the native base set|not in the subset/,
     );
-    expect(refusal("export function f(x) { return async () => x; }")).toMatch(/not in the subset/);
-    expect(
-      refusal(
-        "export function f(x) { class A { m() { return 1; } } class B extends A { m() { return super.m() + x; } } return new B().m(); }",
-      ),
-    ).toMatch(/derived class|not in the subset/);
+    expect(refusal("export function f(x) { async function* g() { yield x; } return g; }")).toMatch(
+      /not in the subset/,
+    );
+    expect(refusal("export function f(x) { class A { y = 1; } return new A().y + x; }")).toMatch(
+      /a class with a field|not in the subset/,
+    );
     expect(refusal("export function f(x) { return Math.sin(x); }")).toMatch(
       /implementation-approximated/,
     );

@@ -11,6 +11,7 @@ import {
   moduleBindingsOf,
   runDucConservationGate,
 } from "./duc-gate.js";
+import { enclosingBindingsOf } from "./module-bindings.js";
 
 const CLOSED = "export function f(a: number, b: number): number { return a + b; }";
 const FREE = "export function f(x: number): number { return helper(x); }";
@@ -613,5 +614,76 @@ describe("feature detection and lift fidelity (#1173)", () => {
   it("every lift is checked for fidelity, and a faithful one holds", () => {
     const r = runDucConservationGate("function f (a) { return helper(a) + K }");
     expect(r.fidelity).toEqual({ holds: true, missing: [], extra: [] });
+  });
+});
+
+describe("a fragment sliced from a function body reads its enclosing scope (#1297)", () => {
+  const MODULE = [
+    "export async function renameWithRetry(src: string, dst: string): Promise<void> {",
+    "  for (let attempt = 0; attempt < 3; attempt++) {",
+    "    try {",
+    "      await rename(src, dst);",
+    "      return;",
+    "    } catch (err) {",
+    "      const last = attempt === 2;",
+    "      if (last) throw err;",
+    "    }",
+    "  }",
+    "}",
+  ].join("\n");
+  const fragment = "      const last = attempt === 2;";
+  const start = MODULE.indexOf(fragment);
+  const range = { start, end: start + fragment.length };
+
+  it("enclosingBindingsOf: the parameters, the loop's variable, the catch's, the block's own", () => {
+    const names = enclosingBindingsOf(MODULE, range);
+    for (const n of ["src", "dst", "attempt", "err", "last"]) expect(names.has(n)).toBe(true);
+    // A module's top level is not an enclosing scope: its bindings are the module's.
+    expect(names.has("renameWithRetry")).toBe(false);
+    expect(enclosingBindingsOf(MODULE, { start: 0, end: MODULE.length }).size).toBe(0);
+  });
+
+  it("the gate records a read of an enclosing binding, and rejects nothing for it", () => {
+    const src = "await rename(src, dst);";
+    const callStart = MODULE.indexOf(src);
+    const enclosing = enclosingBindingsOf(MODULE, {
+      start: callStart,
+      end: callStart + src.length,
+    });
+    const result = runDucConservationGate(src, new Set(["rename"]), undefined, enclosing);
+    expect(result.unexplained).toEqual([]);
+    expect(result.enclosing.map((u) => u.symbol).sort()).toEqual(["dst", "src"]);
+    const { ducUsupp } = enforceDucGate(
+      src,
+      "frag",
+      "reject",
+      () => {},
+      new Set(["rename"]),
+      undefined,
+      enclosing,
+    );
+    expect(JSON.parse(ducUsupp as string).enclosing.sort()).toEqual(["dst", "src"]);
+  });
+
+  it("without the enclosing scope, the same reads stay unexplained", () => {
+    const result = runDucConservationGate("await rename(src, dst);", new Set(["rename"]));
+    expect(result.unexplained.map((u) => u.symbol).sort()).toEqual(["dst", "src"]);
+  });
+});
+
+describe("TypeScript's types are not reads (#1297)", () => {
+  it("a type alias, an interface, type-only and re-export lists, and type positions are closed", () => {
+    for (const src of [
+      'export type GateMode = "warn" | "reject";',
+      "export interface CacheKey { readonly sourceHash: string; readonly model: Model }",
+      'export type { A, B } from "./types.js";',
+      'export { parse, Parser } from "./api.js";',
+      "export function f(r: Record<string, Hash>): Tree { return r as unknown as Tree; }",
+      "export class A implements Shape { area(): Area { return 1 as Area; } }",
+    ]) {
+      const result = runDucConservationGate(src);
+      expect([src, result.unexplained]).toEqual([src, []]);
+      expect([src, result.fidelity?.holds]).toEqual([src, true]);
+    }
   });
 });

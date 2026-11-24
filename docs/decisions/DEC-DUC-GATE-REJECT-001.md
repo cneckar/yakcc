@@ -62,6 +62,43 @@ included.
 
 A package written for several platforms names them, as bcryptjs reads `self.crypto` in a worker. Each is now a platform primitive of the web target. On a Node target the per-target closure check reports it as not on the target. It is not an unexplained hole.
 
+### 3a. yakcc's own sources: TypeScript, and fragments of function bodies (#1297)
+
+The fixture corpus is JavaScript, and its atoms are mostly whole functions. The self-shave bootstrap
+of yakcc's own TypeScript, with the gate at reject, failed on 290 atoms. That self-shave runs in the
+`v2 self-shave` workflow. The failures had four causes, each now fixed at its root.
+
+- **Types read as values.** These now lift to nothing, and fidelity agrees:
+  - type aliases, interfaces and ambient `declare`s;
+  - overload signatures;
+  - type-only export lists, and re-exports from another module (`export { a } from "m"`);
+  - names in type positions: annotations, casts, type arguments, `implements`.
+- **A fragment of a function body reads its enclosing scope.** The shaver slices a large function
+  into its statements, and each fragment reads the function's parameters and locals.
+  `enclosingBindingsOf(moduleSource, range)` computes the names bound in the scopes enclosing a
+  fragment, below the module's top level:
+  - parameters;
+  - a named function expression's own name;
+  - block declarations;
+  - loop and catch variables.
+
+  The gate records a read of one as `enclosing`, stored in the sidecar. It is a declared source in
+  the same file, as a module binding is.
+- **A class member sliced out of its class** (a method, an accessor, a constructor) did not parse.
+  It now parses in a `class __atom__ { … }` form and lifts as that member's function, with a
+  receiver. A parameter property is the write `this.x = x`.
+- **Smaller lifter defects:**
+  - a destructuring key (`{ key: local }`) was read as a name;
+  - an import attribute's key (`with { type: "json" }`) was read as a name;
+  - a fragment of an async body that awaits at its top level now parses as a module;
+  - a `let` or `const` read by a closure made before it, or assigned by a closure in its own
+    initializer, is a cell, as a later `var` already was;
+  - `import.meta` (Node) and `Function` / `eval` (ECMAScript, capability `dynamic-code`) are
+    platform primitives.
+
+The slicer also descends into a `new` expression's object-literal arguments
+(`new Proxy(t, { get() { … } })`), as it does a call's.
+
 ### 4. The default is reject
 
 `ducGateModeFromEnv` returns `reject` unless `YAKCC_DUC_GATE` is exactly `warn`. Any other value

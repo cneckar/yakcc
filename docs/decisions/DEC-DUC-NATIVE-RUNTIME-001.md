@@ -71,7 +71,7 @@ for arrays). The inputs include:
 - booleans, `null` and `undefined`;
 - arrays of all of these.
 
-Eleven programs, each run on 500 generated inputs, cover:
+Fifteen programs, each run on 500 generated inputs, cover:
 - `+` on every pair of kinds, and every other operator with its coercions;
 - template literals;
 - the string methods, and arrays with a loop and `push`;
@@ -79,7 +79,11 @@ Eleven programs, each run on 500 generated inputs, cover:
 - objects: computed keys, reads and writes, own methods with `this`, chained;
 - closures: a counter cell, recursion, functions as values;
 - the array callbacks, including `sort` with and without a comparator;
-- an object's own `valueOf` and `toString`.
+- an object's own `valueOf` and `toString`;
+- classes, ES5 constructors and prototypes, spread, rest and `delete`;
+- derived classes over three levels: super calls, super getters, static super, `super` in an arrow,
+  default constructors;
+- an Error subclass, thrown and caught.
 
 **Other architectures.** The array program also runs on AArch64, ARMv7 and RISC-V. Each is
 cross-linked against the target's glibc, with the runtime compiled by clang for the target, and run
@@ -89,10 +93,85 @@ under QEMU, with the same agreement.
 - `null == undefined` took the same-tag shortcut to strict equality.
 - A write returned the assigned value instead of the object.
 
+## Derived classes (#1294)
+
+A class's parent is its class operation's first input (`["extends"]`). The runtime keeps it on the
+class closure:
+- **Prototypes:** the class's prototype inherits the parent's prototype, so `instanceof` and
+  inherited methods follow the chain.
+- **Statics:** a static member the class lacks is looked up on the parent.
+- **`super(args)`:** the graph's `super` operation. It runs the parent's constructor on the receiver
+  `new` made. An object the parent's constructor returns replaces the receiver.
+  - A derived class with no constructor of its own passes its arguments on, as ECMAScript's default
+    derived constructor does.
+  - An Error-family parent makes the receiver an error, with the parent's name and message.
+- **`super.name`:** the graph's `super.name` operation, whose input is the receiver. It reads the
+  parent's member: the parent's prototype's member from an instance member, the parent's own from a
+  static member. A getter runs with the receiver.
+  - A call through it passes the receiver.
+  - A closure made inside a member keeps the member's class and staticness, so an arrow's `super`
+    is its member's.
+
+Not yet:
+- a write through `super`;
+- extending a built-in other than the Error family (Array, Map, Set);
+- `super` in an object literal's method.
+
+The lifter keeps these opaque or the runtime refuses them by name.
+
+## Async functions, promises and generators (#1295)
+
+**Coroutines.** An async function's or a generator's body is lowered exactly as any function's. Its
+closure carries a mode (async or generator), and a call dispatches on it:
+- Each call runs the body on a stack of its own, a coroutine. On Linux this is glibc's `ucontext`,
+  which every target here has.
+- `await v` and `yield v` are runtime calls that suspend the coroutine.
+- The exception handlers are per coroutine: a throw unwinds only its own stack.
+
+The lowering needs no state machine, and no graph construct changes.
+
+**Promises** follow ECMA-262 §27.2:
+- resolving functions share one already-resolved flag;
+- a thenable resolves through a NewPromiseResolveThenableJob;
+- reactions are jobs in one FIFO queue.
+
+`await v` is PerformPromiseThen(PromiseResolve(v), resume), one job after v settles (ES2019). An
+async function's result resolves its promise through the resolving functions, so a returned promise
+takes its two extra jobs, as in V8.
+
+The runtime gives:
+- `then`, `catch`, `finally`;
+- `Promise.resolve`, `reject`, `all`, `allSettled`, `race`;
+- `new Promise`;
+- `queueMicrotask`;
+- `__yakccTryAsync`, as the TypeScript runtime defines it.
+
+**Generators.**
+- `next(v)`, `throw(e)` and `return(v)`.
+- `return(v)` unwinds the body as a throw that no catch sees and every finally does.
+- `yield*` over a generator or an iterable.
+- for…of, spread and `Array.from` draw from a generator one step at a time.
+
+**The harness.** It runs the jobs after each call (`yk_settle`). A promise is written as its value,
+or as `["rejected", String(reason)]`.
+
+**Evidence.** Four async programs, each on 200 generated inputs, give Node's results exactly:
+- the interleaving of concurrent awaits, then chains and queueMicrotask, all, allSettled, race,
+  finally, and a caught rejection;
+- thenables, and an async function returning a promise;
+- rejections before and after an await;
+- a p-limit-style limiter, whose start and end order depends on the job order.
+
+A generator program covers `yield*`, `next(v)`, `return()`, `throw()`, spread and `Array.from`. The
+job-order program also runs on AArch64, ARMv7 and RISC-V under QEMU, with the same results.
+
+Not yet:
+- async generators and `for await`;
+- timers (`setTimeout`, a host API, not ECMAScript);
+- closing a generator when a for…of over it breaks early (IteratorClose);
+- a try block that contains a `yield`, which the lifter keeps opaque.
+
 ## Next slices
 
-- Iteration (`for…of`, `for…in`).
-- `new`, classes, accessors, spread, and the prototype chain.
-- Exceptions: the try lowering's primitive, and the runtime's TypeErrors as thrown values.
 - A collector.
 - The boundary a contract's types give, so a typed caller need not box.

@@ -529,11 +529,12 @@ describe("nested function declarations and JSDoc (residue defects found in bcryp
     expect(diamondSymbols(g)).not.toContain("returns");
     expect(diamondSymbols(g)).not.toContain("random");
   });
-  it("a nested function reading a later-declared local is reported (sound, conservative)", () => {
-    // The function is bound at its own position because it reads a name declared later
-    // in the same body. That name is an unknown here, never a missing edge.
+  it("a nested function reading a later-declared const reads it through a cell (#1297)", () => {
+    // The function is bound at its own position (a const is not hoisted), and reads K when it
+    // runs, after K's declaration: a cell from here, as for a later `var`, never an unknown.
     const g = lift("function outer () { function f () { return K } const K = 1; return f() }");
-    expect(diamondSymbols(g)).toContain("K");
+    expect(diamondSymbols(g)).not.toContain("K");
+    expect(g.nodes.some((n) => n.label === 'object:["value"]')).toBe(true);
   });
   it("a function hoisted over a later `var` reads it through a cell, as JavaScript does (#1173)", () => {
     // `var` is hoisted as undefined: f, called after the declarations, sees their values.
@@ -584,5 +585,43 @@ describe("var is hoisted to its function (#1173)", () => {
   it("a parameter of the same name keeps its value", () => {
     const g = lift("export function f(r) { if (false) var r = 9; return r; }");
     expect(g.nodes.some((n) => n.diamond?.symbol === "r")).toBe(false);
+  });
+});
+
+describe("TypeScript sources as the self-shave slices them (#1297)", () => {
+  const free = (src: string): string[] =>
+    liftAtom(src)
+      .nodes.filter((n) => n.diamond?.reason === "free-identifier")
+      .map((n) => n.diamond?.symbol as string)
+      .sort();
+  it("types compute nothing: aliases, interfaces, type-only and re-export lists, type positions", () => {
+    expect(free('export type Mode = "warn" | "reject";')).toEqual([]);
+    expect(free("export interface K { readonly hash: string; readonly m: Model }")).toEqual([]);
+    expect(free('export type { A, B } from "./t.js"; export { c, d } from "./m.js";')).toEqual([]);
+    expect(
+      free("export function f(r: Record<string, H>): T { return r as unknown as T; }"),
+    ).toEqual([]);
+  });
+  it("a class member sliced out of its class is its function, with a receiver", () => {
+    const g = liftAtom("private next(): Tok { const t = this.toks[this.i++]; return t; }");
+    expect(free("private next(): Tok { const t = this.toks[this.i++]; return t; }")).toEqual([]);
+    expect(g.nodes.some((n) => n.label === "this")).toBe(true);
+    // A parameter property is the write it means.
+    const c = liftAtom("constructor(private readonly toks: Tok[]) {}");
+    expect(c.nodes.some((n) => n.label === ".toks=")).toBe(true);
+  });
+  it("a fragment of an async body awaits; a destructuring key and an import attribute are not reads", () => {
+    expect(free("await rename(src, dst);")).toEqual(["dst", "rename", "src"]);
+    expect(free('const { recordMiss: miss } = await import("./t.js"); export { miss };')).toEqual(
+      [],
+    );
+    expect(free('import pkg from "../package.json" with { type: "json" };')).toEqual([]);
+  });
+  it("a let a closure in its own initializer assigns is a cell", () => {
+    expect(
+      free(
+        "export function f(d, cb) { let id = setTimeout(() => { id = null; cb(); }, d); return () => id; }",
+      ),
+    ).toEqual([]);
   });
 });
