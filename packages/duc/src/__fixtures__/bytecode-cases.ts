@@ -319,6 +319,17 @@ export const numericText = fc.oneof(
 
 export const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
   [
+    "functions passed as they are: map, filter, forEach, reduce, some, every, find, findIndex, and a closure argument",
+    "export function f(xs: number[], k: number, s: string): unknown { const out: unknown[] = []; const twice = (x: number) => x * 2; const apply = (g: (n: number) => number, v: number) => g(g(v)); const ys = xs.map((x) => x * k).filter((y) => y > 1); xs.forEach((x, i) => out.push(s + i + ':' + x)); const mixed: unknown[] = [s, k, xs.length > 2]; return [ys, ys.reduce((a, b) => a + b, 0), xs.reduce((a, b) => a * 10 + b), xs.some((x) => x > k), xs.every((x) => x >= 0), xs.find((x) => x > k), xs.findIndex((x) => x === k), mixed.map((m) => typeof m), mixed.filter((m) => m), apply(twice, k), apply((n) => n + k, 1), out]; }",
+    ["number[]", "number", "string"],
+    "unknown",
+    fc.tuple(
+      fc.array(fc.integer({ min: -2, max: 5 }), { maxLength: 5 }),
+      fc.integer({ min: -2, max: 4 }),
+      text,
+    ),
+  ],
+  [
     "exceptions: throw and catch, a TypeError from undefined, a thrown number, finally and rethrow, return through finally, uncaught",
     "export function f(n: number, s: string, x: unknown): unknown { const out: unknown[] = []; let a = 0; try { a = n * 2; if (n > 1) throw new Error(s); out.push('no'); } catch (e) { out.push('caught ' + (e as Error).message); a = -1; } try { out.push((x as any).length); } catch (e) { out.push((e as Error).name); } let t = ''; try { try { if (n < 0) throw n; t = t + 'b'; } finally { t = t + 'f'; } } catch (e) { t = t + 'c' + e; } const g = (): number => { try { return n + 1; } finally { out.push('g'); } }; out.push(g()); if (s === 'boom') throw new RangeError('boom!'); return [a, t, out]; }",
     ["number", "string", "unknown"],
