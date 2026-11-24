@@ -7,6 +7,7 @@
 import fc from "fast-check";
 import { emitTypeScript } from "../emit-ts.js";
 import { liftAtom } from "../lift.js";
+import { Thrown } from "../lower-stack.js";
 import {
   BIGNUM_ATOMS,
   DYNAMIC_ATOMS,
@@ -240,6 +241,16 @@ export const anyValue = fc.oneof(
     ),
     { minLength: 1, maxLength: 3 },
   ),
+  // Plain objects (an object's primitive is "[object Object]"); fc.dictionary's have no prototype.
+  fc
+    .dictionary(
+      fc.constantFrom("a", "b", "x"),
+      fc.oneof(fc.integer(), fc.string({ maxLength: 2 })),
+      {
+        maxKeys: 2,
+      },
+    )
+    .map((d) => ({ ...d })),
 );
 
 // biome-ignore lint/suspicious/noExplicitAny: the operators are ECMAScript's, over any values.
@@ -257,11 +268,47 @@ export const DYNAMIC_OPS: [string, string, (r: unknown) => unknown, Op][] = [
   ["String", "__ykToString", (r) => r, (a) => String(a)],
   ["Number", "__ykToNumber", (r) => r, (a) => Number(a)],
 ];
-/** The same value: by Object.is, an array element by element (nested arrays too). */
-export const same = (a: unknown, b: unknown): boolean =>
-  Array.isArray(a) && Array.isArray(b)
-    ? a.length === b.length && a.every((x, i) => same(x, b[i]))
-    : Object.is(a, b);
+/** A call's outcome: its value, or a Thrown of what it threw. */
+export function outcome(f: (...a: unknown[]) => unknown, args: readonly unknown[]): unknown {
+  try {
+    return f(...args);
+  } catch (e) {
+    return e instanceof Thrown ? e : new Thrown(e);
+  }
+}
+
+/**
+ * The same value: by Object.is; an array element by element; a plain object key by key, in order
+ * (nested ones too).
+ */
+export const same = (a: unknown, b: unknown): boolean => {
+  // What was thrown, uncaught: the same value; two errors: the same class and toString.
+  if (a instanceof Thrown || b instanceof Thrown)
+    return a instanceof Thrown && b instanceof Thrown && same(a.value, b.value);
+  if (a instanceof Error || b instanceof Error)
+    return (
+      a instanceof Error &&
+      b instanceof Error &&
+      Object.getPrototypeOf(a) === Object.getPrototypeOf(b) &&
+      String(a) === String(b)
+    );
+  if (Array.isArray(a) && Array.isArray(b))
+    return a.length === b.length && a.every((x, i) => same(x, b[i]));
+  if (a !== null && b !== null && typeof a === "object" && typeof b === "object") {
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    return (
+      !Array.isArray(a) &&
+      !Array.isArray(b) &&
+      ka.length === kb.length &&
+      ka.every(
+        (k, i) =>
+          k === kb[i] && same((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]),
+      )
+    );
+  }
+  return Object.is(a, b);
+};
 
 export const numericText = fc.oneof(
   text,
@@ -271,6 +318,31 @@ export const numericText = fc.oneof(
 );
 
 export const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
+  [
+    "exceptions: throw and catch, a TypeError from undefined, a thrown number, finally and rethrow, return through finally, uncaught",
+    "export function f(n: number, s: string, x: unknown): unknown { const out: unknown[] = []; let a = 0; try { a = n * 2; if (n > 1) throw new Error(s); out.push('no'); } catch (e) { out.push('caught ' + (e as Error).message); a = -1; } try { out.push((x as any).length); } catch (e) { out.push((e as Error).name); } let t = ''; try { try { if (n < 0) throw n; t = t + 'b'; } finally { t = t + 'f'; } } catch (e) { t = t + 'c' + e; } const g = (): number => { try { return n + 1; } finally { out.push('g'); } }; out.push(g()); if (s === 'boom') throw new RangeError('boom!'); return [a, t, out]; }",
+    ["number", "string", "unknown"],
+    "unknown",
+    fc.tuple(
+      fc.oneof(fc.integer({ min: -2, max: 3 }), fc.double()),
+      fc.oneof(text, fc.constant("boom")),
+      fc.oneof(anyValue, fc.constantFrom(null, undefined)),
+    ),
+  ],
+  [
+    "objects: literals, property reads and writes, computed keys, missing properties, toString, +, ==, typeof",
+    "export function f(a: number, s: string, x: unknown): unknown { const o: any = { n: a, s: s, x: x }; o.n = o.n + 1; o.extra = s; const k = s.length > 1 ? 'n' : 's'; const p: any = { n: 1, n2: 2 }; p[k] = x; return [o.n, o.s, o.missing, o[k], o.x, String(o), o + '!', o == '[object Object]', typeof o, o === o, o === p, p, { a: o.x, b: [a], c: { d: s } }]; }",
+    ["number", "string", "unknown"],
+    "unknown",
+    fc.tuple(fc.oneof(fc.integer({ min: -3, max: 3 }), fc.double()), text, anyValue),
+  ],
+  [
+    "errors: new Error and its message, name and toString; a subclass; Error called without new",
+    "export function f(m: string, b: boolean): unknown { const e = b ? new Error(m) : new TypeError(); const g = Error(m + '!'); return [e.message, e.name, String(e), g.message, e + '', typeof e, (e as any).missing, String(new RangeError(m))]; }",
+    ["string", "boolean"],
+    "unknown",
+    fc.tuple(text, fc.boolean()),
+  ],
   [
     "arrays of any values: mixed literals, push and pop, reads in and out of range, join, ==, +, typeof",
     "export function f(x: unknown, n: number, s: string): unknown { const a = [x, n, s]; const b = []; b.push(s); b.push(n); b.push(x); const p = b.pop(); const e = []; return [a.length, a[1], a[5], a[-0], a[1.5], b.length, p, e.pop(), String(a), a + '|' + b, a == s, a[0] === x, typeof a, b, [a, [n]], e]; }",

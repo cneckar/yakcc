@@ -17,7 +17,10 @@ import {
   type Ins,
   LoweringError,
   type StackProgram,
+  Thrown,
   type WT,
+  jsObjectFrom,
+  jsObjectParts,
   lowerProgram,
 } from "./lower-stack.js";
 import type { DucGraph } from "./types.js";
@@ -100,6 +103,8 @@ const BOX = 3;
 /** An array of any values: type 5, a struct of its length and a growable type 4, (array (mut anyref)). */
 const ANYS = 4;
 const ARR = 5;
+/** An object: type 6, a struct of its keys, its values (arrays of any values) and its class. */
+const OBJ = 6;
 const BASE_TYPES: number[][] = [
   [0x5e, 0x77, 0x01],
   [0x5e, 0x7c, 0x01],
@@ -107,6 +112,7 @@ const BASE_TYPES: number[][] = [
   [0x5f, 0x01, 0x7c, 0x00],
   [0x5e, 0x63, 0x6e, 0x01],
   [0x5f, 0x02, 0x7f, 0x01, 0x63, ANYS, 0x01],
+  [0x5f, 0x03, 0x63, ARR, 0x01, 0x63, ARR, 0x01, 0x63, 0x6e, 0x01],
 ];
 /** Abstract heap types. */
 const HT_I31 = 0x6c;
@@ -118,6 +124,7 @@ const VAL: Record<WT, number[]> = {
   str: [0x63, STR],
   nums: [0x63, NUMS],
   arr: [0x63, ARR],
+  obj: [0x63, OBJ],
   any: [0x63, HT_ANY],
 };
 /** The i31 that is undefined. */
@@ -225,7 +232,18 @@ const NUMS_WRAP = "wasm:numsWrap";
 const ARR_WRAP = "wasm:arrWrap";
 
 /** The primitives the boundary reads a value of any kind with. */
-const BOUNDARY_READS = ["__ykTag", "__ykNum", "__ykBool", "__ykStr", "__ykArr", "__ykArrAny"];
+const BOUNDARY_READS = [
+  "__ykTag",
+  "__ykNum",
+  "__ykBool",
+  "__ykStr",
+  "__ykArr",
+  "__ykArrAny",
+  "__ykObj",
+  "__ykObjKeys",
+  "__ykObjVals",
+  "__ykObjCls",
+];
 
 /** The IR as wasm instructions; `index` gives a function's index by key. */
 function encode(code: readonly Ins[], index: (fn: string) => number): number[] {
@@ -289,7 +307,11 @@ function encode(code: readonly Ins[], index: (fn: string) => number): number[] {
         if (x.to === "f64") out.push(...GC.refCast(BOX), ...GC.boxGet);
         else if (x.to === "i32") out.push(...GC.refCast(HT_I31), ...GC.i31GetS);
         else if (x.to !== "any")
-          out.push(...GC.refCastNull(x.to === "str" ? STR : x.to === "nums" ? NUMS : ARR));
+          out.push(
+            ...GC.refCastNull(
+              x.to === "str" ? STR : x.to === "nums" ? NUMS : x.to === "arr" ? ARR : OBJ,
+            ),
+          );
         break;
       case "ref.eq":
         out.push(I.refEq);
@@ -321,6 +343,16 @@ function encode(code: readonly Ins[], index: (fn: string) => number): number[] {
         break;
       case "br_if":
         out.push(I.brIf, ...u32(x.depth));
+        break;
+      // Exceptions: one tag (0), whose payload is the thrown value of any kind.
+      case "throw":
+        out.push(0x08, 0);
+        break;
+      case "try":
+        out.push(0x06, 0x40);
+        break;
+      case "catch":
+        out.push(0x07, 0);
         break;
     }
   }
@@ -405,6 +437,7 @@ function writeModule(prog: StackProgram, exports: Readonly<Record<string, string
     }
     return at;
   };
+  const throwType = fnType([VAL.any], []);
   const importEntries = hosts.map((h) => {
     const t = fnType(
       Array.from({ length: prog.hosts.get(h) ?? 1 }, () => VAL.f64),
@@ -427,11 +460,10 @@ function writeModule(prog: StackProgram, exports: Readonly<Record<string, string
     const body = [...vec(f.locals.map((l) => [...u32(1), ...l])), ...f.code(ix)];
     return [...u32(body.length), ...body];
   });
-  const exportEntries = Object.entries(exports).map(([as, k]) => [
-    ...name(as),
-    0x00,
-    ...u32(ix(k)),
-  ]);
+  const exportEntries = [
+    ...Object.entries(exports).map(([as, k]) => [...name(as), 0x00, ...u32(ix(k))]),
+    [...name("ykThrow"), 0x04, 0],
+  ];
   return new Uint8Array([
     0x00,
     0x61,
@@ -444,6 +476,8 @@ function writeModule(prog: StackProgram, exports: Readonly<Record<string, string
     ...section(1, vec(types)),
     ...(importEntries.length > 0 ? section(2, vec(importEntries)) : []),
     ...section(3, vec(funcTypes)),
+    // The tag of what a program throws: a value of any kind.
+    ...section(13, vec([[0x00, ...u32(throwType)]])),
     ...section(7, vec(exportEntries)),
     ...section(10, vec(bodies)),
   ]);
@@ -463,6 +497,7 @@ const MARSHAL: Readonly<Record<string, { params: WT[]; result: WT | undefined }>
   arrSetAt: { params: ["arr", "i32", "any"], result: undefined },
   arrLen: { params: ["arr"], result: "i32" },
   arrGetAt: { params: ["arr", "i32"], result: "any" },
+  objFrom: { params: ["arr", "arr", "any"], result: "obj" },
   mkNum: { params: ["f64"], result: "any" },
   mkBool: { params: ["i32"], result: "any" },
   mkUndef: { params: [], result: "any" },
@@ -877,6 +912,13 @@ function primitiveBody(key: string): { locals: number[][]; code: Tok[] } {
           ...f64(4),
           I.else,
           ...get(0),
+          ...GC.refTest(OBJ),
+          I.if,
+          0x7c,
+          I.f64const,
+          ...f64(7),
+          I.else,
+          ...get(0),
           ...GC.refTest(NUMS),
           I.if,
           0x7c,
@@ -885,6 +927,7 @@ function primitiveBody(key: string): { locals: number[][]; code: Tok[] } {
           I.else,
           I.f64const,
           ...f64(6),
+          I.end,
           I.end,
           I.end,
           I.end,
@@ -901,11 +944,25 @@ function primitiveBody(key: string): { locals: number[][]; code: Tok[] } {
       return { locals: [], code: [...get(0), ...GC.refCastNull(STR), I.end] };
     case "__ykArr":
       return { locals: [], code: [...get(0), ...GC.refCastNull(NUMS), I.end] };
+    case "__ykObj":
+      return { locals: [], code: [...get(0), ...GC.refCastNull(OBJ), I.end] };
+    case "__ykObjNew": {
+      const emptyArr = [I.i32const, 0, I.i32const, 0, 0xfb, 0x07, ANYS, ...GC.arrNew];
+      return {
+        locals: [],
+        code: [...emptyArr, ...emptyArr, ...get(0), 0xfb, 0x00, OBJ, I.end],
+      };
+    }
+    case "__ykObjKeys":
+    case "__ykObjVals":
+    case "__ykObjCls": {
+      const field = key === "__ykObjKeys" ? 0 : key === "__ykObjVals" ? 1 : 2;
+      return { locals: [], code: [...get(0), 0xfb, 0x02, OBJ, field, I.end] };
+    }
+    case "objFrom":
+      return { locals: [], code: [...get(0), ...get(1), ...get(2), 0xfb, 0x00, OBJ, I.end] };
     case "__ykUndef":
       return { locals: [], code: [I.i32const, UNDEFINED_I31, ...GC.refI31, I.end] };
-    case "__ykTypeError":
-      // A trap, until exceptions: the program stops where ECMAScript throws a TypeError.
-      return { locals: [], code: [0x00, I.end] };
     case "__ykArrAny":
       return { locals: [], code: [...get(0), ...GC.refCastNull(ARR), I.end] };
     case "__ykSame":
@@ -1020,6 +1077,10 @@ export async function instantiateWasmGc(m: WasmGcModule): Promise<(...args: unkn
   const toWasm = (v: unknown, t: WT): unknown => {
     if (t === "i32") return v ? 1 : 0;
     if (t === "f64") return v;
+    if (t === "obj") {
+      const { keys, vals, cls } = jsObjectParts(v as object);
+      return fn("objFrom")(toWasm(keys, "arr"), toWasm(vals, "arr"), toWasm(cls, "any"));
+    }
     if (t === "arr") {
       const a = v as readonly unknown[];
       const r = fn("arrNew")(a.length);
@@ -1040,6 +1101,7 @@ export async function instantiateWasmGc(m: WasmGcModule): Promise<(...args: unkn
       if (typeof v === "string") return toWasm(v, "str");
       if (Array.isArray(v))
         return toWasm(v, v.every((e) => typeof e === "number") ? "nums" : "arr");
+      if (typeof v === "object") return toWasm(v, "obj");
       throw new TypeError(`${String(v)} is not a value the WasmGC lowering represents`);
     }
     const s = String(v);
@@ -1050,6 +1112,11 @@ export async function instantiateWasmGc(m: WasmGcModule): Promise<(...args: unkn
   const fromWasm = (v: unknown, t: WT): unknown => {
     if (t === "i32") return v !== 0;
     if (t === "f64") return v;
+    if (t === "obj") {
+      const keys = fromWasm(fn("__ykObjKeys")(v), "arr") as string[];
+      const vals = fromWasm(fn("__ykObjVals")(v), "arr") as unknown[];
+      return jsObjectFrom(keys, vals, fromWasm(fn("__ykObjCls")(v), "any"));
+    }
     if (t === "arr") {
       const n = fn("arrLen")(v) as number;
       return Array.from({ length: n }, (_, i) => fromWasm(fn("arrGetAt")(v, i), "any"));
@@ -1065,6 +1132,7 @@ export async function instantiateWasmGc(m: WasmGcModule): Promise<(...args: unkn
       if (tag === 2) return fn("__ykBool")(v) !== 0;
       if (tag === 3) return fn("__ykNum")(v);
       if (tag === 6) return fromWasm(fn("__ykArrAny")(v), "arr");
+      if (tag === 7) return fromWasm(fn("__ykObj")(v), "obj");
       return fromWasm(v, tag === 4 ? "str" : "nums");
     }
     const n = fn("strLen")(v) as number;
@@ -1072,6 +1140,18 @@ export async function instantiateWasmGc(m: WasmGcModule): Promise<(...args: unkn
     for (let i = 0; i < n; i++) s += String.fromCharCode(fn("strGet")(v, i) as number);
     return s;
   };
-  return (...args) =>
-    fromWasm(fn("f")(...args.map((a, i) => toWasm(a, m.params[i] as WT))), m.result);
+  // What a program throws, uncaught, reaches the caller as a Thrown of the value.
+  const tag = (instance.exports as Record<string, unknown>).ykThrow as {
+    readonly __brand?: never;
+  };
+  return (...args) => {
+    try {
+      return fromWasm(fn("f")(...args.map((a, i) => toWasm(a, m.params[i] as WT))), m.result);
+    } catch (e) {
+      const ex = e as { is?: (t: unknown) => boolean; getArg?: (t: unknown, i: number) => unknown };
+      if (typeof ex?.is === "function" && ex.is(tag) && typeof ex.getArg === "function")
+        throw new Thrown(fromWasm(ex.getArg(tag, 0), "any"));
+      throw e;
+    }
+  };
 }

@@ -18,6 +18,7 @@ import {
   PROGRAMS,
   anyValue,
   atomInJs,
+  outcome,
   same,
 } from "./__fixtures__/bytecode-cases.js";
 import { EMIT_CASES } from "./__fixtures__/emit-cases.js";
@@ -154,8 +155,8 @@ describe("programs over strings, lowered to WasmGC (#1300)", () => {
       const wasm = await instantiateWasmGc(emitWasmGc(g, { inputs, output }));
       const bad: string[] = [];
       for (const a of fc.sample(args, { numRuns: 400, seed: 13001 })) {
-        const want = ref(...a);
-        const got = wasm(...a);
+        const want = outcome(ref, a);
+        const got = outcome(wasm, a);
         if (!same(got, want))
           bad.push(`${JSON.stringify(a)}: ${JSON.stringify(got)} vs ${JSON.stringify(want)}`);
       }
@@ -213,7 +214,7 @@ describe("what the WasmGC lowering refuses, with the reason (#1300)", () => {
     }
     return "lowered";
   };
-  it("a method not yet an atom, a member of a value of any kind, an element write in a program", () => {
+  it("a method not yet an atom, a method of a value of any kind, an element write in a program", () => {
     expect(
       refusal(
         "export function f(s: string): string { return s.toUpperCase(); }",
@@ -222,12 +223,8 @@ describe("what the WasmGC lowering refuses, with the reason (#1300)", () => {
       ),
     ).toMatch(/toUpperCase is not in the subset yet/);
     expect(
-      refusal(
-        "export function f(x: unknown): unknown { return x.length; }",
-        ["unknown"],
-        "unknown",
-      ),
-    ).toMatch(/member length of a value of any kind/);
+      refusal("export function f(x: any): unknown { return x.size(); }", ["unknown"], "unknown"),
+    ).toMatch(/a call of a value that is not a known function/);
     expect(
       refusal(
         "export function f(a: number[]): number[] { a[5] = 1; return a; }",

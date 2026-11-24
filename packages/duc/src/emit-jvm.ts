@@ -23,7 +23,10 @@ import {
   type Ins,
   LoweringError,
   type StackProgram,
+  Thrown,
   type WT,
+  jsObjectFrom,
+  jsObjectParts,
   lowerProgram,
 } from "./lower-stack.js";
 import type { DucGraph } from "./types.js";
@@ -43,6 +46,9 @@ export interface JvmModule {
 const MAIN = "Yk";
 const NUMS = "YkNums";
 const ARR = "YkArr";
+const OBJ = "YkObj";
+/** What a program throws, as a JVM exception: a RuntimeException that carries the value. */
+const THROW = "YkThrow";
 const OBJECT = "java/lang/Object";
 
 /** Each type's JVM descriptor. */
@@ -52,6 +58,7 @@ const DESC: Record<WT, string> = {
   str: "Ljava/lang/String;",
   nums: `L${NUMS};`,
   arr: `L${ARR};`,
+  obj: `L${OBJ};`,
   any: `L${OBJECT};`,
 };
 const width = (t: WT): number => (t === "f64" ? 2 : 1);
@@ -157,9 +164,10 @@ function classFile(
   name: string,
   fields: readonly { name: string; desc: string; flags: number }[],
   methods: readonly MethodSpec[],
+  superName: string = OBJECT,
 ): Uint8Array {
   const thisC = pool.cls(name);
-  const superC = pool.cls(OBJECT);
+  const superC = pool.cls(superName);
   const codeName = pool.utf8("Code");
   const fieldBytes = fields.flatMap((f) => [
     ...u2(f.flags),
@@ -175,7 +183,7 @@ function classFile(
       ...u2(m.code.maxLocals),
       ...u4(code.length),
       ...code,
-      ...u2(0), // exception table
+      ...m.code.exceptionTable(),
       ...u2(0), // attributes
     ];
     return [
@@ -295,6 +303,7 @@ class Asm {
   private readonly labelAt = new Map<number, number>();
   private readonly labelDepth = new Map<number, number>();
   private readonly fixups: { at: number; field: number; label: number }[] = [];
+  private readonly handlers: { start: number; end: number; handler: number; type: number }[] = [];
   private labels = 0;
   private depth = 0;
   maxStack = 0;
@@ -327,6 +336,38 @@ class Asm {
   }
   locals(n: number): void {
     this.maxLocals = Math.max(this.maxLocals, n);
+  }
+  /** The code's position: a label placed here. */
+  here(): number {
+    const l = this.label();
+    this.place(l);
+    return l;
+  }
+  /** The stack's depth from here: at a handler, the exception it catches. */
+  setDepth(d: number): void {
+    this.depth = d;
+    this.maxStack = Math.max(this.maxStack, d);
+  }
+  /** A handler for the code between two labels, catching a class. */
+  handle(start: number, end: number, handler: number, cls: string): void {
+    this.handlers.push({ start, end, handler, type: this.pool.cls(cls) });
+  }
+  /** The exception table, inner handlers first (in the order they were closed). */
+  exceptionTable(): number[] {
+    const at = (l: number): number => {
+      const p = this.labelAt.get(l);
+      if (p === undefined) throw new JvmEmitError("a handler at a label never placed");
+      return p;
+    };
+    return [
+      ...u2(this.handlers.length),
+      ...this.handlers.flatMap((h) => [
+        ...u2(at(h.start)),
+        ...u2(at(h.end)),
+        ...u2(at(h.handler)),
+        ...u2(h.type),
+      ]),
+    ];
   }
   finish(): number[] {
     for (const f of this.fixups) {
@@ -495,7 +536,13 @@ function encodeFunction(
     }
     return s;
   };
-  const ctrl: { kind: "if" | "block" | "loop"; a: number; b: number; hasElse: boolean }[] = [];
+  const ctrl: {
+    kind: "if" | "block" | "loop" | "try";
+    a: number;
+    b: number;
+    hasElse: boolean;
+    start?: number;
+  }[] = [];
   const target = (depth: number): number => {
     const c = ctrl[ctrl.length - 1 - depth];
     if (c === undefined) throw new JvmEmitError("a branch out of the function (a lowering error)");
@@ -666,6 +713,7 @@ function encodeFunction(
         } else if (x.to === "str") a.checkcast("java/lang/String");
         else if (x.to === "nums") a.checkcast(NUMS);
         else if (x.to === "arr") a.checkcast(ARR);
+        else if (x.to === "obj") a.checkcast(OBJ);
         break;
       case "ref.eq":
         a.bool(OP.if_acmpeq, 2);
@@ -709,7 +757,7 @@ function encodeFunction(
       case "end": {
         const c = ctrl.pop();
         if (c === undefined) throw new JvmEmitError("an end outside a block (a lowering error)");
-        if (c.kind === "if" && !c.hasElse) a.place(c.a);
+        if ((c.kind === "if" || c.kind === "try") && !c.hasElse) a.place(c.a);
         a.place(c.b);
         break;
       }
@@ -728,6 +776,29 @@ function encodeFunction(
       case "br_if":
         a.jump(OP.ifne, target(x.depth), -1);
         break;
+      case "throw":
+        // [v] -> new YkThrow(v), thrown.
+        a.op([OP.new, ...u2(pool.cls(THROW))], 1);
+        a.op([0x5a], 1); // dup_x1: [t, v, t]
+        a.op([0x5f], 0); // swap: [t, t, v]
+        a.invokespecial(THROW, "<init>", `(${DESC.any})V`);
+        a.op([0xbf], -1); // athrow
+        break;
+      case "try":
+        ctrl.push({ kind: "try", a: a.label(), b: a.label(), hasElse: false, start: a.here() });
+        break;
+      case "catch": {
+        const c = ctrl[ctrl.length - 1];
+        if (c?.kind !== "try") throw new JvmEmitError("a catch outside a try (a lowering error)");
+        const end = a.here();
+        a.jump(OP.goto, c.b, 0);
+        a.place(c.a);
+        a.handle(c.start as number, end, c.a, THROW);
+        a.setDepth(1);
+        a.getfield(THROW, "value", DESC.any);
+        c.hasElse = true;
+        break;
+      }
     }
   }
   a.op(
@@ -865,6 +936,7 @@ function primitiveCode(pool: Pool, key: string, params: readonly WT[], result: W
         ["java/lang/Double", 3],
         ["java/lang/String", 4],
         [NUMS, 5],
+        [OBJ, 7],
       ];
       const notNull = a.label();
       p(0);
@@ -914,16 +986,49 @@ function primitiveCode(pool: Pool, key: string, params: readonly WT[], result: W
       a.checkcast(NUMS);
       ret();
       break;
+    case "__ykObj":
+      p(0);
+      a.checkcast(OBJ);
+      ret();
+      break;
+    case "__ykObjNew": {
+      // A new object of the class: two empty arrays.
+      const emptyArr = (): void => {
+        a.op([OP.new, ...u2(pool.cls(ARR))], 1);
+        a.op([OP.dup], 1);
+        a.invokespecial(ARR, "<init>", "()V");
+        a.op([OP.dup], 1);
+        a.iconst(0);
+        a.op([OP.anewarray, ...u2(pool.cls(OBJECT))], 0);
+        a.putfield(ARR, "data", `[L${OBJECT};`);
+      };
+      a.op([OP.new, ...u2(pool.cls(OBJ))], 1);
+      a.op([OP.dup], 1);
+      a.invokespecial(OBJ, "<init>", "()V");
+      a.op([OP.dup], 1);
+      emptyArr();
+      a.putfield(OBJ, "keys", DESC.arr);
+      a.op([OP.dup], 1);
+      emptyArr();
+      a.putfield(OBJ, "vals", DESC.arr);
+      a.op([OP.dup], 1);
+      p(0);
+      a.putfield(OBJ, "cls", DESC.any);
+      ret();
+      break;
+    }
+    case "__ykObjKeys":
+    case "__ykObjVals":
+    case "__ykObjCls": {
+      const field = key === "__ykObjKeys" ? "keys" : key === "__ykObjVals" ? "vals" : "cls";
+      p(0);
+      a.getfield(OBJ, field, field === "cls" ? DESC.any : DESC.arr);
+      ret();
+      break;
+    }
     case "__ykUndef":
       a.getstatic(MAIN, "UNDEF", DESC.any);
       ret();
-      break;
-    case "__ykTypeError":
-      // Thrown, until exceptions are lowered: the program stops where ECMAScript throws.
-      a.op([OP.new, ...u2(pool.cls("java/lang/IllegalStateException"))], 1);
-      a.op([OP.dup], 1);
-      a.invokespecial("java/lang/IllegalStateException", "<init>", "()V");
-      a.op([0xbf], -1); // athrow
       break;
     case "__ykArrAny":
       p(0);
@@ -1150,8 +1255,44 @@ function hostHelper(pool: Pool, name: string): Asm {
   return a;
 }
 
+/** The class of what a program throws: a RuntimeException with no stack trace, and the value. */
+function throwClass(): Uint8Array {
+  const pool = new Pool();
+  const init = new Asm(pool);
+  init.load("any", 0);
+  init.op([OP.aconst_null], 1);
+  init.op([OP.aconst_null], 1);
+  init.iconst(0);
+  init.iconst(0);
+  init.invokespecial(
+    "java/lang/RuntimeException",
+    "<init>",
+    "(Ljava/lang/String;Ljava/lang/Throwable;ZZ)V",
+  );
+  init.load("any", 0);
+  init.load("any", 1);
+  init.putfield(THROW, "value", DESC.any);
+  init.op([OP.return], 0);
+  init.locals(2);
+  return classFile(
+    pool,
+    THROW,
+    [{ name: "value", desc: DESC.any, flags: 0x0001 }],
+    [{ name: "<init>", desc: `(${DESC.any})V`, flags: 0x0001, code: init }],
+    "java/lang/RuntimeException",
+  );
+}
+
 /** The class of an array: its length, its storage, and a constructor. */
 function arrayClass(name: string, store: string): Uint8Array {
+  return dataClass(name, [
+    { name: "len", desc: "I" },
+    { name: "data", desc: store },
+  ]);
+}
+
+/** A class of public fields and a constructor that sets none of them. */
+function dataClass(name: string, fields: readonly { name: string; desc: string }[]): Uint8Array {
   const pool = new Pool();
   const init = new Asm(pool);
   init.load("any", 0);
@@ -1161,10 +1302,7 @@ function arrayClass(name: string, store: string): Uint8Array {
   return classFile(
     pool,
     name,
-    [
-      { name: "len", desc: "I", flags: 0x0001 },
-      { name: "data", desc: store, flags: 0x0001 },
-    ],
+    fields.map((f) => ({ ...f, flags: 0x0001 })),
     [{ name: "<init>", desc: "()V", flags: 0x0001, code: init }],
   );
 }
@@ -1222,6 +1360,15 @@ export function emitJvm(
       [MAIN, main],
       [NUMS, arrayClass(NUMS, "[D")],
       [ARR, arrayClass(ARR, `[L${OBJECT};`)],
+      [THROW, throwClass()],
+      [
+        OBJ,
+        dataClass(OBJ, [
+          { name: "keys", desc: DESC.arr },
+          { name: "vals", desc: DESC.arr },
+          { name: "cls", desc: DESC.any },
+        ]),
+      ],
     ]),
     params: f.params,
     result: f.result,
@@ -1240,12 +1387,13 @@ export function emitJvm(
 const HARNESS = `import java.io.*;
 import java.lang.reflect.*;
 public class YkHarness {
-  static Class<?> nums, arr;
+  static Class<?> nums, arr, obj;
   static Object undef;
   public static void main(String[] argv) throws Exception {
     Class<?> yk = Class.forName("Yk");
     nums = Class.forName("YkNums");
     arr = Class.forName("YkArr");
+    obj = Class.forName("YkObj");
     undef = yk.getField("UNDEF").get(null);
     Method f = null;
     for (Method m : yk.getMethods()) if (m.getName().equals("f")) f = m;
@@ -1260,7 +1408,9 @@ public class YkHarness {
       try {
         out.println(enc(f.invoke(null, args), f.getReturnType()));
       } catch (InvocationTargetException e) {
-        out.println("!" + e.getCause());
+        Throwable c = e.getCause();
+        if (c.getClass().getName().equals("YkThrow")) out.println("!" + enc(c.getClass().getField("value").get(c), Object.class));
+        else out.println("?" + c);
       }
     }
     out.flush();
@@ -1277,6 +1427,18 @@ public class YkHarness {
       case 't': return Boolean.TRUE;
       case 'f': return Boolean.FALSE;
       case 'n': return bits(r);
+      case 'O': {
+        Object all = dec("A" + r, Object.class);
+        Object[] kv = (Object[]) arr.getField("data").get(all);
+        int n = (arr.getField("len").getInt(all) - 1) / 2;
+        Object[] ks = new Object[n], vs = new Object[n];
+        for (int i = 0; i < n; i++) { ks[i] = kv[1 + 2 * i]; vs[i] = kv[2 + 2 * i]; }
+        Object o = obj.getConstructor().newInstance();
+        obj.getField("keys").set(o, mkArr(ks));
+        obj.getField("vals").set(o, mkArr(vs));
+        obj.getField("cls").set(o, kv[0]);
+        return o;
+      }
       case 'A': {
         java.util.List<Object> xs = new java.util.ArrayList<>();
         int at = 0;
@@ -1307,6 +1469,12 @@ public class YkHarness {
       }
     }
   }
+  static Object mkArr(Object[] xs) throws Exception {
+    Object o = arr.getConstructor().newInstance();
+    arr.getField("len").setInt(o, xs.length);
+    arr.getField("data").set(o, xs);
+    return o;
+  }
   static String hex(double d) { return String.format("%016x", Double.doubleToRawLongBits(d)); }
   static String enc(Object v, Class<?> t) throws Exception {
     if (t == double.class) return "n" + hex((Double) v);
@@ -1319,6 +1487,20 @@ public class YkHarness {
       StringBuilder b = new StringBuilder("s");
       String s = (String) v;
       for (int i = 0; i < s.length(); i++) b.append(String.format("%04x", (int) s.charAt(i)));
+      return b.toString();
+    }
+    if (obj.isInstance(v)) {
+      Object keys = obj.getField("keys").get(v), vals = obj.getField("vals").get(v);
+      int n = arr.getField("len").getInt(keys);
+      Object[] ks = (Object[]) arr.getField("data").get(keys);
+      Object[] vs = (Object[]) arr.getField("data").get(vals);
+      StringBuilder b = new StringBuilder("O");
+      String cls = enc(obj.getField("cls").get(v), Object.class);
+      b.append(cls.length()).append(':').append(cls);
+      for (int i = 0; i < n; i++) {
+        String k = enc(ks[i], Object.class), e = enc(vs[i], Object.class);
+        b.append(k.length()).append(':').append(k).append(e.length()).append(':').append(e);
+      }
       return b.toString();
     }
     if (arr.isInstance(v)) {
@@ -1380,6 +1562,12 @@ function encodeValue(v: unknown, t?: WT): string {
     return `s${[...Array(v.length).keys()].map((i) => v.charCodeAt(i).toString(16).padStart(4, "0")).join("")}`;
   if (Array.isArray(v) && t !== "arr" && v.every((e) => typeof e === "number"))
     return `a${v.map((e) => hex16(e as number)).join("")}`;
+  if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+    const { keys, vals, cls } = jsObjectParts(v);
+    return `O${[encodeValue(cls), ...keys.flatMap((k, i) => [encodeValue(k), encodeValue(vals[i])])]
+      .map((x) => `${x.length}:${x}`)
+      .join("")}`;
+  }
   if (Array.isArray(v))
     return `A${v
       .map((e) => {
@@ -1404,6 +1592,18 @@ function decodeValue(s: string): unknown {
       out += String.fromCharCode(Number.parseInt(r.slice(i, i + 4), 16));
     return out;
   }
+  if (k === "O") {
+    const kv = decodeValue(`A${r}`) as unknown[];
+    const keys: string[] = [];
+    const vals: unknown[] = [];
+    for (let i = 1; i < kv.length; i += 2) {
+      keys.push(kv[i] as string);
+      vals.push(kv[i + 1]);
+    }
+    return jsObjectFrom(keys, vals, kv[0]);
+  }
+  // A call that threw a value: a Thrown of it.
+  if (k === "!") return new Thrown(decodeValue(r));
   if (k === "A") {
     const out: unknown[] = [];
     let at = 0;
@@ -1417,7 +1617,7 @@ function decodeValue(s: string): unknown {
   }
   if (k === "a")
     return Array.from({ length: r.length / 16 }, (_, i) => fromHex16(r.slice(16 * i, 16 * i + 16)));
-  // A call that threw: its exception, as an Error.
+  // A call that failed otherwise (the JVM's own exception): an Error.
   return new Error(r);
 }
 

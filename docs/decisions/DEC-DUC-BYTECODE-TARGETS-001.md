@@ -51,7 +51,14 @@ the format lacks, classified (a), (b) or (c) as in #1299, before the lock.
 - every emit case the typed wasm lowering takes.
 
 **What the format lacks for the JVM, classified as in #1299:**
-- **(a) lowered now:** numbers, booleans, strings, arrays of numbers, values of any kind, loops with early exits, and every runtime atom.
+- **(a) lowered now:**
+  - numbers, booleans, strings, arrays of numbers, values of any kind, loops with early exits, and every runtime atom;
+  - closures, when they are called where they are made (one function per signature);
+  - arrays of any values;
+  - objects and errors;
+  - exceptions (`throw`, and `try` with `catch` and `finally`), with runtime TypeErrors catchable.
+
+  The design is the same on both targets: the shared lowering decides, and each target writes only its primitives.
 - **(b) lowering work, no format change:**
   - Stack-map frames. The classes are version 49, which the JVM verifies by type inference. Version 50 and later need frames at every branch target, which the encoder can compute from the IR's types.
   - Nine `Math` functions have no JVM counterpart that equals V8's to the last place, and are refused with that reason:
@@ -60,5 +67,8 @@ the format lacks, classified (a), (b) or (c) as in #1299, before the lock.
 
     They become runtime atoms ported from V8's algorithms, which every target then shares; WasmGC still takes them from the host engine.
   - The other host functions are checked against V8 on 1000 generated arguments each, and agree exactly: `%`, `**`, `round`, `sign` and `fround`, and the `StrictMath` functions `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sinh`, `tanh`, `expm1`, `log`, `log1p`, `log10` and `pow`.
-  - Objects, closures and exceptions, which WasmGC lacks too. They come next, designed once for both targets.
+  - Function values: a closure passed, returned or stored, or one that captures a function or calls itself. They are refused with the reason.
+  - Property enumeration (`Object.keys`, `for...in`, `JSON`): an object keeps insertion order, while ECMAScript puts integer keys first.
+  - The engines' exact TypeError messages.
+  - `instanceof`.
 - **(c) format gaps:** none found. The graph carried everything both lowerings need: the contract's types, the dataflow, and the heap order.

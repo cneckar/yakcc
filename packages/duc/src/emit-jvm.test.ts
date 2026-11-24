@@ -19,6 +19,7 @@ import {
   PROGRAMS,
   anyValue,
   atomInJs,
+  outcome,
   same,
 } from "./__fixtures__/bytecode-cases.js";
 import { EMIT_CASES } from "./__fixtures__/emit-cases.js";
@@ -117,7 +118,7 @@ describe.skipIf(!jdk)(
         ) => unknown;
         const calls = fc.sample(args, { numRuns: 400, seed: 13001 });
         const got = runJvm(emitJvm(g, { inputs, output }), calls);
-        expect(differences(calls, got, (a) => ref(...a))).toEqual([]);
+        expect(differences(calls, got, (a) => outcome(ref, a))).toEqual([]);
       }, 120_000);
 
     it("every emit case the typed wasm lowering takes, the JVM lowering takes, and computes the same", () => {
@@ -150,7 +151,7 @@ describe.skipIf(!jdk)(
           ...a: unknown[]
         ) => unknown;
         expect(
-          differences(tc.args, runJvm(m, tc.args), (a) => ref(...a)),
+          differences(tc.args, runJvm(m, tc.args), (a) => outcome(ref, a)),
           tc.name,
         ).toEqual([]);
         compared++;
@@ -224,7 +225,7 @@ describe.skipIf(!jdk)("ECMAScript's host functions on a JVM agree with V8 (#1311
         .map(([x, y]) => (arity === 1 ? [x] : [x, y]));
       const inputs = arity === 1 ? ["number"] : ["number", "number"];
       const got = runJvm(emitJvm(g, { inputs, output: "number" }), calls);
-      expect(differences(calls, got, (a) => ref(...a))).toEqual([]);
+      expect(differences(calls, got, (a) => outcome(ref, a))).toEqual([]);
     }, 120_000);
 });
 

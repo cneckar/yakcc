@@ -696,8 +696,8 @@ export const BIGNUM_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
 /**
  * ECMAScript's conversions and generic operators as atoms over dynamic values (`unknown`). A
  * dynamic value is inspected by primitives: `__ykTag` (0 undefined, 1 null, 2 boolean, 3 number,
- * 4 string, 5 an array of numbers, 6 an array of any values), and `__ykNum`, `__ykBool`, `__ykStr`,
- * `__ykArr`, `__ykArrAny` read it as that
+ * 4 string, 5 an array of numbers, 6 an array of any values, 7 an object), and `__ykNum`, `__ykBool`,
+ * `__ykStr`, `__ykArr`, `__ykArrAny`, `__ykObj` read it as that
  * kind; `__ykSame` is reference equality.
  */
 export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
@@ -774,7 +774,8 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   return out;
 }`,
   },
-  // ToPrimitive (ECMA-262 7.1.1) of an object: an array is its join. Any other value is itself.
+  // ToPrimitive (ECMA-262 7.1.1) of an object: an array is its join, an object its toString. Any
+  // other value is itself.
   __ykToPrimitive: {
     inputs: ["unknown"],
     output: "unknown",
@@ -782,7 +783,135 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
   const t = __ykTag(x);
   if (t === 5) return __ykJoinNums(__ykArr(x));
   if (t === 6) return __ykJoinAny(__ykArrAny(x));
+  if (t === 7) return __ykObjToString(__ykObj(x));
   return x;
+}`,
+  },
+  // An object's own property: the value, or undefined (__ykUndef) when it has none. An object is
+  // its keys and its values, two arrays in insertion order, and the class its errors inherit from.
+  __ykGet: {
+    inputs: ["YkObject", "string"],
+    output: "unknown",
+    source: `export function f(o: YkObject, k: string): unknown {
+  const keys = __ykObjKeys(o);
+  let i = 0;
+  while (i < keys.length) {
+    if (__ykStrEquals(__ykStr(keys[i]), k)) return __ykObjVals(o)[i];
+    i = i + 1;
+  }
+  return __ykUndef();
+}`,
+  },
+  // Whether an object has an own property.
+  __ykHas: {
+    inputs: ["YkObject", "string"],
+    output: "boolean",
+    source: `export function f(o: YkObject, k: string): boolean {
+  const keys = __ykObjKeys(o);
+  let i = 0;
+  while (i < keys.length) {
+    if (__ykStrEquals(__ykStr(keys[i]), k)) return true;
+    i = i + 1;
+  }
+  return false;
+}`,
+  },
+  // o[k] = v: the property replaced, or added at the end; the object.
+  __ykPut: {
+    inputs: ["YkObject", "string", "unknown"],
+    output: "YkObject",
+    source: `export function f(o: YkObject, k: string, v: unknown): YkObject {
+  const keys = __ykObjKeys(o);
+  const vals = __ykObjVals(o);
+  let i = 0;
+  while (i < keys.length) {
+    if (__ykStrEquals(__ykStr(keys[i]), k)) {
+      vals[i] = v;
+      return o;
+    }
+    i = i + 1;
+  }
+  keys.push(k);
+  vals.push(v);
+  return o;
+}`,
+  },
+  // A property of any value (x.k): an object's own, else what an error inherits (name, and an
+  // empty message); an array's or a string's length; undefined otherwise. Undefined and null have
+  // none (a TypeError).
+  __ykGetAny: {
+    inputs: ["unknown", "string"],
+    output: "unknown",
+    source: `export function f(x: unknown, k: string): unknown {
+  const t = __ykTag(x);
+  if (t === 0 || t === 1) return __ykTypeError();
+  if (t === 7) {
+    const o = __ykObj(x);
+    if (__ykHas(o, k)) return __ykGet(o, k);
+    const c = __ykObjCls(o);
+    if (__ykTag(c) === 4) {
+      if (__ykStrEquals(k, "name")) return c;
+      if (__ykStrEquals(k, "message")) return "";
+    }
+    return __ykUndef();
+  }
+  if (__ykStrEquals(k, "length")) {
+    if (t === 4) return __ykStr(x).length;
+    if (t === 5) return __ykArr(x).length;
+    if (t === 6) return __ykArrAny(x).length;
+  }
+  return __ykUndef();
+}`,
+  },
+  // new Error(message), and its subclasses by name: an object of that class, with an own message
+  // when one is given (ToString of it).
+  __ykMakeError: {
+    inputs: ["string", "unknown"],
+    output: "YkObject",
+    source: `export function f(cls: string, message: unknown): YkObject {
+  const o = __ykObjNew(cls);
+  if (__ykTag(message) !== 0) __ykPut(o, "message", __ykToString(message));
+  return o;
+}`,
+  },
+  // Where ECMAScript throws a TypeError for reading a property of undefined or null: a TypeError.
+  __ykTypeError: {
+    inputs: [],
+    output: "unknown",
+    source: `export function f(): unknown {
+  throw __ykMakeError("TypeError", "Cannot read properties of undefined or null");
+}`,
+  },
+  // Whether a finally block's completion is a return ([1, value]): it replaces the try's result.
+  __ykIsReturn: {
+    inputs: ["unknown"],
+    output: "boolean",
+    source: `export function f(x: unknown): boolean {
+  const t = __ykTag(x);
+  if (t === 5) {
+    const a = __ykArr(x);
+    return a.length > 0 && a[0] === 1;
+  }
+  if (t === 6) {
+    const b = __ykArrAny(x);
+    return b.length > 0 && __ykStrictEquals(b[0], 1);
+  }
+  return false;
+}`,
+  },
+  // An object's toString: "[object Object]", or an error's (Error.prototype.toString).
+  __ykObjToString: {
+    inputs: ["YkObject"],
+    output: "string",
+    source: `export function f(o: YkObject): string {
+  if (__ykTag(__ykObjCls(o)) !== 4) return "[object Object]";
+  const n = __ykGetAny(o, "name");
+  const m = __ykGetAny(o, "message");
+  const name = __ykTag(n) === 0 ? "Error" : __ykToString(n);
+  const msg = __ykTag(m) === 0 ? "" : __ykToString(m);
+  if (name.length === 0) return msg;
+  if (msg.length === 0) return name;
+  return name + ": " + msg;
 }`,
   },
   // ToNumber (ECMA-262 7.1.4).
@@ -919,18 +1048,29 @@ export const RUNTIME_PRIMITIVES_JS = {
             ? 3
             : typeof x === "string"
               ? 4
-              : (x as unknown[]).every((e) => typeof e === "number")
-                ? 5
-                : 6,
+              : !Array.isArray(x)
+                ? 7
+                : (x as unknown[]).every((e) => typeof e === "number")
+                  ? 5
+                  : 6,
   __ykNum: (x: unknown): number => x as number,
   __ykBool: (x: unknown): boolean => x as boolean,
   __ykStr: (x: unknown): string => x as string,
   __ykArr: (x: unknown): number[] => x as number[],
   __ykArrAny: (x: unknown): unknown[] => x as unknown[],
   __ykUndef: (): unknown => undefined,
-  __ykTypeError: (): unknown => {
-    throw new TypeError("a property of undefined or null");
-  },
+  // An object as the atoms see it (read only, in JavaScript): its own keys but an error's stack,
+  // its values, and the class an error inherits its name from.
+  __ykObj: (x: unknown): object => x as object,
+  __ykObjNew: (cls: unknown): object =>
+    typeof cls === "string" ? Object.create({ name: cls, message: "" }) : {},
+  __ykObjKeys: (o: object): unknown[] => Object.getOwnPropertyNames(o).filter((k) => k !== "stack"),
+  __ykObjVals: (o: object): unknown[] =>
+    Object.getOwnPropertyNames(o)
+      .filter((k) => k !== "stack")
+      .map((k) => (o as Record<string, unknown>)[k]),
+  __ykObjCls: (o: object): unknown =>
+    o instanceof Error ? (Object.getPrototypeOf(o) as { name: string }).name : undefined,
   __ykSame: (a: unknown, b: unknown): boolean => a === b,
   __ykChar: (u: number): string => String.fromCharCode(u),
   __ykF64Hi: (x: number): number => {
