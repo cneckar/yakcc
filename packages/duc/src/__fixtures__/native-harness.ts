@@ -87,6 +87,7 @@ export function encode(v: unknown): string {
       `o${Object.keys(v).length}`,
       ...Object.entries(v).flatMap(([k, x]) => [encode(k), encode(x)]),
     ].join(" ");
+  if (typeof v === "bigint") return `b${v.toString()}`;
   if (v === undefined) return "u";
   if (v === null) return "l";
   if (v === true) return "t";
@@ -133,6 +134,13 @@ export function decode(text: string): unknown {
         o[k] = read();
       }
       return o;
+    }
+    if (c === "b") {
+      let end = at;
+      while (/[-0-9]/.test(text[end] ?? "")) end++;
+      const v = BigInt(text.slice(at, end));
+      at = end;
+      return v;
     }
     if (c === "F") return FUNCTION;
     return { u: undefined, l: null, t: true, f: false }[c as "u" | "l" | "t" | "f"];
