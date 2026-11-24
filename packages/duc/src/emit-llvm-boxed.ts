@@ -542,6 +542,8 @@ function lowerFunction(
       );
       return;
     }
+    if (lbl === "super[]")
+      throw new LlvmEmitError("super[key] is not lowered natively yet (#1330)");
     if (lbl.startsWith("super.")) {
       // The parent's member, read with the receiver (#1294).
       if (closure === undefined) throw new LlvmEmitError("super outside a class's member");

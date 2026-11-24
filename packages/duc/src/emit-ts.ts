@@ -94,6 +94,7 @@ function templateText(value: string): string {
 const isMemberRead = (label: string): boolean =>
   (label !== "..." && (label.startsWith(".") || label.startsWith("?.")) && !label.endsWith("=")) ||
   label.startsWith("super.") ||
+  label === "super[]" ||
   label === "ElementAccess" ||
   label === "ElementAccess?.";
 
@@ -395,6 +396,7 @@ function emitFunction(
       if (label === "ElementAccess?.") return `${arg(0)}?.[${arg(1)}]`;
       // The parent's member: its input is the receiver `super` reads with, written as `super`.
       if (label.startsWith("super.")) return label;
+      if (label === "super[]") return `super[${arg(1)}]`;
       return `${arg(0)}${label}`;
     }
     if (CALLS.has(label)) {
@@ -407,6 +409,15 @@ function emitFunction(
       return label === "CallExpression?." ? `${callee}?.(${args})` : `${callee}(${args})`;
     }
     if (label === "ArrayLiteral") return `[${ins.map((v) => ref(v)).join(", ")}]`;
+    if (label.startsWith("array-with-holes:")) {
+      // The holes at their positions, the elements in the rest; a last hole needs its own comma.
+      const holes = new Set(JSON.parse(label.slice("array-with-holes:".length)) as number[]);
+      const parts: string[] = [];
+      let next = 0;
+      for (let i = 0; parts.length < ins.length + holes.size; i++)
+        parts.push(holes.has(i) ? "" : ref(ins[next++] as ValueId));
+      return `[${parts.join(", ")}${holes.has(parts.length - 1) ? "," : ""}]`;
+    }
     if (label === "...") return `...${arg(0)}`;
     if (label.startsWith("OmittedExpression#")) return "";
     if (label === "this" || label.startsWith("ThisKeyword#")) return "this";

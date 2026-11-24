@@ -151,9 +151,47 @@ describe("a try with a return inside a loop (#1330)", () => {
     });
   }
 
-  it("a break that leaves the try is not lifted yet", () => {
+  const JUMPS: [string, string, unknown][] = [
+    [
+      "a break and a continue that leave the try, as Node's Readable.from writes them",
+      "export function f(xs) { const out = []; const it = xs[Symbol.iterator](); for (;;) { try { const { value, done } = it.next(); if (done) { out.push('end'); return out; } if (value === 0) throw new Error('zero'); if (value > 5) { out.push('big'); continue; } out.push(value); } catch (err) { out.push('err ' + err.message); } break; } return out; }",
+      [9, 7, 0, 4],
+    ],
+    [
+      "the same, to the end",
+      "export function f(xs) { const out = []; const it = xs[Symbol.iterator](); for (;;) { try { const { value, done } = it.next(); if (done) { out.push('end'); return out; } if (value > 5) { out.push('big'); continue; } out.push(value); } catch (err) { out.push('err ' + err.message); } break; } return out; }",
+      [9, 9],
+    ],
+    [
+      "for-of: break and continue from the try, statements after it",
+      "export function f(xs) { let n = 0; for (const x of xs) { try { if (x < 0) break; if (x === 0) continue; n += x; } catch {} n *= 2; } return n; }",
+      [1, 0, 2, -1, 5],
+    ],
+    [
+      "a break of a loop inside the try stays inside",
+      "export function f(xs) { let n = 0; for (const x of xs) { try { for (const y of x) { if (y < 0) break; n += y; } } catch {} } return n; }",
+      [[1, -1, 5], [2]],
+    ],
+  ];
+  for (const [name, source, input] of JUMPS) {
+    it(name, () => {
+      const g = liftAtom(source);
+      expect(opaque(g)).toEqual([]);
+      const code = emitTypeScript(g);
+      const go = (c: string): unknown =>
+        (
+          new Function(`${runnable(c).replace(/^export /m, "")}; return f;`)() as (
+            x: unknown,
+          ) => unknown
+        )(input);
+      expect(go(code), code).toEqual(go(source));
+      expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    });
+  }
+
+  it("a break from a finally is not lifted yet", () => {
     const g = liftAtom(
-      "export function f(xs) { let n = 0; for (const x of xs) { try { if (x) break; n++; } catch (e) {} } return n; }",
+      "export function f(xs) { let n = 0; for (const x of xs) { try { n += x; } finally { if (x > 1) break; } } return n; }",
     );
     expect(opaque(g).length).toBeGreaterThan(0);
   });
@@ -205,6 +243,75 @@ describe("closures over a for loop's per-pass binding, and destructuring in a tr
       "export function f(t) { const fs = []; for (let i = 0; i < t; i++) { fs.push(() => i++); } return fs; }",
     ])
       expect(opaque(liftAtom(source)).length, source).toBeGreaterThan(0);
+  });
+});
+
+describe("a try that yields, in a generator (#1330)", () => {
+  // Each returns what a consumer saw, so the source and its lowering are compared by behaviour.
+  const CASES: [string, string][] = [
+    [
+      "next sends into the try; a throw inside is caught; the finally runs",
+      "export function f() { const log = []; function* g(n) { try { for (let i = 0; i < n; i++) { const got = yield i; log.push('got ' + got); if (i === 2) throw new Error('two'); } } catch (e) { log.push('caught ' + e.message); yield -1; } finally { log.push('finally'); } return 'end'; } const it = g(5); const out = [it.next().value, it.next('a').value, it.next('b').value, it.next('c').value, it.next('d')]; return [out, log]; }",
+    ],
+    [
+      "a consumer that stops early runs the finally",
+      "export function f() { const log = []; function* g() { try { yield 1; yield 2; yield 3; } finally { log.push('cleanup'); } } const out = []; for (const x of g()) { out.push(x); if (x === 2) break; } return [out, log]; }",
+    ],
+    [
+      "throw() reaches the handler; a return inside the try returns",
+      "export function f() { function* g() { try { yield 1; return 'early'; } catch (e) { yield 'c:' + e; } } const it = g(); return [it.next(), it.throw('boom'), it.next()]; }",
+    ],
+    [
+      "a finally that yields",
+      "export function f() { function* g() { try { yield 1; return 'early'; } finally { yield 'f'; } } return [...g()]; }",
+    ],
+    [
+      "an async generator, as Node's stream iterators write it",
+      "export async function f() { const log = []; async function* g(xs) { let error; try { while (true) { const x = xs.shift(); if (x === undefined) return; if (x === 'bad') throw new Error('bad'); yield await Promise.resolve(x); } } catch (e) { error = e.message; throw e; } finally { log.push('done ' + error); } } const out = []; try { for await (const x of g(['a', 'b', 'bad', 'c'])) out.push(x); } catch (e) { out.push('outer ' + e.message); } for await (const x of g(['z'])) out.push(x); return [out, log]; }",
+    ],
+  ];
+  for (const [name, source] of CASES) {
+    it(name, async () => {
+      const g = liftAtom(source);
+      expect(opaque(g)).toEqual([]);
+      const code = emitTypeScript(g);
+      const go = async (c: string): Promise<unknown> =>
+        await (
+          new Function(`${runnable(c).replace(/^export /m, "")}; return f;`)() as () => unknown
+        )();
+      expect(await go(code), code).toEqual(await go(source));
+      expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    });
+  }
+
+  it("a try that yields and reads the receiver stays a summary", () => {
+    const g = liftAtom(
+      "export function f() { const o = { *g() { try { yield this.x; } finally {} }, x: 1 }; return [...o.g()]; }",
+    );
+    expect(opaque(g).length).toBeGreaterThan(0);
+  });
+});
+
+describe("array holes (#1330)", () => {
+  it("a hole is no element: its position, the length and the keys are kept", () => {
+    for (const [source, input] of [
+      ["export function f(m) { m ||= [, 0b10, 0b11]; return m; }", undefined],
+      ["export function f(x) { return [1, , x, , ]; }", 5],
+      ["export function f(x) { return [, ...x, , 2]; }", [7, 8]],
+    ] as [string, unknown][]) {
+      const g = liftAtom(source);
+      expect(opaque(g)).toEqual([]);
+      const code = emitTypeScript(g);
+      const go = (c: string): unknown => {
+        const r = (
+          new Function(`${c.replace(/^export /m, "")}; return f;`)() as (x: unknown) => unknown[]
+        )(input);
+        return [r.length, Object.keys(r), r];
+      };
+      expect(go(code), code).toEqual(go(source));
+      expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+      expect(graphIdentity(unpackGraph(packGraph(g)))).toBe(graphIdentity(g));
+    }
   });
 });
 
