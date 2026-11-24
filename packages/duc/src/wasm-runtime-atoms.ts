@@ -1595,6 +1595,44 @@ export const COLLECTION_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
 }`,
   },
   // recv.name(...args) for a receiver of any kind.
+  // An optional chain's link (a?.k, a?.[key], a?.m(...), f?.(...)): undefined when what it reads
+  // is undefined or null, else the plain link's result.
+  __ykOptGet: {
+    inputs: ["unknown", "string"],
+    output: "unknown",
+    source: String.raw`export function f(x: unknown, k: string): unknown {
+  const t = __ykTag(x);
+  if (t === 0 || t === 1) return __ykUndef();
+  return __ykGetAny(x, k);
+}`,
+  },
+  __ykOptGetKey: {
+    inputs: ["unknown", "unknown"],
+    output: "unknown",
+    source: String.raw`export function f(x: unknown, key: unknown): unknown {
+  const t = __ykTag(x);
+  if (t === 0 || t === 1) return __ykUndef();
+  return __ykGetKey(x, key);
+}`,
+  },
+  __ykOptInvoke: {
+    inputs: ["unknown", "string", "unknown[]"],
+    output: "unknown",
+    source: String.raw`export function f(x: unknown, name: string, args: unknown[]): unknown {
+  const t = __ykTag(x);
+  if (t === 0 || t === 1) return __ykUndef();
+  return __ykInvoke(x, name, args);
+}`,
+  },
+  __ykOptCall: {
+    inputs: ["unknown", "unknown[]"],
+    output: "unknown",
+    source: String.raw`export function f(g: unknown, args: unknown[]): unknown {
+  const t = __ykTag(g);
+  if (t === 0 || t === 1) return __ykUndef();
+  return __ykCallWith(g, args);
+}`,
+  },
   __ykInvoke: {
     inputs: ["unknown", "string", "unknown[]"],
     output: "unknown",
@@ -1642,10 +1680,14 @@ export const COLLECTION_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
         return __ykUndef();
       }
     }
+    if (__ykStrEquals(name, "toString")) return __ykToString(recv);
     return __ykNoMethod();
   }
+  if ((t === 5 || t === 6) && __ykStrEquals(name, "toString")) return __ykToString(recv);
   if (t === 5 || t === 6) return __ykArrayMethod(recv, name, args);
   if (t === 4) return __ykStringMethod(__ykStr(recv), name, args);
+  if (t === 3 && __ykStrEquals(name, "toString")) return __ykNumberToStringRadix(__ykNum(recv), arg(0));
+  if (t === 2 && __ykStrEquals(name, "toString")) return __ykBool(recv) ? "true" : "false";
   return __ykNoMethod();
 }`,
   },
@@ -1809,6 +1851,95 @@ export const METHOD_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     k = k + 1;
   }
   return out;
+}`,
+  },
+  // Number.prototype.toString(radix) for a radix other than 10, as V8 writes it
+  // (DoubleToRadixCString): fraction digits while they are above half a unit in the last place of
+  // the value (scaled with them), rounded to even with a carry back through the digits written;
+  // integer digits by repeated division, those below the double's precision zeros.
+  __ykNumberToRadix: {
+    inputs: ["number", "number"],
+    output: "string",
+    source: String.raw`export function f(x: number, radix: number): string {
+  const chars = "0123456789abcdefghijklmnopqrstuvwxyz";
+  if (x !== x) return "NaN";
+  if (x === Infinity) return "Infinity";
+  if (x === -Infinity) return "-Infinity";
+  const negative = x < 0;
+  const value = negative ? -x : x;
+  let integer = Math.floor(value);
+  let fraction = value - integer;
+  const biased = Math.floor(__ykF64Hi(value) / 1048576) % 2048;
+  const ulp = biased === 0 ? __ykPow2(-1074) : __ykPow2(biased - 1075);
+  let delta = 0.5 * (value + ulp - value);
+  delta = Math.max(__ykPow2(-1074), delta);
+  const digits: number[] = [];
+  if (fraction >= delta) {
+    let going = true;
+    while (going) {
+      fraction = fraction * radix;
+      delta = delta * radix;
+      const digit = Math.floor(fraction);
+      digits.push(digit);
+      fraction = fraction - digit;
+      if (fraction > 0.5 || (fraction === 0.5 && digit % 2 === 1)) {
+        if (fraction + delta > 1) {
+          let carrying = true;
+          while (carrying) {
+            if (digits.length === 0) {
+              integer = integer + 1;
+              carrying = false;
+            } else {
+              const d = digits[digits.length - 1] as number;
+              digits.pop();
+              if (d + 1 < radix) {
+                digits.push(d + 1);
+                carrying = false;
+              }
+            }
+          }
+          going = false;
+        }
+      }
+      if (going && !(fraction >= delta)) going = false;
+    }
+  }
+  let intPart = "";
+  while (integer / radix >= 9007199254740992) {
+    integer = integer / radix;
+    intPart = "0" + intPart;
+  }
+  let more = true;
+  while (more) {
+    const remainder = integer % radix;
+    intPart = __ykSub(chars, remainder, remainder + 1) + intPart;
+    integer = (integer - remainder) / radix;
+    more = integer > 0;
+  }
+  let out = negative ? "-" + intPart : intPart;
+  if (digits.length > 0) {
+    out = out + ".";
+    let i = 0;
+    while (i < digits.length) {
+      const d = digits[i] as number;
+      out = out + __ykSub(chars, d, d + 1);
+      i = i + 1;
+    }
+  }
+  return out;
+}`,
+  },
+  // Number.prototype.toString(radix): radix 10 (or undefined) NumberToString, else a RangeError
+  // outside 2..36.
+  __ykNumberToStringRadix: {
+    inputs: ["number", "unknown"],
+    output: "string",
+    source: String.raw`export function f(x: number, radix: unknown): string {
+  if (__ykTag(radix) === 0) return __ykNumberToString(x);
+  const r = __ykToInteger(radix);
+  if (r < 2 || r > 36) throw __ykMakeError("RangeError", "toString() radix must be between 2 and 36");
+  if (r === 10) return __ykNumberToString(x);
+  return __ykNumberToRadix(x, r);
 }`,
   },
   // A RangeError: Invalid count value.
@@ -2016,6 +2147,26 @@ export const DYNAMIC_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     return __ykUndef();
   }
   return __ykUndef();
+}`,
+  },
+  // x[key] for a value of any kind and a key of any kind: a string's or an array's element at an
+  // index (a number, or a string that is one's canonical form), else the property ToPropertyKey
+  // names (an object's own, a length).
+  __ykGetKey: {
+    inputs: ["unknown", "unknown"],
+    output: "unknown",
+    source: `export function f(x: unknown, key: unknown): unknown {
+  const t = __ykTag(x);
+  if (t === 0 || t === 1) return __ykTypeError();
+  const tk = __ykTag(key);
+  const indexed = t === 4 || t === 5 || t === 6;
+  if (tk === 3 && indexed) return __ykIndex(x, __ykNum(key));
+  const k = tk === 3 ? __ykNumberToString(__ykNum(key)) : __ykToString(key);
+  if (indexed) {
+    const n = __ykToNumber(k);
+    if (__ykStrEquals(__ykNumberToString(n), k)) return __ykIndex(x, n);
+  }
+  return __ykGetAny(x, k);
 }`,
   },
   // An array of values of any kind, each a number, as an array of numbers.
