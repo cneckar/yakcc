@@ -107,7 +107,8 @@ module, x = another module, - = none):
 
 The first run put break-even near 2,000 output tokens of from-scratch code. The `routed` arm
 acts on that in its first call. The prompt says: if you can write this correctly in about 60
-lines or fewer, write it now; otherwise, name the module to search for. A reply with code is
+lines or fewer, write it now; otherwise, name the module to search for. The threshold was 60
+lines in this run, and is 15 by default after tuning (below). A reply with code is
 the solution (one call, no search). A reply without code is the need, and the reuse path
 continues from it.
 
@@ -159,8 +160,30 @@ at once, T = searched and reused the target):
   costs some thinking). A caller that already knows a task is small should skip the router.
 - **The model routes conservatively.** It searched for the two tasks it judged too large to
   write in 60 lines. A lower line threshold would route more of the large tasks to search,
-  with the risk of searching for things it could write. The threshold is a knob to tune,
-  not a constant.
+  with the risk of searching for things it could write. The next section tunes it.
+
+### Tuning the threshold (Haiku 5.5, 3 seeds each, `results/route-sweep/`)
+
+These runs used the routed arm only, at 15, 30 and 45 lines, with the 60-line run above for
+comparison. The sweep cost about $0.10.
+
+| Threshold | Dollars per passing task | Large | Medium | Small | Searched | Passed |
+|---|---|---|---|---|---|---|
+| **15 lines** | **$0.00082** | **$0.00106** | $0.00044 | $0.00043 | 38% | 39/39 |
+| 30 lines | $0.00090 | $0.00120 | $0.00044 | $0.00046 | 28% | 38/39 |
+| 45 lines | $0.00089 | $0.00115 | $0.00044 | $0.00049 | 15% | 39/39 |
+| 60 lines | $0.00097 | $0.00129 | $0.00042 | $0.00050 | 13% | 39/39 |
+
+- **15 lines is the default now.** It is the cheapest, 15% below 60 lines, 43% below scratch
+  ($0.00145) and 22% below always searching ($0.00105), and it passed every test.
+- **The saving comes from the large tasks.** At 15 lines the model also searched for
+  `sort-iso-timestamps`, `name-based-uuid` and `md5-hex`, and reused the target in most of
+  those runs. Small and medium tasks were still written at once, at every threshold, so a
+  lower threshold did not make them search.
+- **The one failure** was at 30 lines: `md5-hex` written from scratch gave a wrong digest for
+  `"abc"`. Writing a hash by hand is where reuse also protects correctness.
+- **Caveat:** these are 3 seeds on 13 tasks. The gaps between 30, 45 and 60 lines are within
+  run-to-run noise; 15 lines' lead on the large tasks is the consistent part.
 
 ## Running
 
@@ -172,7 +195,7 @@ node --test harness/b14.test.mjs
 node harness/run.mjs --dry-run --seeds 3
 node harness/run.mjs --client offline
 CLAUDE_API_KEY=... node harness/run.mjs --client anthropic --seeds 3   # after the go-ahead
-#   --arms scratch,reuse,routed (default all three)
+#   --arms scratch,reuse,routed (default all three); --route-lines N (default 15)
 ```
 
 ## Limitations

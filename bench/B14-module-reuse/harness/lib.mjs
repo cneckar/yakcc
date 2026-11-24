@@ -101,16 +101,20 @@ export function needPrompt(task) {
   return `Task: ${task.spec}\n\nBefore writing any code, say what reusable library module would do the heavy lifting for this task, as one or two sentences for a code search: the capability, its inputs and outputs, the behavior that matters. No code. If the task is small enough that no library would help, reply NONE.`;
 }
 
-/** Lines of from-scratch code below which the routed arm writes instead of searching. */
-export const ROUTE_LINES = 60;
+/**
+ * Lines of from-scratch code below which the routed arm writes instead of searching. Tuned on
+ * Haiku 5.5 over 15, 30, 45 and 60 (README, "Tuning the threshold"): 15 was cheapest per passing
+ * task and passed every test.
+ */
+export const ROUTE_LINES = 15;
 
 /**
  * The routed arm's first prompt: write it now when it is small, else name the module to search
  * for. B14's first live run put break-even near 2,000 output tokens of from-scratch code; the
  * model cannot count tokens before writing, so the threshold is stated in lines.
  */
-export function routePrompt(task) {
-  return `Task: ${task.spec}\n\nIf you can write this correctly in about ${ROUTE_LINES} lines of code or fewer, write it now. ${CODE_RULES}\n\nOtherwise, do not write any code: say what reusable library module would do the heavy lifting, as one or two sentences for a code search: the capability, its inputs and outputs, the behavior that matters.`;
+export function routePrompt(task, lines = ROUTE_LINES) {
+  return `Task: ${task.spec}\n\nIf you can write this correctly in about ${lines} lines of code or fewer, write it now. ${CODE_RULES}\n\nOtherwise, do not write any code: say what reusable library module would do the heavy lifting, as one or two sentences for a code search: the capability, its inputs and outputs, the behavior that matters.`;
 }
 
 export function confirmPrompt(task, need, candidates) {
@@ -182,7 +186,15 @@ export async function runScratch({ task, client }) {
  * With `route`, the first call is routePrompt: a reply with code is the solution (one call, no
  * search); a reply without code is the need, and the reuse path continues from it.
  */
-export async function runReuse({ task, client, search, rootSourceOf, k = 5, route = false }) {
+export async function runReuse({
+  task,
+  client,
+  search,
+  rootSourceOf,
+  k = 5,
+  route = false,
+  routeLines = ROUTE_LINES,
+}) {
   const t0 = Date.now();
   let inputTokens = 0;
   let outputTokens = 0;
@@ -195,7 +207,7 @@ export async function runReuse({ task, client, search, rootSourceOf, k = 5, rout
     return r.text;
   };
   const arm = route ? "routed" : "reuse";
-  const first = (await call(route ? routePrompt(task) : needPrompt(task))).trim();
+  const first = (await call(route ? routePrompt(task, routeLines) : needPrompt(task))).trim();
   if (route && /```/.test(first)) {
     const score = scoreSolution(task, extractCode(first));
     return {
