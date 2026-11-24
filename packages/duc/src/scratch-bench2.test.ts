@@ -1,0 +1,21 @@
+import { writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { it } from "vitest";
+import { emitNativeModules } from "./emit-llvm-boxed.js";
+import { liftAtom } from "./lift.js";
+import { compileObject } from "./native.js";
+import { shaveCUnit } from "./raise-c.js";
+const here = (p: string): string => fileURLToPath(new URL(p, import.meta.url));
+const V8 = here("../vendor/v8/"); const MUSL = here("../vendor/musl/");
+it("bench", () => {
+  const v8 = shaveCUnit(`${V8}src/base/ieee754.cc`, ["ieee754::", "__kernel", "__ieee754"], ["-std=c++20", `-I${V8}`, `-I${V8}include`]);
+  const musl = shaveCUnit(`${MUSL}src/math/scalbn.c`, ["scalbn"], ["-std=c11"], "clang");
+  const atoms = new Map([...v8.atoms, ...musl.atoms]);
+  const names = [...atoms.keys()];
+  const statements = names.map((n) => ({ kind: "function" as const, declares: [n], graph: liftAtom(atoms.get(n)!.source) }));
+  statements.push({ kind: "statement" as const, declares: [], graph: liftAtom(`module.exports = { ${names.join(", ")} };`) } as never);
+  const { ir } = emitNativeModules([{ id: "m.js", statements }]);
+  const dir = "/tmp/claude-0/-home-user-yakcc/00f8f43c-b4e3-537d-a110-6d044596c74d/scratchpad/bench";
+  writeFileSync(`${dir}/m.ll`, ir);
+  writeFileSync(`${dir}/m.o`, compileObject({ ir, symbol: "", params: [], result: "i64" }));
+}, 600000);

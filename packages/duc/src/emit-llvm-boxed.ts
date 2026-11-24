@@ -188,6 +188,31 @@ const LEAVES: Readonly<Record<string, [string, number]>> = {
   __ykStoreF32: ["yk_leaf_store_f32", 2],
   __ykF32: ["yk_leaf_f32", 1],
 };
+/**
+ * The memory leaves with an inline fast path (#1369): an access to the region the runtime's cache
+ * holds (`yk_mcache_*`) is a native load or store; anything else is the runtime's leaf, which finds
+ * the region or traps and fills the cache. Each: its size, its LLVM type, how its value converts.
+ */
+const MEM_INLINE: Readonly<
+  Record<string, { size: number; ty: string; kind: "u" | "f64" | "f32"; store: boolean }>
+> = {
+  __ykLoad8: { size: 1, ty: "i8", kind: "u", store: false },
+  __ykLoad16: { size: 2, ty: "i16", kind: "u", store: false },
+  __ykLoad32: { size: 4, ty: "i32", kind: "u", store: false },
+  __ykLoadF64: { size: 8, ty: "double", kind: "f64", store: false },
+  __ykLoadF32: { size: 4, ty: "float", kind: "f32", store: false },
+  __ykStore8: { size: 1, ty: "i8", kind: "u", store: true },
+  __ykStore16: { size: 2, ty: "i16", kind: "u", store: true },
+  __ykStore32: { size: 4, ty: "i32", kind: "u", store: true },
+  __ykStoreF64: { size: 8, ty: "double", kind: "f64", store: true },
+  __ykStoreF32: { size: 4, ty: "float", kind: "f32", store: true },
+};
+const MEM_CACHE_DECLS = [
+  "@yk_mcache_base = external global i64",
+  "@yk_mcache_len = external global i64",
+  "@yk_mcache_bytes = external global ptr",
+  "@yk_mcache_writable = external global i64",
+];
 /** A BigInt literal: its digits (any radix prefix kept), then n. */
 const BIGINT_LITERAL = /^(0[xXoObB][0-9a-fA-F_]+|[0-9_]+)n$/;
 const MATH1 = new Set(["floor", "ceil", "trunc", "sqrt", "abs", "sign", "round"]);
@@ -589,6 +614,138 @@ function lowerFunction(
     const i = fresh();
     emit(`${i} = trunc i64 ${w} to i32`);
     return i;
+  };
+  /**
+   * A load or store of the memory leaves, inline when its address (and a store's value) is a number,
+   * the address an integer inside the runtime's cached region (and it writable, for a store);
+   * `slow` (the runtime's leaf) otherwise.
+   */
+  const memoryAccess = (
+    mem: { size: number; ty: string; kind: "u" | "f64" | "f32"; store: boolean },
+    args: readonly string[],
+    slow: () => string,
+  ): string => {
+    for (const d of MEM_CACHE_DECLS) m.intrinsics.add(d);
+    m.intrinsics.add("declare double @llvm.fabs.f64(double)");
+    const range = freshLabel("mrange");
+    const conv = freshLabel("mconv");
+    const fast = freshLabel("mfast");
+    const slowLabel = freshLabel("mslow");
+    const join = freshLabel("mjoin");
+    const addr = args[0] as string;
+    const value = args[1];
+    let numbers = fresh();
+    emit(`${numbers} = icmp ult i64 ${addr}, ${NUMBER_LIMIT}`);
+    if (mem.store) {
+      const v = fresh();
+      emit(`${v} = icmp ult i64 ${value}, ${NUMBER_LIMIT}`);
+      const both = fresh();
+      emit(`${both} = and i1 ${numbers}, ${v}`);
+      numbers = both;
+    }
+    emit(`br i1 ${numbers}, label %${range}, label %${slowLabel}`);
+    block(range);
+    const d = fresh();
+    emit(`${d} = bitcast i64 ${addr} to double`);
+    const nonneg = fresh();
+    emit(`${nonneg} = fcmp oge double ${d}, 0.0`);
+    const below = fresh();
+    emit(`${below} = fcmp olt double ${d}, 9.2e18`);
+    let ok = fresh();
+    emit(`${ok} = and i1 ${nonneg}, ${below}`);
+    let xd = "";
+    if (mem.store) {
+      xd = fresh();
+      emit(`${xd} = bitcast i64 ${value} to double`);
+      if (mem.kind === "u") {
+        // ToInt32 of the value inline needs it below 2^63 in magnitude.
+        const small = fresh();
+        emit(`${small} = and i1 ${ok}, ${smallDouble(xd)}`);
+        ok = small;
+      }
+    }
+    emit(`br i1 ${ok}, label %${conv}, label %${slowLabel}`);
+    block(conv);
+    const i = fresh();
+    emit(`${i} = fptosi double ${d} to i64`);
+    const back = fresh();
+    emit(`${back} = sitofp i64 ${i} to double`);
+    const integral = fresh();
+    emit(`${integral} = fcmp oeq double ${back}, ${d}`);
+    const base = fresh();
+    emit(`${base} = load i64, ptr @yk_mcache_base`);
+    const len = fresh();
+    emit(`${len} = load i64, ptr @yk_mcache_len`);
+    const off = fresh();
+    emit(`${off} = sub i64 ${i}, ${base}`);
+    const room = fresh();
+    emit(`${room} = icmp uge i64 ${len}, ${mem.size}`);
+    const lim = fresh();
+    emit(`${lim} = sub i64 ${len}, ${mem.size}`);
+    const inside = fresh();
+    emit(`${inside} = icmp ule i64 ${off}, ${lim}`);
+    let all = fresh();
+    emit(`${all} = and i1 ${integral}, ${room}`);
+    const all2 = fresh();
+    emit(`${all2} = and i1 ${all}, ${inside}`);
+    all = all2;
+    if (mem.store) {
+      const w = fresh();
+      emit(`${w} = load i64, ptr @yk_mcache_writable`);
+      const wr = fresh();
+      emit(`${wr} = icmp ne i64 ${w}, 0`);
+      const all3 = fresh();
+      emit(`${all3} = and i1 ${all}, ${wr}`);
+      all = all3;
+    }
+    emit(`br i1 ${all}, label %${fast}, label %${slowLabel}`);
+    block(fast);
+    const bytes = fresh();
+    emit(`${bytes} = load ptr, ptr @yk_mcache_bytes`);
+    const p = fresh();
+    emit(`${p} = getelementptr i8, ptr ${bytes}, i64 ${off}`);
+    let r1: string;
+    if (mem.store) {
+      if (mem.kind === "u") {
+        const w = fresh();
+        emit(`${w} = fptosi double ${xd} to i64`);
+        const t = fresh();
+        emit(`${t} = trunc i64 ${w} to ${mem.ty}`);
+        emit(`store ${mem.ty} ${t}, ptr ${p}, align 1`);
+      } else if (mem.kind === "f64") emit(`store double ${xd}, ptr ${p}, align 1`);
+      else {
+        const f = fresh();
+        emit(`${f} = fptrunc double ${xd} to float`);
+        emit(`store float ${f}, ptr ${p}, align 1`);
+      }
+      r1 = value as string;
+    } else {
+      const v = fresh();
+      emit(`${v} = load ${mem.ty}, ptr ${p}, align 1`);
+      if (mem.kind === "u") {
+        const z = fresh();
+        emit(`${z} = zext ${mem.ty} ${v} to i64`);
+        const f = fresh();
+        emit(`${f} = uitofp i64 ${z} to double`);
+        r1 = fresh();
+        emit(`${r1} = bitcast double ${f} to i64`);
+      } else if (mem.kind === "f64") r1 = boxDouble(v);
+      else {
+        const f = fresh();
+        emit(`${f} = fpext float ${v} to double`);
+        r1 = boxDouble(f);
+      }
+    }
+    const fastEnd = currentLabel();
+    emit(`br label %${join}`);
+    block(slowLabel);
+    const r2 = slow();
+    const slowEnd = currentLabel();
+    emit(`br label %${join}`);
+    block(join);
+    const r = fresh();
+    emit(`${r} = phi i64 [ ${r1}, %${fastEnd} ], [ ${r2}, %${slowEnd} ]`);
+    return r;
   };
   const boolBox = (b: string): string => {
     const r = fresh();
@@ -1030,13 +1187,19 @@ function lowerFunction(
     }
     if (lbl === "CallExpression" && leafValue.has(resolve(ins[0] as ValueId))) {
       // A leaf: the runtime's function for it, called directly.
-      const [fn, arity] = LEAVES[leafValue.get(resolve(ins[0] as ValueId)) as string] as [
-        string,
-        number,
-      ];
+      const leafName = leafValue.get(resolve(ins[0] as ValueId)) as string;
+      const [fn, arity] = LEAVES[leafName] as [string, number];
       if (ins.length - 1 !== arity)
         throw new LlvmEmitError(`the leaf ${fn} takes ${arity} arguments`);
       const args = ins.slice(1).map(operand);
+      const mem = MEM_INLINE[leafName];
+      if (mem !== undefined) {
+        set(
+          out,
+          memoryAccess(mem, args, () => call(fn, args.map((a) => `i64 ${a}`).join(", "))),
+        );
+        return;
+      }
       set(out, call(fn, args.map((a) => `i64 ${a}`).join(", ")));
       return;
     }

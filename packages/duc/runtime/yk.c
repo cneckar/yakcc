@@ -2101,9 +2101,61 @@ static int big_cmp(const yk_bigint *a, const yk_bigint *b) {
 
 static void mix_error(void) { type_error("Cannot mix BigInt and other types, use explicit conversions"); }
 
+#ifdef __SIZEOF_INT128__
+/* A BigInt of at most two limbs (|x| < 2^64) as a signed 128-bit integer. */
+static int big_small(const yk_bigint *x, __int128 *out) {
+  if (x->len > 2) return 0;
+  unsigned __int128 m = x->len == 0 ? 0 : x->len == 1 ? x->d[0] : ((unsigned __int128)x->d[1] << 32) | x->d[0];
+  *out = x->neg ? -(__int128)m : (__int128)m;
+  return 1;
+}
+/* A signed 128-bit integer as a BigInt. */
+static yk big_from_i128(__int128 v) {
+  int neg = v < 0;
+  unsigned __int128 m = neg ? (unsigned __int128)0 - (unsigned __int128)v : (unsigned __int128)v;
+  yk_bigint *r = big_new(4);
+  for (int i = 0; i < 4; i++) r->d[i] = (uint32_t)(m >> (32 * i));
+  r->neg = neg;
+  return big_box(r);
+}
+#endif
+
 /* An arithmetic or bitwise operator of two BigInts. */
 static yk big_binary(yk a, yk b, char op) {
   yk_bigint *x = big(a), *y = big(b);
+  /* Both below 2^64 in magnitude: 128-bit arithmetic computes exactly what the limbs do. A sum or
+     difference stays below 2^65 and a product below 2^128 in magnitude (a product's sign apart);
+     the bitwise operators are the two's complement's; a shift's result is checked to fit. */
+#ifdef __SIZEOF_INT128__
+  __int128 p, q;
+  if (big_small(x, &p) && big_small(y, &q)) {
+    switch (op) {
+    case '+': return big_from_i128(p + q);
+    case '-': return big_from_i128(p - q);
+    case '*': {
+      unsigned __int128 mp = p < 0 ? (unsigned __int128)0 - (unsigned __int128)p : (unsigned __int128)p;
+      unsigned __int128 mq = q < 0 ? (unsigned __int128)0 - (unsigned __int128)q : (unsigned __int128)q;
+      unsigned __int128 m = mp * mq;
+      if ((m >> 127) == 0) {
+        __int128 v = (__int128)m;
+        return big_from_i128((p < 0) != (q < 0) ? -v : v);
+      }
+      break; /* 2^127 or more: the limbs' */
+    }
+    case '&': return big_from_i128(p & q);
+    case '|': return big_from_i128(p | q);
+    case '^': return big_from_i128(p ^ q);
+    case '>':
+      if (q >= 0) return big_from_i128(q >= 127 ? (p < 0 ? -1 : 0) : p >> q);
+      break;
+    case '<':
+      if (q >= 0 && q <= 62) return big_from_i128(p * ((__int128)1 << q));
+      break;
+    default:
+      break;
+    }
+  }
+#endif
   switch (op) {
   case '+':
     return big_add_signed(x, x->neg, y, y->neg);
@@ -4566,6 +4618,18 @@ static c_region *c_regions = NULL;
 static uint32_t c_nregions = 0, c_capregions = 0;
 /* The last region an access found: most accesses are to it. */
 static uint32_t c_last = 0;
+/* It, as the lowered code's inline loads and stores check it (#1369): its base, its length (0 when
+   there is none), its bytes, and whether it may be written. */
+uint64_t yk_mcache_base = 0;
+uint64_t yk_mcache_len = 0;
+uint8_t *yk_mcache_bytes = NULL;
+uint64_t yk_mcache_writable = 0;
+static void c_cache(c_region *r) {
+  yk_mcache_base = r->base;
+  yk_mcache_len = r->len;
+  yk_mcache_bytes = r->bytes;
+  yk_mcache_writable = !r->constant;
+}
 static uint64_t c_next = 0x10000;
 static yk c_data_keys = 0; /* an object: a constant's content, to its address */
 
@@ -4599,8 +4663,10 @@ static c_region *c_region_of(double a, uint32_t n, int write) {
   if (c_last < c_nregions) {
     c_region *r = &c_regions[c_last];
     if (a >= (double)r->base && a + n <= (double)(r->base + r->len) && r->live && trunc(a) == a &&
-        !(write && r->constant))
+        !(write && r->constant)) {
+      c_cache(r);
       return r;
+    }
   }
   if (!(a == a && !isinf(a) && trunc(a) == a)) c_trap(concat(str(ascii("address ")), str(number_to_string(a))));
   uint32_t lo = 0, hi = c_nregions;
@@ -4612,6 +4678,7 @@ static c_region *c_region_of(double a, uint32_t n, int write) {
     else {
       if (!r->live || a + n > (double)(r->base + r->len) || (write && r->constant)) break;
       c_last = mid;
+      c_cache(r);
       return r;
     }
   }
@@ -4632,6 +4699,7 @@ yk yk_leaf_free(yk addr) {
   c_region *r = c_region_of(a, 1, 0);
   if ((double)r->base != a || r->constant) c_trap(concat(str(ascii("free of 0x")), str(hex_of(a))));
   r->live = 0;
+  if (yk_mcache_bytes == r->bytes) yk_mcache_len = 0;
   free(r->bytes);
   r->bytes = NULL;
   /* A dead region traps as no region does, so the dead ones at the end leave the table (frames are
