@@ -1,0 +1,625 @@
+{
+  "set": "seed",
+  "note": "Hand-written by the harness author, who knows the answers. For developing the pipeline only; never report its numbers as the result. Each need describes behavior without the target's identifier. targets: acceptable implementations as pkg:file#name (file '*' = any file in the package); [] means nothing in the corpus implements it.",
+  "queries": [
+    {
+      "id": "duration-to-ms",
+      "origin": "b11:add-durations",
+      "need": "Convert a human-written duration such as '2h', '1.5 days' or '300ms' into a number of milliseconds; return undefined when the text is not a duration.",
+      "inputs": [{ "name": "text", "type": "string" }],
+      "output": "number | undefined",
+      "examples": [
+        { "args": ["2h"], "returns": 7200000 },
+        { "args": ["1.5 days"], "returns": 129600000 },
+        { "args": ["300ms"], "returns": 300 },
+        { "args": ["soon"], "returns": { "$type": "undefined" } }
+      ],
+      "targets": ["ms-2.1.3:index.js#parse"]
+    },
+    {
+      "id": "ms-to-short-duration",
+      "origin": "b11:add-durations",
+      "need": "Format a number of milliseconds as a compact duration with one unit: days, hours, minutes or seconds, rounded to a whole number (90 seconds becomes '2m'), or milliseconds when under one second.",
+      "inputs": [{ "name": "ms", "type": "number" }],
+      "output": "string",
+      "examples": [
+        { "args": [7200000], "returns": "2h" },
+        { "args": [90000], "returns": "2m" },
+        { "args": [500], "returns": "500ms" },
+        { "args": [86400000], "returns": "1d" }
+      ],
+      "targets": ["ms-2.1.3:index.js#fmtShort"]
+    },
+    {
+      "id": "bytes-to-base64",
+      "origin": "b11:base64url-from-string",
+      "need": "Encode an array of bytes as standard base64 text, padded with '='.",
+      "inputs": [{ "name": "bytes", "type": "number[]" }],
+      "output": "string",
+      "examples": [
+        { "args": [[102, 111, 111]], "returns": "Zm9v" },
+        { "args": [[102]], "returns": "Zg==" },
+        { "args": [[]], "returns": "" },
+        { "args": [[255, 255]], "returns": "//8=" }
+      ],
+      "targets": ["base64-js-1.5.1:index.js#fromByteArray"]
+    },
+    {
+      "id": "base64-encode-byte-range",
+      "origin": "b11:base64url-from-string",
+      "need": "Base64-encode the bytes of an array between a start index and an end index, where the range is a whole number of 3-byte groups, so no padding is needed.",
+      "inputs": [
+        { "name": "bytes", "type": "number[]" },
+        { "name": "start", "type": "number" },
+        { "name": "end", "type": "number" }
+      ],
+      "output": "string",
+      "examples": [
+        { "args": [[102, 111, 111, 98, 97, 114], 0, 6], "returns": "Zm9vYmFy" },
+        { "args": [[0, 0, 0, 102, 111, 111], 3, 6], "returns": "Zm9v" }
+      ],
+      "targets": ["base64-js-1.5.1:index.js#encodeChunk"]
+    },
+    {
+      "id": "int24-to-base64-chars",
+      "origin": "b11:base64url-from-string",
+      "need": "Turn a 24-bit integer into the four base64 characters that encode it.",
+      "inputs": [{ "name": "value", "type": "number" }],
+      "output": "string",
+      "examples": [
+        { "args": [6713199], "returns": "Zm9v" },
+        { "args": [0], "returns": "AAAA" },
+        { "args": [16777215], "returns": "////" }
+      ],
+      "targets": ["base64-js-1.5.1:index.js#tripletToBase64"]
+    },
+    {
+      "id": "nodes-of-edge-list",
+      "origin": "b11:build-order",
+      "need": "Given a list of directed edges as [from, to] pairs, list every node that appears, each once, in order of first appearance.",
+      "inputs": [{ "name": "edges", "type": "[string, string][]" }],
+      "output": "string[]",
+      "examples": [{ "args": [[["a", "b"], ["b", "c"], ["a", "c"]]], "returns": ["a", "b", "c"] }],
+      "targets": ["toposort-2.0.2:index.js#uniqueNodes"]
+    },
+    {
+      "id": "adjacency-from-edges",
+      "origin": "b11:build-order",
+      "need": "Build an adjacency map from a list of [from, to] edges: each node maps to the set of nodes it points to, and a node with no outgoing edges maps to an empty set.",
+      "inputs": [{ "name": "edges", "type": "[string, string][]" }],
+      "output": "Map<string, Set<string>>",
+      "examples": [
+        {
+          "args": [[["a", "b"], ["b", "c"]]],
+          "returns": {
+            "$map": [["a", { "$set": ["b"] }], ["b", { "$set": ["c"] }], ["c", { "$set": [] }]]
+          }
+        }
+      ],
+      "targets": ["toposort-2.0.2:index.js#makeOutgoingEdges"]
+    },
+    {
+      "id": "order-by-dependencies",
+      "origin": "b11:build-order",
+      "need": "Order a list of nodes so that for every [from, to] edge, from comes before to; throw when the edges contain a cycle.",
+      "inputs": [
+        { "name": "nodes", "type": "string[]" },
+        { "name": "edges", "type": "[string, string][]" }
+      ],
+      "output": "string[]",
+      "examples": [
+        { "args": [["a", "b", "c"], [["a", "b"], ["b", "c"]]], "returns": ["a", "b", "c"] },
+        { "args": [["x", "y"], [["x", "y"], ["y", "x"]]], "throws": true }
+      ],
+      "targets": ["toposort-2.0.2:index.js#toposort"]
+    },
+    {
+      "id": "is-real-calendar-date",
+      "origin": "b11:days-between",
+      "need": "Check whether a year, a zero-based month and a day of the month form a real calendar date, accounting for leap years.",
+      "inputs": [
+        { "name": "year", "type": "number" },
+        { "name": "month", "type": "number" },
+        { "name": "day", "type": "number" }
+      ],
+      "output": "boolean",
+      "examples": [
+        { "args": [2024, 1, 29], "returns": true },
+        { "args": [2023, 1, 29], "returns": false },
+        { "args": [2023, 11, 31], "returns": true },
+        { "args": [2023, 12, 1], "returns": false }
+      ],
+      "targets": ["date-fns-4.1.0:parseISO.cjs#validateDate"]
+    },
+    {
+      "id": "ms-between-dates",
+      "origin": "b11:days-between",
+      "need": "Return how many milliseconds the first date is after the second date.",
+      "inputs": [{ "name": "later", "type": "Date" }, { "name": "earlier", "type": "Date" }],
+      "output": "number",
+      "examples": [
+        {
+          "args": [
+            { "$date": "2024-01-01T00:00:01.500Z" },
+            { "$date": "2024-01-01T00:00:00.000Z" }
+          ],
+          "returns": 1500
+        },
+        {
+          "args": [
+            { "$date": "2024-01-01T00:00:00.000Z" },
+            { "$date": "2024-01-01T00:00:01.500Z" }
+          ],
+          "returns": -1500
+        }
+      ],
+      "targets": ["date-fns-4.1.0:differenceInMilliseconds.cjs#differenceInMilliseconds"]
+    },
+    {
+      "id": "date-plus-days",
+      "origin": "b11:add-days-iso",
+      "need": "Add a whole number of days to a date and return the new date.",
+      "inputs": [{ "name": "date", "type": "Date" }, { "name": "days", "type": "number" }],
+      "output": "Date",
+      "examples": [
+        {
+          "args": [{ "$date": "2024-01-31T00:00:00.000Z" }, 1],
+          "returns": { "$date": "2024-02-01T00:00:00.000Z" }
+        },
+        {
+          "args": [{ "$date": "2024-01-31T00:00:00.000Z" }, -31],
+          "returns": { "$date": "2023-12-31T00:00:00.000Z" }
+        }
+      ],
+      "targets": ["date-fns-4.1.0:addDays.cjs#addDays"]
+    },
+    {
+      "id": "zero-pad-number",
+      "origin": "b11:add-days-iso",
+      "need": "Pad a number with leading zeros to at least a given width, keeping a minus sign in front.",
+      "inputs": [{ "name": "value", "type": "number" }, { "name": "width", "type": "number" }],
+      "output": "string",
+      "examples": [
+        { "args": [7, 2], "returns": "07" },
+        { "args": [-5, 3], "returns": "-005" },
+        { "args": [123, 2], "returns": "123" }
+      ],
+      "targets": ["date-fns-4.1.0:_lib/addLeadingZeros.cjs#addLeadingZeros"]
+    },
+    {
+      "id": "parse-iso-date",
+      "origin": "b11:days-between",
+      "need": "Parse an ISO-8601 calendar date string such as '2024-02-29' into a Date at midnight; give an invalid date for a string that is not a real date.",
+      "inputs": [{ "name": "text", "type": "string" }],
+      "output": "Date",
+      "examples": [
+        { "args": ["2024-02-29"], "returns": { "$date": "2024-02-29T00:00:00.000Z" } },
+        { "args": ["2023-02-29"], "returns": { "$date": "Invalid" } }
+      ],
+      "targets": ["date-fns-4.1.0:parseISO.cjs#parseISO", "date-fns-4.1.0:parseISO.cjs#parseDate"]
+    },
+    {
+      "id": "cache-function-results",
+      "origin": "b11:memoize-lru",
+      "need": "Wrap a one-argument function so that calling it again with the same argument returns the stored result instead of calling the function again.",
+      "inputs": [{ "name": "fn", "type": "(arg) => result" }],
+      "output": "(arg) => result",
+      "examples": [],
+      "targets": [
+        "lodash-4.17.21:memoize.js#memoize",
+        "lodash-4.17.21:_memoizeCapped.js#memoizeCapped"
+      ]
+    },
+    {
+      "id": "bounded-recent-cache",
+      "origin": "b11:memoize-lru",
+      "need": "A key-value cache with a maximum number of entries that evicts the least recently used entry when it is full.",
+      "inputs": [],
+      "output": "cache object",
+      "examples": [],
+      "targets": ["semver-7.8.0:internal/lrucache.js#LRUCache", "lru-cache-11.3.6:*#LRUCache"]
+    },
+    {
+      "id": "split-json-pointer",
+      "origin": "b11:pointer-get",
+      "need": "Split a JSON Pointer string like '/a/b' into its reference tokens, keeping the leading empty token; throw for a string that does not start with '/'.",
+      "inputs": [{ "name": "pointer", "type": "string" }],
+      "output": "string[]",
+      "examples": [
+        { "args": ["/a/b"], "returns": ["", "a", "b"] },
+        { "args": [""], "returns": [""] },
+        { "args": ["a"], "throws": true }
+      ],
+      "targets": ["jsonpointer-5.0.1:jsonpointer.js#compilePointer"]
+    },
+    {
+      "id": "unescape-pointer-token",
+      "origin": "b11:pointer-get",
+      "need": "Unescape one JSON Pointer reference token: '~1' becomes '/' and '~0' becomes '~'.",
+      "inputs": [{ "name": "token", "type": "string" }],
+      "output": "string",
+      "examples": [
+        { "args": ["a~1b"], "returns": "a/b" },
+        { "args": ["m~0n"], "returns": "m~n" },
+        { "args": ["plain"], "returns": "plain" }
+      ],
+      "targets": ["jsonpointer-5.0.1:jsonpointer.js#untilde"]
+    },
+    {
+      "id": "value-at-json-pointer",
+      "origin": "b11:pointer-get",
+      "need": "Look up the value at a JSON Pointer path such as '/a/0/b' inside a parsed JSON document; give undefined when the path does not exist.",
+      "inputs": [{ "name": "doc", "type": "object" }, { "name": "pointer", "type": "string" }],
+      "output": "unknown",
+      "examples": [
+        { "args": [{ "a": [{ "b": 1 }] }, "/a/0/b"], "returns": 1 },
+        { "args": [{ "a": 1 }, "/x"], "returns": { "$type": "undefined" } },
+        { "args": [{ "a": { "b": 2 } }, ""], "returns": { "a": { "b": 2 } } }
+      ],
+      "targets": ["jsonpointer-5.0.1:jsonpointer.js#get"]
+    },
+    {
+      "id": "compare-prerelease-identifiers",
+      "origin": "b11:sort-versions",
+      "need": "Compare two semantic-version pre-release identifiers: numeric ones compare as numbers and rank below alphanumeric ones, which compare as text. Return -1, 0 or 1.",
+      "inputs": [{ "name": "a", "type": "string" }, { "name": "b", "type": "string" }],
+      "output": "-1 | 0 | 1",
+      "examples": [
+        { "args": ["2", "10"], "returns": -1 },
+        { "args": ["alpha", "1"], "returns": 1 },
+        { "args": ["beta", "alpha"], "returns": 1 },
+        { "args": ["rc", "rc"], "returns": 0 }
+      ],
+      "targets": ["semver-7.8.0:internal/identifiers.js#compareIdentifiers"]
+    },
+    {
+      "id": "compare-version-core",
+      "origin": "b11:sort-versions",
+      "need": "Compare two semantic versions by their major, minor and patch numbers only, ignoring any pre-release. Return -1, 0 or 1.",
+      "inputs": [{ "name": "a", "type": "string" }, { "name": "b", "type": "string" }],
+      "output": "-1 | 0 | 1",
+      "examples": [],
+      "targets": [
+        "semver-7.8.0:classes/semver.js#compareMain",
+        "semver-7.8.0:classes/semver.js#SemVer"
+      ]
+    },
+    {
+      "id": "compare-version-prerelease",
+      "origin": "b11:sort-versions",
+      "need": "Compare the pre-release parts of two semantic versions: a version without a pre-release ranks higher; otherwise compare identifier by identifier, and a shorter list ranks lower when the shared identifiers are equal.",
+      "inputs": [{ "name": "a", "type": "string" }, { "name": "b", "type": "string" }],
+      "output": "-1 | 0 | 1",
+      "examples": [],
+      "targets": [
+        "semver-7.8.0:classes/semver.js#comparePre",
+        "semver-7.8.0:classes/semver.js#SemVer"
+      ]
+    },
+    {
+      "id": "edit-count-between-strings",
+      "origin": "b11:suggest-words",
+      "need": "Count the minimum number of single-character insertions, deletions and substitutions that turn one string into another.",
+      "inputs": [{ "name": "a", "type": "string" }, { "name": "b", "type": "string" }],
+      "output": "number",
+      "examples": [
+        { "args": ["kitten", "sitting"], "returns": 3 },
+        { "args": ["", "abc"], "returns": 3 },
+        { "args": ["flaw", "lawn"], "returns": 2 }
+      ],
+      "targets": ["fastest-levenshtein-1.0.16:esm/mod.js#distance"]
+    },
+    {
+      "id": "nearest-string",
+      "origin": "b11:suggest-words",
+      "need": "From a list of candidate strings, return the one that needs the fewest single-character edits to become a given word, taking the first on a tie.",
+      "inputs": [
+        { "name": "word", "type": "string" },
+        { "name": "candidates", "type": "string[]" }
+      ],
+      "output": "string",
+      "examples": [
+        { "args": ["kiten", ["sitting", "kitten", "bitten"]], "returns": "kitten" },
+        { "args": ["abc", ["xyz", "abd", "abe"]], "returns": "abd" }
+      ],
+      "targets": ["fastest-levenshtein-1.0.16:esm/mod.js#closest"]
+    },
+    {
+      "id": "is-uuid",
+      "origin": "b11:uuid-version",
+      "need": "Check whether a string is a valid RFC 9562 UUID (version 1 to 8 with the RFC variant, or the nil or max UUID), in any letter case.",
+      "inputs": [{ "name": "text", "type": "string" }],
+      "output": "boolean",
+      "examples": [
+        { "args": ["109156be-c4fb-41ea-b1b4-efe1671c5836"], "returns": true },
+        { "args": ["109156BE-C4FB-41EA-B1B4-EFE1671C5836"], "returns": true },
+        { "args": ["109156bec4fb41eab1b4efe1671c5836"], "returns": false },
+        { "args": ["00000000-0000-0000-0000-000000000000"], "returns": true }
+      ],
+      "targets": ["uuid-11.1.1:*#validate"]
+    },
+    {
+      "id": "uuid-version-number",
+      "origin": "b11:uuid-version",
+      "need": "Return the version number of a UUID string, read from the first digit of its third group; throw for a string that is not a UUID.",
+      "inputs": [{ "name": "uuid", "type": "string" }],
+      "output": "number",
+      "examples": [
+        { "args": ["109156be-c4fb-41ea-b1b4-efe1671c5836"], "returns": 4 },
+        { "args": ["6ba7b810-9dad-11d1-80b4-00c04fd430c8"], "returns": 1 },
+        { "args": ["nope"], "throws": true }
+      ],
+      "targets": ["uuid-11.1.1:*#version"]
+    },
+    {
+      "id": "uuid-to-bytes",
+      "origin": "b11:uuid-normalize",
+      "need": "Convert a UUID string into its 16 bytes; throw for a string that is not a UUID.",
+      "inputs": [{ "name": "uuid", "type": "string" }],
+      "output": "Uint8Array",
+      "examples": [
+        {
+          "args": ["109156be-c4fb-41ea-b1b4-efe1671c5836"],
+          "returns": {
+            "$bytes": [16, 145, 86, 190, 196, 251, 65, 234, 177, 180, 239, 225, 103, 28, 88, 54]
+          }
+        },
+        { "args": ["nope"], "throws": true }
+      ],
+      "targets": ["uuid-11.1.1:*#parse"]
+    },
+    {
+      "id": "bytes-to-uuid-text",
+      "origin": "b11:uuid-normalize",
+      "need": "Format 16 bytes as a lowercase hyphenated UUID string (8-4-4-4-12 hex digits) without checking that it is a valid UUID.",
+      "inputs": [{ "name": "bytes", "type": "Uint8Array" }],
+      "output": "string",
+      "examples": [
+        {
+          "args": [
+            { "$bytes": [16, 145, 86, 190, 196, 251, 65, 234, 177, 180, 239, 225, 103, 28, 88, 54] }
+          ],
+          "returns": "109156be-c4fb-41ea-b1b4-efe1671c5836"
+        },
+        {
+          "args": [{ "$bytes": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255] }],
+          "returns": "00000000-0000-0000-0000-0000000000ff"
+        }
+      ],
+      "targets": ["uuid-11.1.1:*#unsafeStringify"]
+    },
+    {
+      "id": "normalize-semver",
+      "origin": "extra",
+      "need": "Return a semantic version string in normal form, dropping a leading 'v' or '=' and surrounding spaces, or null when it is not a valid version.",
+      "inputs": [{ "name": "version", "type": "string" }],
+      "output": "string | null",
+      "examples": [
+        { "args": ["1.2.3"], "returns": "1.2.3" },
+        { "args": ["  =v1.2.3  "], "returns": "1.2.3" },
+        { "args": ["a.b.c"], "returns": null }
+      ],
+      "targets": ["semver-7.8.0:functions/clean.js#clean"]
+    },
+    {
+      "id": "bump-semver",
+      "origin": "extra",
+      "need": "Increment a semantic version by a release type such as 'major', 'minor' or 'patch', resetting the lower parts.",
+      "inputs": [{ "name": "version", "type": "string" }, { "name": "release", "type": "string" }],
+      "output": "string",
+      "examples": [
+        { "args": ["1.2.3", "minor"], "returns": "1.3.0" },
+        { "args": ["1.2.3", "major"], "returns": "2.0.0" },
+        { "args": ["1.2.3", "patch"], "returns": "1.2.4" }
+      ],
+      "targets": ["semver-7.8.0:functions/inc.js#inc"]
+    },
+    {
+      "id": "version-in-range",
+      "origin": "extra",
+      "need": "Check whether a semantic version falls inside a version range expression such as '^1.0.0' or '>=2 <3'.",
+      "inputs": [{ "name": "version", "type": "string" }, { "name": "range", "type": "string" }],
+      "output": "boolean",
+      "examples": [
+        { "args": ["1.2.3", "^1.0.0"], "returns": true },
+        { "args": ["2.0.0", "^1.0.0"], "returns": false },
+        { "args": ["2.5.0", ">=2 <3"], "returns": true }
+      ],
+      "targets": ["semver-7.8.0:functions/satisfies.js#satisfies"]
+    },
+    {
+      "id": "version-difference-kind",
+      "origin": "extra",
+      "need": "Say which part differs between two semantic versions ('major', 'minor', 'patch' and so on), or null when they are equal.",
+      "inputs": [{ "name": "a", "type": "string" }, { "name": "b", "type": "string" }],
+      "output": "string | null",
+      "examples": [
+        { "args": ["1.2.3", "1.3.0"], "returns": "minor" },
+        { "args": ["1.2.3", "2.0.0"], "returns": "major" },
+        { "args": ["1.2.3", "1.2.3"], "returns": null }
+      ],
+      "targets": ["semver-7.8.0:functions/diff.js#diff"]
+    },
+    {
+      "id": "sort-versions-descending",
+      "origin": "extra",
+      "need": "Sort a list of semantic version strings from highest to lowest.",
+      "inputs": [{ "name": "versions", "type": "string[]" }],
+      "output": "string[]",
+      "examples": [
+        { "args": [["1.0.0", "2.0.0", "1.10.0"]], "returns": ["2.0.0", "1.10.0", "1.0.0"] }
+      ],
+      "targets": ["semver-7.8.0:functions/rsort.js#rsort"]
+    },
+    {
+      "id": "is-email",
+      "origin": "extra",
+      "need": "Check whether a string is a plausible email address.",
+      "inputs": [{ "name": "text", "type": "string" }],
+      "output": "boolean",
+      "examples": [
+        { "args": ["foo@bar.com"], "returns": true },
+        { "args": ["foo@bar"], "returns": false },
+        { "args": ["not an email"], "returns": false }
+      ],
+      "targets": ["validator-13.15.35:lib/isEmail.js#isEmail"]
+    },
+    {
+      "id": "is-integer-text",
+      "origin": "extra",
+      "need": "Check whether a string is the text of a whole number, optionally signed.",
+      "inputs": [{ "name": "text", "type": "string" }],
+      "output": "boolean",
+      "examples": [
+        { "args": ["42"], "returns": true },
+        { "args": ["-7"], "returns": true },
+        { "args": ["4.2"], "returns": false },
+        { "args": ["four"], "returns": false }
+      ],
+      "targets": ["validator-13.15.35:lib/isInt.js#isInt"]
+    },
+    {
+      "id": "is-hex-color",
+      "origin": "extra",
+      "need": "Check whether a string is a hexadecimal colour such as '#ff0000' or '#fff'.",
+      "inputs": [{ "name": "text", "type": "string" }],
+      "output": "boolean",
+      "examples": [
+        { "args": ["#ff0000"], "returns": true },
+        { "args": ["#fff"], "returns": true },
+        { "args": ["#ggg"], "returns": false }
+      ],
+      "targets": ["validator-13.15.35:lib/isHexColor.js#isHexColor"]
+    },
+    {
+      "id": "escape-html",
+      "origin": "extra",
+      "need": "Escape the characters of a string that are special in HTML (such as <, >, & and quotes) as character entities.",
+      "inputs": [{ "name": "text", "type": "string" }],
+      "output": "string",
+      "examples": [
+        { "args": ["a < b"], "returns": "a &lt; b" },
+        { "args": ["Tom & Jerry"], "returns": "Tom &amp; Jerry" }
+      ],
+      "targets": ["validator-13.15.35:lib/escape.js#escape"]
+    },
+    {
+      "id": "value-at-object-path",
+      "origin": "extra",
+      "need": "Read the value at a dotted path with array indexes, such as 'a[0].b.c', from a nested object, returning a default value when the path is missing.",
+      "inputs": [
+        { "name": "object", "type": "object" },
+        { "name": "path", "type": "string" },
+        { "name": "fallback", "type": "unknown" }
+      ],
+      "output": "unknown",
+      "examples": [
+        { "args": [{ "a": [{ "b": { "c": 3 } }] }, "a[0].b.c"], "returns": 3 },
+        { "args": [{ "a": 1 }, "x.y", "d"], "returns": "d" }
+      ],
+      "targets": ["lodash-4.17.21:get.js#get"]
+    },
+    {
+      "id": "coerce-to-number",
+      "origin": "extra",
+      "need": "Convert a value such as a numeric string to a number, accepting surrounding spaces and hexadecimal like '0x1f'.",
+      "inputs": [{ "name": "value", "type": "unknown" }],
+      "output": "number",
+      "examples": [
+        { "args": ["3.2"], "returns": 3.2 },
+        { "args": [" 12 "], "returns": 12 },
+        { "args": ["0x1f"], "returns": 31 }
+      ],
+      "targets": ["lodash-4.17.21:toNumber.js#toNumber"]
+    },
+    {
+      "id": "chunk-array",
+      "origin": "negative:b11:chunk",
+      "need": "Split an array into consecutive groups of at most a given size.",
+      "inputs": [{ "name": "items", "type": "unknown[]" }, { "name": "size", "type": "number" }],
+      "output": "unknown[][]",
+      "examples": [{ "args": [[1, 2, 3, 4, 5], 2], "returns": [[1, 2], [3, 4], [5]] }],
+      "targets": []
+    },
+    {
+      "id": "clamp-number",
+      "origin": "negative:b11:clamp",
+      "need": "Limit a number to a closed interval given by a lower and an upper bound.",
+      "inputs": [
+        { "name": "value", "type": "number" },
+        { "name": "lo", "type": "number" },
+        { "name": "hi", "type": "number" }
+      ],
+      "output": "number",
+      "examples": [
+        { "args": [5, 0, 10], "returns": 5 },
+        { "args": [-3, 0, 10], "returns": 0 },
+        { "args": [99, 0, 10], "returns": 10 }
+      ],
+      "targets": []
+    },
+    {
+      "id": "slug-from-title",
+      "origin": "negative:b11:slugify",
+      "need": "Turn a title into a URL slug: lowercase words joined by hyphens, with punctuation removed.",
+      "inputs": [{ "name": "title", "type": "string" }],
+      "output": "string",
+      "examples": [{ "args": ["Hello, World! 2024"], "returns": "hello-world-2024" }],
+      "targets": []
+    },
+    {
+      "id": "title-case-words",
+      "origin": "negative:b11:title-case",
+      "need": "Capitalise the first letter of every word in a string and lowercase the rest.",
+      "inputs": [{ "name": "text", "type": "string" }],
+      "output": "string",
+      "examples": [{ "args": ["hello wORLD"], "returns": "Hello World" }],
+      "targets": []
+    },
+    {
+      "id": "group-by-key",
+      "origin": "negative:b11:group-by",
+      "need": "Group the items of an array into an object of arrays, keyed by the result of a function applied to each item.",
+      "inputs": [
+        { "name": "items", "type": "unknown[]" },
+        { "name": "key", "type": "(item) => string" }
+      ],
+      "output": "Record<string, unknown[]>",
+      "examples": [],
+      "targets": []
+    },
+    {
+      "id": "integer-range",
+      "origin": "negative:b11:range",
+      "need": "Produce the list of integers from a start (inclusive) to an end (exclusive), with an optional step.",
+      "inputs": [{ "name": "start", "type": "number" }, { "name": "end", "type": "number" }],
+      "output": "number[]",
+      "examples": [
+        { "args": [0, 4], "returns": [0, 1, 2, 3] },
+        { "args": [2, 5], "returns": [2, 3, 4] }
+      ],
+      "targets": []
+    },
+    {
+      "id": "shallow-object-equal",
+      "origin": "negative:b11:shallow-equal",
+      "need": "Check whether two plain objects have the same keys with strictly equal values, without comparing nested objects deeply.",
+      "inputs": [{ "name": "a", "type": "object" }, { "name": "b", "type": "object" }],
+      "output": "boolean",
+      "examples": [
+        { "args": [{ "a": 1, "b": 2 }, { "b": 2, "a": 1 }], "returns": true },
+        { "args": [{ "a": 1 }, { "a": 2 }], "returns": false }
+      ],
+      "targets": []
+    },
+    {
+      "id": "dedupe-array",
+      "origin": "negative:b11:unique",
+      "need": "Remove repeated values from an array, keeping the first occurrence of each and the original order.",
+      "inputs": [{ "name": "items", "type": "unknown[]" }],
+      "output": "unknown[]",
+      "examples": [{ "args": [[3, 1, 3, 2, 1]], "returns": [3, 1, 2] }],
+      "targets": []
+    }
+  ]
+}

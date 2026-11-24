@@ -1,0 +1,767 @@
+{
+  "set": "seed",
+  "model": "claude-opus-5-5",
+  "k": 10,
+  "descriptions": 0,
+  "usage": {
+    "inputTokens": 49723,
+    "outputTokens": 4572,
+    "calls": 46
+  },
+  "summary": {
+    "queries": 46,
+    "targetShown": 0.7368421052631579,
+    "rightOfPositives": 0.7368421052631579,
+    "rightWhenShown": 1,
+    "reusePrecision": 1,
+    "wrongReuseOnNegatives": 0,
+    "correctNoneOnNegatives": 1,
+    "invalid": 0,
+    "rightOfPositivesSameFunction": 0.7368421052631579,
+    "reusePrecisionSameFunction": 1
+  },
+  "meanTokens": {
+    "request": 57.130434782608695,
+    "examples": 47.08695652173913,
+    "confirmInput": 1080.9347826086957,
+    "confirmOutput": 99.3913043478261
+  },
+  "rows": [
+    {
+      "id": "duration-to-ms",
+      "positive": true,
+      "pick": 1,
+      "picked": "ms-2.1.3/index.js#parse@48",
+      "reason": "ms parse converts '1.5h' to milliseconds",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 69,
+        "examples": 52,
+        "confirmInput": 1004,
+        "confirmOutput": 35
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "ms-to-short-duration",
+      "positive": true,
+      "pick": 2,
+      "picked": "ms-2.1.3/index.js#fmtShort@113",
+      "reason": "ms fmtShort writes durations in compact single-unit form, e.g. 3 -> '3ms'",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 82,
+        "examples": 45,
+        "confirmInput": 962,
+        "confirmOutput": 128
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "bytes-to-base64",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate fits. The bcrypt encoders use a non-standard alphabet with no padding, and encodeChunk and tripletToBase64 encode only full 3-byte groups without '=' padding.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 41,
+        "examples": 51,
+        "confirmInput": 1288,
+        "confirmOutput": 272
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "base64-encode-byte-range",
+      "positive": true,
+      "pick": 4,
+      "picked": "base64-js-1.5.1/index.js#encodeChunk@106",
+      "reason": "encodeChunk matches the bytes/start/end signature",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 72,
+        "examples": 61,
+        "confirmInput": 1212,
+        "confirmOutput": 136
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "int24-to-base64-chars",
+      "positive": true,
+      "pick": 4,
+      "picked": "base64-js-1.5.1/index.js#tripletToBase64@99",
+      "reason": "Converts a 24-bit number to four base64 characters: 3 gives \"AAAD\".",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 38,
+        "examples": 37,
+        "confirmInput": 1038,
+        "confirmOutput": 48
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "nodes-of-edge-list",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "no unique-node extraction from edges",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 59,
+        "examples": 32,
+        "confirmInput": 942,
+        "confirmOutput": 168
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "adjacency-from-edges",
+      "positive": true,
+      "pick": 1,
+      "picked": "toposort-2.0.2/index.js#makeOutgoingEdges@103",
+      "reason": "toposort's makeOutgoingEdges returns a Map of node to Set of targets, with empty Sets for sink nodes",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 84,
+        "examples": 65,
+        "confirmInput": 1304,
+        "confirmOutput": 252
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "order-by-dependencies",
+      "positive": true,
+      "pick": 1,
+      "picked": "toposort-2.0.2/index.js#toposort@37",
+      "reason": "Takes nodes and edges and returns them topologically ordered, e.g. a before b before c.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 68,
+        "examples": 62,
+        "confirmInput": 1074,
+        "confirmOutput": 46
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "is-real-calendar-date",
+      "positive": true,
+      "pick": 2,
+      "picked": "date-fns-4.1.0/parseISO.cjs#validateDate@262",
+      "reason": "validateDate(year, month, date) checks a day against month length, including leap years",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 59,
+        "examples": 55,
+        "confirmInput": 1085,
+        "confirmOutput": 40
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "ms-between-dates",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/differenceInMilliseconds.cjs#differenceInMilliseconds@27",
+      "reason": "Returns the first date minus the second in milliseconds.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 40,
+        "examples": 111,
+        "confirmInput": 1448,
+        "confirmOutput": 33
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "date-plus-days",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/addDays.cjs#addDays@32",
+      "reason": "addDays shifts the date by the given number of days, e.g. 0 minus 2 days gives Dec 30",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 37,
+        "examples": 109,
+        "confirmInput": 1402,
+        "confirmOutput": 52
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "zero-pad-number",
+      "positive": true,
+      "pick": 1,
+      "picked": "date-fns-4.1.0/_lib/addLeadingZeros.cjs#addLeadingZeros@3",
+      "reason": "date-fns addLeadingZeros pads to target length and keeps the minus sign",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 47,
+        "examples": 37,
+        "confirmInput": 1228,
+        "confirmOutput": 43
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "parse-iso-date",
+      "positive": true,
+      "pick": 5,
+      "picked": "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+      "reason": "parseISO parses ISO date to midnight Date",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 66,
+        "examples": 57,
+        "confirmInput": 969,
+        "confirmOutput": 83
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "cache-function-results",
+      "positive": true,
+      "pick": 4,
+      "picked": "lodash-4.17.21/memoize.js#memoize@50",
+      "reason": "memoize caches results keyed by the first argument",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 61,
+        "examples": 0,
+        "confirmInput": 949,
+        "confirmOutput": 31
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "bounded-recent-cache",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "None of the candidates constructs a size-bounded LRU cache. The lru-cache entries are methods on an existing cache, and the lodash caches have no maximum size or eviction.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 38,
+        "examples": 0,
+        "confirmInput": 850,
+        "confirmOutput": 113
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "split-json-pointer",
+      "positive": true,
+      "pick": 2,
+      "picked": "jsonpointer-5.0.1/jsonpointer.js#compilePointer@49",
+      "reason": "splits pointer into tokens with leading empty",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 68,
+        "examples": 32,
+        "confirmInput": 1024,
+        "confirmOutput": 158
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "unescape-pointer-token",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate handles ~0/~1. validator's unescape decodes HTML entities, not JSON Pointer tokens.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 52,
+        "examples": 38,
+        "confirmInput": 917,
+        "confirmOutput": 164
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "value-at-json-pointer",
+      "positive": true,
+      "pick": 7,
+      "picked": "jsonpointer-5.0.1/jsonpointer.js#get@66",
+      "reason": "jsonpointer get resolves JSON Pointer strings on a doc",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 71,
+        "examples": 79,
+        "confirmInput": 966,
+        "confirmOutput": 40
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "compare-prerelease-identifiers",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/internal/identifiers.js#compareIdentifiers@4",
+      "reason": "compareIdentifiers ranks numeric below alphanumeric and returns -1/0/1",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 87,
+        "examples": 50,
+        "confirmInput": 826,
+        "confirmOutput": 47
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "compare-version-core",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate compares only major, minor and patch. compare, compareLoose and compareBuild all factor in pre-release, and comparePre compares only the pre-release.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 72,
+        "examples": 0,
+        "confirmInput": 870,
+        "confirmOutput": 139
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "compare-version-prerelease",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/classes/semver.js#comparePre@135",
+      "reason": "Only the semver comparePre performs this pre-release comparison. It is a method with no parameters and was never run, so the a, b signature is unconfirmed.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 96,
+        "examples": 0,
+        "confirmInput": 851,
+        "confirmOutput": 222
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "edit-count-between-strings",
+      "positive": true,
+      "pick": 4,
+      "picked": "fastest-levenshtein-1.0.16/esm/mod.js#distance@141",
+      "reason": "Levenshtein distance; empty-to-11-char string correctly gives 11",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 49,
+        "examples": 40,
+        "confirmInput": 961,
+        "confirmOutput": 42
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "nearest-string",
+      "positive": true,
+      "pick": 8,
+      "picked": "fastest-levenshtein-1.0.16/esm/mod.js#closest@155",
+      "reason": "Levenshtein closest from candidate list",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 62,
+        "examples": 53,
+        "confirmInput": 1039,
+        "confirmOutput": 150
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "is-uuid",
+      "positive": true,
+      "pick": 10,
+      "picked": "uuid-11.1.1/dist/cjs/validate.js#validate@4",
+      "reason": "Boolean UUID validator for versions 1-8, nil and max, case-insensitive",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 69,
+        "examples": 112,
+        "confirmInput": 1553,
+        "confirmOutput": 242
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "uuid-version-number",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs/version.js#version@4",
+      "reason": "uuid version() returns the version number from the third group's first digit",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 52,
+        "examples": 74,
+        "confirmInput": 1554,
+        "confirmOutput": 35
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "uuid-to-bytes",
+      "positive": true,
+      "pick": 1,
+      "picked": "uuid-11.1.1/dist/cjs/parse.js#parse@4",
+      "reason": "Parses a UUID string into 16 bytes, matching the example.",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 51,
+        "examples": 79,
+        "confirmInput": 2104,
+        "confirmOutput": 37
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "bytes-to-uuid-text",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "none turns bytes into a UUID string",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 73,
+        "examples": 137,
+        "confirmInput": 2173,
+        "confirmOutput": 109
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "normalize-semver",
+      "positive": true,
+      "pick": 2,
+      "picked": "semver-7.8.0/functions/clean.js#clean@4",
+      "reason": "semver clean trims and strips v/= prefix",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 63,
+        "examples": 49,
+        "confirmInput": 933,
+        "confirmOutput": 107
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "bump-semver",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/inc.js#inc@5",
+      "reason": "semver inc bumps a version by release type",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 56,
+        "examples": 61,
+        "confirmInput": 961,
+        "confirmOutput": 29
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "version-in-range",
+      "positive": true,
+      "pick": 1,
+      "picked": "semver-7.8.0/functions/satisfies.js#satisfies@4",
+      "reason": "semver satisfies checks a version against a range",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 58,
+        "examples": 56,
+        "confirmInput": 802,
+        "confirmOutput": 30
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "version-difference-kind",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "no candidate returns the differing part",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 59,
+        "examples": 58,
+        "confirmInput": 1069,
+        "confirmOutput": 117
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "sort-versions-descending",
+      "positive": true,
+      "pick": 4,
+      "picked": "semver-7.8.0/functions/rsort.js#rsort@4",
+      "reason": "semver rsort sorts versions descending",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 39,
+        "examples": 45,
+        "confirmInput": 905,
+        "confirmOutput": 82
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "is-email",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "no email validator among candidates",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 30,
+        "examples": 32,
+        "confirmInput": 768,
+        "confirmOutput": 92
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "is-integer-text",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "No integer-only check is offered. isNumeric, isDecimal and isFloat all accept decimal text like \"1.5\", so none restricts to whole numbers.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 37,
+        "examples": 30,
+        "confirmInput": 827,
+        "confirmOutput": 190
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "is-hex-color",
+      "positive": true,
+      "pick": 0,
+      "picked": null,
+      "reason": "No hex-colour checker. isHexadecimal tests plain hex digits and would likely reject '#ff0000'.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 48,
+        "examples": 29,
+        "confirmInput": 763,
+        "confirmOutput": 187
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "escape-html",
+      "positive": true,
+      "pick": 1,
+      "picked": "validator-13.15.35/lib/escape.js#escape@9",
+      "reason": "validator escape does HTML entity escaping",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 48,
+        "examples": 41,
+        "confirmInput": 1032,
+        "confirmOutput": 30
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "value-at-object-path",
+      "positive": true,
+      "pick": 1,
+      "picked": "lodash-4.17.21/get.js#get@28",
+      "reason": "lodash get resolves path, returns default if undefined",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 74,
+        "examples": 53,
+        "confirmInput": 1218,
+        "confirmOutput": 33
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "coerce-to-number",
+      "positive": true,
+      "pick": 7,
+      "picked": "lodash-4.17.21/toNumber.js#toNumber@43",
+      "reason": "lodash toNumber converts any value to a number, trims surrounding whitespace and parses hex strings",
+      "outcome": "right",
+      "reachable": true,
+      "tokens": {
+        "request": 57,
+        "examples": 34,
+        "confirmInput": 1150,
+        "confirmOutput": 49
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "chunk-array",
+      "positive": false,
+      "pick": 0,
+      "picked": null,
+      "reason": "no candidate chunks arrays",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 44,
+        "examples": 31,
+        "confirmInput": 839,
+        "confirmOutput": 78
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "clamp-number",
+      "positive": false,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate clamps a value; lowerLT(0,-2,2.5) gives -2 where a clamp would give 0.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 47,
+        "examples": 42,
+        "confirmInput": 845,
+        "confirmOutput": 110
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "slug-from-title",
+      "positive": false,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate slugifies a title. The url() functions are zod validators, and _lowercase returns {}.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 47,
+        "examples": 22,
+        "confirmInput": 609,
+        "confirmOutput": 49
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "title-case-words",
+      "positive": false,
+      "pick": 0,
+      "picked": null,
+      "reason": "no title-case function",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 38,
+        "examples": 16,
+        "confirmInput": 905,
+        "confirmOutput": 131
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "group-by-key",
+      "positive": false,
+      "pick": 0,
+      "picked": null,
+      "reason": "no groupBy candidate",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 65,
+        "examples": 0,
+        "confirmInput": 1469,
+        "confirmOutput": 69
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "integer-range",
+      "positive": false,
+      "pick": 0,
+      "picked": null,
+      "reason": "no range generator among candidates",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 52,
+        "examples": 33,
+        "confirmInput": 961,
+        "confirmOutput": 106
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "shallow-object-equal",
+      "positive": false,
+      "pick": 0,
+      "picked": null,
+      "reason": "No candidate shallowly compares object keys and values.",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 54,
+        "examples": 45,
+        "confirmInput": 1047,
+        "confirmOutput": 65
+      },
+      "otherBuild": false
+    },
+    {
+      "id": "dedupe-array",
+      "positive": false,
+      "pick": 0,
+      "picked": null,
+      "reason": "None dedupes a flat array; uniqueNodes expects edge pairs and flattens them",
+      "outcome": "correct-none",
+      "reachable": false,
+      "tokens": {
+        "request": 49,
+        "examples": 21,
+        "confirmInput": 1027,
+        "confirmOutput": 153
+      },
+      "otherBuild": false
+    }
+  ]
+}

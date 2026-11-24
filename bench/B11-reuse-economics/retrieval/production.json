@@ -1,0 +1,3054 @@
+{
+  "variant": "production",
+  "model": "Xenova/bge-small-en-v1.5",
+  "k": 8,
+  "deep": 50,
+  "pool": {
+    "definitions": 2985,
+    "stored": 2360,
+    "sourceFragmentBehaviors": 24,
+    "skipped": {
+      "TypeScript syntax error(s) in source: ';' expected.": 407,
+      "TypeScript syntax error(s) in source: Declaration or statement expected.": 29,
+      "TypeScript syntax error(s) in source: Expression expected.": 45,
+      "TypeScript syntax error(s) in source: Unexpected keyword or identifier.": 10,
+      "TypeScript syntax error(s) in source: ',' expected.": 94,
+      "TypeScript syntax error(s) in source: 'try' expected.": 5,
+      "TypeScript syntax error(s) in source: '?' expected.": 28,
+      "TypeScript syntax error(s) in source: 'export' expected.": 4,
+      "IntentCard schema violation: field \"behavior\" must not contain newline character": 1,
+      "TypeScript syntax error(s) in source: Type 'any' does not satisfy the expected t": 2
+    }
+  },
+  "tasks": {
+    "add-days-iso": {
+      "slice": [
+        {
+          "id": "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+          "rank": 1,
+          "score": 0.8278086214106075,
+          "channel": "both",
+          "sourcePkg": "date-fns-4.1.0",
+          "name": "dayOfISOWeekYear",
+          "behavior": "function dayOfISOWeekYear(isoWeekYear, week, day) -> unknown",
+          "text": "function dayOfISOWeekYear(isoWeekYear, week, day) {\n  const date = new Date(0);\n  date.setUTCFullYear(isoWeekYear, 0, 4);\n  const fourthOfJanuaryDay = date.getUTCDay() || 7;\n  const diff = (week - 1) * 7 + day + 1 - fourthOfJanuaryDay;\n  date.setUTCDate(date.getUTCDate() + diff);\n  return date;\n}",
+          "citation": {
+            "merkleRoot": "1df2266e3bb653c04837b0867a763654326402156b1585f0e66f96354939ea4a",
+            "sourceFile": "date-fns-4.1.0/parseISO.cjs",
+            "lineStart": 244,
+            "lineEnd": 251
+          }
+        },
+        {
+          "id": "date-fns-4.1.0/parseISO.cjs#parseYear@141",
+          "rank": 2,
+          "score": 0.8213467398881562,
+          "channel": "both",
+          "sourcePkg": "date-fns-4.1.0",
+          "name": "parseYear",
+          "behavior": "function parseYear(dateString, additionalDigits) -> unknown",
+          "text": "function parseYear(dateString, additionalDigits) {\n  const regex = new RegExp(\n    \"^(?:(\\\\d{4}|[+-]\\\\d{\" +\n      (4 + additionalDigits) +\n      \"})|(\\\\d{2}|[+-]\\\\d{\" +\n      (2 + additionalDigits) +\n      \"})$)\",\n  );\n\n  const captures = dateString.match(regex);\n  // Invalid ISO-formatted year\n  if (!captures) return { year: NaN, restDateString: \"\" };\n\n  const year = captures[1] ? parseInt(captures[1]) : null;\n  const century = captures[2] ? parseInt(captures[2]) : null;\n\n  // either year or century is null, not both\n  return {\n    year: century === null ? year : century * 100,\n    restDateString: dateString.slice((captures[1] || captures[2]).length),\n  };\n}",
+          "citation": {
+            "merkleRoot": "59091675675b39d4527349ccaa5f6b911bb4da0dd94e5d236b90d73e60f9c834",
+            "sourceFile": "date-fns-4.1.0/parseISO.cjs",
+            "lineStart": 141,
+            "lineEnd": 162
+          }
+        },
+        {
+          "id": "date-fns-4.1.0/addDays.cjs#addDays@32",
+          "rank": 3,
+          "score": 0.835789383285146,
+          "channel": "both",
+          "sourcePkg": "date-fns-4.1.0",
+          "name": "addDays",
+          "behavior": "function addDays(date, amount, options) -> unknown",
+          "text": "function addDays(date, amount, options) {\n  const _date = (0, _index2.toDate)(date, options?.in);\n  if (isNaN(amount)) return (0, _index.constructFrom)(options?.in || date, NaN);\n\n  // If 0 days, no-op to avoid changing times in the hour before end of DST\n  if (!amount) return _date;\n\n  _date.setDate(_date.getDate() + amount);\n  return _date;\n}",
+          "citation": {
+            "merkleRoot": "787a28a71d8c9df0b45ff50acc4d62e1c204b78545b9bc7bf8a70fe750cf9664",
+            "sourceFile": "date-fns-4.1.0/addDays.cjs",
+            "lineStart": 32,
+            "lineEnd": 41
+          }
+        },
+        {
+          "id": "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271",
+          "rank": 4,
+          "score": 0.808355149075715,
+          "channel": "both",
+          "sourcePkg": "date-fns-4.1.0",
+          "name": "validateDayOfYearDate",
+          "behavior": "function validateDayOfYearDate(year, dayOfYear) -> unknown",
+          "text": "function validateDayOfYearDate(year, dayOfYear) {\n  return dayOfYear >= 1 && dayOfYear <= (isLeapYearIndex(year) ? 366 : 365);\n}",
+          "citation": {
+            "merkleRoot": "8df6fac0b90c2a5f3bbd9400a0fb4c049268aef3fe1267566f4e113de4cc8126",
+            "sourceFile": "date-fns-4.1.0/parseISO.cjs",
+            "lineStart": 271,
+            "lineEnd": 273
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+          "rank": 5,
+          "score": 0.8065805525192786,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "datetime",
+          "behavior": "function datetime(params) -> ZodISODateTime",
+          "text": "export function datetime(params?: string | core.$ZodISODateTimeParams): ZodISODateTime {\n  return core._isoDateTime(ZodISODateTime, params);\n}",
+          "citation": {
+            "merkleRoot": "a06791ed52d8f6ea8f78504b341fdf7ef35a904cbb2646033e621ddb7e2ceaf5",
+            "sourceFile": "zod-3.25.76/src/v4/classic/iso.ts",
+            "lineStart": 23,
+            "lineEnd": 25
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/mini/iso.ts#datetime@15",
+          "rank": 6,
+          "score": 0.8097275382283291,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "datetime",
+          "behavior": "function datetime(params) -> ZodMiniISODateTime",
+          "text": "export function datetime(params?: string | core.$ZodISODateTimeParams): ZodMiniISODateTime {\n  return core._isoDateTime(ZodMiniISODateTime, params);\n}",
+          "citation": {
+            "merkleRoot": "522bf49a31f00a8f64a1acfebbed2a90ddd5825c59a1488052f97975af1a9b0c",
+            "sourceFile": "zod-3.25.76/src/v4/mini/iso.ts",
+            "lineStart": 15,
+            "lineEnd": 17
+          }
+        },
+        {
+          "id": "date-fns-4.1.0/parseISO.cjs#parseDate@164",
+          "rank": 7,
+          "score": 0.8203183336225344,
+          "channel": "both",
+          "sourcePkg": "date-fns-4.1.0",
+          "name": "parseDate",
+          "behavior": "function parseDate(dateString, year) -> unknown",
+          "text": "function parseDate(dateString, year) {\n  // Invalid ISO-formatted year\n  if (year === null) return new Date(NaN);\n\n  const captures = dateString.match(dateRegex);\n  // Invalid ISO-formatted string\n  if (!captures) return new Date(NaN);\n\n  const isWeekDate = !!captures[4];\n  const dayOfYear = parseDateUnit(captures[1]);\n  const month = parseDateUnit(captures[2]) - 1;\n  const day = parseDateUnit(captures[3]);\n  const week = parseDateUnit(captures[4]);\n  const dayOfWeek = parseDateUnit(captures[5]) - 1;\n\n  if (isWeekDate) {\n    if (!validateWeekDate(year, week, dayOfWeek)) {\n      return new Date(NaN);\n    }\n    return dayOfISOWeekYear(year, week, dayOfWeek);\n  } else {\n    const date = new Date(0);\n    if (\n      !validateDate(year, month, day) ||\n      !validateDayOfYearDate(year, dayOfYear)\n    ) {\n      return new Date(NaN);\n    }\n    date.setUTCFullYear(year, month, Math.max(dayOfYear, day));\n    return date;\n  }\n}",
+          "citation": {
+            "merkleRoot": "f6f587c35723c3546f702fbf140739258ac1e737885dd25012dd083d575e5ca1",
+            "sourceFile": "date-fns-4.1.0/parseISO.cjs",
+            "lineStart": 164,
+            "lineEnd": 195
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/classic/iso.ts#date@43",
+          "rank": 8,
+          "score": 0.8059917098202298,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "date",
+          "behavior": "function date(params) -> ZodISODate",
+          "text": "export function date(params?: string | core.$ZodISODateParams): ZodISODate {\n  return core._isoDate(ZodISODate, params);\n}",
+          "citation": {
+            "merkleRoot": "a3a6c9c4f1ac4a95e47c080675d2330e77af585d50c1dc011e1e525cf789fbca",
+            "sourceFile": "zod-3.25.76/src/v4/classic/iso.ts",
+            "lineStart": 43,
+            "lineEnd": 45
+          }
+        }
+      ],
+      "needed": [
+        {
+          "atom": "date-fns-4.1.0:parseISO.cjs#parseDate",
+          "sliceRank": 7,
+          "deepRank": 7,
+          "coveredBy": "date-fns-4.1.0/parseISO.cjs#parseDate@164"
+        },
+        {
+          "atom": "date-fns-4.1.0:addDays.cjs#addDays",
+          "sliceRank": 3,
+          "deepRank": 3,
+          "coveredBy": "date-fns-4.1.0/addDays.cjs#addDays@32"
+        },
+        {
+          "atom": "date-fns-4.1.0:_lib/addLeadingZeros.cjs#addLeadingZeros",
+          "sliceRank": null,
+          "deepRank": 37,
+          "coveredBy": null
+        }
+      ],
+      "recallAtK": 0.6666666666666666,
+      "bestScore": 0.835789383285146
+    },
+    "add-durations": {
+      "slice": [
+        {
+          "id": "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+          "rank": 1,
+          "score": 0.8193379779562795,
+          "channel": "both",
+          "sourcePkg": "date-fns-4.1.0",
+          "name": "dayOfISOWeekYear",
+          "behavior": "function dayOfISOWeekYear(isoWeekYear, week, day) -> unknown",
+          "text": "function dayOfISOWeekYear(isoWeekYear, week, day) {\n  const date = new Date(0);\n  date.setUTCFullYear(isoWeekYear, 0, 4);\n  const fourthOfJanuaryDay = date.getUTCDay() || 7;\n  const diff = (week - 1) * 7 + day + 1 - fourthOfJanuaryDay;\n  date.setUTCDate(date.getUTCDate() + diff);\n  return date;\n}",
+          "citation": {
+            "merkleRoot": "1df2266e3bb653c04837b0867a763654326402156b1585f0e66f96354939ea4a",
+            "sourceFile": "date-fns-4.1.0/parseISO.cjs",
+            "lineStart": 244,
+            "lineEnd": 251
+          }
+        },
+        {
+          "id": "date-fns-4.1.0/parseISO.cjs#validateWeekDate@275",
+          "rank": 2,
+          "score": 0.8003059519697757,
+          "channel": "both",
+          "sourcePkg": "date-fns-4.1.0",
+          "name": "validateWeekDate",
+          "behavior": "function validateWeekDate(_year, week, day) -> unknown",
+          "text": "function validateWeekDate(_year, week, day) {\n  return week >= 1 && week <= 53 && day >= 0 && day <= 6;\n}",
+          "citation": {
+            "merkleRoot": "527d14df805f6c302e05ff97fb45b0d12d5f890d51ec1b6c49724963a4ac98ff",
+            "sourceFile": "date-fns-4.1.0/parseISO.cjs",
+            "lineStart": 275,
+            "lineEnd": 277
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/mini/iso.ts#duration@60",
+          "rank": 3,
+          "score": 0.821018723464757,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "duration",
+          "behavior": "function duration(params) -> ZodMiniISODuration",
+          "text": "export function duration(params?: string | core.$ZodISODurationParams): ZodMiniISODuration {\n  return core._isoDuration(ZodMiniISODuration, params);\n}",
+          "citation": {
+            "merkleRoot": "4bff7ffaa9c9620da13be99ab16bb7bed8200200f51a42eac16f677e59b81870",
+            "sourceFile": "zod-3.25.76/src/v4/mini/iso.ts",
+            "lineStart": 60,
+            "lineEnd": 62
+          }
+        },
+        {
+          "id": "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271",
+          "rank": 4,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "date-fns-4.1.0",
+          "name": "validateDayOfYearDate",
+          "behavior": "function validateDayOfYearDate(year, dayOfYear) -> unknown",
+          "text": "function validateDayOfYearDate(year, dayOfYear) {\n  return dayOfYear >= 1 && dayOfYear <= (isLeapYearIndex(year) ? 366 : 365);\n}",
+          "citation": {
+            "merkleRoot": "8df6fac0b90c2a5f3bbd9400a0fb4c049268aef3fe1267566f4e113de4cc8126",
+            "sourceFile": "date-fns-4.1.0/parseISO.cjs",
+            "lineStart": 271,
+            "lineEnd": 273
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/classic/iso.ts#duration@88",
+          "rank": 5,
+          "score": 0.8186742624494263,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "duration",
+          "behavior": "function duration(params) -> ZodISODuration",
+          "text": "export function duration(params?: string | core.$ZodISODurationParams): ZodISODuration {\n  return core._isoDuration(ZodISODuration, params);\n}",
+          "citation": {
+            "merkleRoot": "dd54315ac18b62b845b227054044b439113cde233e80c2a8bd8cbe5f7589b4d0",
+            "sourceFile": "zod-3.25.76/src/v4/classic/iso.ts",
+            "lineStart": 88,
+            "lineEnd": 90
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/mini/iso.js#duration@28",
+          "rank": 6,
+          "score": 0.8182699453898259,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "duration",
+          "behavior": "function duration(params) -> unknown",
+          "text": "export function duration(params) {\n    return core._isoDuration(ZodMiniISODuration, params);\n}",
+          "citation": {
+            "merkleRoot": "70b3f206c6fa7eac05b1169dbdf00e38ecb55f7180d12d230fe835e245e60cb7",
+            "sourceFile": "zod-3.25.76/v4/mini/iso.js",
+            "lineStart": 28,
+            "lineEnd": 30
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190",
+          "rank": 7,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "assertNotEqual",
+          "behavior": "function assertNotEqual(val) -> AssertNotEqual<A, B>",
+          "text": "export function assertNotEqual<A, B>(val: AssertNotEqual<A, B>): AssertNotEqual<A, B> {\n  return val;\n}",
+          "citation": {
+            "merkleRoot": "2de57d684e67255ea91df02da0d7c9bd232a52fc7846d4bae2ae9d295f5fe755",
+            "sourceFile": "zod-3.25.76/src/v4/core/util.ts",
+            "lineStart": 190,
+            "lineEnd": 192
+          }
+        },
+        {
+          "id": "lodash-4.17.21/debounce.js#trailingEdge@138",
+          "rank": 8,
+          "score": 0.8169980735971727,
+          "channel": "knn",
+          "sourcePkg": "lodash-4.17.21",
+          "name": "trailingEdge",
+          "behavior": "function trailingEdge(time) -> unknown",
+          "text": "function trailingEdge(time) {\n    timerId = undefined;\n\n    // Only invoke if we have `lastArgs` which means `func` has been\n    // debounced at least once.\n    if (trailing && lastArgs) {\n      return invokeFunc(time);\n    }\n    lastArgs = lastThis = undefined;\n    return result;\n  }",
+          "citation": {
+            "merkleRoot": "6847a46f766ccaa3a969bb80599c6e5a424496851265a24d797d1b9c1b0827fa",
+            "sourceFile": "lodash-4.17.21/debounce.js",
+            "lineStart": 138,
+            "lineEnd": 148
+          }
+        }
+      ],
+      "needed": [
+        {
+          "atom": "ms-2.1.3:index.js#parse",
+          "sliceRank": null,
+          "deepRank": null,
+          "coveredBy": null
+        },
+        {
+          "atom": "ms-2.1.3:index.js#fmtShort",
+          "sliceRank": null,
+          "deepRank": 10,
+          "coveredBy": null
+        }
+      ],
+      "recallAtK": 0,
+      "bestScore": 0.821018723464757
+    },
+    "base64url-from-string": {
+      "slice": [
+        {
+          "id": "zod-3.25.76/src/v4/classic/schemas.ts#base64url@647",
+          "rank": 1,
+          "score": 0.8276091126050993,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "base64url",
+          "behavior": "function base64url(params) -> ZodBase64URL",
+          "text": "export function base64url(params?: string | core.$ZodBase64URLParams): ZodBase64URL {\n  return core._base64url(ZodBase64URL, params);\n}",
+          "citation": {
+            "merkleRoot": "1d1b80dff7edf5f2cdfb1b8c8acb9ccd72763bfc3cce8acceec4f835615883ea",
+            "sourceFile": "zod-3.25.76/src/v4/classic/schemas.ts",
+            "lineStart": 647,
+            "lineEnd": 649
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/mini/schemas.ts#base64url@384",
+          "rank": 2,
+          "score": 0.8223930192988282,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "base64url",
+          "behavior": "function base64url(params) -> ZodMiniBase64URL",
+          "text": "export function base64url(params?: string | core.$ZodBase64URLParams): ZodMiniBase64URL {\n  return core._base64url(ZodMiniBase64URL, params);\n}",
+          "citation": {
+            "merkleRoot": "2d045c9d4acc38db6e26d4235f6d89738908b12ae11f2032beb0bf8b288376be",
+            "sourceFile": "zod-3.25.76/src/v4/mini/schemas.ts",
+            "lineStart": 384,
+            "lineEnd": 386
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/schemas.ts#isValidBase64URL@843",
+          "rank": 3,
+          "score": 0.812525892833591,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "isValidBase64URL",
+          "behavior": "function isValidBase64URL(data) -> boolean",
+          "text": "export function isValidBase64URL(data: string): boolean {\n  if (!regexes.base64url.test(data)) return false;\n  const base64 = data.replace(/[-_]/g, (c) => (c === \"-\" ? \"+\" : \"/\"));\n  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, \"=\");\n  return isValidBase64(padded);\n}",
+          "citation": {
+            "merkleRoot": "0f1f0cd9ef27ac2fdc69182c6614e6b88b924f3d8d3b7557e23e951a7fed14b8",
+            "sourceFile": "zod-3.25.76/src/v4/core/schemas.ts",
+            "lineStart": 843,
+            "lineEnd": 848
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/schemas.js#isValidBase64URL@348",
+          "rank": 4,
+          "score": 0.8095541588553345,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "isValidBase64URL",
+          "behavior": "function isValidBase64URL(data) -> unknown",
+          "text": "export function isValidBase64URL(data) {\n    if (!regexes.base64url.test(data))\n        return false;\n    const base64 = data.replace(/[-_]/g, (c) => (c === \"-\" ? \"+\" : \"/\"));\n    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, \"=\");\n    return isValidBase64(padded);\n}",
+          "citation": {
+            "merkleRoot": "969ce21391906ffc3434762f293c81a0175b8258f83dfb96d7f88165326c0080",
+            "sourceFile": "zod-3.25.76/v4/core/schemas.js",
+            "lineStart": 348,
+            "lineEnd": 354
+          }
+        },
+        {
+          "id": "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_encode@38",
+          "rank": 5,
+          "score": 0.8403008333054833,
+          "channel": "both",
+          "sourcePkg": "bcryptjs-2.4.3",
+          "name": "base64_encode",
+          "behavior": "function base64_encode(b, len) -> unknown",
+          "text": "function base64_encode(b, len) {\n    var off = 0,\n        rs = [],\n        c1, c2;\n    if (len <= 0 || len > b.length)\n        throw Error(\"Illegal len: \"+len);\n    while (off < len) {\n        c1 = b[off++] & 0xff;\n        rs.push(BASE64_CODE[(c1 >> 2) & 0x3f]);\n        c1 = (c1 & 0x03) << 4;\n        if (off >= len) {\n            rs.push(BASE64_CODE[c1 & 0x3f]);\n            break;\n        }\n        c2 = b[off++] & 0xff;\n        c1 |= (c2 >> 4) & 0x0f;\n        rs.push(BASE64_CODE[c1 & 0x3f]);\n        c1 = (c2 & 0x0f) << 2;\n        if (off >= len) {\n            rs.push(BASE64_CODE[c1 & 0x3f]);\n            break;\n        }\n        c2 = b[off++] & 0xff;\n        c1 |= (c2 >> 6) & 0x03;\n        rs.push(BASE64_CODE[c1 & 0x3f]);\n        rs.push(BASE64_CODE[c2 & 0x3f]);\n    }\n    return rs.join('');\n}",
+          "citation": {
+            "merkleRoot": "e67fc5b12902acb47a10ab03260be62cdd5759c0e733337b862dca523f5b6370",
+            "sourceFile": "bcryptjs-2.4.3/src/bcrypt/util/base64.js",
+            "lineStart": 38,
+            "lineEnd": 66
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/isSurrogatePair.js#isSurrogatePair@10",
+          "rank": 6,
+          "score": 0.8050636111888059,
+          "channel": "both",
+          "sourcePkg": "validator-13.15.35",
+          "name": "isSurrogatePair",
+          "behavior": "function isSurrogatePair(str) -> unknown",
+          "text": "function isSurrogatePair(str) {\n  (0, _assertString.default)(str);\n  return surrogatePair.test(str);\n}",
+          "citation": {
+            "merkleRoot": "08ab2cc50b561a5603c3f916b0ada898f4b5d64dce9912a4ab7a4da160f0b74d",
+            "sourceFile": "validator-13.15.35/lib/isSurrogatePair.js",
+            "lineStart": 10,
+            "lineEnd": 13
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/schemas.cjs#isValidBase64URL@379",
+          "rank": 7,
+          "score": 0.8035785747559565,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "isValidBase64URL",
+          "behavior": "function isValidBase64URL(data) -> unknown",
+          "text": "function isValidBase64URL(data) {\n    if (!regexes.base64url.test(data))\n        return false;\n    const base64 = data.replace(/[-_]/g, (c) => (c === \"-\" ? \"+\" : \"/\"));\n    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, \"=\");\n    return isValidBase64(padded);\n}",
+          "citation": {
+            "merkleRoot": "4f885489f824213ec22b27c4734db41dd1dc30ecd2fc08ae7a2f80c3cdd92c39",
+            "sourceFile": "zod-3.25.76/v4/core/schemas.cjs",
+            "lineStart": 379,
+            "lineEnd": 385
+          }
+        },
+        {
+          "id": "nanoid-3.3.12/index.js#random@17",
+          "rank": 8,
+          "score": 0.8050441102449781,
+          "channel": "both",
+          "sourcePkg": "nanoid-3.3.12",
+          "name": "random",
+          "behavior": "arrow const random(bytes) -> unknown",
+          "text": "let random = bytes => {\n  fillPool((bytes |= 0))\n  return pool.subarray(poolOffset - bytes, poolOffset)\n}",
+          "citation": {
+            "merkleRoot": "7c1a95f3f25dfebceb0481f2c63882a8c32dee127bdf065818064a7350be1f4d",
+            "sourceFile": "nanoid-3.3.12/index.js",
+            "lineStart": 17,
+            "lineEnd": 20
+          }
+        }
+      ],
+      "needed": [
+        {
+          "atom": "base64-js-1.5.1:index.js#fromByteArray",
+          "sliceRank": null,
+          "deepRank": null,
+          "coveredBy": null
+        },
+        {
+          "atom": "base64-js-1.5.1:index.js#encodeChunk",
+          "sliceRank": null,
+          "deepRank": null,
+          "coveredBy": null
+        },
+        {
+          "atom": "base64-js-1.5.1:index.js#tripletToBase64",
+          "sliceRank": null,
+          "deepRank": null,
+          "coveredBy": null
+        }
+      ],
+      "recallAtK": 0,
+      "bestScore": 0.8403008333054833
+    },
+    "build-order": {
+      "slice": [
+        {
+          "id": "zod-3.25.76/src/v3/helpers/util.ts#arrayToEnum@16",
+          "rank": 1,
+          "score": 0.7787911208959377,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "arrayToEnum",
+          "behavior": "arrow const arrayToEnum(items) -> { [k in U[number]]: k }",
+          "text": "export const arrayToEnum = <T extends string, U extends [T, ...T[]]>(items: U): { [k in U[number]]: k } => {\n    const obj: any = {};\n    for (const item of items) {\n      obj[item] = item;\n    }\n    return obj;\n  };",
+          "citation": {
+            "merkleRoot": "97e8005b1c1ab2cb498d66518e95d29d50427e0d30548d010bb446d6ecc8a248",
+            "sourceFile": "zod-3.25.76/src/v3/helpers/util.ts",
+            "lineStart": 16,
+            "lineEnd": 22
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+          "rank": 2,
+          "score": 0.7992019824614509,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "createSortItemSchema",
+          "behavior": "arrow const createSortItemSchema(sortKeySchema) -> unknown",
+          "text": "const createSortItemSchema = <T extends z.ZodType<string>>(sortKeySchema: T) =>\n    z.object({\n      key: sortKeySchema,\n      order: z.string(),\n    });",
+          "citation": {
+            "merkleRoot": "40bcf4e0ce5bdbc32c633f7190a02c007ad3fd385354c3e52bee6491f06a38e0",
+            "sourceFile": "zod-3.25.76/src/v4/classic/tests/assignability.test.ts",
+            "lineStart": 202,
+            "lineEnd": 206
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v3/helpers/errorUtil.ts#toString@6",
+          "rank": 3,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "toString",
+          "behavior": "arrow const toString(message) -> string | undefined",
+          "text": "export const toString = (message?: ErrMessage): string | undefined =>\n    typeof message === \"string\" ? message : message?.message;",
+          "citation": {
+            "merkleRoot": "337caa00c37f23136c2acdeb771625b6b9dc1c57205d4a895d936842939cfcea",
+            "sourceFile": "zod-3.25.76/src/v3/helpers/errorUtil.ts",
+            "lineStart": 6,
+            "lineEnd": 7
+          }
+        },
+        {
+          "id": "bcryptjs-2.4.3/externs/minimal-env.js#require@10",
+          "rank": 4,
+          "score": 0.7922842602171789,
+          "channel": "knn",
+          "sourcePkg": "bcryptjs-2.4.3",
+          "name": "require",
+          "behavior": "function require(moduleName) -> unknown",
+          "text": "function require(moduleName) {}",
+          "citation": {
+            "merkleRoot": "ac341743156e8e9ea6196d0e2c2a2d27d1b688f3715b55cc8aac9aa1121d2054",
+            "sourceFile": "bcryptjs-2.4.3/externs/minimal-env.js",
+            "lineStart": 10,
+            "lineEnd": 10
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v3/helpers/errorUtil.ts#errToObj@3",
+          "rank": 5,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "errToObj",
+          "behavior": "arrow const errToObj(message) -> { message?: string | undefined }",
+          "text": "export const errToObj = (message?: ErrMessage): { message?: string | undefined } =>\n    typeof message === \"string\" ? { message } : message || {};",
+          "citation": {
+            "merkleRoot": "481c778a37b71b692a9053e46eead3468435e7d2cad4f493ba0571125ed82f55",
+            "sourceFile": "zod-3.25.76/src/v3/helpers/errorUtil.ts",
+            "lineStart": 3,
+            "lineEnd": 4
+          }
+        },
+        {
+          "id": "lodash-4.17.21/_createBaseFor.js#createBaseFor@8",
+          "rank": 6,
+          "score": 0.7893973007211308,
+          "channel": "knn",
+          "sourcePkg": "lodash-4.17.21",
+          "name": "createBaseFor",
+          "behavior": "function createBaseFor(fromRight) -> unknown",
+          "text": "function createBaseFor(fromRight) {\n  return function(object, iteratee, keysFunc) {\n    var index = -1,\n        iterable = Object(object),\n        props = keysFunc(object),\n        length = props.length;\n\n    while (length--) {\n      var key = props[fromRight ? length : ++index];\n      if (iteratee(iterable[key], key, iterable) === false) {\n        break;\n      }\n    }\n    return object;\n  };\n}",
+          "citation": {
+            "merkleRoot": "afbc55d883a236238fd27e183f4d4e3ac0542296cf69ed496671095d2dbac7e8",
+            "sourceFile": "lodash-4.17.21/_createBaseFor.js",
+            "lineStart": 8,
+            "lineEnd": 23
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/util.ts#unwrapMessage@701",
+          "rank": 7,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "unwrapMessage",
+          "behavior": "function unwrapMessage(message) -> string | undefined",
+          "text": "export function unwrapMessage(message: string | { message: string } | undefined | null): string | undefined {\n  return typeof message === \"string\" ? message : message?.message;\n}",
+          "citation": {
+            "merkleRoot": "12d53adc314588d7287996a104f59f46ef693bb7e5e336c628048e5c366faf4e",
+            "sourceFile": "zod-3.25.76/src/v4/core/util.ts",
+            "lineStart": 701,
+            "lineEnd": 703
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/util.ts#aborted@686",
+          "rank": 8,
+          "score": 0.7880058102867897,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "aborted",
+          "behavior": "function aborted(x, startIndex) -> boolean",
+          "text": "export function aborted(x: schemas.ParsePayload, startIndex = 0): boolean {\n  for (let i = startIndex; i < x.issues.length; i++) {\n    if (x.issues[i]?.continue !== true) return true;\n  }\n  return false;\n}",
+          "citation": {
+            "merkleRoot": "3412abe1184e864c778e95f463a4f355f126dbfc84b4b705a9440e22f379792d",
+            "sourceFile": "zod-3.25.76/src/v4/core/util.ts",
+            "lineStart": 686,
+            "lineEnd": 691
+          }
+        }
+      ],
+      "needed": [
+        {
+          "atom": "toposort-2.0.2:index.js#uniqueNodes",
+          "sliceRank": null,
+          "deepRank": null,
+          "coveredBy": null
+        },
+        {
+          "atom": "toposort-2.0.2:index.js#makeOutgoingEdges",
+          "sliceRank": null,
+          "deepRank": null,
+          "coveredBy": null
+        },
+        {
+          "atom": "toposort-2.0.2:index.js#toposort",
+          "sliceRank": null,
+          "deepRank": null,
+          "coveredBy": null
+        }
+      ],
+      "recallAtK": 0,
+      "bestScore": 0.7992019824614509
+    },
+    "chunk": {
+      "slice": [
+        {
+          "id": "zod-3.25.76/src/v4/core/api.ts#_size@896",
+          "rank": 1,
+          "score": 0.7672830802860409,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_size",
+          "behavior": "function _size(size, params) -> checks.$ZodCheckSizeEquals<util.HasSize>",
+          "text": "export function _size(\n  size: number,\n  params?: string | $ZodCheckSizeEqualsParams\n): checks.$ZodCheckSizeEquals<util.HasSize> {\n  return new checks.$ZodCheckSizeEquals({\n    check: \"size_equals\",\n    ...util.normalizeParams(params),\n    size,\n  });\n}",
+          "citation": {
+            "merkleRoot": "a569a472f8e724fb75ac5274556ecbb6e04a89adb62eb16410701614ba6b0b6d",
+            "sourceFile": "zod-3.25.76/src/v4/core/api.ts",
+            "lineStart": 896,
+            "lineEnd": 905
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+          "rank": 2,
+          "score": 0.7665137722705708,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "readonly",
+          "behavior": "function readonly(innerType) -> ZodReadonly<T>",
+          "text": "export function readonly<T extends core.SomeType>(innerType: T): ZodReadonly<T> {\n  return new ZodReadonly({\n    type: \"readonly\",\n    innerType: innerType as any as core.$ZodType,\n  }) as any;\n}",
+          "citation": {
+            "merkleRoot": "a02631d8c9f852abfe9407acb5055043f36c08fde294f09681a1a2e7cad9b28b",
+            "sourceFile": "zod-3.25.76/src/v4/classic/schemas.ts",
+            "lineStart": 1860,
+            "lineEnd": 1865
+          }
+        },
+        {
+          "id": "semver-7.8.0/ranges/valid.js#validRange@4",
+          "rank": 3,
+          "score": 0.7681586112178911,
+          "channel": "both",
+          "sourcePkg": "semver-7.8.0",
+          "name": "validRange",
+          "behavior": "arrow const validRange(range, options) -> unknown",
+          "text": "const validRange = (range, options) => {\n  try {\n    // Return '*' instead of '' so that truthiness works.\n    // This will throw if it's invalid anyway\n    return new Range(range, options).range || '*'\n  } catch (er) {\n    return null\n  }\n}",
+          "citation": {
+            "merkleRoot": "b7fbdb91bb1467ffdd57b0a7461f9ec607795b8954a66c44bbfb91311b7161f4",
+            "sourceFile": "semver-7.8.0/ranges/valid.js",
+            "lineStart": 4,
+            "lineEnd": 12
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1302",
+          "rank": 4,
+          "score": 0.7647130027456654,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "tuple",
+          "behavior": "function tuple(items, params) -> ZodTuple<T, null>",
+          "text": "export function tuple<T extends readonly [core.SomeType, ...core.SomeType[]]>(\n  items: T,\n  params?: string | core.$ZodTupleParams\n): ZodTuple<T, null>;",
+          "citation": {
+            "merkleRoot": "00be1cd83335e259ed21bc15e31ad00302b83ffa79cbf397961fb1f19d4a3f96",
+            "sourceFile": "zod-3.25.76/src/v4/classic/schemas.ts",
+            "lineStart": 1302,
+            "lineEnd": 1305
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/isDate.js#_slicedToArray@9",
+          "rank": 5,
+          "score": 0.784843323567852,
+          "channel": "knn",
+          "sourcePkg": "validator-13.15.35",
+          "name": "_slicedToArray",
+          "behavior": "function _slicedToArray(r, e) -> unknown",
+          "text": "function _slicedToArray(r, e) { return _arrayWithHoles(r) || _iterableToArrayLimit(r, e) || _unsupportedIterableToArray(r, e) || _nonIterableRest(); }",
+          "citation": {
+            "merkleRoot": "1ac8f9346193e1ea9fe2c6553b11add54b1769f581f0935fe330b5bca6fbcd83",
+            "sourceFile": "validator-13.15.35/lib/isDate.js",
+            "lineStart": 9,
+            "lineEnd": 9
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190",
+          "rank": 6,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "assertNotEqual",
+          "behavior": "function assertNotEqual(val) -> AssertNotEqual<A, B>",
+          "text": "export function assertNotEqual<A, B>(val: AssertNotEqual<A, B>): AssertNotEqual<A, B> {\n  return val;\n}",
+          "citation": {
+            "merkleRoot": "2de57d684e67255ea91df02da0d7c9bd232a52fc7846d4bae2ae9d295f5fe755",
+            "sourceFile": "zod-3.25.76/src/v4/core/util.ts",
+            "lineStart": 190,
+            "lineEnd": 192
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/api.js#_maxSize@484",
+          "rank": 7,
+          "score": 0.7825954000170432,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_maxSize",
+          "behavior": "function _maxSize(maximum, params) -> unknown",
+          "text": "export function _maxSize(maximum, params) {\n    return new checks.$ZodCheckMaxSize({\n        check: \"max_size\",\n        ...util.normalizeParams(params),\n        maximum,\n    });\n}",
+          "citation": {
+            "merkleRoot": "ecddc80ae6b5115d22e31598a0915e8d12d24e89c20f59047d668431e2e9ec55",
+            "sourceFile": "zod-3.25.76/v4/core/api.js",
+            "lineStart": 484,
+            "lineEnd": 490
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/api.cjs#_maxSize@617",
+          "rank": 8,
+          "score": 0.7825032609078875,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_maxSize",
+          "behavior": "function _maxSize(maximum, params) -> unknown",
+          "text": "function _maxSize(maximum, params) {\n    return new checks.$ZodCheckMaxSize({\n        check: \"max_size\",\n        ...util.normalizeParams(params),\n        maximum,\n    });\n}",
+          "citation": {
+            "merkleRoot": "ac2f26142675547ed93dec5f2e098d6d56605ede2997409bd73b39a905b7acee",
+            "sourceFile": "zod-3.25.76/v4/core/api.cjs",
+            "lineStart": 617,
+            "lineEnd": 623
+          }
+        }
+      ],
+      "needed": [],
+      "recallAtK": null,
+      "bestScore": 0.784843323567852
+    },
+    "clamp": {
+      "slice": [
+        {
+          "id": "semver-7.8.0/ranges/valid.js#validRange@4",
+          "rank": 1,
+          "score": 0.8008727013430095,
+          "channel": "both",
+          "sourcePkg": "semver-7.8.0",
+          "name": "validRange",
+          "behavior": "arrow const validRange(range, options) -> unknown",
+          "text": "const validRange = (range, options) => {\n  try {\n    // Return '*' instead of '' so that truthiness works.\n    // This will throw if it's invalid anyway\n    return new Range(range, options).range || '*'\n  } catch (er) {\n    return null\n  }\n}",
+          "citation": {
+            "merkleRoot": "b7fbdb91bb1467ffdd57b0a7461f9ec607795b8954a66c44bbfb91311b7161f4",
+            "sourceFile": "semver-7.8.0/ranges/valid.js",
+            "lineStart": 4,
+            "lineEnd": 12
+          }
+        },
+        {
+          "id": "p-throttle-8.1.0/index.js#pThrottle@21",
+          "rank": 2,
+          "score": 0.808276939536654,
+          "channel": "both",
+          "sourcePkg": "p-throttle-8.1.0",
+          "name": "pThrottle",
+          "behavior": "function pThrottle({limit, interval, strict, signal, onDelay, weight}) -> unknown",
+          "text": "export default function pThrottle({limit, interval, strict, signal, onDelay, weight}) {\n\tif (!Number.isFinite(limit)) {\n\t\tthrow new TypeError('Expected `limit` to be a finite number');\n\t}\n\n\tif (!Number.isFinite(interval)) {\n\t\tthrow new TypeError('Expected `interval` to be a finite number');\n\t}\n\n\tif (limit < 0) {\n\t\tthrow new TypeError('Expected `limit` to be >= 0');\n\t}\n\n\tif (interval < 0) {\n\t\tthrow new TypeError('Expected `interval` to be >= 0');\n\t}\n\n\tif (weight !== undefined && typeof weight !== 'function') {\n\t\tthrow new TypeError('Expected `weight` to be a function');\n\t}\n\n\tif (weight && interval === 0) {\n\t\tthrow new TypeError('The `weight` option cannot be used with `interval` of 0');\n\t}\n\n\t// TODO: Uncomment in next major version (breaking change)\n\t// The combination of strict mode with interval=0 doesn't enforce the limit correctly\n\t// (minSpacing becomes 0, allowing unlimited calls in the same millisecond).\n\t// For now, we allow it to avoid breaking existing code, but it should be rejected in v9.\n\t// if (strict && interval === 0) {\n\t// \tthrow new TypeError('The `strict` option cannot be used with `interval` of 0');\n\t// }\n\n\tconst state = {\n\t\tqueue: new Map(),\n\t\tstrictTicks: [],\n\t\t// Track windowed algorithm state so it can be reset on abort\n\t\tcurrentTick: 0,\n\t\tactiveWeight: 0,\n\t};\n\tconst strictCapacity = Math.max(limit, 1);\n\n\t// Helper: insert tick maintaining sorted order by time (for weighted strict mode)\n\tconst insertTickSorted = tickRecord => {\n\t\t// Optimization: append if it belongs at the end (common case - O(1))\n\t\tif (state.strictTicks.length === 0 || tickRecord.time >= state.strictTicks.at(-1).time) {\n\t\t\tstate.strictTicks.push(tickRecord);\n\t\t} else {\n\t\t\t// Insert at correct position (rare case - O(n))\n\t\t\tconst insertIndex = state.strictTicks.findIndex(tick => tick.time > tickRecord.time);\n\t\t\tstate.strictTicks.splice(insertIndex, 0, tickRecord);\n\t\t}\n\t};\n\n\tfunction windowedDelay(requestWeight) {\n\t\tconst now = Date.now();\n\n\t\tif ((now - state.currentTick) > interval) {\n\t\t\tstate.activeWeight = requestWeight;\n\t\t\tstate.currentTick = now;\n\t\t\treturn 0;\n\t\t}\n\n\t\tif (state.activeWeight + requestWeight <= limit) {\n\t\t\tstate.activeWeight += requestWeight;\n\t\t} else {\n\t\t\tstate.currentTick += interval;\n\t\t\tstate.activeWeight = requestWeight;\n\t\t}\n\n\t\treturn state.currentTick - now;\n\t}\n\n\tfunction strictDelay(requestWeight) {\n\t\tconst now = Date.now();\n\n\t\t// Clear the queue if there's a significant delay since the last execution\n\t\tif (state.strictTicks.length > 0 && now - state.strictTicks.at(-1).time > interval) {\n\t\t\tstate.strictTicks.length = 0;\n\t\t}\n\n\t\t// For weighted throttling, use time-based sliding window\n\t\tif (weight) {\n\t\t\t// Remove ticks outside the current interval window\n\t\t\twhile (state.strictTicks.length > 0 && now - state.strictTicks[0].time >= interval) {\n\t\t\t\tstate.strictTicks.shift();\n\t\t\t}\n\n\t\t\tconst weightInWindowAt = time => {\n\t\t\t\tlet total = 0;\n\t\t\t\tfor (const tick of state.strictTicks) {\n\t\t\t\t\tif (tick.time <= time && time - tick.time < interval) {\n\t\t\t\t\t\ttotal += tick.weight;\n\t\t\t\t\t}\n\t\t\t\t}\n\n\t\t\t\treturn total;\n\t\t\t};\n\n\t\t\t// Execute immediately if capacity available\n\t\t\tif (weightInWindowAt(now) + requestWeight <= limit) {\n\t\t\t\tconst tickRecord = {time: now, weight: requestWeight};\n\t\t\t\tinsertTickSorted(tickRecord);\n\t\t\t\treturn {delay: 0};\n\t\t\t}\n\n\t\t\t// Find earliest time when window will have room\n\t\t\tlet nextExecutionTime = now;\n\t\t\twhile (weightInWindowAt(nextExecutionTime) + requestWeight > limit) {\n\t\t\t\tconst firstInWindow = state.strictTicks.find(tick =>\n\t\t\t\t\ttick.time <= nextExecutionTime && nextExecutionTime - tick.time < interval,\n\t\t\t\t);\n\n\t\t\t\tif (!firstInWindow) {\n\t\t\t\t\tbreak;\n\t\t\t\t}\n\n\t\t\t\tnextExecutionTime = firstInWindow.time + interval;\n\t\t\t}\n\n\t\t\tconst tickRecord = {time: nextExecutionTime, weight: requestWeight};\n\t\t\tinsertTickSorted(tickRecord);\n\t\t\treturn {delay: Math.max(0, nextExecutionTime - now), tickRecord};\n\t\t}\n\n\t\t// For non-weighted throttling, use count-based queue (original algorithm)\n\t\t// If the queue is not full (treat limit 0 as capacity 1 for seeding), add the current time and execute immediately\n\t\tif (state.strictTicks.length < strictCapacity) {\n\t\t\tstate.strictTicks.push({time: now, weight: requestWeight});\n\t\t\treturn {delay: 0};\n\t\t}\n\n\t\t// Calculate next execution time: must be after oldest + interval,\n\t\t// AND must be after the most recent to prevent multiple calls bunching up\n\t\tconst oldestTime = state.strictTicks[0].time;\n\t\tconst mostRecentTime = state.strictTicks.at(-1).time;\n\t\tconst baseTime = oldestTime + interval;\n\t\t// Add minimum spacing to prevent bunching (except for interval=0)\n\t\tconst minSpacing = interval > 0 ? Math.ceil(interval / strictCapacity) : 0;\n\t\tconst nextExecutionTime = baseTime <= mostRecentTime ? mostRecentTime + minSpacing : baseTime;\n\n\t\t// Shift the queue and add a record for the new execution\n\t\tstate.strictTicks.shift();\n\t\tconst tickRecord = {time: nextExecutionTime, weight: requestWeight};\n\t\tstate.strictTicks.push(tickRecord);\n\n\t\t// Calculate the delay for the current execution\n\t\treturn {delay: Math.max(0, nextExecutionTime - now), tickRecord};\n\t}\n\n\tconst getDelay = strict ? strictDelay : windowedDelay;\n\n\treturn function_ => {\n\t\tconst throttled = function (...arguments_) {\n\t\t\tif (!throttled.isEnabled) {\n\t\t\t\treturn (async () => function_.apply(this, arguments_))();\n\t\t\t}\n\n\t\t\tlet timeoutId;\n\t\t\treturn new Promise((resolve, reject) => {\n\t\t\t\t// Calculate weight for this call\n\t\t\t\tlet requestWeight = 1;\n\t\t\t\tif (weight) {\n\t\t\t\t\ttry {\n\t\t\t\t\t\trequestWeight = weight(...arguments_);\n\t\t\t\t\t} catch (error) {\n\t\t\t\t\t\treject(error);\n\t\t\t\t\t\treturn;\n\t\t\t\t\t}\n\n\t\t\t\t\t// Validate weight\n\t\t\t\t\tif (!Number.isFinite(requestWeight) || requestWeight < 0) {\n\t\t\t\t\t\treject(new TypeError('Expected `weight` to be a finite non-negative number'));\n\t\t\t\t\t\treturn;\n\t\t\t\t\t}\n\n\t\t\t\t\tif (requestWeight > limit) {\n\t\t\t\t\t\treject(new TypeError(`Expected \\`weight\\` (${requestWeight}) to be <= \\`limit\\` (${limit})`));\n\t\t\t\t\t\treturn;\n\t\t\t\t\t}\n\t\t\t\t}\n\n\t\t\t\tconst delayResult = getDelay(requestWeight);\n\t\t\t\tconst delay = strict ? delayResult.delay : delayResult;\n\t\t\t\tconst tickRecord = strict ? delayResult.tickRecord : undefined;\n\n\t\t\t\tconst execute = () => {\n\t\t\t\t\t// Update strictTicks with actual execution time to account for setTimeout drift\n\t\t\t\t\tif (tickRecord) {\n\t\t\t\t\t\tconst actualTime = Date.now();\n\n\t\t\t\t\t\t// For weighted throttling with drift, maintain sorted order\n\t\t\t\t\t\tif (weight && tickRecord.time !== actualTime) {\n\t\t\t\t\t\t\ttickRecord.time = actualTime;\n\t\t\t\t\t\t\tconst index = state.strictTicks.indexOf(tickRecord);\n\t\t\t\t\t\t\tstate.strictTicks.splice(index, 1);\n\t\t\t\t\t\t\tinsertTickSorted(tickRecord);\n\t\t\t\t\t\t} else {\n\t\t\t\t\t\t\ttickRecord.time = actualTime;\n\t\t\t\t\t\t}\n\t\t\t\t\t}\n\n\t\t\t\t\ttry {\n\t\t\t\t\t\tresolve(function_.apply(this, arguments_));\n\t\t\t\t\t} catch (error) {\n\t\t\t\t\t\treject(error);\n\t\t\t\t\t}\n\n\t\t\t\t\tstate.queue.delete(timeoutId);\n\t\t\t\t};\n\n\t\t\t\tif (delay > 0) {\n\t\t\t\t\ttimeoutId = setTimeout(execute, delay);\n\t\t\t\t\tstate.queue.set(timeoutId, reject);\n\t\t\t\t\ttry {\n\t\t\t\t\t\tonDelay?.(...arguments_);\n\t\t\t\t\t} catch {}\n\t\t\t\t} else {\n\t\t\t\t\texecute();\n\t\t\t\t}\n\t\t\t});\n\t\t};\n\n\t\tsignal?.throwIfAborted();\n\n\t\tif (signal) {\n\t\t\tlet registration = signalThrottleds.get(signal);\n\t\t\tif (!registration) {\n\t\t\t\tregistration = {\n\t\t\t\t\tthrottleds: new Set(),\n\t\t\t\t\tlistener: null,\n\t\t\t\t};\n\n\t\t\t\tregistration.listener = () => {\n\t\t\t\t\tfor (const weakReference of registration.throttleds) {\n\t\t\t\t\t\tconst function_ = weakReference.deref();\n\t\t\t\t\t\tif (!function_) {\n\t\t\t\t\t\t\tcontinue;\n\t\t\t\t\t\t}\n\n\t\t\t\t\t\tconst functionState = states.get(function_);\n\t\t\t\t\t\tif (!functionState) {\n\t\t\t\t\t\t\tcontinue;\n\t\t\t\t\t\t}\n\n\t\t\t\t\t\tfor (const timeout of functionState.queue.keys()) {\n\t\t\t\t\t\t\tclearTimeout(timeout);\n\t\t\t\t\t\t\tfunctionState.queue.get(timeout)(signal.reason);\n\t\t\t\t\t\t}\n\n\t\t\t\t\t\tfunctionState.queue.clear();\n\t\t\t\t\t\tfunctionState.strictTicks.length = 0;\n\t\t\t\t\t\t// Reset windowed state so subsequent calls are not artificially delayed\n\t\t\t\t\t\tfunctionState.currentTick = 0;\n\t\t\t\t\t\tfunctionState.activeWeight = 0;\n\t\t\t\t\t}\n\n\t\t\t\t\tsignalThrottleds.delete(signal);\n\t\t\t\t};\n\n\t\t\t\tsignalThrottleds.set(signal, registration);\n\t\t\t\tsignal.addEventListener('abort', registration.listener, {once: true});\n\t\t\t}\n\n\t\t\tconst weakReference = new WeakRef(throttled);\n\t\t\tregistration.throttleds.add(weakReference);\n\t\t\tfinalizationRegistry.register(throttled, {\n\t\t\t\tsignalWeakRef: new WeakRef(signal),\n\t\t\t\tweakReference,\n\t\t\t});\n\t\t}\n\n\t\tthrottled.isEnabled = true;\n\n\t\tObject.defineProperty(throttled, 'queueSize', {\n\t\t\tget() {\n\t\t\t\treturn state.queue.size;\n\t\t\t},\n\t\t});\n\n\t\tstates.set(throttled, state);\n\n\t\treturn throttled;\n\t};\n}",
+          "citation": {
+            "merkleRoot": "94d8e9e5a97b4ae9208e9460583013706c980ce08b105f7a5983198ff5dfc1a4",
+            "sourceFile": "p-throttle-8.1.0/index.js",
+            "lineStart": 21,
+            "lineEnd": 305
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+          "rank": 3,
+          "score": 0.804233657645077,
+          "channel": "both",
+          "sourcePkg": "validator-13.15.35",
+          "name": "isIPRange",
+          "behavior": "function isIPRange(str) -> unknown",
+          "text": "function isIPRange(str) {\n  var version = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : '';\n  (0, _assertString.default)(str);\n  var parts = str.split('/');\n\n  // parts[0] -> ip, parts[1] -> subnet\n  if (parts.length !== 2) {\n    return false;\n  }\n  if (!subnetMaybe.test(parts[1])) {\n    return false;\n  }\n\n  // Disallow preceding 0 i.e. 01, 02, ...\n  if (parts[1].length > 1 && parts[1].startsWith('0')) {\n    return false;\n  }\n  var isValidIP = (0, _isIP.default)(parts[0], version);\n  if (!isValidIP) {\n    return false;\n  }\n\n  // Define valid subnet according to IP's version\n  var expectedSubnet = null;\n  switch (String(version)) {\n    case '4':\n      expectedSubnet = v4Subnet;\n      break;\n    case '6':\n      expectedSubnet = v6Subnet;\n      break;\n    default:\n      expectedSubnet = (0, _isIP.default)(parts[0], '6') ? v6Subnet : v4Subnet;\n  }\n  return parts[1] <= expectedSubnet && parts[1] >= 0;\n}",
+          "citation": {
+            "merkleRoot": "b3528700818f183c6b12aa05aa1a31094925794c29d7389e544fff695e08c77f",
+            "sourceFile": "validator-13.15.35/lib/isIPRange.js",
+            "lineStart": 13,
+            "lineEnd": 48
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/stripLow.js#stripLow@10",
+          "rank": 4,
+          "score": 0.8142883513794024,
+          "channel": "knn",
+          "sourcePkg": "validator-13.15.35",
+          "name": "stripLow",
+          "behavior": "function stripLow(str, keep_new_lines) -> unknown",
+          "text": "function stripLow(str, keep_new_lines) {\n  (0, _assertString.default)(str);\n  var chars = keep_new_lines ? '\\\\x00-\\\\x09\\\\x0B\\\\x0C\\\\x0E-\\\\x1F\\\\x7F' : '\\\\x00-\\\\x1F\\\\x7F';\n  return (0, _blacklist.default)(str, chars);\n}",
+          "citation": {
+            "merkleRoot": "d7a5ed3928251e0889ccf75d479ed8b35a4df6ef53187af630570c52e0f21f5b",
+            "sourceFile": "validator-13.15.35/lib/stripLow.js",
+            "lineStart": 10,
+            "lineEnd": 14
+          }
+        },
+        {
+          "id": "lodash-4.17.21/toNumber.js#toNumber@43",
+          "rank": 5,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "lodash-4.17.21",
+          "name": "toNumber",
+          "behavior": "function toNumber(value) -> unknown",
+          "text": "function toNumber(value) {\n  if (typeof value == 'number') {\n    return value;\n  }\n  if (isSymbol(value)) {\n    return NAN;\n  }\n  if (isObject(value)) {\n    var other = typeof value.valueOf == 'function' ? value.valueOf() : value;\n    value = isObject(other) ? (other + '') : other;\n  }\n  if (typeof value != 'string') {\n    return value === 0 ? value : +value;\n  }\n  value = baseTrim(value);\n  var isBinary = reIsBinary.test(value);\n  return (isBinary || reIsOctal.test(value))\n    ? freeParseInt(value.slice(2), isBinary ? 2 : 8)\n    : (reIsBadHex.test(value) ? NAN : +value);\n}",
+          "citation": {
+            "merkleRoot": "6aeadb8545eb63db5aa239cdf62ec641e4a556e7008ba194fdee4d7d04b572e5",
+            "sourceFile": "lodash-4.17.21/toNumber.js",
+            "lineStart": 43,
+            "lineEnd": 62
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139",
+          "rank": 6,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "mergeValues",
+          "behavior": "function mergeValues(a, b) -> { valid: true; data: any } | { valid: false; mergeErrorPath: (string | number)[] }",
+          "text": "function mergeValues(\n  a: any,\n  b: any\n): { valid: true; data: any } | { valid: false; mergeErrorPath: (string | number)[] } {\n  // const aType = parse.t(a);\n  // const bType = parse.t(b);\n\n  if (a === b) {\n    return { valid: true, data: a };\n  }\n  if (a instanceof Date && b instanceof Date && +a === +b) {\n    return { valid: true, data: a };\n  }\n  if (util.isPlainObject(a) && util.isPlainObject(b)) {\n    const bKeys = Object.keys(b);\n    const sharedKeys = Object.keys(a).filter((key) => bKeys.indexOf(key) !== -1);\n\n    const newObj: any = { ...a, ...b };\n    for (const key of sharedKeys) {\n      const sharedValue = mergeValues(a[key], b[key]);\n      if (!sharedValue.valid) {\n        return {\n          valid: false,\n          mergeErrorPath: [key, ...sharedValue.mergeErrorPath],\n        };\n      }\n      newObj[key] = sharedValue.data;\n    }\n\n    return { valid: true, data: newObj };\n  }\n  if (Array.isArray(a) && Array.isArray(b)) {\n    if (a.length !== b.length) {\n      return { valid: false, mergeErrorPath: [] };\n    }\n\n    const newArray: unknown[] = [];\n    for (let index = 0; index < a.length; index++) {\n      const itemA = a[index];\n      const itemB = b[index];\n      const sharedValue = mergeValues(itemA, itemB);\n\n      if (!sharedValue.valid) {\n        return {\n          valid: false,\n          mergeErrorPath: [index, ...sharedValue.mergeErrorPath],\n        };\n      }\n\n      newArray.push(sharedValue.data);\n    }\n\n    return { valid: true, data: newArray };\n  }\n\n  return { valid: false, mergeErrorPath: [] };\n}",
+          "citation": {
+            "merkleRoot": "e71217a220a50187a28cda6b28ee6006ec0adc1c164d251d969775f70f2f1f60",
+            "sourceFile": "zod-3.25.76/src/v4/core/schemas.ts",
+            "lineStart": 2139,
+            "lineEnd": 2195
+          }
+        },
+        {
+          "id": "p-limit-7.3.0/index.js#limitFunction@117",
+          "rank": 7,
+          "score": 0.8070688955503291,
+          "channel": "knn",
+          "sourcePkg": "p-limit-7.3.0",
+          "name": "limitFunction",
+          "behavior": "function limitFunction(function_, options) -> unknown",
+          "text": "export function limitFunction(function_, options) {\n\tconst limit = pLimit(options);\n\n\treturn (...arguments_) => limit(() => function_(...arguments_));\n}",
+          "citation": {
+            "merkleRoot": "023560c17e00164b0d69ede9469f682799f3e0c86a5a2de76a21953957adbd50",
+            "sourceFile": "p-limit-7.3.0/index.js",
+            "lineStart": 117,
+            "lineEnd": 121
+          }
+        },
+        {
+          "id": "semver-7.8.0/ranges/to-comparators.js#toComparators@6",
+          "rank": 8,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "semver-7.8.0",
+          "name": "toComparators",
+          "behavior": "arrow const toComparators(range, options) -> unknown",
+          "text": "const toComparators = (range, options) =>\n  new Range(range, options).set\n    .map(comp => comp.map(c => c.value).join(' ').trim().split(' '))",
+          "citation": {
+            "merkleRoot": "a2b21c0cb31a2bc031dbdc5192c494028663d868f916c9f3617bbd35c5cebe17",
+            "sourceFile": "semver-7.8.0/ranges/to-comparators.js",
+            "lineStart": 6,
+            "lineEnd": 8
+          }
+        }
+      ],
+      "needed": [],
+      "recallAtK": null,
+      "bestScore": 0.8142883513794024
+    },
+    "days-between": {
+      "slice": [
+        {
+          "id": "date-fns-4.1.0/parseISO.cjs#splitDateString@103",
+          "rank": 1,
+          "score": 0.8043689772422473,
+          "channel": "both",
+          "sourcePkg": "date-fns-4.1.0",
+          "name": "splitDateString",
+          "behavior": "function splitDateString(dateString) -> unknown",
+          "text": "function splitDateString(dateString) {\n  const dateStrings = {};\n  const array = dateString.split(patterns.dateTimeDelimiter);\n  let timeString;\n\n  // The regex match should only return at maximum two array elements.\n  // [date], [time], or [date, time].\n  if (array.length > 2) {\n    return dateStrings;\n  }\n\n  if (/:/.test(array[0])) {\n    timeString = array[0];\n  } else {\n    dateStrings.date = array[0];\n    timeString = array[1];\n    if (patterns.timeZoneDelimiter.test(dateStrings.date)) {\n      dateStrings.date = dateString.split(patterns.timeZoneDelimiter)[0];\n      timeString = dateString.substr(\n        dateStrings.date.length,\n        dateString.length,\n      );\n    }\n  }\n\n  if (timeString) {\n    const token = patterns.timezone.exec(timeString);\n    if (token) {\n      dateStrings.time = timeString.replace(token[1], \"\");\n      dateStrings.timezone = token[1];\n    } else {\n      dateStrings.time = timeString;\n    }\n  }\n\n  return dateStrings;\n}",
+          "citation": {
+            "merkleRoot": "fe3b5bf7d2e08a81fa7ef6279402c24535ca6a8195132b3f8e3d1a10f2c119a6",
+            "sourceFile": "date-fns-4.1.0/parseISO.cjs",
+            "lineStart": 103,
+            "lineEnd": 139
+          }
+        },
+        {
+          "id": "date-fns-4.1.0/parseISO.cjs#parseYear@141",
+          "rank": 2,
+          "score": 0.8066244843725912,
+          "channel": "both",
+          "sourcePkg": "date-fns-4.1.0",
+          "name": "parseYear",
+          "behavior": "function parseYear(dateString, additionalDigits) -> unknown",
+          "text": "function parseYear(dateString, additionalDigits) {\n  const regex = new RegExp(\n    \"^(?:(\\\\d{4}|[+-]\\\\d{\" +\n      (4 + additionalDigits) +\n      \"})|(\\\\d{2}|[+-]\\\\d{\" +\n      (2 + additionalDigits) +\n      \"})$)\",\n  );\n\n  const captures = dateString.match(regex);\n  // Invalid ISO-formatted year\n  if (!captures) return { year: NaN, restDateString: \"\" };\n\n  const year = captures[1] ? parseInt(captures[1]) : null;\n  const century = captures[2] ? parseInt(captures[2]) : null;\n\n  // either year or century is null, not both\n  return {\n    year: century === null ? year : century * 100,\n    restDateString: dateString.slice((captures[1] || captures[2]).length),\n  };\n}",
+          "citation": {
+            "merkleRoot": "59091675675b39d4527349ccaa5f6b911bb4da0dd94e5d236b90d73e60f9c834",
+            "sourceFile": "date-fns-4.1.0/parseISO.cjs",
+            "lineStart": 141,
+            "lineEnd": 162
+          }
+        },
+        {
+          "id": "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+          "rank": 3,
+          "score": 0.8075929386032632,
+          "channel": "both",
+          "sourcePkg": "date-fns-4.1.0",
+          "name": "dayOfISOWeekYear",
+          "behavior": "function dayOfISOWeekYear(isoWeekYear, week, day) -> unknown",
+          "text": "function dayOfISOWeekYear(isoWeekYear, week, day) {\n  const date = new Date(0);\n  date.setUTCFullYear(isoWeekYear, 0, 4);\n  const fourthOfJanuaryDay = date.getUTCDay() || 7;\n  const diff = (week - 1) * 7 + day + 1 - fourthOfJanuaryDay;\n  date.setUTCDate(date.getUTCDate() + diff);\n  return date;\n}",
+          "citation": {
+            "merkleRoot": "1df2266e3bb653c04837b0867a763654326402156b1585f0e66f96354939ea4a",
+            "sourceFile": "date-fns-4.1.0/parseISO.cjs",
+            "lineStart": 244,
+            "lineEnd": 251
+          }
+        },
+        {
+          "id": "date-fns-4.1.0/parseISO.cjs#validateDayOfYearDate@271",
+          "rank": 4,
+          "score": 0.7861374637500722,
+          "channel": "both",
+          "sourcePkg": "date-fns-4.1.0",
+          "name": "validateDayOfYearDate",
+          "behavior": "function validateDayOfYearDate(year, dayOfYear) -> unknown",
+          "text": "function validateDayOfYearDate(year, dayOfYear) {\n  return dayOfYear >= 1 && dayOfYear <= (isLeapYearIndex(year) ? 366 : 365);\n}",
+          "citation": {
+            "merkleRoot": "8df6fac0b90c2a5f3bbd9400a0fb4c049268aef3fe1267566f4e113de4cc8126",
+            "sourceFile": "date-fns-4.1.0/parseISO.cjs",
+            "lineStart": 271,
+            "lineEnd": 273
+          }
+        },
+        {
+          "id": "date-fns-4.1.0/addDays.cjs#addDays@32",
+          "rank": 5,
+          "score": 0.7934838551269507,
+          "channel": "both",
+          "sourcePkg": "date-fns-4.1.0",
+          "name": "addDays",
+          "behavior": "function addDays(date, amount, options) -> unknown",
+          "text": "function addDays(date, amount, options) {\n  const _date = (0, _index2.toDate)(date, options?.in);\n  if (isNaN(amount)) return (0, _index.constructFrom)(options?.in || date, NaN);\n\n  // If 0 days, no-op to avoid changing times in the hour before end of DST\n  if (!amount) return _date;\n\n  _date.setDate(_date.getDate() + amount);\n  return _date;\n}",
+          "citation": {
+            "merkleRoot": "787a28a71d8c9df0b45ff50acc4d62e1c204b78545b9bc7bf8a70fe750cf9664",
+            "sourceFile": "date-fns-4.1.0/addDays.cjs",
+            "lineStart": 32,
+            "lineEnd": 41
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/mini/iso.ts#datetime@15",
+          "rank": 6,
+          "score": 0.7901709922872007,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "datetime",
+          "behavior": "function datetime(params) -> ZodMiniISODateTime",
+          "text": "export function datetime(params?: string | core.$ZodISODateTimeParams): ZodMiniISODateTime {\n  return core._isoDateTime(ZodMiniISODateTime, params);\n}",
+          "citation": {
+            "merkleRoot": "522bf49a31f00a8f64a1acfebbed2a90ddd5825c59a1488052f97975af1a9b0c",
+            "sourceFile": "zod-3.25.76/src/v4/mini/iso.ts",
+            "lineStart": 15,
+            "lineEnd": 17
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+          "rank": 7,
+          "score": 0.7886259396778854,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "datetime",
+          "behavior": "function datetime(params) -> ZodISODateTime",
+          "text": "export function datetime(params?: string | core.$ZodISODateTimeParams): ZodISODateTime {\n  return core._isoDateTime(ZodISODateTime, params);\n}",
+          "citation": {
+            "merkleRoot": "a06791ed52d8f6ea8f78504b341fdf7ef35a904cbb2646033e621ddb7e2ceaf5",
+            "sourceFile": "zod-3.25.76/src/v4/classic/iso.ts",
+            "lineStart": 23,
+            "lineEnd": 25
+          }
+        },
+        {
+          "id": "date-fns-4.1.0/parseISO.cjs#parseTime@201",
+          "rank": 8,
+          "score": 0.7885998507460812,
+          "channel": "both",
+          "sourcePkg": "date-fns-4.1.0",
+          "name": "parseTime",
+          "behavior": "function parseTime(timeString) -> unknown",
+          "text": "function parseTime(timeString) {\n  const captures = timeString.match(timeRegex);\n  if (!captures) return NaN; // Invalid ISO-formatted time\n\n  const hours = parseTimeUnit(captures[1]);\n  const minutes = parseTimeUnit(captures[2]);\n  const seconds = parseTimeUnit(captures[3]);\n\n  if (!validateTime(hours, minutes, seconds)) {\n    return NaN;\n  }\n\n  return (\n    hours * _index.millisecondsInHour +\n    minutes * _index.millisecondsInMinute +\n    seconds * 1000\n  );\n}",
+          "citation": {
+            "merkleRoot": "254568aa1b365b0bb293eb2dd718efe8be61cd0693ecbec3f2c958134eb8485d",
+            "sourceFile": "date-fns-4.1.0/parseISO.cjs",
+            "lineStart": 201,
+            "lineEnd": 218
+          }
+        }
+      ],
+      "needed": [
+        {
+          "atom": "date-fns-4.1.0:parseISO.cjs#parseDate",
+          "sliceRank": null,
+          "deepRank": 9,
+          "coveredBy": null
+        },
+        {
+          "atom": "date-fns-4.1.0:parseISO.cjs#validateDate",
+          "sliceRank": null,
+          "deepRank": 14,
+          "coveredBy": null
+        },
+        {
+          "atom": "date-fns-4.1.0:differenceInMilliseconds.cjs#differenceInMilliseconds",
+          "sliceRank": null,
+          "deepRank": 12,
+          "coveredBy": null
+        }
+      ],
+      "recallAtK": 0,
+      "bestScore": 0.8075929386032632
+    },
+    "group-by": {
+      "slice": [
+        {
+          "id": "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+          "rank": 1,
+          "score": 0.7736137572271531,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "createSortItemSchema",
+          "behavior": "arrow const createSortItemSchema(sortKeySchema) -> unknown",
+          "text": "const createSortItemSchema = <T extends z.ZodType<string>>(sortKeySchema: T) =>\n    z.object({\n      key: sortKeySchema,\n      order: z.string(),\n    });",
+          "citation": {
+            "merkleRoot": "40bcf4e0ce5bdbc32c633f7190a02c007ad3fd385354c3e52bee6491f06a38e0",
+            "sourceFile": "zod-3.25.76/src/v4/classic/tests/assignability.test.ts",
+            "lineStart": 202,
+            "lineEnd": 206
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+          "rank": 2,
+          "score": 0.7727093936248997,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "readonly",
+          "behavior": "function readonly(innerType) -> ZodReadonly<T>",
+          "text": "export function readonly<T extends core.SomeType>(innerType: T): ZodReadonly<T> {\n  return new ZodReadonly({\n    type: \"readonly\",\n    innerType: innerType as any as core.$ZodType,\n  }) as any;\n}",
+          "citation": {
+            "merkleRoot": "a02631d8c9f852abfe9407acb5055043f36c08fde294f09681a1a2e7cad9b28b",
+            "sourceFile": "zod-3.25.76/src/v4/classic/schemas.ts",
+            "lineStart": 1860,
+            "lineEnd": 1865
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/classic/schemas.ts#record@1345",
+          "rank": 3,
+          "score": 0.7684019198137753,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "record",
+          "behavior": "function record(keyType, valueType, params) -> ZodRecord<Key, Value>",
+          "text": "export function record<Key extends core.$ZodRecordKey, Value extends core.SomeType>(\n  keyType: Key,\n  valueType: Value,\n  params?: string | core.$ZodRecordParams\n): ZodRecord<Key, Value> {\n  return new ZodRecord({\n    type: \"record\",\n    keyType,\n    valueType: valueType as any as core.$ZodType,\n    ...util.normalizeParams(params),\n  }) as any;\n}",
+          "citation": {
+            "merkleRoot": "f2cbc4b373304b96921c58971332708131111df8a26cf07348d73f8ba1e439eb",
+            "sourceFile": "zod-3.25.76/src/v4/classic/schemas.ts",
+            "lineStart": 1345,
+            "lineEnd": 1356
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/api.ts#_readonly@1395",
+          "rank": 4,
+          "score": 0.7725231420480974,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_readonly",
+          "behavior": "function _readonly(Class, innerType) -> schemas.$ZodReadonly<T>",
+          "text": "export function _readonly<T extends schemas.$ZodObject>(\n  Class: util.SchemaClass<schemas.$ZodReadonly>,\n  innerType: T\n): schemas.$ZodReadonly<T> {\n  return new Class({\n    type: \"readonly\",\n    innerType,\n  }) as any;\n}",
+          "citation": {
+            "merkleRoot": "86d70f0a08484d9d4650a515cf917b8e69a7dc84364cc5fe23837500cf234d7e",
+            "sourceFile": "zod-3.25.76/src/v4/core/api.ts",
+            "lineStart": 1395,
+            "lineEnd": 1403
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/mini/schemas.ts#record@1010",
+          "rank": 5,
+          "score": 0.7676052691744495,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "record",
+          "behavior": "function record(keyType, valueType, params) -> ZodMiniRecord<Key, Value>",
+          "text": "export function record<Key extends core.$ZodRecordKey, Value extends SomeType>(\n  keyType: Key,\n  valueType: Value,\n  params?: string | core.$ZodRecordParams\n): ZodMiniRecord<Key, Value> {\n  return new ZodMiniRecord({\n    type: \"record\",\n    keyType,\n    valueType: valueType as any as core.$ZodType,\n    ...util.normalizeParams(params),\n  }) as any;\n}",
+          "citation": {
+            "merkleRoot": "944b1be126d9a88fd43c72dc1db8421a2edbc70e3ebf7fbcd0edab34ab97e5f8",
+            "sourceFile": "zod-3.25.76/src/v4/mini/schemas.ts",
+            "lineStart": 1010,
+            "lineEnd": 1021
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/mini/schemas.ts#readonly@1408",
+          "rank": 6,
+          "score": 0.7691074797599873,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "readonly",
+          "behavior": "function readonly(innerType) -> ZodMiniReadonly<T>",
+          "text": "export function readonly<T extends SomeType>(innerType: T): ZodMiniReadonly<T> {\n  return new ZodMiniReadonly({\n    type: \"readonly\",\n    innerType: innerType as any as core.$ZodType,\n  }) as any;\n}",
+          "citation": {
+            "merkleRoot": "b1e6a5862f6a8114c6d1f0ac06e9da3a7c2651b8e2daf8b91049cfcd423f1622",
+            "sourceFile": "zod-3.25.76/src/v4/mini/schemas.ts",
+            "lineStart": 1408,
+            "lineEnd": 1413
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/mini/schemas.cjs#record@556",
+          "rank": 7,
+          "score": 0.7702426051217719,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "record",
+          "behavior": "function record(keyType, valueType, params) -> unknown",
+          "text": "function record(keyType, valueType, params) {\n    return new exports.ZodMiniRecord({\n        type: \"record\",\n        keyType,\n        valueType: valueType,\n        ...index_js_1.util.normalizeParams(params),\n    });\n}",
+          "citation": {
+            "merkleRoot": "4b1953f7d6e1057c9b673361bbeb861085de57907198a1d0e3f8751dbaa3ab4a",
+            "sourceFile": "zod-3.25.76/v4/mini/schemas.cjs",
+            "lineStart": 556,
+            "lineEnd": 563
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/mini/schemas.js#record@446",
+          "rank": 8,
+          "score": 0.7696533652872084,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "record",
+          "behavior": "function record(keyType, valueType, params) -> unknown",
+          "text": "export function record(keyType, valueType, params) {\n    return new ZodMiniRecord({\n        type: \"record\",\n        keyType,\n        valueType: valueType,\n        ...util.normalizeParams(params),\n    });\n}",
+          "citation": {
+            "merkleRoot": "59c67c6790c178ac977e9e039e490b176dab128d1cee94c6d7ac8cfcc5dbd842",
+            "sourceFile": "zod-3.25.76/v4/mini/schemas.js",
+            "lineStart": 446,
+            "lineEnd": 453
+          }
+        }
+      ],
+      "needed": [],
+      "recallAtK": null,
+      "bestScore": 0.7736137572271531
+    },
+    "memoize-lru": {
+      "slice": [
+        {
+          "id": "zod-3.25.76/src/v4/core/api.ts#_maxSize@872",
+          "rank": 1,
+          "score": 0.8297318660638231,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_maxSize",
+          "behavior": "function _maxSize(maximum, params) -> checks.$ZodCheckMaxSize<util.HasSize>",
+          "text": "export function _maxSize(\n  maximum: number,\n  params?: string | $ZodCheckMaxSizeParams\n): checks.$ZodCheckMaxSize<util.HasSize> {\n  return new checks.$ZodCheckMaxSize({\n    check: \"max_size\",\n    ...util.normalizeParams(params),\n    maximum,\n  });\n}",
+          "citation": {
+            "merkleRoot": "48d074d1459f6ef0a9da8377d0d26d2b4eaba325bd7e2821edab0b41e88ee0a7",
+            "sourceFile": "zod-3.25.76/src/v4/core/api.ts",
+            "lineStart": 872,
+            "lineEnd": 881
+          }
+        },
+        {
+          "id": "lodash-4.17.21/_MapCache.js#MapCache@14",
+          "rank": 2,
+          "score": 0.8090136725729735,
+          "channel": "both",
+          "sourcePkg": "lodash-4.17.21",
+          "name": "MapCache",
+          "behavior": "function MapCache(entries) -> unknown",
+          "text": "function MapCache(entries) {\n  var index = -1,\n      length = entries == null ? 0 : entries.length;\n\n  this.clear();\n  while (++index < length) {\n    var entry = entries[index];\n    this.set(entry[0], entry[1]);\n  }\n}",
+          "citation": {
+            "merkleRoot": "1c0e56720d81c709ed8c4824f223922ba72c1af6ec7138f203921aa6fafef096",
+            "sourceFile": "lodash-4.17.21/_MapCache.js",
+            "lineStart": 14,
+            "lineEnd": 23
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/api.ts#_size@896",
+          "rank": 3,
+          "score": 0.816996849686003,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_size",
+          "behavior": "function _size(size, params) -> checks.$ZodCheckSizeEquals<util.HasSize>",
+          "text": "export function _size(\n  size: number,\n  params?: string | $ZodCheckSizeEqualsParams\n): checks.$ZodCheckSizeEquals<util.HasSize> {\n  return new checks.$ZodCheckSizeEquals({\n    check: \"size_equals\",\n    ...util.normalizeParams(params),\n    size,\n  });\n}",
+          "citation": {
+            "merkleRoot": "a569a472f8e724fb75ac5274556ecbb6e04a89adb62eb16410701614ba6b0b6d",
+            "sourceFile": "zod-3.25.76/src/v4/core/api.ts",
+            "lineStart": 896,
+            "lineEnd": 905
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1",
+          "rank": 4,
+          "score": 0.8077853446920358,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "getRandomInt",
+          "behavior": "function getRandomInt(max) -> unknown",
+          "text": "function getRandomInt(max: number) {\n  return Math.floor(Math.random() * Math.floor(max));\n}",
+          "citation": {
+            "merkleRoot": "6d1ace8687001dd1a29ae5192bf096853535bb5bd785482682f6bbcf7f6aa248",
+            "sourceFile": "zod-3.25.76/src/v3/tests/Mocker.ts",
+            "lineStart": 1,
+            "lineEnd": 3
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/api.cjs#_maxSize@617",
+          "rank": 5,
+          "score": 0.8371242099528322,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_maxSize",
+          "behavior": "function _maxSize(maximum, params) -> unknown",
+          "text": "function _maxSize(maximum, params) {\n    return new checks.$ZodCheckMaxSize({\n        check: \"max_size\",\n        ...util.normalizeParams(params),\n        maximum,\n    });\n}",
+          "citation": {
+            "merkleRoot": "ac2f26142675547ed93dec5f2e098d6d56605ede2997409bd73b39a905b7acee",
+            "sourceFile": "zod-3.25.76/v4/core/api.cjs",
+            "lineStart": 617,
+            "lineEnd": 623
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/regexes.ts#uuid@22",
+          "rank": 6,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "uuid",
+          "behavior": "arrow const uuid(version) -> RegExp",
+          "text": "export const uuid = (version?: number | undefined): RegExp => {\n  if (!version)\n    return /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000)$/;\n  return new RegExp(\n    `^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-${version}[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$`\n  );\n};",
+          "citation": {
+            "merkleRoot": "8f308db1322cd819441dfde55c613f3293e5f71fd701cc878afd0bb67c73118c",
+            "sourceFile": "zod-3.25.76/src/v4/core/regexes.ts",
+            "lineStart": 22,
+            "lineEnd": 28
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/api.js#_maxSize@484",
+          "rank": 7,
+          "score": 0.8332140657510081,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_maxSize",
+          "behavior": "function _maxSize(maximum, params) -> unknown",
+          "text": "export function _maxSize(maximum, params) {\n    return new checks.$ZodCheckMaxSize({\n        check: \"max_size\",\n        ...util.normalizeParams(params),\n        maximum,\n    });\n}",
+          "citation": {
+            "merkleRoot": "ecddc80ae6b5115d22e31598a0915e8d12d24e89c20f59047d668431e2e9ec55",
+            "sourceFile": "zod-3.25.76/v4/core/api.js",
+            "lineStart": 484,
+            "lineEnd": 490
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/api.js#_maxLength@505",
+          "rank": 8,
+          "score": 0.8272509740692691,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_maxLength",
+          "behavior": "function _maxLength(maximum, params) -> unknown",
+          "text": "export function _maxLength(maximum, params) {\n    const ch = new checks.$ZodCheckMaxLength({\n        check: \"max_length\",\n        ...util.normalizeParams(params),\n        maximum,\n    });\n    return ch;\n}",
+          "citation": {
+            "merkleRoot": "7c37bfacacbfc16fabcaeada4d8cdebe5f00f06fe5f5dc592ae5083bc53aa68f",
+            "sourceFile": "zod-3.25.76/v4/core/api.js",
+            "lineStart": 505,
+            "lineEnd": 512
+          }
+        }
+      ],
+      "needed": [
+        {
+          "atom": "lodash-4.17.21:memoize.js#memoize",
+          "sliceRank": null,
+          "deepRank": 15,
+          "coveredBy": null
+        },
+        {
+          "atom": "semver-7.8.0:internal/lrucache.js#LRUCache",
+          "sliceRank": null,
+          "deepRank": null,
+          "coveredBy": null
+        }
+      ],
+      "recallAtK": 0,
+      "bestScore": 0.8371242099528322
+    },
+    "parse-int-strict": {
+      "slice": [
+        {
+          "id": "zod-3.25.76/src/v3/types.ts#ZodNumber@1367",
+          "rank": 1,
+          "score": 0.8038583045977026,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "ZodNumber",
+          "behavior": "method _parse(input) -> ParseReturnType<number>",
+          "text": "export class ZodNumber extends ZodType<number, ZodNumberDef, number> {\n  _parse(input: ParseInput): ParseReturnType<number> {\n    if (this._def.coerce) {\n      input.data = Number(input.data);\n    }\n    const parsedType = this._getType(input);\n    if (parsedType !== ZodParsedType.number) {\n      const ctx = this._getOrReturnCtx(input);\n      addIssueToContext(ctx, {\n        code: ZodIssueCode.invalid_type,\n        expected: ZodParsedType.number,\n        received: ctx.parsedType,\n      });\n      return INVALID;\n    }\n\n    let ctx: undefined | ParseContext = undefined;\n    const status = new ParseStatus();\n\n    for (const check of this._def.checks) {\n      if (check.kind === \"int\") {\n        if (!util.isInteger(input.data)) {\n          ctx = this._getOrReturnCtx(input, ctx);\n          addIssueToContext(ctx, {\n            code: ZodIssueCode.invalid_type,\n            expected: \"integer\",\n            received: \"float\",\n            message: check.message,\n          });\n          status.dirty();\n        }\n      } else if (check.kind === \"min\") {\n        const tooSmall = check.inclusive ? input.data < check.value : input.data <= check.value;\n        if (tooSmall) {\n          ctx = this._getOrReturnCtx(input, ctx);\n          addIssueToContext(ctx, {\n            code: ZodIssueCode.too_small,\n            minimum: check.value,\n            type: \"number\",\n            inclusive: check.inclusive,\n            exact: false,\n            message: check.message,\n          });\n          status.dirty();\n        }\n      } else if (check.kind === \"max\") {\n        const tooBig = check.inclusive ? input.data > check.value : input.data >= check.value;\n        if (tooBig) {\n          ctx = this._getOrReturnCtx(input, ctx);\n          addIssueToContext(ctx, {\n            code: ZodIssueCode.too_big,\n            maximum: check.value,\n            type: \"number\",\n            inclusive: check.inclusive,\n            exact: false,\n            message: check.message,\n          });\n          status.dirty();\n        }\n      } else if (check.kind === \"multipleOf\") {\n        if (floatSafeRemainder(input.data, check.value) !== 0) {\n          ctx = this._getOrReturnCtx(input, ctx);\n          addIssueToContext(ctx, {\n            code: ZodIssueCode.not_multiple_of,\n            multipleOf: check.value,\n            message: check.message,\n          });\n          status.dirty();\n        }\n      } else if (check.kind === \"finite\") {\n        if (!Number.isFinite(input.data)) {\n          ctx = this._getOrReturnCtx(input, ctx);\n          addIssueToContext(ctx, {\n            code: ZodIssueCode.not_finite,\n            message: check.message,\n          });\n          status.dirty();\n        }\n      } else {\n        util.assertNever(check);\n      }\n    }\n\n    return { status: status.value, value: input.data };\n  }\n\n  static create = (params?: RawCreateParams & { coerce?: boolean }): ZodNumber => {\n    return new ZodNumber({\n      checks: [],\n      typeName: ZodFirstPartyTypeKind.ZodNumber,\n      coerce: params?.coerce || false,\n      ...processCreateParams(params),\n    });\n  };\n\n  gte(value: number, message?: errorUtil.ErrMessage) {\n    return this.setLimit(\"min\", value, true, errorUtil.toString(message));\n  }\n  min = this.gte;\n\n  gt(value: number, message?: errorUtil.ErrMessage) {\n    return this.setLimit(\"min\", value, false, errorUtil.toString(message));\n  }\n\n  lte(value: number, message?: errorUtil.ErrMessage) {\n    return this.setLimit(\"max\", value, true, errorUtil.toString(message));\n  }\n  max = this.lte;\n\n  lt(value: number, message?: errorUtil.ErrMessage) {\n    return this.setLimit(\"max\", value, false, errorUtil.toString(message));\n  }\n\n  protected setLimit(kind: \"min\" | \"max\", value: number, inclusive: boolean, message?: string) {\n    return new ZodNumber({\n      ...this._def,\n      checks: [\n        ...this._def.checks,\n        {\n          kind,\n          value,\n          inclusive,\n          message: errorUtil.toString(message),\n        },\n      ],\n    });\n  }\n\n  _addCheck(check: ZodNumberCheck) {\n    return new ZodNumber({\n      ...this._def,\n      checks: [...this._def.checks, check],\n    });\n  }\n\n  int(message?: errorUtil.ErrMessage) {\n    return this._addCheck({\n      kind: \"int\",\n      message: errorUtil.toString(message),\n    });\n  }\n\n  positive(message?: errorUtil.ErrMessage) {\n    return this._addCheck({\n      kind: \"min\",\n      value: 0,\n      inclusive: false,\n      message: errorUtil.toString(message),\n    });\n  }\n\n  negative(message?: errorUtil.ErrMessage) {\n    return this._addCheck({\n      kind: \"max\",\n      value: 0,\n      inclusive: false,\n      message: errorUtil.toString(message),\n    });\n  }\n\n  nonpositive(message?: errorUtil.ErrMessage) {\n    return this._addCheck({\n      kind: \"max\",\n      value: 0,\n      inclusive: true,\n      message: errorUtil.toString(message),\n    });\n  }\n\n  nonnegative(message?: errorUtil.ErrMessage) {\n    return this._addCheck({\n      kind: \"min\",\n      value: 0,\n      inclusive: true,\n      message: errorUtil.toString(message),\n    });\n  }\n\n  multipleOf(value: number, message?: errorUtil.ErrMessage) {\n    return this._addCheck({\n      kind: \"multipleOf\",\n      value: value,\n      message: errorUtil.toString(message),\n    });\n  }\n  step = this.multipleOf;\n\n  finite(message?: errorUtil.ErrMessage) {\n    return this._addCheck({\n      kind: \"finite\",\n      message: errorUtil.toString(message),\n    });\n  }\n\n  safe(message?: errorUtil.ErrMessage) {\n    return this._addCheck({\n      kind: \"min\",\n      inclusive: true,\n      value: Number.MIN_SAFE_INTEGER,\n      message: errorUtil.toString(message),\n    })._addCheck({\n      kind: \"max\",\n      inclusive: true,\n      value: Number.MAX_SAFE_INTEGER,\n      message: errorUtil.toString(message),\n    });\n  }\n\n  get minValue() {\n    let min: number | null = null;\n    for (const ch of this._def.checks) {\n      if (ch.kind === \"min\") {\n        if (min === null || ch.value > min) min = ch.value;\n      }\n    }\n    return min;\n  }\n\n  get maxValue() {\n    let max: number | null = null;\n    for (const ch of this._def.checks) {\n      if (ch.kind === \"max\") {\n        if (max === null || ch.value < max) max = ch.value;\n      }\n    }\n    return max;\n  }\n\n  get isInt() {\n    return !!this._def.checks.find((ch) => ch.kind === \"int\" || (ch.kind === \"multipleOf\" && util.isInteger(ch.value)));\n  }\n\n  get isFinite() {\n    let max: number | null = null;\n    let min: number | null = null;\n    for (const ch of this._def.checks) {\n      if (ch.kind === \"finite\" || ch.kind === \"int\" || ch.kind === \"multipleOf\") {\n        return true;\n      } else if (ch.kind === \"min\") {\n        if (min === null || ch.value > min) min = ch.value;\n      } else if (ch.kind === \"max\") {\n        if (max === null || ch.value < max) max = ch.value;\n      }\n    }\n    return Number.isFinite(min) && Number.isFinite(max);\n  }\n}",
+          "citation": {
+            "merkleRoot": "e329ecc0c95d1eb1fd7bcbad943dbdf011cc164f9f8e4628532e67584ad0275f",
+            "sourceFile": "zod-3.25.76/src/v3/types.ts",
+            "lineStart": 1367,
+            "lineEnd": 1613
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+          "rank": 2,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "validator-13.15.35",
+          "name": "reverseMultiplyAndSum",
+          "behavior": "function reverseMultiplyAndSum(digits, base) -> unknown",
+          "text": "function reverseMultiplyAndSum(digits, base) {\n  var total = 0;\n  for (var i = 0; i < digits.length; i++) {\n    total += digits[i] * (base - i);\n  }\n  return total;\n}",
+          "citation": {
+            "merkleRoot": "e86633087c826600202f05724406082dc6a745cd3a9168633d620e387606f9bf",
+            "sourceFile": "validator-13.15.35/lib/util/algorithms.js",
+            "lineStart": 64,
+            "lineEnd": 70
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/isDecimal.js#decimalRegExp@12",
+          "rank": 3,
+          "score": 0.8029472433276474,
+          "channel": "knn",
+          "sourcePkg": "validator-13.15.35",
+          "name": "decimalRegExp",
+          "behavior": "function decimalRegExp(options) -> unknown",
+          "text": "function decimalRegExp(options) {\n  var regExp = new RegExp(\"^[-+]?([0-9]+)?(\\\\\".concat(_alpha.decimal[options.locale], \"[0-9]{\").concat(options.decimal_digits, \"})\").concat(options.force_decimal ? '' : '?', \"$\"));\n  return regExp;\n}",
+          "citation": {
+            "merkleRoot": "12fcb3709dc402de82546c13114d18fe01d0b555d1b3aaf54911a2cea42fa140",
+            "sourceFile": "validator-13.15.35/lib/isDecimal.js",
+            "lineStart": 12,
+            "lineEnd": 15
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v3/types.ts#makeReturnsIssue@3845",
+          "rank": 4,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "makeReturnsIssue",
+          "behavior": "function makeReturnsIssue(returns, error) -> ZodIssue",
+          "text": "function makeReturnsIssue(returns: any, error: ZodError): ZodIssue {\n      return makeIssue({\n        data: returns,\n        path: ctx.path,\n        errorMaps: [ctx.common.contextualErrorMap, ctx.schemaErrorMap, getErrorMap(), defaultErrorMap].filter(\n          (x) => !!x\n        ),\n        issueData: {\n          code: ZodIssueCode.invalid_return_type,\n          returnTypeError: error,\n        },\n      });\n    }",
+          "citation": {
+            "merkleRoot": "970f7a01db9ce872390b71edab175b034891019a3c5ad0fcdd98ba1870e88984",
+            "sourceFile": "zod-3.25.76/src/v3/types.ts",
+            "lineStart": 3845,
+            "lineEnd": 3857
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v3/types.ts#ZodBigInt@1633",
+          "rank": 5,
+          "score": 0.8028965448641223,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "ZodBigInt",
+          "behavior": "method _parse(input) -> ParseReturnType<bigint>",
+          "text": "export class ZodBigInt extends ZodType<bigint, ZodBigIntDef, bigint> {\n  _parse(input: ParseInput): ParseReturnType<bigint> {\n    if (this._def.coerce) {\n      try {\n        input.data = BigInt(input.data);\n      } catch {\n        return this._getInvalidInput(input);\n      }\n    }\n    const parsedType = this._getType(input);\n    if (parsedType !== ZodParsedType.bigint) {\n      return this._getInvalidInput(input);\n    }\n\n    let ctx: undefined | ParseContext = undefined;\n    const status = new ParseStatus();\n\n    for (const check of this._def.checks) {\n      if (check.kind === \"min\") {\n        const tooSmall = check.inclusive ? input.data < check.value : input.data <= check.value;\n        if (tooSmall) {\n          ctx = this._getOrReturnCtx(input, ctx);\n          addIssueToContext(ctx, {\n            code: ZodIssueCode.too_small,\n            type: \"bigint\",\n            minimum: check.value,\n            inclusive: check.inclusive,\n            message: check.message,\n          });\n          status.dirty();\n        }\n      } else if (check.kind === \"max\") {\n        const tooBig = check.inclusive ? input.data > check.value : input.data >= check.value;\n        if (tooBig) {\n          ctx = this._getOrReturnCtx(input, ctx);\n          addIssueToContext(ctx, {\n            code: ZodIssueCode.too_big,\n            type: \"bigint\",\n            maximum: check.value,\n            inclusive: check.inclusive,\n            message: check.message,\n          });\n          status.dirty();\n        }\n      } else if (check.kind === \"multipleOf\") {\n        if (input.data % check.value !== BigInt(0)) {\n          ctx = this._getOrReturnCtx(input, ctx);\n          addIssueToContext(ctx, {\n            code: ZodIssueCode.not_multiple_of,\n            multipleOf: check.value,\n            message: check.message,\n          });\n          status.dirty();\n        }\n      } else {\n        util.assertNever(check);\n      }\n    }\n\n    return { status: status.value, value: input.data };\n  }\n\n  _getInvalidInput(input: ParseInput) {\n    const ctx = this._getOrReturnCtx(input);\n    addIssueToContext(ctx, {\n      code: ZodIssueCode.invalid_type,\n      expected: ZodParsedType.bigint,\n      received: ctx.parsedType,\n    });\n    return INVALID;\n  }\n\n  static create = (params?: RawCreateParams & { coerce?: boolean }): ZodBigInt => {\n    return new ZodBigInt({\n      checks: [],\n      typeName: ZodFirstPartyTypeKind.ZodBigInt,\n      coerce: params?.coerce ?? false,\n      ...processCreateParams(params),\n    });\n  };\n\n  gte(value: bigint, message?: errorUtil.ErrMessage) {\n    return this.setLimit(\"min\", value, true, errorUtil.toString(message));\n  }\n  min = this.gte;\n\n  gt(value: bigint, message?: errorUtil.ErrMessage) {\n    return this.setLimit(\"min\", value, false, errorUtil.toString(message));\n  }\n\n  lte(value: bigint, message?: errorUtil.ErrMessage) {\n    return this.setLimit(\"max\", value, true, errorUtil.toString(message));\n  }\n  max = this.lte;\n\n  lt(value: bigint, message?: errorUtil.ErrMessage) {\n    return this.setLimit(\"max\", value, false, errorUtil.toString(message));\n  }\n\n  protected setLimit(kind: \"min\" | \"max\", value: bigint, inclusive: boolean, message?: string) {\n    return new ZodBigInt({\n      ...this._def,\n      checks: [\n        ...this._def.checks,\n        {\n          kind,\n          value,\n          inclusive,\n          message: errorUtil.toString(message),\n        },\n      ],\n    });\n  }\n\n  _addCheck(check: ZodBigIntCheck) {\n    return new ZodBigInt({\n      ...this._def,\n      checks: [...this._def.checks, check],\n    });\n  }\n\n  positive(message?: errorUtil.ErrMessage) {\n    return this._addCheck({\n      kind: \"min\",\n      value: BigInt(0),\n      inclusive: false,\n      message: errorUtil.toString(message),\n    });\n  }\n\n  negative(message?: errorUtil.ErrMessage) {\n    return this._addCheck({\n      kind: \"max\",\n      value: BigInt(0),\n      inclusive: false,\n      message: errorUtil.toString(message),\n    });\n  }\n\n  nonpositive(message?: errorUtil.ErrMessage) {\n    return this._addCheck({\n      kind: \"max\",\n      value: BigInt(0),\n      inclusive: true,\n      message: errorUtil.toString(message),\n    });\n  }\n\n  nonnegative(message?: errorUtil.ErrMessage) {\n    return this._addCheck({\n      kind: \"min\",\n      value: BigInt(0),\n      inclusive: true,\n      message: errorUtil.toString(message),\n    });\n  }\n\n  multipleOf(value: bigint, message?: errorUtil.ErrMessage) {\n    return this._addCheck({\n      kind: \"multipleOf\",\n      value,\n      message: errorUtil.toString(message),\n    });\n  }\n\n  get minValue() {\n    let min: bigint | null = null;\n    for (const ch of this._def.checks) {\n      if (ch.kind === \"min\") {\n        if (min === null || ch.value > min) min = ch.value;\n      }\n    }\n    return min;\n  }\n\n  get maxValue() {\n    let max: bigint | null = null;\n    for (const ch of this._def.checks) {\n      if (ch.kind === \"max\") {\n        if (max === null || ch.value < max) max = ch.value;\n      }\n    }\n    return max;\n  }\n}",
+          "citation": {
+            "merkleRoot": "0a4adc0cef992742fc4f3c218862e72d6c5773ee36c5f92c9154445b68dcc6a6",
+            "sourceFile": "zod-3.25.76/src/v3/types.ts",
+            "lineStart": 1633,
+            "lineEnd": 1817
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/classic/schemas.ts#int@788",
+          "rank": 6,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "int",
+          "behavior": "function int(params) -> ZodInt",
+          "text": "export function int(params?: string | core.$ZodCheckNumberFormatParams): ZodInt {\n  return core._int(ZodNumberFormat, params);\n}",
+          "citation": {
+            "merkleRoot": "8aae7863653f80ee3a8dbf91c8112dce27b025e9219a324fafa63e75893017b2",
+            "sourceFile": "zod-3.25.76/src/v4/classic/schemas.ts",
+            "lineStart": 788,
+            "lineEnd": 790
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v3/types.ts#ZodEnum@4077",
+          "rank": 7,
+          "score": 0.8018787918924835,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "ZodEnum",
+          "behavior": "method _parse(input) -> ParseReturnType<this[\"_output\"]>",
+          "text": "export class ZodEnum<T extends [string, ...string[]]> extends ZodType<T[number], ZodEnumDef<T>, T[number]> {\n  _cache: Set<T[number]> | undefined;\n\n  _parse(input: ParseInput): ParseReturnType<this[\"_output\"]> {\n    if (typeof input.data !== \"string\") {\n      const ctx = this._getOrReturnCtx(input);\n      const expectedValues = this._def.values;\n      addIssueToContext(ctx, {\n        expected: util.joinValues(expectedValues) as \"string\",\n        received: ctx.parsedType,\n        code: ZodIssueCode.invalid_type,\n      });\n      return INVALID;\n    }\n\n    if (!this._cache) {\n      this._cache = new Set(this._def.values);\n    }\n\n    if (!this._cache.has(input.data)) {\n      const ctx = this._getOrReturnCtx(input);\n      const expectedValues = this._def.values;\n\n      addIssueToContext(ctx, {\n        received: ctx.data,\n        code: ZodIssueCode.invalid_enum_value,\n        options: expectedValues,\n      });\n      return INVALID;\n    }\n    return OK(input.data);\n  }\n\n  get options() {\n    return this._def.values;\n  }\n\n  get enum(): Values<T> {\n    const enumValues: any = {};\n    for (const val of this._def.values) {\n      enumValues[val] = val;\n    }\n    return enumValues;\n  }\n\n  get Values(): Values<T> {\n    const enumValues: any = {};\n    for (const val of this._def.values) {\n      enumValues[val] = val;\n    }\n    return enumValues;\n  }\n\n  get Enum(): Values<T> {\n    const enumValues: any = {};\n    for (const val of this._def.values) {\n      enumValues[val] = val;\n    }\n    return enumValues;\n  }\n\n  extract<ToExtract extends readonly [T[number], ...T[number][]]>(\n    values: ToExtract,\n    newDef: RawCreateParams = this._def\n  ): ZodEnum<Writeable<ToExtract>> {\n    return ZodEnum.create(values, {\n      ...this._def,\n      ...newDef,\n    }) as any;\n  }\n\n  exclude<ToExclude extends readonly [T[number], ...T[number][]]>(\n    values: ToExclude,\n    newDef: RawCreateParams = this._def\n  ): ZodEnum<typecast<Writeable<FilterEnum<T, ToExclude[number]>>, [string, ...string[]]>> {\n    return ZodEnum.create(this.options.filter((opt) => !values.includes(opt)) as FilterEnum<T, ToExclude[number]>, {\n      ...this._def,\n      ...newDef,\n    }) as any;\n  }\n\n  static create = createZodEnum;\n}",
+          "citation": {
+            "merkleRoot": "b68b7d021ccbc6fc1508f7053ebe94a5f05d2c7645a4a8f288d0d092d3a1e98b",
+            "sourceFile": "zod-3.25.76/src/v3/types.ts",
+            "lineStart": 4077,
+            "lineEnd": 4159
+          }
+        },
+        {
+          "id": "zod-3.25.76/v3/types.js#makeReturnsIssue@2894",
+          "rank": 8,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "makeReturnsIssue",
+          "behavior": "function makeReturnsIssue(returns, error) -> unknown",
+          "text": "function makeReturnsIssue(returns, error) {\n            return makeIssue({\n                data: returns,\n                path: ctx.path,\n                errorMaps: [ctx.common.contextualErrorMap, ctx.schemaErrorMap, getErrorMap(), defaultErrorMap].filter((x) => !!x),\n                issueData: {\n                    code: ZodIssueCode.invalid_return_type,\n                    returnTypeError: error,\n                },\n            });\n        }",
+          "citation": {
+            "merkleRoot": "8eb65e00917da6a7587ee4d464aa2715ce95dcb8df6a4d1170216e40f76c939d",
+            "sourceFile": "zod-3.25.76/v3/types.js",
+            "lineStart": 2894,
+            "lineEnd": 2904
+          }
+        }
+      ],
+      "needed": [],
+      "recallAtK": null,
+      "bestScore": 0.8038583045977026
+    },
+    "pointer-get": {
+      "slice": [
+        {
+          "id": "jsonpointer-5.0.1/jsonpointer.js#get@66",
+          "rank": 1,
+          "score": 0.8469902084120662,
+          "channel": "both",
+          "sourcePkg": "jsonpointer-5.0.1",
+          "name": "get",
+          "behavior": "function get(obj, pointer) -> unknown",
+          "text": "function get (obj, pointer) {\n  if (typeof obj !== 'object') throw new Error('Invalid input object.')\n  pointer = compilePointer(pointer)\n  var len = pointer.length\n  if (len === 1) return obj\n\n  for (var p = 1; p < len;) {\n    obj = obj[untilde(pointer[p++])]\n    if (len === p) return obj\n    if (typeof obj !== 'object' || obj === null) return undefined\n  }\n}",
+          "citation": {
+            "merkleRoot": "6df0cfdab50e11be661143dd59a143f57c08161d1b2f9915d18777b2764c0364",
+            "sourceFile": "jsonpointer-5.0.1/jsonpointer.js",
+            "lineStart": 66,
+            "lineEnd": 77
+          }
+        },
+        {
+          "id": "jsonwebtoken-9.0.2/lib/JsonWebTokenError.js#JsonWebTokenError@1",
+          "rank": 2,
+          "score": 0.8251841167075327,
+          "channel": "both",
+          "sourcePkg": "jsonwebtoken-9.0.2",
+          "name": "JsonWebTokenError",
+          "behavior": "function const JsonWebTokenError(message, error) -> unknown",
+          "text": "var JsonWebTokenError = function (message, error) {\n  Error.call(this, message);\n  if(Error.captureStackTrace) {\n    Error.captureStackTrace(this, this.constructor);\n  }\n  this.name = 'JsonWebTokenError';\n  this.message = message;\n  if (error) this.inner = error;\n};",
+          "citation": {
+            "merkleRoot": "23c1c3c1c276553daf80c8ec352d0815233637241a9983c4dcf1bd0d62e0ef5f",
+            "sourceFile": "jsonwebtoken-9.0.2/lib/JsonWebTokenError.js",
+            "lineStart": 1,
+            "lineEnd": 9
+          }
+        },
+        {
+          "id": "date-fns-4.1.0/_lib/addLeadingZeros.cjs#addLeadingZeros@3",
+          "rank": 3,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "date-fns-4.1.0",
+          "name": "addLeadingZeros",
+          "behavior": "function addLeadingZeros(number, targetLength) -> unknown",
+          "text": "function addLeadingZeros(number, targetLength) {\n  const sign = number < 0 ? \"-\" : \"\";\n  const output = Math.abs(number).toString().padStart(targetLength, \"0\");\n  return sign + output;\n}",
+          "citation": {
+            "merkleRoot": "4a7bb71270308030dad2e0a943e7dd6abe91caf449dfc9355713b25a1f2562d3",
+            "sourceFile": "date-fns-4.1.0/_lib/addLeadingZeros.cjs",
+            "lineStart": 3,
+            "lineEnd": 7
+          }
+        },
+        {
+          "id": "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+          "rank": 4,
+          "score": 0.8413990155732511,
+          "channel": "knn",
+          "sourcePkg": "jsonpointer-5.0.1",
+          "name": "compile",
+          "behavior": "function compile(pointer) -> unknown",
+          "text": "function compile (pointer) {\n  var compiled = compilePointer(pointer)\n  return {\n    get: function (object) {\n      return get(object, compiled)\n    },\n    set: function (object, value) {\n      return set(object, compiled, value)\n    }\n  }\n}",
+          "citation": {
+            "merkleRoot": "9b9be9fb59098d7051f049c962a2f14613eb13f7de6eb124076485ff3fc6c79e",
+            "sourceFile": "jsonpointer-5.0.1/jsonpointer.js",
+            "lineStart": 86,
+            "lineEnd": 96
+          }
+        },
+        {
+          "id": "lodash-4.17.21/_isIndex.js#isIndex@15",
+          "rank": 5,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "lodash-4.17.21",
+          "name": "isIndex",
+          "behavior": "function isIndex(value, length) -> unknown",
+          "text": "function isIndex(value, length) {\n  var type = typeof value;\n  length = length == null ? MAX_SAFE_INTEGER : length;\n\n  return !!length &&\n    (type == 'number' ||\n      (type != 'symbol' && reIsUint.test(value))) &&\n        (value > -1 && value % 1 == 0 && value < length);\n}",
+          "citation": {
+            "merkleRoot": "f246a2f5166f3cc2e7f83df11d006ed59d3697a34220e1e569dbd8c30c942540",
+            "sourceFile": "lodash-4.17.21/_isIndex.js",
+            "lineStart": 15,
+            "lineEnd": 23
+          }
+        },
+        {
+          "id": "jsonpointer-5.0.1/jsonpointer.js#compilePointer@49",
+          "rank": 6,
+          "score": 0.8381508252335514,
+          "channel": "knn",
+          "sourcePkg": "jsonpointer-5.0.1",
+          "name": "compilePointer",
+          "behavior": "function compilePointer(pointer) -> unknown",
+          "text": "function compilePointer (pointer) {\n  if (typeof pointer === 'string') {\n    pointer = pointer.split('/')\n    if (pointer[0] === '') return pointer\n    throw new Error('Invalid JSON pointer.')\n  } else if (Array.isArray(pointer)) {\n    for (const part of pointer) {\n      if (typeof part !== 'string' && typeof part !== 'number') {\n        throw new Error('Invalid JSON pointer. Must be of type string or number.')\n      }\n    }\n    return pointer\n  }\n\n  throw new Error('Invalid JSON pointer.')\n}",
+          "citation": {
+            "merkleRoot": "bb5dfb3642dba3f51fab6907c6e6888114730c52ed394de10bbfeda01ac4e07d",
+            "sourceFile": "jsonpointer-5.0.1/jsonpointer.js",
+            "lineStart": 49,
+            "lineEnd": 64
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@829",
+          "rank": 7,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "toJSONSchema",
+          "behavior": "function toJSONSchema(registry, _params) -> { schemas: Record<string, JSONSchema.BaseSchema> }",
+          "text": "export function toJSONSchema(\n  registry: $ZodRegistry<{ id?: string | undefined }>,\n  _params?: RegistryToJSONSchemaParams\n): { schemas: Record<string, JSONSchema.BaseSchema> };",
+          "citation": {
+            "merkleRoot": "045bf000450fefd48ce809c57ffda621bee41c35f87f7360c9019480246c32e7",
+            "sourceFile": "zod-3.25.76/src/v4/core/to-json-schema.ts",
+            "lineStart": 829,
+            "lineEnd": 832
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/api.cjs#_undefined@510",
+          "rank": 8,
+          "score": 0.828954220946442,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_undefined",
+          "behavior": "function _undefined(Class, params) -> unknown",
+          "text": "function _undefined(Class, params) {\n    return new Class({\n        type: \"undefined\",\n        ...util.normalizeParams(params),\n    });\n}",
+          "citation": {
+            "merkleRoot": "d9f2831e45cb62b4c0be4d866673ffa371dfe8a744c0a5b6acac89785d172ab0",
+            "sourceFile": "zod-3.25.76/v4/core/api.cjs",
+            "lineStart": 510,
+            "lineEnd": 515
+          }
+        }
+      ],
+      "needed": [
+        {
+          "atom": "jsonpointer-5.0.1:jsonpointer.js#compilePointer",
+          "sliceRank": 6,
+          "deepRank": 6,
+          "coveredBy": "jsonpointer-5.0.1/jsonpointer.js#compilePointer@49"
+        },
+        {
+          "atom": "jsonpointer-5.0.1:jsonpointer.js#untilde",
+          "sliceRank": null,
+          "deepRank": null,
+          "coveredBy": null
+        },
+        {
+          "atom": "jsonpointer-5.0.1:jsonpointer.js#get",
+          "sliceRank": 1,
+          "deepRank": 1,
+          "coveredBy": "jsonpointer-5.0.1/jsonpointer.js#get@66"
+        }
+      ],
+      "recallAtK": 0.6666666666666666,
+      "bestScore": 0.8469902084120662
+    },
+    "range": {
+      "slice": [
+        {
+          "id": "semver-7.8.0/ranges/valid.js#validRange@4",
+          "rank": 1,
+          "score": 0.7984447603967872,
+          "channel": "both",
+          "sourcePkg": "semver-7.8.0",
+          "name": "validRange",
+          "behavior": "arrow const validRange(range, options) -> unknown",
+          "text": "const validRange = (range, options) => {\n  try {\n    // Return '*' instead of '' so that truthiness works.\n    // This will throw if it's invalid anyway\n    return new Range(range, options).range || '*'\n  } catch (er) {\n    return null\n  }\n}",
+          "citation": {
+            "merkleRoot": "b7fbdb91bb1467ffdd57b0a7461f9ec607795b8954a66c44bbfb91311b7161f4",
+            "sourceFile": "semver-7.8.0/ranges/valid.js",
+            "lineStart": 4,
+            "lineEnd": 12
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+          "rank": 2,
+          "score": 0.7783947703905048,
+          "channel": "both",
+          "sourcePkg": "validator-13.15.35",
+          "name": "isIPRange",
+          "behavior": "function isIPRange(str) -> unknown",
+          "text": "function isIPRange(str) {\n  var version = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : '';\n  (0, _assertString.default)(str);\n  var parts = str.split('/');\n\n  // parts[0] -> ip, parts[1] -> subnet\n  if (parts.length !== 2) {\n    return false;\n  }\n  if (!subnetMaybe.test(parts[1])) {\n    return false;\n  }\n\n  // Disallow preceding 0 i.e. 01, 02, ...\n  if (parts[1].length > 1 && parts[1].startsWith('0')) {\n    return false;\n  }\n  var isValidIP = (0, _isIP.default)(parts[0], version);\n  if (!isValidIP) {\n    return false;\n  }\n\n  // Define valid subnet according to IP's version\n  var expectedSubnet = null;\n  switch (String(version)) {\n    case '4':\n      expectedSubnet = v4Subnet;\n      break;\n    case '6':\n      expectedSubnet = v6Subnet;\n      break;\n    default:\n      expectedSubnet = (0, _isIP.default)(parts[0], '6') ? v6Subnet : v4Subnet;\n  }\n  return parts[1] <= expectedSubnet && parts[1] >= 0;\n}",
+          "citation": {
+            "merkleRoot": "b3528700818f183c6b12aa05aa1a31094925794c29d7389e544fff695e08c77f",
+            "sourceFile": "validator-13.15.35/lib/isIPRange.js",
+            "lineStart": 13,
+            "lineEnd": 48
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/util.cjs#aborted@462",
+          "rank": 3,
+          "score": 0.7768901498203853,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "aborted",
+          "behavior": "function aborted(x, startIndex) -> unknown",
+          "text": "function aborted(x, startIndex = 0) {\n    for (let i = startIndex; i < x.issues.length; i++) {\n        if (x.issues[i]?.continue !== true)\n            return true;\n    }\n    return false;\n}",
+          "citation": {
+            "merkleRoot": "5b70cd9b8e2aa4821a0a7869de5afc0669a428c283220e58d95c0f4f2f39c7f6",
+            "sourceFile": "zod-3.25.76/v4/core/util.cjs",
+            "lineStart": 462,
+            "lineEnd": 468
+          }
+        },
+        {
+          "id": "bcryptjs-2.4.3/src/bcrypt/prng/accum.js#step@20",
+          "rank": 4,
+          "score": 0.7794959440857729,
+          "channel": "both",
+          "sourcePkg": "bcryptjs-2.4.3",
+          "name": "step",
+          "behavior": "function step() -> unknown",
+          "text": "function step() {\n        if (!to)\n            return;\n        if (pool.length >= 255) { // stop at 255 values (1 more is added on fetch)\n            stop();\n            return;\n        }\n        var now = new Date().getTime();\n        // use actual time difference\n        pool.push(now-last);\n        // always compute, occasionally use Math.random\n        var rnd = (Math.random() * 0xffffffff)|0;\n        if (now % 2)\n            pool[pool.length-1] += rnd;\n        last = now;\n        to = setTimeout(step, 100+Math.random()*512); // use hypothetical time difference\n    }",
+          "citation": {
+            "merkleRoot": "b0381a0cd46d27d06ca2ba40b2e33da6f840d6c876693d6f5a229be90ef5fc14",
+            "sourceFile": "bcryptjs-2.4.3/src/bcrypt/prng/accum.js",
+            "lineStart": 20,
+            "lineEnd": 36
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v3/types.ts#floatSafeRemainder@1352",
+          "rank": 5,
+          "score": 0.7692170177980273,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "floatSafeRemainder",
+          "behavior": "function floatSafeRemainder(val, step) -> unknown",
+          "text": "function floatSafeRemainder(val: number, step: number) {\n  const valDecCount = (val.toString().split(\".\")[1] || \"\").length;\n  const stepDecCount = (step.toString().split(\".\")[1] || \"\").length;\n  const decCount = valDecCount > stepDecCount ? valDecCount : stepDecCount;\n  const valInt = Number.parseInt(val.toFixed(decCount).replace(\".\", \"\"));\n  const stepInt = Number.parseInt(step.toFixed(decCount).replace(\".\", \"\"));\n  return (valInt % stepInt) / 10 ** decCount;\n}",
+          "citation": {
+            "merkleRoot": "9faac1bb3d322bbe8a24fa2954bc47f8e3bbe7c3a07004cceafc2b09ca084eba",
+            "sourceFile": "zod-3.25.76/src/v3/types.ts",
+            "lineStart": 1352,
+            "lineEnd": 1359
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/util.js#aborted@417",
+          "rank": 6,
+          "score": 0.7758240966766685,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "aborted",
+          "behavior": "function aborted(x, startIndex) -> unknown",
+          "text": "export function aborted(x, startIndex = 0) {\n    for (let i = startIndex; i < x.issues.length; i++) {\n        if (x.issues[i]?.continue !== true)\n            return true;\n    }\n    return false;\n}",
+          "citation": {
+            "merkleRoot": "90ab52fb4be0f1890424c0cf16aca751b598bfad8c2bf7c5e7afa851c1845e8f",
+            "sourceFile": "zod-3.25.76/v4/core/util.js",
+            "lineStart": 417,
+            "lineEnd": 423
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/util.ts#floatSafeRemainder@242",
+          "rank": 7,
+          "score": 0.7662517517935887,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "floatSafeRemainder",
+          "behavior": "function floatSafeRemainder(val, step) -> number",
+          "text": "export function floatSafeRemainder(val: number, step: number): number {\n  const valDecCount = (val.toString().split(\".\")[1] || \"\").length;\n  const stepDecCount = (step.toString().split(\".\")[1] || \"\").length;\n  const decCount = valDecCount > stepDecCount ? valDecCount : stepDecCount;\n  const valInt = Number.parseInt(val.toFixed(decCount).replace(\".\", \"\"));\n  const stepInt = Number.parseInt(step.toFixed(decCount).replace(\".\", \"\"));\n  return (valInt % stepInt) / 10 ** decCount;\n}",
+          "citation": {
+            "merkleRoot": "2f9f86167919224a1f9a465205938b83896619cb114c6df46a25b9f4cc27819e",
+            "sourceFile": "zod-3.25.76/src/v4/core/util.ts",
+            "lineStart": 242,
+            "lineEnd": 249
+          }
+        },
+        {
+          "id": "semver-7.8.0/ranges/min-version.js#minVersion@7",
+          "rank": 8,
+          "score": 0.7715396895552606,
+          "channel": "both",
+          "sourcePkg": "semver-7.8.0",
+          "name": "minVersion",
+          "behavior": "arrow const minVersion(range, loose) -> unknown",
+          "text": "const minVersion = (range, loose) => {\n  range = new Range(range, loose)\n\n  let minver = new SemVer('0.0.0')\n  if (range.test(minver)) {\n    return minver\n  }\n\n  minver = new SemVer('0.0.0-0')\n  if (range.test(minver)) {\n    return minver\n  }\n\n  minver = null\n  for (let i = 0; i < range.set.length; ++i) {\n    const comparators = range.set[i]\n\n    let setMin = null\n    comparators.forEach((comparator) => {\n      // Clone to avoid manipulating the comparator's semver object.\n      const compver = new SemVer(comparator.semver.version)\n      switch (comparator.operator) {\n        case '>':\n          if (compver.prerelease.length === 0) {\n            compver.patch++\n          } else {\n            compver.prerelease.push(0)\n          }\n          compver.raw = compver.format()\n          /* fallthrough */\n        case '':\n        case '>=':\n          if (!setMin || gt(compver, setMin)) {\n            setMin = compver\n          }\n          break\n        case '<':\n        case '<=':\n          /* Ignore maximum versions */\n          break\n        /* istanbul ignore next */\n        default:\n          throw new Error(`Unexpected operation: ${comparator.operator}`)\n      }\n    })\n    if (setMin && (!minver || gt(minver, setMin))) {\n      minver = setMin\n    }\n  }\n\n  if (minver && range.test(minver)) {\n    return minver\n  }\n\n  return null\n}",
+          "citation": {
+            "merkleRoot": "cbe2dd74bc9200c4fb7b39f3e842a117f4ba97274bec4462840d3b2be5db0d4d",
+            "sourceFile": "semver-7.8.0/ranges/min-version.js",
+            "lineStart": 7,
+            "lineEnd": 62
+          }
+        }
+      ],
+      "needed": [],
+      "recallAtK": null,
+      "bestScore": 0.7984447603967872
+    },
+    "safe-filename": {
+      "slice": [
+        {
+          "id": "validator-13.15.35/lib/isAscii.js#isAscii@13",
+          "rank": 1,
+          "score": 0.7951970733091533,
+          "channel": "both",
+          "sourcePkg": "validator-13.15.35",
+          "name": "isAscii",
+          "behavior": "function isAscii(str) -> unknown",
+          "text": "function isAscii(str) {\n  (0, _assertString.default)(str);\n  return ascii.test(str);\n}",
+          "citation": {
+            "merkleRoot": "2f874a592a8ae753bfce4f6457967b755050380b01aa1e36162fe5d40488f992",
+            "sourceFile": "validator-13.15.35/lib/isAscii.js",
+            "lineStart": 13,
+            "lineEnd": 16
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/trim.js#trim@10",
+          "rank": 2,
+          "score": 0.8249310990337682,
+          "channel": "knn",
+          "sourcePkg": "validator-13.15.35",
+          "name": "trim",
+          "behavior": "function trim(str, chars) -> unknown",
+          "text": "function trim(str, chars) {\n  return (0, _rtrim.default)((0, _ltrim.default)(str, chars), chars);\n}",
+          "citation": {
+            "merkleRoot": "8c0164f70285e1cdd427d4c4a6f9f2f755883921a1ce8960b4e50c5a9de6de05",
+            "sourceFile": "validator-13.15.35/lib/trim.js",
+            "lineStart": 10,
+            "lineEnd": 12
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+          "rank": 3,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "validator-13.15.35",
+          "name": "reverseMultiplyAndSum",
+          "behavior": "function reverseMultiplyAndSum(digits, base) -> unknown",
+          "text": "function reverseMultiplyAndSum(digits, base) {\n  var total = 0;\n  for (var i = 0; i < digits.length; i++) {\n    total += digits[i] * (base - i);\n  }\n  return total;\n}",
+          "citation": {
+            "merkleRoot": "e86633087c826600202f05724406082dc6a745cd3a9168633d620e387606f9bf",
+            "sourceFile": "validator-13.15.35/lib/util/algorithms.js",
+            "lineStart": 64,
+            "lineEnd": 70
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/whitelist.js#whitelist@9",
+          "rank": 4,
+          "score": 0.8135156021486267,
+          "channel": "knn",
+          "sourcePkg": "validator-13.15.35",
+          "name": "whitelist",
+          "behavior": "function whitelist(str, chars) -> unknown",
+          "text": "function whitelist(str, chars) {\n  (0, _assertString.default)(str);\n  return str.replace(new RegExp(\"[^\".concat(chars, \"]+\"), 'g'), '');\n}",
+          "citation": {
+            "merkleRoot": "6defb21ee017691cf83d0f69a4e612de98ef1e2830812eff6dfc45fa9d55fcbf",
+            "sourceFile": "validator-13.15.35/lib/whitelist.js",
+            "lineStart": 9,
+            "lineEnd": 12
+          }
+        },
+        {
+          "id": "lodash-4.17.21/eq.js#eq@33",
+          "rank": 5,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "lodash-4.17.21",
+          "name": "eq",
+          "behavior": "function eq(value, other) -> unknown",
+          "text": "function eq(value, other) {\n  return value === other || (value !== value && other !== other);\n}",
+          "citation": {
+            "merkleRoot": "2b92bebe9ff719ec0417643585fc104df3d8108aa42dfe319a513239e115d4e5",
+            "sourceFile": "lodash-4.17.21/eq.js",
+            "lineStart": 33,
+            "lineEnd": 35
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/blacklist.js#blacklist@9",
+          "rank": 6,
+          "score": 0.8118678630757747,
+          "channel": "knn",
+          "sourcePkg": "validator-13.15.35",
+          "name": "blacklist",
+          "behavior": "function blacklist(str, chars) -> unknown",
+          "text": "function blacklist(str, chars) {\n  (0, _assertString.default)(str);\n  return str.replace(new RegExp(\"[\".concat(chars, \"]+\"), 'g'), '');\n}",
+          "citation": {
+            "merkleRoot": "01e74112470b367b21222e31c3c7db900008a2fd642e5130edc6beec388038c4",
+            "sourceFile": "validator-13.15.35/lib/blacklist.js",
+            "lineStart": 9,
+            "lineEnd": 12
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/errors.ts#toDotPath@392",
+          "rank": 7,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "toDotPath",
+          "behavior": "function toDotPath(path) -> string",
+          "text": "export function toDotPath(path: (string | number | symbol)[]): string {\n  const segs: string[] = [];\n  for (const seg of path) {\n    if (typeof seg === \"number\") segs.push(`[${seg}]`);\n    else if (typeof seg === \"symbol\") segs.push(`[${JSON.stringify(String(seg))}]`);\n    else if (/[^\\w$]/.test(seg)) segs.push(`[${JSON.stringify(seg)}]`);\n    else {\n      if (segs.length) segs.push(\".\");\n      segs.push(seg);\n    }\n  }\n\n  return segs.join(\"\");\n}",
+          "citation": {
+            "merkleRoot": "493fc8dbc2ec2c7630cb682fd67017c47026a7b315e9da845fbf4107be458ce9",
+            "sourceFile": "zod-3.25.76/src/v4/core/errors.ts",
+            "lineStart": 392,
+            "lineEnd": 405
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/isWhitelisted.js#isWhitelisted@9",
+          "rank": 8,
+          "score": 0.8117714706031611,
+          "channel": "knn",
+          "sourcePkg": "validator-13.15.35",
+          "name": "isWhitelisted",
+          "behavior": "function isWhitelisted(str, chars) -> unknown",
+          "text": "function isWhitelisted(str, chars) {\n  (0, _assertString.default)(str);\n  for (var i = str.length - 1; i >= 0; i--) {\n    if (chars.indexOf(str[i]) === -1) {\n      return false;\n    }\n  }\n  return true;\n}",
+          "citation": {
+            "merkleRoot": "f45f607d982cba11258cc0b8a0b379ad727a61cd77b4e775781593eaea341204",
+            "sourceFile": "validator-13.15.35/lib/isWhitelisted.js",
+            "lineStart": 9,
+            "lineEnd": 17
+          }
+        }
+      ],
+      "needed": [],
+      "recallAtK": null,
+      "bestScore": 0.8249310990337682
+    },
+    "shallow-equal": {
+      "slice": [
+        {
+          "id": "zod-3.25.76/src/v4/core/util.ts#assertEqual@186",
+          "rank": 1,
+          "score": 0.8184207185713879,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "assertEqual",
+          "behavior": "function assertEqual(val) -> AssertEqual<A, B>",
+          "text": "export function assertEqual<A, B>(val: AssertEqual<A, B>): AssertEqual<A, B> {\n  return val;\n}",
+          "citation": {
+            "merkleRoot": "b6781df1754f57d8c625c5545c86f537810ea006d5645472b9937f9fb87cb72e",
+            "sourceFile": "zod-3.25.76/src/v4/core/util.ts",
+            "lineStart": 186,
+            "lineEnd": 188
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190",
+          "rank": 2,
+          "score": 0.8163826447070015,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "assertNotEqual",
+          "behavior": "function assertNotEqual(val) -> AssertNotEqual<A, B>",
+          "text": "export function assertNotEqual<A, B>(val: AssertNotEqual<A, B>): AssertNotEqual<A, B> {\n  return val;\n}",
+          "citation": {
+            "merkleRoot": "2de57d684e67255ea91df02da0d7c9bd232a52fc7846d4bae2ae9d295f5fe755",
+            "sourceFile": "zod-3.25.76/src/v4/core/util.ts",
+            "lineStart": 190,
+            "lineEnd": 192
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v3/helpers/util.ts#assertEqual@5",
+          "rank": 3,
+          "score": 0.8053335766046166,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "assertEqual",
+          "behavior": "arrow const assertEqual(_) -> void",
+          "text": "export const assertEqual = <A, B>(_: AssertEqual<A, B>): void => {};",
+          "citation": {
+            "merkleRoot": "531bf9b74a26fcc4efb173b6d28393b7ed3550af059980a78b228ffc6b77ffd0",
+            "sourceFile": "zod-3.25.76/src/v3/helpers/util.ts",
+            "lineStart": 5,
+            "lineEnd": 5
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/util.ts#isPlainObject@339",
+          "rank": 4,
+          "score": 0.8291962090888552,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "isPlainObject",
+          "behavior": "function isPlainObject(o) -> o is Record<PropertyKey, unknown>",
+          "text": "export function isPlainObject(o: any): o is Record<PropertyKey, unknown> {\n  if (isObject(o) === false) return false;\n\n  // modified constructor\n  const ctor = o.constructor;\n  if (ctor === undefined) return true;\n\n  // modified prototype\n  const prot = ctor.prototype;\n  if (isObject(prot) === false) return false;\n\n  // ctor doesn't have static `isPrototypeOf`\n  if (Object.prototype.hasOwnProperty.call(prot, \"isPrototypeOf\") === false) {\n    return false;\n  }\n\n  return true;\n}",
+          "citation": {
+            "merkleRoot": "20342c1e688a8da8d503091fef65cefdeea77845cceec238173ffc1791f54d67",
+            "sourceFile": "zod-3.25.76/src/v4/core/util.ts",
+            "lineStart": 339,
+            "lineEnd": 356
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/equals.js#equals@9",
+          "rank": 5,
+          "score": 0.8263159234831212,
+          "channel": "knn",
+          "sourcePkg": "validator-13.15.35",
+          "name": "equals",
+          "behavior": "function equals(str, comparison) -> unknown",
+          "text": "function equals(str, comparison) {\n  (0, _assertString.default)(str);\n  return str === comparison;\n}",
+          "citation": {
+            "merkleRoot": "71426d1ed83bab9e853fe7ca1f3f872809ae570a4006a2653a3de39a4d33ce01",
+            "sourceFile": "validator-13.15.35/lib/equals.js",
+            "lineStart": 9,
+            "lineEnd": 12
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/util.cjs#assertEqual@46",
+          "rank": 6,
+          "score": 0.8189378758274151,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "assertEqual",
+          "behavior": "function assertEqual(val) -> unknown",
+          "text": "function assertEqual(val) {\n    return val;\n}",
+          "citation": {
+            "merkleRoot": "7076adfe78433e3ff3991cc079b0399403b9b9ed80517c0741be8f3ba2fb18c4",
+            "sourceFile": "zod-3.25.76/v4/core/util.cjs",
+            "lineStart": 46,
+            "lineEnd": 48
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139",
+          "rank": 7,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "mergeValues",
+          "behavior": "function mergeValues(a, b) -> { valid: true; data: any } | { valid: false; mergeErrorPath: (string | number)[] }",
+          "text": "function mergeValues(\n  a: any,\n  b: any\n): { valid: true; data: any } | { valid: false; mergeErrorPath: (string | number)[] } {\n  // const aType = parse.t(a);\n  // const bType = parse.t(b);\n\n  if (a === b) {\n    return { valid: true, data: a };\n  }\n  if (a instanceof Date && b instanceof Date && +a === +b) {\n    return { valid: true, data: a };\n  }\n  if (util.isPlainObject(a) && util.isPlainObject(b)) {\n    const bKeys = Object.keys(b);\n    const sharedKeys = Object.keys(a).filter((key) => bKeys.indexOf(key) !== -1);\n\n    const newObj: any = { ...a, ...b };\n    for (const key of sharedKeys) {\n      const sharedValue = mergeValues(a[key], b[key]);\n      if (!sharedValue.valid) {\n        return {\n          valid: false,\n          mergeErrorPath: [key, ...sharedValue.mergeErrorPath],\n        };\n      }\n      newObj[key] = sharedValue.data;\n    }\n\n    return { valid: true, data: newObj };\n  }\n  if (Array.isArray(a) && Array.isArray(b)) {\n    if (a.length !== b.length) {\n      return { valid: false, mergeErrorPath: [] };\n    }\n\n    const newArray: unknown[] = [];\n    for (let index = 0; index < a.length; index++) {\n      const itemA = a[index];\n      const itemB = b[index];\n      const sharedValue = mergeValues(itemA, itemB);\n\n      if (!sharedValue.valid) {\n        return {\n          valid: false,\n          mergeErrorPath: [index, ...sharedValue.mergeErrorPath],\n        };\n      }\n\n      newArray.push(sharedValue.data);\n    }\n\n    return { valid: true, data: newArray };\n  }\n\n  return { valid: false, mergeErrorPath: [] };\n}",
+          "citation": {
+            "merkleRoot": "e71217a220a50187a28cda6b28ee6006ec0adc1c164d251d969775f70f2f1f60",
+            "sourceFile": "zod-3.25.76/src/v4/core/schemas.ts",
+            "lineStart": 2139,
+            "lineEnd": 2195
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/util.js#assertEqual@2",
+          "rank": 8,
+          "score": 0.8188706079443113,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "assertEqual",
+          "behavior": "function assertEqual(val) -> unknown",
+          "text": "export function assertEqual(val) {\n    return val;\n}",
+          "citation": {
+            "merkleRoot": "581f7d8d442d498b2499bf6ec264b2cdb78ee6d53cd8d022f013a7b858c75ee2",
+            "sourceFile": "zod-3.25.76/v4/core/util.js",
+            "lineStart": 2,
+            "lineEnd": 4
+          }
+        }
+      ],
+      "needed": [],
+      "recallAtK": null,
+      "bestScore": 0.8291962090888552
+    },
+    "slugify": {
+      "slice": [
+        {
+          "id": "validator-13.15.35/lib/trim.js#trim@10",
+          "rank": 1,
+          "score": 0.8316534318792668,
+          "channel": "knn",
+          "sourcePkg": "validator-13.15.35",
+          "name": "trim",
+          "behavior": "function trim(str, chars) -> unknown",
+          "text": "function trim(str, chars) {\n  return (0, _rtrim.default)((0, _ltrim.default)(str, chars), chars);\n}",
+          "citation": {
+            "merkleRoot": "8c0164f70285e1cdd427d4c4a6f9f2f755883921a1ce8960b4e50c5a9de6de05",
+            "sourceFile": "validator-13.15.35/lib/trim.js",
+            "lineStart": 10,
+            "lineEnd": 12
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+          "rank": 2,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "validator-13.15.35",
+          "name": "reverseMultiplyAndSum",
+          "behavior": "function reverseMultiplyAndSum(digits, base) -> unknown",
+          "text": "function reverseMultiplyAndSum(digits, base) {\n  var total = 0;\n  for (var i = 0; i < digits.length; i++) {\n    total += digits[i] * (base - i);\n  }\n  return total;\n}",
+          "citation": {
+            "merkleRoot": "e86633087c826600202f05724406082dc6a745cd3a9168633d620e387606f9bf",
+            "sourceFile": "validator-13.15.35/lib/util/algorithms.js",
+            "lineStart": 64,
+            "lineEnd": 70
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/stripLow.js#stripLow@10",
+          "rank": 3,
+          "score": 0.8189657736215343,
+          "channel": "knn",
+          "sourcePkg": "validator-13.15.35",
+          "name": "stripLow",
+          "behavior": "function stripLow(str, keep_new_lines) -> unknown",
+          "text": "function stripLow(str, keep_new_lines) {\n  (0, _assertString.default)(str);\n  var chars = keep_new_lines ? '\\\\x00-\\\\x09\\\\x0B\\\\x0C\\\\x0E-\\\\x1F\\\\x7F' : '\\\\x00-\\\\x1F\\\\x7F';\n  return (0, _blacklist.default)(str, chars);\n}",
+          "citation": {
+            "merkleRoot": "d7a5ed3928251e0889ccf75d479ed8b35a4df6ef53187af630570c52e0f21f5b",
+            "sourceFile": "validator-13.15.35/lib/stripLow.js",
+            "lineStart": 10,
+            "lineEnd": 14
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/api.ts#_startsWith@983",
+          "rank": 4,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_startsWith",
+          "behavior": "function _startsWith(prefix, params) -> checks.$ZodCheckStartsWith",
+          "text": "export function _startsWith(prefix: string, params?: string | $ZodCheckStartsWithParams): checks.$ZodCheckStartsWith {\n  return new checks.$ZodCheckStartsWith({\n    check: \"string_format\",\n    format: \"starts_with\",\n    ...util.normalizeParams(params),\n    prefix,\n  });\n}",
+          "citation": {
+            "merkleRoot": "be85742d9361f64b9ce3f7d95d170cc2255b8c345a131c083f962f04e8241d22",
+            "sourceFile": "zod-3.25.76/src/v4/core/api.ts",
+            "lineStart": 983,
+            "lineEnd": 990
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/toInt.js#toInt@9",
+          "rank": 5,
+          "score": 0.8125987669384216,
+          "channel": "knn",
+          "sourcePkg": "validator-13.15.35",
+          "name": "toInt",
+          "behavior": "function toInt(str, radix) -> unknown",
+          "text": "function toInt(str, radix) {\n  (0, _assertString.default)(str);\n  return parseInt(str, radix || 10);\n}",
+          "citation": {
+            "merkleRoot": "28c95c27f07a9bbf3e6eb3df5efdcc7b92da6e18f3eaf70c5c1e9d0c24926c90",
+            "sourceFile": "validator-13.15.35/lib/toInt.js",
+            "lineStart": 9,
+            "lineEnd": 12
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/api.ts#_endsWith@994",
+          "rank": 6,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_endsWith",
+          "behavior": "function _endsWith(suffix, params) -> checks.$ZodCheckEndsWith",
+          "text": "export function _endsWith(suffix: string, params?: string | $ZodCheckEndsWithParams): checks.$ZodCheckEndsWith {\n  return new checks.$ZodCheckEndsWith({\n    check: \"string_format\",\n    format: \"ends_with\",\n    ...util.normalizeParams(params),\n    suffix,\n  });\n}",
+          "citation": {
+            "merkleRoot": "169a141c41f41e4a223249b840ece3185db90208ad33d3ba7d61cde1e126a094",
+            "sourceFile": "zod-3.25.76/src/v4/core/api.ts",
+            "lineStart": 994,
+            "lineEnd": 1001
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/whitelist.js#whitelist@9",
+          "rank": 7,
+          "score": 0.8122346938234619,
+          "channel": "knn",
+          "sourcePkg": "validator-13.15.35",
+          "name": "whitelist",
+          "behavior": "function whitelist(str, chars) -> unknown",
+          "text": "function whitelist(str, chars) {\n  (0, _assertString.default)(str);\n  return str.replace(new RegExp(\"[^\".concat(chars, \"]+\"), 'g'), '');\n}",
+          "citation": {
+            "merkleRoot": "6defb21ee017691cf83d0f69a4e612de98ef1e2830812eff6dfc45fa9d55fcbf",
+            "sourceFile": "validator-13.15.35/lib/whitelist.js",
+            "lineStart": 9,
+            "lineEnd": 12
+          }
+        },
+        {
+          "id": "lodash-4.17.21/eq.js#eq@33",
+          "rank": 8,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "lodash-4.17.21",
+          "name": "eq",
+          "behavior": "function eq(value, other) -> unknown",
+          "text": "function eq(value, other) {\n  return value === other || (value !== value && other !== other);\n}",
+          "citation": {
+            "merkleRoot": "2b92bebe9ff719ec0417643585fc104df3d8108aa42dfe319a513239e115d4e5",
+            "sourceFile": "lodash-4.17.21/eq.js",
+            "lineStart": 33,
+            "lineEnd": 35
+          }
+        }
+      ],
+      "needed": [],
+      "recallAtK": null,
+      "bestScore": 0.8316534318792668
+    },
+    "sort-versions": {
+      "slice": [
+        {
+          "id": "semver-7.8.0/functions/inc.js#inc@5",
+          "rank": 1,
+          "score": 0.7896252846796505,
+          "channel": "both",
+          "sourcePkg": "semver-7.8.0",
+          "name": "inc",
+          "behavior": "arrow const inc(version, release, options, identifier, identifierBase) -> unknown",
+          "text": "const inc = (version, release, options, identifier, identifierBase) => {\n  if (typeof (options) === 'string') {\n    identifierBase = identifier\n    identifier = options\n    options = undefined\n  }\n\n  try {\n    return new SemVer(\n      version instanceof SemVer ? version.version : version,\n      options\n    ).inc(release, identifier, identifierBase).version\n  } catch (er) {\n    return null\n  }\n}",
+          "citation": {
+            "merkleRoot": "472ee10bde5d6dc5fa0eebff51c8a433b7d4333fe42e8ddd747d80e65492982a",
+            "sourceFile": "semver-7.8.0/functions/inc.js",
+            "lineStart": 5,
+            "lineEnd": 20
+          }
+        },
+        {
+          "id": "semver-7.8.0/functions/sort.js#sort@4",
+          "rank": 2,
+          "score": 0.7989312476058634,
+          "channel": "both",
+          "sourcePkg": "semver-7.8.0",
+          "name": "sort",
+          "behavior": "arrow const sort(list, loose) -> unknown",
+          "text": "const sort = (list, loose) => list.sort((a, b) => compareBuild(a, b, loose))",
+          "citation": {
+            "merkleRoot": "ca35161fac389ca8a2d870ee9ca0d7d4ec92f60f746c2f6d3b1932aeb497d2d9",
+            "sourceFile": "semver-7.8.0/functions/sort.js",
+            "lineStart": 4,
+            "lineEnd": 4
+          }
+        },
+        {
+          "id": "semver-7.8.0/ranges/ltr.js#ltr@5",
+          "rank": 3,
+          "score": 0.7875305492928453,
+          "channel": "both",
+          "sourcePkg": "semver-7.8.0",
+          "name": "ltr",
+          "behavior": "arrow const ltr(version, range, options) -> unknown",
+          "text": "const ltr = (version, range, options) => outside(version, range, '<', options)",
+          "citation": {
+            "merkleRoot": "e08244e34e4d570999bc128bccabb99195c8df8dce9d454727d3875372668887",
+            "sourceFile": "semver-7.8.0/ranges/ltr.js",
+            "lineStart": 5,
+            "lineEnd": 5
+          }
+        },
+        {
+          "id": "semver-7.8.0/functions/parse.js#parse@4",
+          "rank": 4,
+          "score": 0.7877597613801157,
+          "channel": "both",
+          "sourcePkg": "semver-7.8.0",
+          "name": "parse",
+          "behavior": "arrow const parse(version, options, throwErrors) -> unknown",
+          "text": "const parse = (version, options, throwErrors = false) => {\n  if (version instanceof SemVer) {\n    return version\n  }\n  try {\n    return new SemVer(version, options)\n  } catch (er) {\n    if (!throwErrors) {\n      return null\n    }\n    throw er\n  }\n}",
+          "citation": {
+            "merkleRoot": "ca8a04f525c1368fed0051d4b430785ce3e27f6f9f205dcfa41bfb7d5bf9a47d",
+            "sourceFile": "semver-7.8.0/functions/parse.js",
+            "lineStart": 4,
+            "lineEnd": 16
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+          "rank": 5,
+          "score": 0.8113735648091129,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "createSortItemSchema",
+          "behavior": "arrow const createSortItemSchema(sortKeySchema) -> unknown",
+          "text": "const createSortItemSchema = <T extends z.ZodType<string>>(sortKeySchema: T) =>\n    z.object({\n      key: sortKeySchema,\n      order: z.string(),\n    });",
+          "citation": {
+            "merkleRoot": "40bcf4e0ce5bdbc32c633f7190a02c007ad3fd385354c3e52bee6491f06a38e0",
+            "sourceFile": "zod-3.25.76/src/v4/classic/tests/assignability.test.ts",
+            "lineStart": 202,
+            "lineEnd": 206
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190",
+          "rank": 6,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "assertNotEqual",
+          "behavior": "function assertNotEqual(val) -> AssertNotEqual<A, B>",
+          "text": "export function assertNotEqual<A, B>(val: AssertNotEqual<A, B>): AssertNotEqual<A, B> {\n  return val;\n}",
+          "citation": {
+            "merkleRoot": "2de57d684e67255ea91df02da0d7c9bd232a52fc7846d4bae2ae9d295f5fe755",
+            "sourceFile": "zod-3.25.76/src/v4/core/util.ts",
+            "lineStart": 190,
+            "lineEnd": 192
+          }
+        },
+        {
+          "id": "semver-7.8.0/ranges/min-version.js#minVersion@7",
+          "rank": 7,
+          "score": 0.8007844933147572,
+          "channel": "knn",
+          "sourcePkg": "semver-7.8.0",
+          "name": "minVersion",
+          "behavior": "arrow const minVersion(range, loose) -> unknown",
+          "text": "const minVersion = (range, loose) => {\n  range = new Range(range, loose)\n\n  let minver = new SemVer('0.0.0')\n  if (range.test(minver)) {\n    return minver\n  }\n\n  minver = new SemVer('0.0.0-0')\n  if (range.test(minver)) {\n    return minver\n  }\n\n  minver = null\n  for (let i = 0; i < range.set.length; ++i) {\n    const comparators = range.set[i]\n\n    let setMin = null\n    comparators.forEach((comparator) => {\n      // Clone to avoid manipulating the comparator's semver object.\n      const compver = new SemVer(comparator.semver.version)\n      switch (comparator.operator) {\n        case '>':\n          if (compver.prerelease.length === 0) {\n            compver.patch++\n          } else {\n            compver.prerelease.push(0)\n          }\n          compver.raw = compver.format()\n          /* fallthrough */\n        case '':\n        case '>=':\n          if (!setMin || gt(compver, setMin)) {\n            setMin = compver\n          }\n          break\n        case '<':\n        case '<=':\n          /* Ignore maximum versions */\n          break\n        /* istanbul ignore next */\n        default:\n          throw new Error(`Unexpected operation: ${comparator.operator}`)\n      }\n    })\n    if (setMin && (!minver || gt(minver, setMin))) {\n      minver = setMin\n    }\n  }\n\n  if (minver && range.test(minver)) {\n    return minver\n  }\n\n  return null\n}",
+          "citation": {
+            "merkleRoot": "cbe2dd74bc9200c4fb7b39f3e842a117f4ba97274bec4462840d3b2be5db0d4d",
+            "sourceFile": "semver-7.8.0/ranges/min-version.js",
+            "lineStart": 7,
+            "lineEnd": 62
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/locales/be.ts#getSizing@69",
+          "rank": 8,
+          "score": 0.8006157370687665,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "getSizing",
+          "behavior": "function getSizing(origin) -> BelarusianSizable | null",
+          "text": "function getSizing(origin: string): BelarusianSizable | null {\n    return Sizable[origin] ?? null;\n  }",
+          "citation": {
+            "merkleRoot": "b0d7e7f22c0bc645dd5a52d9c72d183f5b0c9904cdd4d6e19511e32a94f3c463",
+            "sourceFile": "zod-3.25.76/src/v4/locales/be.ts",
+            "lineStart": 69,
+            "lineEnd": 71
+          }
+        }
+      ],
+      "needed": [
+        {
+          "atom": "semver-7.8.0:classes/semver.js#compareMain",
+          "sliceRank": null,
+          "deepRank": null,
+          "coveredBy": null
+        },
+        {
+          "atom": "semver-7.8.0:classes/semver.js#comparePre",
+          "sliceRank": null,
+          "deepRank": null,
+          "coveredBy": null
+        },
+        {
+          "atom": "semver-7.8.0:internal/identifiers.js#compareIdentifiers",
+          "sliceRank": null,
+          "deepRank": 26,
+          "coveredBy": null
+        }
+      ],
+      "recallAtK": 0,
+      "bestScore": 0.8113735648091129
+    },
+    "suggest-words": {
+      "slice": [
+        {
+          "id": "zod-3.25.76/src/v4/core/api.ts#_maxLength@908",
+          "rank": 1,
+          "score": 0.7926060716699794,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_maxLength",
+          "behavior": "function _maxLength(maximum, params) -> checks.$ZodCheckMaxLength<util.HasLength>",
+          "text": "export function _maxLength(\n  maximum: number,\n  params?: string | $ZodCheckMaxLengthParams\n): checks.$ZodCheckMaxLength<util.HasLength> {\n  const ch = new checks.$ZodCheckMaxLength({\n    check: \"max_length\",\n    ...util.normalizeParams(params),\n    maximum,\n  });\n  return ch;\n}",
+          "citation": {
+            "merkleRoot": "6bb320adc0cc1e50ffb05f465b3238cdba338c8d3e4f4e2e5ed181345539688b",
+            "sourceFile": "zod-3.25.76/src/v4/core/api.ts",
+            "lineStart": 908,
+            "lineEnd": 918
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/api.ts#_maxSize@872",
+          "rank": 2,
+          "score": 0.7875140643279854,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_maxSize",
+          "behavior": "function _maxSize(maximum, params) -> checks.$ZodCheckMaxSize<util.HasSize>",
+          "text": "export function _maxSize(\n  maximum: number,\n  params?: string | $ZodCheckMaxSizeParams\n): checks.$ZodCheckMaxSize<util.HasSize> {\n  return new checks.$ZodCheckMaxSize({\n    check: \"max_size\",\n    ...util.normalizeParams(params),\n    maximum,\n  });\n}",
+          "citation": {
+            "merkleRoot": "48d074d1459f6ef0a9da8377d0d26d2b4eaba325bd7e2821edab0b41e88ee0a7",
+            "sourceFile": "zod-3.25.76/src/v4/core/api.ts",
+            "lineStart": 872,
+            "lineEnd": 881
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1",
+          "rank": 3,
+          "score": 0.7842422601486154,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "getRandomInt",
+          "behavior": "function getRandomInt(max) -> unknown",
+          "text": "function getRandomInt(max: number) {\n  return Math.floor(Math.random() * Math.floor(max));\n}",
+          "citation": {
+            "merkleRoot": "6d1ace8687001dd1a29ae5192bf096853535bb5bd785482682f6bbcf7f6aa248",
+            "sourceFile": "zod-3.25.76/src/v3/tests/Mocker.ts",
+            "lineStart": 1,
+            "lineEnd": 3
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/isDivisibleBy.js#isDivisibleBy@10",
+          "rank": 4,
+          "score": 0.7792902044764105,
+          "channel": "both",
+          "sourcePkg": "validator-13.15.35",
+          "name": "isDivisibleBy",
+          "behavior": "function isDivisibleBy(str, num) -> unknown",
+          "text": "function isDivisibleBy(str, num) {\n  (0, _assertString.default)(str);\n  return (0, _toFloat.default)(str) % parseInt(num, 10) === 0;\n}",
+          "citation": {
+            "merkleRoot": "08eb39b34cd3d593fe445867a7ee018669ecbea71d1dee748be20a99ac360ead",
+            "sourceFile": "validator-13.15.35/lib/isDivisibleBy.js",
+            "lineStart": 10,
+            "lineEnd": 13
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/api.js#_maxLength@505",
+          "rank": 5,
+          "score": 0.7983971257652591,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_maxLength",
+          "behavior": "function _maxLength(maximum, params) -> unknown",
+          "text": "export function _maxLength(maximum, params) {\n    const ch = new checks.$ZodCheckMaxLength({\n        check: \"max_length\",\n        ...util.normalizeParams(params),\n        maximum,\n    });\n    return ch;\n}",
+          "citation": {
+            "merkleRoot": "7c37bfacacbfc16fabcaeada4d8cdebe5f00f06fe5f5dc592ae5083bc53aa68f",
+            "sourceFile": "zod-3.25.76/v4/core/api.js",
+            "lineStart": 505,
+            "lineEnd": 512
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/api.ts#_negative@845",
+          "rank": 6,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_negative",
+          "behavior": "function _negative(params) -> checks.$ZodCheckLessThan",
+          "text": "export function _negative(params?: string | $ZodCheckLessThanParams): checks.$ZodCheckLessThan {\n  return _lt(0, params);\n}",
+          "citation": {
+            "merkleRoot": "0a99a1d25fea37dceb76f443171dcf34dc5685b5ff3aaae935fe38acec23056d",
+            "sourceFile": "zod-3.25.76/src/v4/core/api.ts",
+            "lineStart": 845,
+            "lineEnd": 847
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/api.cjs#_maxLength@638",
+          "rank": 7,
+          "score": 0.7962266750719982,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_maxLength",
+          "behavior": "function _maxLength(maximum, params) -> unknown",
+          "text": "function _maxLength(maximum, params) {\n    const ch = new checks.$ZodCheckMaxLength({\n        check: \"max_length\",\n        ...util.normalizeParams(params),\n        maximum,\n    });\n    return ch;\n}",
+          "citation": {
+            "merkleRoot": "ca0f31edf562ab72b899aafbbbd081ee80123730389b6688f60de66db608e29c",
+            "sourceFile": "zod-3.25.76/v4/core/api.cjs",
+            "lineStart": 638,
+            "lineEnd": 645
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/util.ts#assertNotEqual@190",
+          "rank": 8,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "assertNotEqual",
+          "behavior": "function assertNotEqual(val) -> AssertNotEqual<A, B>",
+          "text": "export function assertNotEqual<A, B>(val: AssertNotEqual<A, B>): AssertNotEqual<A, B> {\n  return val;\n}",
+          "citation": {
+            "merkleRoot": "2de57d684e67255ea91df02da0d7c9bd232a52fc7846d4bae2ae9d295f5fe755",
+            "sourceFile": "zod-3.25.76/src/v4/core/util.ts",
+            "lineStart": 190,
+            "lineEnd": 192
+          }
+        }
+      ],
+      "needed": [
+        {
+          "atom": "fastest-levenshtein-1.0.16:esm/mod.js#distance",
+          "sliceRank": null,
+          "deepRank": 5,
+          "coveredBy": null
+        },
+        {
+          "atom": "fastest-levenshtein-1.0.16:esm/mod.js#closest",
+          "sliceRank": null,
+          "deepRank": null,
+          "coveredBy": null
+        }
+      ],
+      "recallAtK": 0,
+      "bestScore": 0.7983971257652591
+    },
+    "title-case": {
+      "slice": [
+        {
+          "id": "zod-3.25.76/v4/core/api.cjs#_toUpperCase@740",
+          "rank": 1,
+          "score": 0.7976171258552389,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_toUpperCase",
+          "behavior": "function _toUpperCase() -> unknown",
+          "text": "function _toUpperCase() {\n    return _overwrite((input) => input.toUpperCase());\n}",
+          "citation": {
+            "merkleRoot": "cadf6ff7cd1780dabd7dcae41843bf5e0e4386ef67fb4833ba16701562e15ef5",
+            "sourceFile": "zod-3.25.76/v4/core/api.cjs",
+            "lineStart": 740,
+            "lineEnd": 742
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/trim.js#trim@10",
+          "rank": 2,
+          "score": 0.8174926317657798,
+          "channel": "knn",
+          "sourcePkg": "validator-13.15.35",
+          "name": "trim",
+          "behavior": "function trim(str, chars) -> unknown",
+          "text": "function trim(str, chars) {\n  return (0, _rtrim.default)((0, _ltrim.default)(str, chars), chars);\n}",
+          "citation": {
+            "merkleRoot": "8c0164f70285e1cdd427d4c4a6f9f2f755883921a1ce8960b4e50c5a9de6de05",
+            "sourceFile": "validator-13.15.35/lib/trim.js",
+            "lineStart": 10,
+            "lineEnd": 12
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/isTaxID.js#itItNameCheck@682",
+          "rank": 3,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "validator-13.15.35",
+          "name": "itItNameCheck",
+          "behavior": "function itItNameCheck(name) -> unknown",
+          "text": "function itItNameCheck(name) {\n  // true at the first occurrence of a vowel\n  var vowelflag = false;\n\n  // true at the first occurrence of an X AFTER vowel\n  // (to properly handle last names with X as consonant)\n  var xflag = false;\n  for (var i = 0; i < 3; i++) {\n    if (!vowelflag && /[AEIOU]/.test(name[i])) {\n      vowelflag = true;\n    } else if (!xflag && vowelflag && name[i] === 'X') {\n      xflag = true;\n    } else if (i > 0) {\n      if (vowelflag && !xflag) {\n        if (!/[AEIOU]/.test(name[i])) {\n          return false;\n        }\n      }\n      if (xflag) {\n        if (!/X/.test(name[i])) {\n          return false;\n        }\n      }\n    }\n  }\n  return true;\n}",
+          "citation": {
+            "merkleRoot": "6830922f9ad5647005230bfca304e24392e8e8143e81f6aa4d195e3b4a94a285",
+            "sourceFile": "validator-13.15.35/lib/isTaxID.js",
+            "lineStart": 682,
+            "lineEnd": 708
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/api.cjs#_uppercase@675",
+          "rank": 4,
+          "score": 0.8156428738396775,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_uppercase",
+          "behavior": "function _uppercase(params) -> unknown",
+          "text": "function _uppercase(params) {\n    return new checks.$ZodCheckUpperCase({\n        check: \"string_format\",\n        format: \"uppercase\",\n        ...util.normalizeParams(params),\n    });\n}",
+          "citation": {
+            "merkleRoot": "ff7168eb5b3228bf5cffcfa9278b76c0691dc3fd49f25c3335b6e9415aa3276b",
+            "sourceFile": "zod-3.25.76/v4/core/api.cjs",
+            "lineStart": 675,
+            "lineEnd": 681
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/isTaxID.js#itItCheck@718",
+          "rank": 5,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "validator-13.15.35",
+          "name": "itItCheck",
+          "behavior": "function itItCheck(tin) -> unknown",
+          "text": "function itItCheck(tin) {\n  // Capitalize and split characters into an array for further processing\n  var chars = tin.toUpperCase().split('');\n\n  // Check first and last name validity calling itItNameCheck()\n  if (!itItNameCheck(chars.slice(0, 3))) {\n    return false;\n  }\n  if (!itItNameCheck(chars.slice(3, 6))) {\n    return false;\n  }\n\n  // Convert letters in number spaces back to numbers if any\n  var number_locations = [6, 7, 9, 10, 12, 13, 14];\n  var number_replace = {\n    L: '0',\n    M: '1',\n    N: '2',\n    P: '3',\n    Q: '4',\n    R: '5',\n    S: '6',\n    T: '7',\n    U: '8',\n    V: '9'\n  };\n  for (var _i4 = 0, _number_locations = number_locations; _i4 < _number_locations.length; _i4++) {\n    var i = _number_locations[_i4];\n    if (chars[i] in number_replace) {\n      chars.splice(i, 1, number_replace[chars[i]]);\n    }\n  }\n\n  // Extract month and day, and check date validity\n  var month_replace = {\n    A: '01',\n    B: '02',\n    C: '03',\n    D: '04',\n    E: '05',\n    H: '06',\n    L: '07',\n    M: '08',\n    P: '09',\n    R: '10',\n    S: '11',\n    T: '12'\n  };\n  var month = month_replace[chars[8]];\n  var day = parseInt(chars[9] + chars[10], 10);\n  if (day > 40) {\n    day -= 40;\n  }\n  if (day < 10) {\n    day = \"0\".concat(day);\n  }\n  var date = \"\".concat(chars[6]).concat(chars[7], \"/\").concat(month, \"/\").concat(day);\n  if (!(0, _isDate.default)(date, 'YY/MM/DD')) {\n    return false;\n  }\n\n  // Calculate check character by adding up even and odd characters as numbers\n  var checksum = 0;\n  for (var _i5 = 1; _i5 < chars.length - 1; _i5 += 2) {\n    var char_to_int = parseInt(chars[_i5], 10);\n    if (isNaN(char_to_int)) {\n      char_to_int = chars[_i5].charCodeAt(0) - 65;\n    }\n    checksum += char_to_int;\n  }\n  var odd_convert = {\n    // Maps of characters at odd places\n    A: 1,\n    B: 0,\n    C: 5,\n    D: 7,\n    E: 9,\n    F: 13,\n    G: 15,\n    H: 17,\n    I: 19,\n    J: 21,\n    K: 2,\n    L: 4,\n    M: 18,\n    N: 20,\n    O: 11,\n    P: 3,\n    Q: 6,\n    R: 8,\n    S: 12,\n    T: 14,\n    U: 16,\n    V: 10,\n    W: 22,\n    X: 25,\n    Y: 24,\n    Z: 23,\n    0: 1,\n    1: 0\n  };\n  for (var _i6 = 0; _i6 < chars.length - 1; _i6 += 2) {\n    var _char_to_int = 0;\n    if (chars[_i6] in odd_convert) {\n      _char_to_int = odd_convert[chars[_i6]];\n    } else {\n      var multiplier = parseInt(chars[_i6], 10);\n      _char_to_int = 2 * multiplier + 1;\n      if (multiplier > 4) {\n        _char_to_int += 2;\n      }\n    }\n    checksum += _char_to_int;\n  }\n  if (String.fromCharCode(65 + checksum % 26) !== chars[15]) {\n    return false;\n  }\n  return true;\n}",
+          "citation": {
+            "merkleRoot": "015e2cecbf1a08e3f13c2c2f1b0bbd1abeec0cfb236e77eae60d3954af881c45",
+            "sourceFile": "validator-13.15.35/lib/isTaxID.js",
+            "lineStart": 718,
+            "lineEnd": 836
+          }
+        },
+        {
+          "id": "validator-13.15.35/lib/isUppercase.js#isUppercase@9",
+          "rank": 6,
+          "score": 0.8129724110352612,
+          "channel": "knn",
+          "sourcePkg": "validator-13.15.35",
+          "name": "isUppercase",
+          "behavior": "function isUppercase(str) -> unknown",
+          "text": "function isUppercase(str) {\n  (0, _assertString.default)(str);\n  return str === str.toUpperCase();\n}",
+          "citation": {
+            "merkleRoot": "aa5577ca1bbb0581cc213149b61ab4c2508aaa6545b1507d8fa4a3c2b9f09e9a",
+            "sourceFile": "validator-13.15.35/lib/isUppercase.js",
+            "lineStart": 9,
+            "lineEnd": 12
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v3/helpers/util.ts#mergeShapes@113",
+          "rank": 7,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "mergeShapes",
+          "behavior": "arrow const mergeShapes(first, second) -> T & U",
+          "text": "export const mergeShapes = <U, T>(first: U, second: T): T & U => {\n    return {\n      ...first,\n      ...second, // second overwrites first\n    };\n  };",
+          "citation": {
+            "merkleRoot": "fb2170a74412fd29e03b0307a3c6e480234e0cb0a2170de1f5c33c2ba4ca84e8",
+            "sourceFile": "zod-3.25.76/src/v3/helpers/util.ts",
+            "lineStart": 113,
+            "lineEnd": 118
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/api.cjs#_lowercase@668",
+          "rank": 8,
+          "score": 0.8123961346477975,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_lowercase",
+          "behavior": "function _lowercase(params) -> unknown",
+          "text": "function _lowercase(params) {\n    return new checks.$ZodCheckLowerCase({\n        check: \"string_format\",\n        format: \"lowercase\",\n        ...util.normalizeParams(params),\n    });\n}",
+          "citation": {
+            "merkleRoot": "2bd3d9c7de83a6ab24385c284b3e7952043c9f2ca9578aa4de12ecde043c1599",
+            "sourceFile": "zod-3.25.76/v4/core/api.cjs",
+            "lineStart": 668,
+            "lineEnd": 674
+          }
+        }
+      ],
+      "needed": [],
+      "recallAtK": null,
+      "bestScore": 0.8174926317657798
+    },
+    "unique": {
+      "slice": [
+        {
+          "id": "zod-3.25.76/src/v4/classic/schemas.ts#readonly@1860",
+          "rank": 1,
+          "score": 0.7865254760740186,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "readonly",
+          "behavior": "function readonly(innerType) -> ZodReadonly<T>",
+          "text": "export function readonly<T extends core.SomeType>(innerType: T): ZodReadonly<T> {\n  return new ZodReadonly({\n    type: \"readonly\",\n    innerType: innerType as any as core.$ZodType,\n  }) as any;\n}",
+          "citation": {
+            "merkleRoot": "a02631d8c9f852abfe9407acb5055043f36c08fde294f09681a1a2e7cad9b28b",
+            "sourceFile": "zod-3.25.76/src/v4/classic/schemas.ts",
+            "lineStart": 1860,
+            "lineEnd": 1865
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/api.ts#_readonly@1395",
+          "rank": 2,
+          "score": 0.7883751781814112,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_readonly",
+          "behavior": "function _readonly(Class, innerType) -> schemas.$ZodReadonly<T>",
+          "text": "export function _readonly<T extends schemas.$ZodObject>(\n  Class: util.SchemaClass<schemas.$ZodReadonly>,\n  innerType: T\n): schemas.$ZodReadonly<T> {\n  return new Class({\n    type: \"readonly\",\n    innerType,\n  }) as any;\n}",
+          "citation": {
+            "merkleRoot": "86d70f0a08484d9d4650a515cf917b8e69a7dc84364cc5fe23837500cf234d7e",
+            "sourceFile": "zod-3.25.76/src/v4/core/api.ts",
+            "lineStart": 1395,
+            "lineEnd": 1403
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/mini/schemas.ts#readonly@1408",
+          "rank": 3,
+          "score": 0.7855031247053992,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "readonly",
+          "behavior": "function readonly(innerType) -> ZodMiniReadonly<T>",
+          "text": "export function readonly<T extends SomeType>(innerType: T): ZodMiniReadonly<T> {\n  return new ZodMiniReadonly({\n    type: \"readonly\",\n    innerType: innerType as any as core.$ZodType,\n  }) as any;\n}",
+          "citation": {
+            "merkleRoot": "b1e6a5862f6a8114c6d1f0ac06e9da3a7c2651b8e2daf8b91049cfcd423f1622",
+            "sourceFile": "zod-3.25.76/src/v4/mini/schemas.ts",
+            "lineStart": 1408,
+            "lineEnd": 1413
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1302",
+          "rank": 4,
+          "score": 0.7846754145633064,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "tuple",
+          "behavior": "function tuple(items, params) -> ZodTuple<T, null>",
+          "text": "export function tuple<T extends readonly [core.SomeType, ...core.SomeType[]]>(\n  items: T,\n  params?: string | core.$ZodTupleParams\n): ZodTuple<T, null>;",
+          "citation": {
+            "merkleRoot": "00be1cd83335e259ed21bc15e31ad00302b83ffa79cbf397961fb1f19d4a3f96",
+            "sourceFile": "zod-3.25.76/src/v4/classic/schemas.ts",
+            "lineStart": 1302,
+            "lineEnd": 1305
+          }
+        },
+        {
+          "id": "toposort-2.0.2/index.js#uniqueNodes@93",
+          "rank": 5,
+          "score": 0.7862523915669888,
+          "channel": "both",
+          "sourcePkg": "toposort-2.0.2",
+          "name": "uniqueNodes",
+          "behavior": "function uniqueNodes(arr) -> unknown",
+          "text": "function uniqueNodes(arr){\n  var res = new Set()\n  for (var i = 0, len = arr.length; i < len; i++) {\n    var edge = arr[i]\n    res.add(edge[0])\n    res.add(edge[1])\n  }\n  return Array.from(res)\n}",
+          "citation": {
+            "merkleRoot": "965bb0356a36e6e661814222fc18f67ab3ae128fde5273c48c39c205966e13da",
+            "sourceFile": "toposort-2.0.2/index.js",
+            "lineStart": 93,
+            "lineEnd": 101
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/mini/schemas.ts#tuple@969",
+          "rank": 6,
+          "score": 0.781227266517817,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "tuple",
+          "behavior": "function tuple(items, params) -> ZodMiniTuple<T, null>",
+          "text": "export function tuple<const T extends readonly [SomeType, ...SomeType[]]>(\n  items: T,\n  params?: string | core.$ZodTupleParams\n): ZodMiniTuple<T, null>;",
+          "citation": {
+            "merkleRoot": "37198d0442b5d04d395d4155a3760e02da0d195f6ac6a8d8885fd6bc45c9f077",
+            "sourceFile": "zod-3.25.76/src/v4/mini/schemas.ts",
+            "lineStart": 969,
+            "lineEnd": 972
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/classic/schemas.ts#tuple@1306",
+          "rank": 7,
+          "score": 0.7809387077423429,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "tuple",
+          "behavior": "function tuple(items, rest, params) -> ZodTuple<T, Rest>",
+          "text": "export function tuple<T extends readonly [core.SomeType, ...core.SomeType[]], Rest extends core.SomeType>(\n  items: T,\n  rest: Rest,\n  params?: string | core.$ZodTupleParams\n): ZodTuple<T, Rest>;",
+          "citation": {
+            "merkleRoot": "a565fb6d4d206c332e78198e826fff62b8dff75d6385ca60a04dc465793218d6",
+            "sourceFile": "zod-3.25.76/src/v4/classic/schemas.ts",
+            "lineStart": 1306,
+            "lineEnd": 1310
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/api.cjs#_readonly@914",
+          "rank": 8,
+          "score": 0.7953012073614865,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_readonly",
+          "behavior": "function _readonly(Class, innerType) -> unknown",
+          "text": "function _readonly(Class, innerType) {\n    return new Class({\n        type: \"readonly\",\n        innerType,\n    });\n}",
+          "citation": {
+            "merkleRoot": "ef65c9b0ef88de73a7aee41e1b27542253a24bf05b2befbe7cd6b9e05b3cf510",
+            "sourceFile": "zod-3.25.76/v4/core/api.cjs",
+            "lineStart": 914,
+            "lineEnd": 919
+          }
+        }
+      ],
+      "needed": [],
+      "recallAtK": null,
+      "bestScore": 0.7953012073614865
+    },
+    "uuid-normalize": {
+      "slice": [
+        {
+          "id": "uuid-11.1.1/dist/cjs/version.js#version@4",
+          "rank": 1,
+          "score": 0.8113731247302018,
+          "channel": "both",
+          "sourcePkg": "uuid-11.1.1",
+          "name": "version",
+          "behavior": "function version(uuid) -> unknown",
+          "text": "function version(uuid) {\n    if (!(0, validate_js_1.default)(uuid)) {\n        throw TypeError('Invalid UUID');\n    }\n    return parseInt(uuid.slice(14, 15), 16);\n}",
+          "citation": {
+            "merkleRoot": "244716aa203063700b7bed285a23f4e7b1b640b37c4dcf742ae1829731c611a5",
+            "sourceFile": "uuid-11.1.1/dist/cjs/version.js",
+            "lineStart": 4,
+            "lineEnd": 9
+          }
+        },
+        {
+          "id": "uuid-11.1.1/dist/esm/version.js#version@2",
+          "rank": 2,
+          "score": 0.8104215118583715,
+          "channel": "both",
+          "sourcePkg": "uuid-11.1.1",
+          "name": "version",
+          "behavior": "function version(uuid) -> unknown",
+          "text": "function version(uuid) {\n    if (!validate(uuid)) {\n        throw TypeError('Invalid UUID');\n    }\n    return parseInt(uuid.slice(14, 15), 16);\n}",
+          "citation": {
+            "merkleRoot": "89017b52bf236a39263acf38d6508cf4e5c271218e6559f9953632bf1866b377",
+            "sourceFile": "uuid-11.1.1/dist/esm/version.js",
+            "lineStart": 2,
+            "lineEnd": 7
+          }
+        },
+        {
+          "id": "uuid-11.1.1/dist/esm/parse.js#parse@2",
+          "rank": 3,
+          "score": 0.8160695325932465,
+          "channel": "knn",
+          "sourcePkg": "uuid-11.1.1",
+          "name": "parse",
+          "behavior": "function parse(uuid) -> unknown",
+          "text": "function parse(uuid) {\n    if (!validate(uuid)) {\n        throw TypeError('Invalid UUID');\n    }\n    let v;\n    return Uint8Array.of((v = parseInt(uuid.slice(0, 8), 16)) >>> 24, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff, (v = parseInt(uuid.slice(9, 13), 16)) >>> 8, v & 0xff, (v = parseInt(uuid.slice(14, 18), 16)) >>> 8, v & 0xff, (v = parseInt(uuid.slice(19, 23), 16)) >>> 8, v & 0xff, ((v = parseInt(uuid.slice(24, 36), 16)) / 0x10000000000) & 0xff, (v / 0x100000000) & 0xff, (v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff);\n}",
+          "citation": {
+            "merkleRoot": "ee3202880edcfa4a6475607c6bfb48827fe29066106bb78d077fe9d4c5fff5fb",
+            "sourceFile": "uuid-11.1.1/dist/esm/parse.js",
+            "lineStart": 2,
+            "lineEnd": 8
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139",
+          "rank": 4,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "mergeValues",
+          "behavior": "function mergeValues(a, b) -> { valid: true; data: any } | { valid: false; mergeErrorPath: (string | number)[] }",
+          "text": "function mergeValues(\n  a: any,\n  b: any\n): { valid: true; data: any } | { valid: false; mergeErrorPath: (string | number)[] } {\n  // const aType = parse.t(a);\n  // const bType = parse.t(b);\n\n  if (a === b) {\n    return { valid: true, data: a };\n  }\n  if (a instanceof Date && b instanceof Date && +a === +b) {\n    return { valid: true, data: a };\n  }\n  if (util.isPlainObject(a) && util.isPlainObject(b)) {\n    const bKeys = Object.keys(b);\n    const sharedKeys = Object.keys(a).filter((key) => bKeys.indexOf(key) !== -1);\n\n    const newObj: any = { ...a, ...b };\n    for (const key of sharedKeys) {\n      const sharedValue = mergeValues(a[key], b[key]);\n      if (!sharedValue.valid) {\n        return {\n          valid: false,\n          mergeErrorPath: [key, ...sharedValue.mergeErrorPath],\n        };\n      }\n      newObj[key] = sharedValue.data;\n    }\n\n    return { valid: true, data: newObj };\n  }\n  if (Array.isArray(a) && Array.isArray(b)) {\n    if (a.length !== b.length) {\n      return { valid: false, mergeErrorPath: [] };\n    }\n\n    const newArray: unknown[] = [];\n    for (let index = 0; index < a.length; index++) {\n      const itemA = a[index];\n      const itemB = b[index];\n      const sharedValue = mergeValues(itemA, itemB);\n\n      if (!sharedValue.valid) {\n        return {\n          valid: false,\n          mergeErrorPath: [index, ...sharedValue.mergeErrorPath],\n        };\n      }\n\n      newArray.push(sharedValue.data);\n    }\n\n    return { valid: true, data: newArray };\n  }\n\n  return { valid: false, mergeErrorPath: [] };\n}",
+          "citation": {
+            "merkleRoot": "e71217a220a50187a28cda6b28ee6006ec0adc1c164d251d969775f70f2f1f60",
+            "sourceFile": "zod-3.25.76/src/v4/core/schemas.ts",
+            "lineStart": 2139,
+            "lineEnd": 2195
+          }
+        },
+        {
+          "id": "uuid-11.1.1/dist/esm/validate.js#validate@2",
+          "rank": 5,
+          "score": 0.8137804969278539,
+          "channel": "knn",
+          "sourcePkg": "uuid-11.1.1",
+          "name": "validate",
+          "behavior": "function validate(uuid) -> unknown",
+          "text": "function validate(uuid) {\n    return typeof uuid === 'string' && REGEX.test(uuid);\n}",
+          "citation": {
+            "merkleRoot": "b5a38c7b920a10f52035d1fdb29160672a3536eaf16ac4cbf829e94d3f6972d4",
+            "sourceFile": "uuid-11.1.1/dist/esm/validate.js",
+            "lineStart": 2,
+            "lineEnd": 4
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v3/types.ts#mergeValues@3239",
+          "rank": 6,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "mergeValues",
+          "behavior": "function mergeValues(a, b) -> { valid: true; data: any } | { valid: false }",
+          "text": "function mergeValues(a: any, b: any): { valid: true; data: any } | { valid: false } {\n  const aType = getParsedType(a);\n  const bType = getParsedType(b);\n\n  if (a === b) {\n    return { valid: true, data: a };\n  } else if (aType === ZodParsedType.object && bType === ZodParsedType.object) {\n    const bKeys = util.objectKeys(b);\n    const sharedKeys = util.objectKeys(a).filter((key) => bKeys.indexOf(key) !== -1);\n\n    const newObj: any = { ...a, ...b };\n    for (const key of sharedKeys) {\n      const sharedValue = mergeValues(a[key], b[key]);\n      if (!sharedValue.valid) {\n        return { valid: false };\n      }\n      newObj[key] = sharedValue.data;\n    }\n\n    return { valid: true, data: newObj };\n  } else if (aType === ZodParsedType.array && bType === ZodParsedType.array) {\n    if (a.length !== b.length) {\n      return { valid: false };\n    }\n\n    const newArray: unknown[] = [];\n    for (let index = 0; index < a.length; index++) {\n      const itemA = a[index];\n      const itemB = b[index];\n      const sharedValue = mergeValues(itemA, itemB);\n\n      if (!sharedValue.valid) {\n        return { valid: false };\n      }\n\n      newArray.push(sharedValue.data);\n    }\n\n    return { valid: true, data: newArray };\n  } else if (aType === ZodParsedType.date && bType === ZodParsedType.date && +a === +b) {\n    return { valid: true, data: a };\n  } else {\n    return { valid: false };\n  }\n}",
+          "citation": {
+            "merkleRoot": "034310fc888bc0cd49d72c9e7e974f8aa68891b927d734069ebb4b599239997f",
+            "sourceFile": "zod-3.25.76/src/v3/types.ts",
+            "lineStart": 3239,
+            "lineEnd": 3283
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/api.ts#_normalize@1033",
+          "rank": 7,
+          "score": 0.8133054308224521,
+          "channel": "knn",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_normalize",
+          "behavior": "function _normalize(form) -> checks.$ZodCheckOverwrite<string>",
+          "text": "export function _normalize(form?: \"NFC\" | \"NFD\" | \"NFKC\" | \"NFKD\" | (string & {})): checks.$ZodCheckOverwrite<string> {\n  return _overwrite((input) => input.normalize(form));\n}",
+          "citation": {
+            "merkleRoot": "0443d1e9697af5f76a7c94cb6a647d6e0e29f67ad264c0f0c7ac6b145f8569d7",
+            "sourceFile": "zod-3.25.76/src/v4/core/api.ts",
+            "lineStart": 1033,
+            "lineEnd": 1035
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/api.ts#_startsWith@983",
+          "rank": 8,
+          "score": 0.75,
+          "channel": "lexical",
+          "sourcePkg": "zod-3.25.76",
+          "name": "_startsWith",
+          "behavior": "function _startsWith(prefix, params) -> checks.$ZodCheckStartsWith",
+          "text": "export function _startsWith(prefix: string, params?: string | $ZodCheckStartsWithParams): checks.$ZodCheckStartsWith {\n  return new checks.$ZodCheckStartsWith({\n    check: \"string_format\",\n    format: \"starts_with\",\n    ...util.normalizeParams(params),\n    prefix,\n  });\n}",
+          "citation": {
+            "merkleRoot": "be85742d9361f64b9ce3f7d95d170cc2255b8c345a131c083f962f04e8241d22",
+            "sourceFile": "zod-3.25.76/src/v4/core/api.ts",
+            "lineStart": 983,
+            "lineEnd": 990
+          }
+        }
+      ],
+      "needed": [
+        {
+          "atom": "uuid-11.1.1:dist/esm/validate.js#validate",
+          "sliceRank": 5,
+          "deepRank": 9,
+          "coveredBy": "uuid-11.1.1/dist/esm/validate.js#validate@2"
+        },
+        {
+          "atom": "uuid-11.1.1:dist/esm/parse.js#parse",
+          "sliceRank": 3,
+          "deepRank": 7,
+          "coveredBy": "uuid-11.1.1/dist/esm/parse.js#parse@2"
+        },
+        {
+          "atom": "uuid-11.1.1:dist/esm/stringify.js#unsafeStringify",
+          "sliceRank": null,
+          "deepRank": null,
+          "coveredBy": null
+        }
+      ],
+      "recallAtK": 0.6666666666666666,
+      "bestScore": 0.8160695325932465
+    },
+    "uuid-version": {
+      "slice": [
+        {
+          "id": "validator-13.15.35/lib/isUUID.js#isUUID@24",
+          "rank": 1,
+          "score": 0.8133422315811139,
+          "channel": "both",
+          "sourcePkg": "validator-13.15.35",
+          "name": "isUUID",
+          "behavior": "function isUUID(str, version) -> unknown",
+          "text": "function isUUID(str, version) {\n  (0, _assertString.default)(str);\n  if (version === undefined || version === null) {\n    version = 'all';\n  }\n  return version in uuid ? uuid[version].test(str) : false;\n}",
+          "citation": {
+            "merkleRoot": "cbd520b757564a7248eaaeb8cf015e6e038d61145a4c9d00a4a059affe6fc6e2",
+            "sourceFile": "validator-13.15.35/lib/isUUID.js",
+            "lineStart": 24,
+            "lineEnd": 30
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v3/types.ts#isValidIP@687",
+          "rank": 2,
+          "score": 0.7947616407589555,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "isValidIP",
+          "behavior": "function isValidIP(ip, version) -> unknown",
+          "text": "function isValidIP(ip: string, version?: IpVersion) {\n  if ((version === \"v4\" || !version) && ipv4Regex.test(ip)) {\n    return true;\n  }\n  if ((version === \"v6\" || !version) && ipv6Regex.test(ip)) {\n    return true;\n  }\n\n  return false;\n}",
+          "citation": {
+            "merkleRoot": "3681d7cfbcf1e7af27ea2bf68bc13bb5b985c19fc8366ef4fdaa906673984395",
+            "sourceFile": "zod-3.25.76/src/v3/types.ts",
+            "lineStart": 687,
+            "lineEnd": 696
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v4/core/regexes.ts#uuid@22",
+          "rank": 3,
+          "score": 0.7922061525840398,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "uuid",
+          "behavior": "arrow const uuid(version) -> RegExp",
+          "text": "export const uuid = (version?: number | undefined): RegExp => {\n  if (!version)\n    return /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000)$/;\n  return new RegExp(\n    `^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-${version}[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$`\n  );\n};",
+          "citation": {
+            "merkleRoot": "8f308db1322cd819441dfde55c613f3293e5f71fd701cc878afd0bb67c73118c",
+            "sourceFile": "zod-3.25.76/src/v4/core/regexes.ts",
+            "lineStart": 22,
+            "lineEnd": 28
+          }
+        },
+        {
+          "id": "uuid-11.1.1/dist/esm/version.js#version@2",
+          "rank": 4,
+          "score": 0.8147766583469433,
+          "channel": "both",
+          "sourcePkg": "uuid-11.1.1",
+          "name": "version",
+          "behavior": "function version(uuid) -> unknown",
+          "text": "function version(uuid) {\n    if (!validate(uuid)) {\n        throw TypeError('Invalid UUID');\n    }\n    return parseInt(uuid.slice(14, 15), 16);\n}",
+          "citation": {
+            "merkleRoot": "89017b52bf236a39263acf38d6508cf4e5c271218e6559f9953632bf1866b377",
+            "sourceFile": "uuid-11.1.1/dist/esm/version.js",
+            "lineStart": 2,
+            "lineEnd": 7
+          }
+        },
+        {
+          "id": "uuid-11.1.1/dist/cjs/version.js#version@4",
+          "rank": 5,
+          "score": 0.8113626662332498,
+          "channel": "both",
+          "sourcePkg": "uuid-11.1.1",
+          "name": "version",
+          "behavior": "function version(uuid) -> unknown",
+          "text": "function version(uuid) {\n    if (!(0, validate_js_1.default)(uuid)) {\n        throw TypeError('Invalid UUID');\n    }\n    return parseInt(uuid.slice(14, 15), 16);\n}",
+          "citation": {
+            "merkleRoot": "244716aa203063700b7bed285a23f4e7b1b640b37c4dcf742ae1829731c611a5",
+            "sourceFile": "uuid-11.1.1/dist/cjs/version.js",
+            "lineStart": 4,
+            "lineEnd": 9
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/regexes.js#uuid@16",
+          "rank": 6,
+          "score": 0.7929800323776552,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "uuid",
+          "behavior": "arrow const uuid(version) -> unknown",
+          "text": "export const uuid = (version) => {\n    if (!version)\n        return /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000)$/;\n    return new RegExp(`^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-${version}[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$`);\n};",
+          "citation": {
+            "merkleRoot": "eb2069a0c4c3645ca93bb1e6d9a16b25707296d7750c8f7151478f94b0e3d453",
+            "sourceFile": "zod-3.25.76/v4/core/regexes.js",
+            "lineStart": 16,
+            "lineEnd": 20
+          }
+        },
+        {
+          "id": "zod-3.25.76/src/v3/tests/Mocker.ts#getRandomInt@1",
+          "rank": 7,
+          "score": 0.7860025426399053,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "getRandomInt",
+          "behavior": "function getRandomInt(max) -> unknown",
+          "text": "function getRandomInt(max: number) {\n  return Math.floor(Math.random() * Math.floor(max));\n}",
+          "citation": {
+            "merkleRoot": "6d1ace8687001dd1a29ae5192bf096853535bb5bd785482682f6bbcf7f6aa248",
+            "sourceFile": "zod-3.25.76/src/v3/tests/Mocker.ts",
+            "lineStart": 1,
+            "lineEnd": 3
+          }
+        },
+        {
+          "id": "zod-3.25.76/v4/core/regexes.cjs#uuid@22",
+          "rank": 8,
+          "score": 0.7875739566410678,
+          "channel": "both",
+          "sourcePkg": "zod-3.25.76",
+          "name": "uuid",
+          "behavior": "arrow const uuid(version) -> unknown",
+          "text": "const uuid = (version) => {\n    if (!version)\n        return /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000)$/;\n    return new RegExp(`^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-${version}[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$`);\n};",
+          "citation": {
+            "merkleRoot": "506efd3ddb9b98c0507a5b77b83a95ec6c708ca0fc146edc38738f155a9c705f",
+            "sourceFile": "zod-3.25.76/v4/core/regexes.cjs",
+            "lineStart": 22,
+            "lineEnd": 26
+          }
+        }
+      ],
+      "needed": [
+        {
+          "atom": "uuid-11.1.1:dist/esm/validate.js#validate",
+          "sliceRank": null,
+          "deepRank": 18,
+          "coveredBy": null
+        },
+        {
+          "atom": "uuid-11.1.1:dist/esm/version.js#version",
+          "sliceRank": 4,
+          "deepRank": 4,
+          "coveredBy": "uuid-11.1.1/dist/esm/version.js#version@2"
+        }
+      ],
+      "recallAtK": 0.5,
+      "bestScore": 0.8147766583469433
+    }
+  },
+  "summary": {
+    "meanRecallAtK": 0.22727272727272727,
+    "tasksWithAllAtoms": 0,
+    "tasksWithNoAtoms": 7,
+    "compositionTasks": 11,
+    "neededAtoms": 29,
+    "neededAtomsInSlice": 7,
+    "neededAtomsInDeep": 16
+  }
+}

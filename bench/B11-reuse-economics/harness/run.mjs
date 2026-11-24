@@ -3,14 +3,16 @@
 // B11 reuse-economics runner (#1258). Arms per task, one model client, held-out scoring.
 //   node harness/run.mjs --client offline --out results/offline-validation.json
 //   node harness/run.mjs --dry-run                     (plan and cost estimate; no calls)
+//   --slice retrieved|fixture   slice source (default: retrieved, from retrieval/production.json)
+//   --arms ...,slice-oracle     add the fixture-slice ceiling arm
 //   ANTHROPIC_API_KEY=... node harness/run.mjs --client anthropic --model <id> --seeds 3 \
 //     [--effort low|medium|high] --out results/<run>.json
 // The live client calls the Messages API, which costs money. Run it only with approval.
 // Needs @yakcc/shave built (pnpm --filter @yakcc/shave build): the slice selection and the
 // fallback policy are shave's own code, imported from its dist.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   breakEven,
@@ -58,6 +60,44 @@ export const DEFAULTS = Object.freeze({
 export const ARMS = Object.freeze(["scratch", "slice", "slice-fill", "fallback"]);
 
 /**
+ * Arms that run only when asked for (`--arms`):
+ *   slice-oracle  the hand-curated fixture slice, which always holds the needed atoms: the
+ *                 ceiling a perfect retriever would give. Comparing it with `slice` prices
+ *                 retrieval's misses.
+ */
+export const OPTIONAL_ARMS = Object.freeze(["slice-oracle"]);
+
+/** Where a task's slice comes from: real registry retrieval (default) or the fixture. */
+export const SLICE_SOURCES = Object.freeze(["retrieved", "fixture"]);
+
+/**
+ * The tasks with their slice taken from `source`. "retrieved" replaces each task's slice
+ * with the registry's candidates from a retrieval file (harness/retrieve.mjs), and keeps
+ * the fixture slice as `oracleSlice`. "fixture" leaves the slice as authored.
+ */
+export function withSliceSource(tasks, source, retrieval) {
+  if (source === "fixture") return tasks.map((t) => ({ ...t, oracleSlice: t.slice }));
+  if (source !== "retrieved") throw new Error(`unknown slice source ${source}`);
+  return tasks.map((t) => {
+    const r = retrieval.tasks[t.id];
+    if (r === undefined)
+      throw new Error(`no retrieval for task ${t.id}; rerun harness/retrieve.mjs`);
+    const slice = r.slice.map(({ id, sourcePkg, score, text, citation, channel }) => ({
+      id,
+      sourcePkg,
+      score,
+      text,
+      citation,
+      channel,
+    }));
+    return { ...t, slice, oracleSlice: t.slice };
+  });
+}
+
+/** The retrieval file a run reads by default. */
+export const RETRIEVAL_FILE = join(here, "..", "retrieval", "production.json");
+
+/**
  * The composition context for a task: its candidates through selectCompositionContext,
  * in rank order (`fill: false`) or under the source-spread fill (`fill: true`).
  */
@@ -100,6 +140,10 @@ export async function runAll({ tasks, client, model, options = {} }) {
   for (const task of tasks) {
     const rank = selectionFor(task, { ...o, fill: false });
     const filled = selectionFor(task, { ...o, fill: true });
+    const oracle = selectionFor(
+      { ...task, slice: task.oracleSlice ?? task.slice },
+      { ...o, fill: false },
+    );
     selections.push({
       task: task.id,
       rank: describeSelection(rank.ctx),
@@ -116,6 +160,13 @@ export async function runAll({ tasks, client, model, options = {} }) {
           tag({
             ...(await runArm({ arm: "slice", task, client, slice: rank.slice, model })),
             selection: "rank",
+          }),
+        );
+      if (arms.includes("slice-oracle"))
+        rows.push(
+          tag({
+            ...(await runArm({ arm: "slice-oracle", task, client, slice: oracle.slice, model })),
+            selection: "oracle",
           }),
         );
       if (arms.includes("slice-fill"))
@@ -175,11 +226,16 @@ export function planRun({ tasks, options = {}, outputTokensPerCall = 2000 }) {
   for (const task of tasks) {
     const rank = selectionFor(task, { ...o, fill: false }).slice;
     const filled = selectionFor(task, { ...o, fill: true }).slice;
+    const oracle = selectionFor(
+      { ...task, slice: task.oracleSlice ?? task.slice },
+      { ...o, fill: false },
+    ).slice;
     const strong = Math.max(...task.slice.map((c) => c.score)) >= o.strongThreshold;
     const prompts = [];
     if (arms.includes("scratch")) prompts.push(buildPrompt(task, "scratch", []));
     if (arms.includes("slice")) prompts.push(buildPrompt(task, "slice", rank));
     if (arms.includes("slice-fill")) prompts.push(buildPrompt(task, "slice", filled));
+    if (arms.includes("slice-oracle")) prompts.push(buildPrompt(task, "slice", oracle));
     if (arms.includes("fallback")) {
       const p = strong ? buildPrompt(task, "slice", rank) : buildPrompt(task, "scratch", []);
       prompts.push(p);
@@ -250,16 +306,22 @@ function parseArgs(argv) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const tasks = loadTasks(join(here, "..", "tasks"));
+  const sliceSource = args.slice ?? "retrieved";
+  if (!SLICE_SOURCES.includes(sliceSource)) throw new Error(`unknown slice source ${sliceSource}`);
+  const retrievalFile = args.retrieval ?? RETRIEVAL_FILE;
+  const retrieval =
+    sliceSource === "retrieved" ? JSON.parse(readFileSync(retrievalFile, "utf8")) : undefined;
+  const tasks = withSliceSource(loadTasks(join(here, "..", "tasks")), sliceSource, retrieval);
   const options = {
     ...(args.seeds ? { seeds: Number(args.seeds) } : {}),
     ...(args.budget ? { tokenBudget: Number(args.budget) } : {}),
     ...(args.share ? { maxPackageShare: Number(args.share) } : {}),
     ...(args.arms ? { arms: args.arms.split(",") } : {}),
   };
-  for (const a of options.arms ?? []) if (!ARMS.includes(a)) throw new Error(`unknown arm ${a}`);
+  for (const a of options.arms ?? [])
+    if (!ARMS.includes(a) && !OPTIONAL_ARMS.includes(a)) throw new Error(`unknown arm ${a}`);
   if (args["dry-run"] === "true") {
-    console.log(JSON.stringify(planRun({ tasks, options }), null, 2));
+    console.log(JSON.stringify({ sliceSource, ...planRun({ tasks, options }) }, null, 2));
     return;
   }
   const clientName = args.client ?? "offline";
@@ -285,7 +347,27 @@ async function main() {
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(
     out,
-    `${JSON.stringify({ client: clientName, model, tasks: tasks.length, ...result }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        client: clientName,
+        model,
+        tasks: tasks.length,
+        sliceSource,
+        ...(retrieval !== undefined
+          ? {
+              retrieval: {
+                file: relative(join(here, ".."), retrievalFile),
+                variant: retrieval.variant,
+                embeddingModel: retrieval.model,
+                summary: retrieval.summary,
+              },
+            }
+          : {}),
+        ...result,
+      },
+      null,
+      2,
+    )}\n`,
   );
   console.log(
     JSON.stringify({ summary: result.summary, triggerCounts: result.triggerCounts }, null, 2),
