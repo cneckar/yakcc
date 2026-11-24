@@ -1,0 +1,164 @@
+{
+  "set": "seed",
+  "note": "Hand-written by the harness author, who knows the answers: for developing the pipeline, never reported as the result. Each need is a complex, module-scale capability, written without the target's identifier. targets: acceptable roots as pkg:file#name ('*' = any file in the package, for packages that ship several builds); [] means nothing in the corpus implements it. The held-out set comes from needs-from-readme.mjs.",
+  "queries": [
+    {
+      "id": "csv-to-records",
+      "need": "Parse CSV text into an array of records, handling quoted fields that contain the delimiter or newlines, doubled quotes inside quotes, a configurable delimiter, and optionally using the first line as column names.",
+      "targets": ["csv-parse-6.2.1:*#parse"]
+    },
+    {
+      "id": "highest-version-in-range",
+      "need": "Given a list of semantic version strings and a range expression such as '^1.2.0 || >=2.5 <3', return the highest version that satisfies the range, or null when none does.",
+      "targets": ["semver-7.8.0:ranges/max-satisfying.js#maxSatisfying"]
+    },
+    {
+      "id": "version-satisfies-range",
+      "need": "Check whether a semantic version satisfies a range expression, including caret, tilde and hyphen ranges, x-ranges and '||' alternatives, with an option for loose parsing.",
+      "targets": ["semver-7.8.0:functions/satisfies.js#satisfies"]
+    },
+    {
+      "id": "lowest-version-of-range",
+      "need": "Find the lowest semantic version that could possibly match a range expression.",
+      "targets": ["semver-7.8.0:ranges/min-version.js#minVersion"]
+    },
+    {
+      "id": "range-within-range",
+      "need": "Decide whether every version matched by one semantic-version range is also matched by another range.",
+      "targets": ["semver-7.8.0:ranges/subset.js#subset"]
+    },
+    {
+      "id": "parse-iso8601",
+      "need": "Parse an ISO 8601 date-time string, including calendar, week and ordinal dates, an optional time with fractions and an optional timezone offset, into a Date; give an invalid date for malformed input.",
+      "targets": ["date-fns-4.1.0:parseISO.cjs#parseISO"]
+    },
+    {
+      "id": "format-iso8601",
+      "need": "Format a date as an ISO 8601 string with the date, the time and the local timezone offset, with options for the basic or extended format and date-only or time-only output.",
+      "targets": ["date-fns-4.1.0:formatISO.cjs#formatISO"]
+    },
+    {
+      "id": "deep-copy",
+      "need": "Make a deep copy of any value, including nested objects and arrays, Maps, Sets, Dates, regular expressions, typed arrays and buffers, preserving circular references and prototypes.",
+      "targets": ["lodash-4.17.21:cloneDeep.js#cloneDeep", "lodash-4.17.21:_baseClone.js#baseClone"]
+    },
+    {
+      "id": "deep-merge-objects",
+      "need": "Recursively merge the properties of source objects into a destination object, merging nested plain objects and arrays rather than replacing them.",
+      "targets": ["lodash-4.17.21:_baseMerge.js#baseMerge", "lodash-4.17.21:_baseMergeDeep.js#baseMergeDeep"]
+    },
+    {
+      "id": "rate-limit-calls",
+      "need": "Wrap a function so it runs at most once per wait interval, with options to call it on the leading edge, the trailing edge, or both.",
+      "targets": ["lodash-4.17.21:throttle.js#throttle"]
+    },
+    {
+      "id": "delay-until-quiet",
+      "need": "Wrap a function so calls are postponed until a given time has passed since the last call, with leading and trailing options, a maximum wait, and the ability to cancel or flush a pending call.",
+      "targets": ["lodash-4.17.21:debounce.js#debounce"]
+    },
+    {
+      "id": "set-at-deep-path",
+      "need": "Set a value at a deep property path such as 'a[0].b.c' in an object, creating the missing objects and arrays along the way.",
+      "targets": ["lodash-4.17.21:set.js#set"]
+    },
+    {
+      "id": "bounded-cache-with-ttl",
+      "need": "A key-value cache bounded by entry count or total size that evicts the least recently used entries, with optional time-to-live per entry, stale reads, and a fetch method that fills missing entries.",
+      "targets": ["lru-cache-11.3.6:*#LRUCache"]
+    },
+    {
+      "id": "limit-concurrent-promises",
+      "need": "Limit how many promise-returning tasks run at the same time: queue the rest and start them as running ones finish, and report the active and pending counts.",
+      "targets": ["p-limit-7.3.0:index.js#pLimit"]
+    },
+    {
+      "id": "throttle-async-calls",
+      "need": "Throttle an async function so it is called at most a given number of times per time interval, queuing the excess calls, with optional strict mode and abort.",
+      "targets": ["p-throttle-8.1.0:index.js#pThrottle"]
+    },
+    {
+      "id": "validate-email",
+      "need": "Validate an email address with options for allowing a display name, requiring a top-level domain, allowing IP addresses as the domain, and limiting the length of each part.",
+      "targets": ["validator-13.15.35:lib/isEmail.js#isEmail"]
+    },
+    {
+      "id": "validate-url",
+      "need": "Validate a URL string with options for the allowed protocols, requiring a protocol or a top-level domain, allowing underscores or IP hosts, and checking the port and the host whitelist.",
+      "targets": ["validator-13.15.35:lib/isURL.js#isURL"]
+    },
+    {
+      "id": "canonical-email",
+      "need": "Canonicalize an email address for comparison: lowercase it and apply provider-specific rules, such as removing dots and plus-suffixes for Gmail addresses.",
+      "targets": ["validator-13.15.35:lib/normalizeEmail.js#normalizeEmail"]
+    },
+    {
+      "id": "password-strength",
+      "need": "Check whether a password is strong enough by minimum length and minimum counts of lowercase letters, uppercase letters, digits and symbols, or return a numeric strength score.",
+      "targets": ["validator-13.15.35:lib/isStrongPassword.js#isStrongPassword"]
+    },
+    {
+      "id": "time-ordered-id",
+      "need": "Generate a time-ordered unique identifier from a millisecond timestamp and random bits, monotonic within the same millisecond, in the standard 8-4-4-4-12 hexadecimal form.",
+      "targets": ["uuid-11.1.1:*#v7"]
+    },
+    {
+      "id": "name-based-id",
+      "need": "Generate a deterministic unique identifier from a namespace identifier and a name by hashing them with SHA-1, in the standard 8-4-4-4-12 hexadecimal form.",
+      "targets": ["uuid-11.1.1:*#v5", "uuid-11.1.1:*#v35"]
+    },
+    {
+      "id": "md5-digest",
+      "need": "Compute the MD5 digest of a sequence of bytes.",
+      "targets": ["uuid-11.1.1:*#md5"]
+    },
+    {
+      "id": "sha1-digest",
+      "need": "Compute the SHA-1 digest of a sequence of bytes.",
+      "targets": ["uuid-11.1.1:*#sha1"]
+    },
+    {
+      "id": "closest-by-edits",
+      "need": "Find the string in a list that needs the fewest single-character edits to become a given word, fast even for long strings.",
+      "targets": ["fastest-levenshtein-1.0.16:esm/mod.js#closest"]
+    },
+    {
+      "id": "object-schema-validation",
+      "need": "Define a schema for an object with typed fields, then validate unknown input against it, returning the typed value or a list of issues, each with the path of the invalid field; support strict, passthrough and partial variants.",
+      "targets": ["zod-3.25.76:*#ZodObject"]
+    },
+    {
+      "id": "string-schema-rules",
+      "need": "A schema for strings that can require a minimum or maximum length, a regular expression, or a format such as email, URL, UUID or ISO date-time, and trims or lowercases as part of parsing.",
+      "targets": ["zod-3.25.76:*#ZodString"]
+    },
+    {
+      "id": "base64-decode",
+      "need": "Decode base64 text into bytes, handling padding and rejecting input whose length is not a multiple of four.",
+      "targets": ["base64-js-1.5.1:index.js#toByteArray"]
+    },
+    {
+      "id": "dependency-order",
+      "need": "Sort the nodes of a dependency graph given as edges so that each node comes after its dependencies, failing when there is a cycle.",
+      "targets": ["toposort-2.0.2:index.js#toposort"]
+    },
+    {
+      "id": "compiled-json-pointer",
+      "need": "Compile a JSON Pointer once into an object with get and set operations that apply it to many documents.",
+      "targets": ["jsonpointer-5.0.1:jsonpointer.js#compile"]
+    },
+    {
+      "id": "custom-alphabet-ids",
+      "need": "Make a generator of random identifiers of a given length drawn from a custom alphabet, using a secure random source.",
+      "targets": ["nanoid-3.3.12:*#customAlphabet"]
+    },
+    { "id": "yaml-parse", "need": "Parse a YAML document into plain objects, arrays and scalars, including anchors and multi-line strings.", "targets": [] },
+    { "id": "markdown-render", "need": "Render Markdown text to HTML, including headings, lists, links, emphasis and fenced code blocks.", "targets": [] },
+    { "id": "deflate-compress", "need": "Compress a byte array with the DEFLATE algorithm and decompress it again.", "targets": [] },
+    { "id": "cron-next-run", "need": "Parse a cron expression and compute the next times it fires after a given date.", "targets": [] },
+    { "id": "text-line-diff", "need": "Compute a line-by-line difference between two texts as a list of added, removed and unchanged lines.", "targets": [] },
+    { "id": "route-matching", "need": "Match URL paths against route patterns such as '/users/:id/posts/:postId' and extract the named parameters.", "targets": [] },
+    { "id": "currency-formatting", "need": "Format a number as a currency amount with locale-aware digit grouping, decimal separator and currency symbol placement.", "targets": [] },
+    { "id": "image-resize", "need": "Resize an RGBA image buffer to new dimensions with bilinear interpolation.", "targets": [] }
+  ]
+}
