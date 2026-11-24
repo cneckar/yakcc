@@ -159,3 +159,32 @@ describe("Node's last opaque forms (#1330)", () => {
     );
   });
 });
+
+describe("hoisting over a let or const (#1330)", () => {
+  it("a function declaration reads a const declared above it, which its own initializer passes", () => {
+    agrees(
+      `export function f(n: number) {
+  const calls: number[] = [];
+  const emit = make(n, deprecated);
+  function deprecated(k: number) { emit(k); return k * 2; }
+  function make(m: number, fn: (k: number) => number) { return (k: number) => calls.push(m + k + fn.length); }
+  return [deprecated(3), deprecated(4), calls];
+}`,
+      [[1], [10]],
+    );
+  });
+
+  it("a closure in a const's own initializer reads the const when it runs", () => {
+    agrees(
+      `export function f(flag: boolean) {
+  const log: string[] = [];
+  function eos(cb: () => void) { return () => { log.push('cleaned'); cb(); }; }
+  const cleanup: () => void = eos(() => { if (flag && log.length < 3) { cleanup(); } });
+  const run = () => cleanup();
+  run();
+  return log;
+}`,
+      [[true], [false]],
+    );
+  });
+});

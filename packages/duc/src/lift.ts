@@ -750,14 +750,16 @@ class Lifter {
     // Names declared in the list by `var`: hoisted as undefined, as JavaScript hoists them. A `let`,
     // `const` or class read before its declaration throws, so a function reading one is not hoisted
     // over it: it is bound where it stands, and the name stays reported.
+    // A `let`, `const` or class too (#1330): a function declaration is hoisted over it, as
+    // JavaScript hoists it, and reads it through a cell when it runs. (Run before the declaration,
+    // JavaScript throws; the cell gives undefined.)
     const declaredValues = new Set<string>();
     for (const stmt of stmts) {
-      if (
-        Node.isVariableStatement(stmt) &&
-        stmt.getDeclarationKind() === VariableDeclarationKind.Var
-      )
+      if (Node.isVariableStatement(stmt))
         for (const decl of stmt.getDeclarations())
           for (const name of patternNames(decl.getNameNode())) declaredValues.add(name);
+      else if (Node.isClassDeclaration(stmt) && stmt.getName() !== undefined)
+        declaredValues.add(stmt.getName() as string);
     }
     // A function declaration is hoisted, as JavaScript hoists it (#1173). A later-declared value it
     // reads is a cell from here, holding undefined until its declaration writes it, so the function
@@ -833,11 +835,19 @@ class Lifter {
       const isVar = stmt.getDeclarationKind() === VariableDeclarationKind.Var;
       for (const decl of stmt.getDeclarations())
         for (const name of patternNames(decl.getNameNode())) {
-          const readEarlier = stmts
-            .slice(0, isVar ? j + 1 : j)
-            .some((earlier) =>
-              functionsWithin(earlier).some((fn) => this.readNamesOf(fn).includes(name)),
-            );
+          const readEarlier =
+            stmts
+              .slice(0, isVar ? j + 1 : j)
+              .some((earlier) =>
+                functionsWithin(earlier).some((fn) => this.readNamesOf(fn).includes(name)),
+              ) ||
+            // A closure in a let's or const's own initializer that reads it when it runs, after
+            // the initializer (#1330): `const c = eos(s, () => c())`. One that is the initializer
+            // itself is `function-self`.
+            (!isVar &&
+              functionsWithin(stmt).some(
+                (fn) => this.readNamesOf(fn).includes(name) && constInitializedBy(fn) !== name,
+              ));
           // A `let` or `const` too, read by a closure made before it, which runs after it is
           // initialized (#1297); or assigned by a closure in its own initializer (`let id =
           // setTimeout(() => { id = null })`). A const arrow calling itself is `function-self`.
