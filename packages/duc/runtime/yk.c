@@ -131,7 +131,29 @@ yk yk_number(double d) {
 
 yk yk_bool(int b) { return b ? YK_TRUE : YK_FALSE; }
 
+/* Memory the runtime never frees (there is no collector yet): bumped out of zeroed chunks, 16-byte
+   aligned. A large request has a chunk of its own. */
 static void *alloc(size_t n) {
+  static uint8_t *chunk = NULL;
+  static size_t left = 0;
+  n = (n + 15) & ~(size_t)15;
+  if (n > (1u << 16)) {
+    void *p = calloc(1, n);
+    if (p == NULL) abort();
+    return p;
+  }
+  if (n > left) {
+    chunk = calloc(1, 1u << 20);
+    if (chunk == NULL) abort();
+    left = 1u << 20;
+  }
+  void *p = chunk;
+  chunk += n;
+  left -= n;
+  return p;
+}
+/* Memory that is freed (scratch buffers, coroutine stacks): the C library's. */
+static void *scratch(size_t n) {
   void *p = calloc(1, n);
   if (p == NULL) abort();
   return p;
@@ -147,7 +169,7 @@ static yk string_of(yk_string *s) { return BOX(T_STRING, s); }
 
 /* A string from UTF-8 bytes, as a source literal is written. */
 yk yk_string_utf8(const char *p, uint64_t n) {
-  uint16_t *tmp = alloc((size_t)n * 2 + 2);
+  uint16_t *tmp = scratch((size_t)n * 2 + 2);
   uint32_t len = 0;
   for (uint64_t i = 0; i < n;) {
     uint32_t c = (unsigned char)p[i];
@@ -499,15 +521,25 @@ int yk_truthy(yk v) {
 }
 
 yk yk_add(yk a, yk b) {
+  if (is_number(a) && is_number(b)) return yk_number(num(a) + num(b));
   a = to_primitive(a);
   b = to_primitive(b);
   if (is_string(a) || is_string(b)) return concat(str(to_string(a)), str(to_string(b)));
   if (numeric_pair(&a, &b)) return big_binary(a, b, '+');
   return yk_number(to_number(a) + to_number(b));
 }
-yk yk_sub(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '-') : yk_number(to_number(a) - to_number(b)); }
-yk yk_mul(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '*') : yk_number(to_number(a) * to_number(b)); }
-yk yk_div(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '/') : yk_number(to_number(a) / to_number(b)); }
+yk yk_sub(yk a, yk b) {
+  if (is_number(a) && is_number(b)) return yk_number(num(a) - num(b));
+  return numeric_pair(&a, &b) ? big_binary(a, b, '-') : yk_number(to_number(a) - to_number(b));
+}
+yk yk_mul(yk a, yk b) {
+  if (is_number(a) && is_number(b)) return yk_number(num(a) * num(b));
+  return numeric_pair(&a, &b) ? big_binary(a, b, '*') : yk_number(to_number(a) * to_number(b));
+}
+yk yk_div(yk a, yk b) {
+  if (is_number(a) && is_number(b)) return yk_number(num(a) / num(b));
+  return numeric_pair(&a, &b) ? big_binary(a, b, '/') : yk_number(to_number(a) / to_number(b));
+}
 yk yk_mod(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '%') : yk_number(fmod(to_number(a), to_number(b))); }
 yk yk_neg(yk a) {
   a = to_primitive(a);
@@ -562,6 +594,10 @@ yk yk_ne(yk a, yk b) { return yk_bool(!loose_equal(a, b)); }
 
 /* IsLessThan: -1 for undefined (a NaN took part), else 0 or 1. */
 static int less_than(yk a, yk b) {
+  if (is_number(a) && is_number(b)) {
+    double x = num(a), y = num(b);
+    return x != x || y != y ? -1 : x < y;
+  }
   a = to_primitive(a);
   b = to_primitive(b);
   if (is_string(a) && is_string(b)) {
@@ -1456,8 +1492,8 @@ static int canonical_index(yk_string *s, uint32_t *out) {
 
 static yk_array *ordered_keys(yk_object *o) {
   yk_array *r = new_array(o->len);
-  uint32_t *idx = alloc((size_t)o->len * sizeof(uint32_t) + 4);
-  yk *ik = alloc((size_t)o->len * sizeof(yk) + 8);
+  uint32_t *idx = scratch((size_t)o->len * sizeof(uint32_t) + 4);
+  yk *ik = scratch((size_t)o->len * sizeof(yk) + 8);
   uint32_t n = 0;
   for (uint32_t i = 0; i < o->len; i++) {
     uint32_t k;
@@ -1620,7 +1656,7 @@ static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv,
   }
   if (key_is(key, "sort")) {
     if (f != YK_UNDEFINED && !is_closure(f)) type_error("the comparator is not a function");
-    yk *tmp = alloc((size_t)(a->len + 1) * sizeof(yk));
+    yk *tmp = scratch((size_t)(a->len + 1) * sizeof(yk));
     merge_sort(a->items, tmp, a->len, f);
     free(tmp);
     return *out = recv, 1;
@@ -1668,6 +1704,9 @@ static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv,
 /* --- bitwise operators, on ToInt32 / ToUint32 --- */
 
 static uint32_t to_uint32(yk v) {
+  /* A number below 2^63 in magnitude: its int64 conversion truncates, and its low 32 bits are the
+     value modulo 2^32, as ECMA-262's ToUint32. */
+  if (is_number(v) && fabs(num(v)) < 9.2e18) return (uint32_t)(int64_t)num(v);
   double d = to_number(v);
   if (d != d || isinf(d)) return 0;
   d = trunc(d);
@@ -2062,9 +2101,61 @@ static int big_cmp(const yk_bigint *a, const yk_bigint *b) {
 
 static void mix_error(void) { type_error("Cannot mix BigInt and other types, use explicit conversions"); }
 
+#ifdef __SIZEOF_INT128__
+/* A BigInt of at most two limbs (|x| < 2^64) as a signed 128-bit integer. */
+static int big_small(const yk_bigint *x, __int128 *out) {
+  if (x->len > 2) return 0;
+  unsigned __int128 m = x->len == 0 ? 0 : x->len == 1 ? x->d[0] : ((unsigned __int128)x->d[1] << 32) | x->d[0];
+  *out = x->neg ? -(__int128)m : (__int128)m;
+  return 1;
+}
+/* A signed 128-bit integer as a BigInt. */
+static yk big_from_i128(__int128 v) {
+  int neg = v < 0;
+  unsigned __int128 m = neg ? (unsigned __int128)0 - (unsigned __int128)v : (unsigned __int128)v;
+  yk_bigint *r = big_new(4);
+  for (int i = 0; i < 4; i++) r->d[i] = (uint32_t)(m >> (32 * i));
+  r->neg = neg;
+  return big_box(r);
+}
+#endif
+
 /* An arithmetic or bitwise operator of two BigInts. */
 static yk big_binary(yk a, yk b, char op) {
   yk_bigint *x = big(a), *y = big(b);
+  /* Both below 2^64 in magnitude: 128-bit arithmetic computes exactly what the limbs do. A sum or
+     difference stays below 2^65 and a product below 2^128 in magnitude (a product's sign apart);
+     the bitwise operators are the two's complement's; a shift's result is checked to fit. */
+#ifdef __SIZEOF_INT128__
+  __int128 p, q;
+  if (big_small(x, &p) && big_small(y, &q)) {
+    switch (op) {
+    case '+': return big_from_i128(p + q);
+    case '-': return big_from_i128(p - q);
+    case '*': {
+      unsigned __int128 mp = p < 0 ? (unsigned __int128)0 - (unsigned __int128)p : (unsigned __int128)p;
+      unsigned __int128 mq = q < 0 ? (unsigned __int128)0 - (unsigned __int128)q : (unsigned __int128)q;
+      unsigned __int128 m = mp * mq;
+      if ((m >> 127) == 0) {
+        __int128 v = (__int128)m;
+        return big_from_i128((p < 0) != (q < 0) ? -v : v);
+      }
+      break; /* 2^127 or more: the limbs' */
+    }
+    case '&': return big_from_i128(p & q);
+    case '|': return big_from_i128(p | q);
+    case '^': return big_from_i128(p ^ q);
+    case '>':
+      if (q >= 0) return big_from_i128(q >= 127 ? (p < 0 ? -1 : 0) : p >> q);
+      break;
+    case '<':
+      if (q >= 0 && q <= 62) return big_from_i128(p * ((__int128)1 << q));
+      break;
+    default:
+      break;
+    }
+  }
+#endif
   switch (op) {
   case '+':
     return big_add_signed(x, x->neg, y, y->neg);
@@ -2103,6 +2194,21 @@ static int numeric_pair(yk *a, yk *b) {
   if (x && y) return 1;
   if (x || y) mix_error();
   return 0;
+}
+
+/* A 128-bit two's complement integer (as its low and high words) as a BigInt: the typed
+   lowering's boxing of the BigInts it keeps unboxed (#1369). Portable: no __int128 needed. */
+yk yk_bigint_from_i128(uint64_t lo, uint64_t hi) {
+  uint32_t w[4] = {(uint32_t)lo, (uint32_t)(lo >> 32), (uint32_t)hi, (uint32_t)(hi >> 32)};
+  return from_twos(w, 4);
+}
+
+/* Word i (0 low, 1 high) of a BigInt's 128-bit two's complement (the typed lowering's unboxing of a
+   value it proved fits). */
+uint64_t yk_bigint_word(yk b, int32_t i) {
+  uint32_t w[4];
+  twos(big(b), w, 4);
+  return ((uint64_t)w[2 * i + 1] << 32) | w[2 * i];
 }
 
 /* --- the leaves --- */
@@ -3150,7 +3256,7 @@ static void coro_resume(coro *co, yk value, int mode) {
   co->mode = mode;
   current_coro = co;
   if (co->state == 0) {
-    co->stack = alloc(CORO_STACK);
+    co->stack = scratch(CORO_STACK);
     getcontext(&co->ctx);
     co->ctx.uc_stack.ss_sp = co->stack;
     co->ctx.uc_stack.ss_size = CORO_STACK;
@@ -4525,6 +4631,25 @@ typedef struct {
 } c_region;
 static c_region *c_regions = NULL;
 static uint32_t c_nregions = 0, c_capregions = 0;
+/* The last region an access found: most accesses are to it. */
+static uint32_t c_last = 0, c_prev = 0;
+/* It, as the lowered code's inline loads and stores check it (#1369): its base, its length (0 when
+   there is none), its bytes, and whether it may be written. */
+uint64_t yk_mcache_base = 0;
+uint64_t yk_mcache_len = 0;
+uint8_t *yk_mcache_bytes = NULL;
+uint64_t yk_mcache_writable = 0;
+/* The lowered code's per-access-site caches (#1369) hold a region's base, length and bytes. The 16
+   bytes before a region's bytes hold its base while it lives (0 once freed, a new region's when the
+   bytes are reused), so a site that hit a freed region misses. Bytes handed back to the C library
+   (a large region's) change this epoch instead, which every site's cache holds. */
+uint64_t yk_mcache_epoch = 1;
+static void c_cache(c_region *r) {
+  yk_mcache_base = r->base;
+  yk_mcache_len = r->len;
+  yk_mcache_bytes = r->bytes;
+  yk_mcache_writable = !r->constant;
+}
 static uint64_t c_next = 0x10000;
 static yk c_data_keys = 0; /* an object: a constant's content, to its address */
 
@@ -4532,6 +4657,37 @@ static _Noreturn void c_trap(yk message) {
   yk_throw(make_error("Error", concat(str(ascii("memory trap: ")), str(message))));
 }
 static yk hex_of(double a) { return number_to_radix(a, 16); }
+
+/* Freed regions' bytes, by size (16 to 4096, in steps of 16), for the next region of that size: a
+   region's addresses are never reused, but its bytes may be (zeroed again). */
+static uint8_t *c_free_bytes[257];
+static uint8_t *c_bytes(uint32_t len, uint64_t base) {
+  uint8_t *p;
+  if (len <= 4096 && c_free_bytes[len / 16] != NULL) {
+    p = c_free_bytes[len / 16];
+    c_free_bytes[len / 16] = *(uint8_t **)p;
+    memset(p, 0, len);
+  } else {
+    uint8_t *block = calloc((size_t)len + 16, 1);
+    if (block == NULL) {
+      fputs("out of memory\n", stderr);
+      exit(71);
+    }
+    p = block + 16;
+  }
+  ((uint64_t *)p)[-2] = base;
+  return p;
+}
+static void c_release(uint8_t *p, uint32_t len) {
+  ((uint64_t *)p)[-2] = 0;
+  if (len <= 4096) {
+    *(uint8_t **)p = c_free_bytes[len / 16];
+    c_free_bytes[len / 16] = p;
+  } else {
+    yk_mcache_epoch++;
+    free(p - 16);
+  }
+}
 
 static uint64_t c_alloc(double size, double align, int constant) {
   double a = align > 16 ? align : 16;
@@ -4545,13 +4701,31 @@ static uint64_t c_alloc(double size, double align, int constant) {
     if (c_nregions > 0) memcpy(grown, c_regions, (size_t)c_nregions * sizeof(c_region));
     c_regions = grown;
   }
-  uint8_t *bytes = alloc(len);
-  memset(bytes, 0, len);
+  uint8_t *bytes = c_bytes(len, base);
   c_regions[c_nregions++] = (c_region){base, len, constant, 1, bytes};
   c_next = base + len + 16;
+  /* A new region is the one its first accesses are to. */
+  c_prev = c_last;
+  c_last = c_nregions - 1;
+  c_cache(&c_regions[c_last]);
   return base;
 }
 static c_region *c_region_of(double a, uint32_t n, int write) {
+  /* The last two regions found: a function alternating between two arrays hits one of them. */
+  uint32_t recent[2] = {c_last, c_prev};
+  for (int k = 0; k < 2; k++) {
+    if (recent[k] >= c_nregions) continue;
+    c_region *r = &c_regions[recent[k]];
+    if (a >= (double)r->base && a + n <= (double)(r->base + r->len) && r->live && trunc(a) == a &&
+        !(write && r->constant)) {
+      if (k == 1) {
+        c_prev = c_last;
+        c_last = recent[1];
+      }
+      c_cache(r);
+      return r;
+    }
+  }
   if (!(a == a && !isinf(a) && trunc(a) == a)) c_trap(concat(str(ascii("address ")), str(number_to_string(a))));
   uint32_t lo = 0, hi = c_nregions;
   while (lo < hi) {
@@ -4561,6 +4735,9 @@ static c_region *c_region_of(double a, uint32_t n, int write) {
     else if (a >= (double)(r->base + r->len)) lo = mid + 1;
     else {
       if (!r->live || a + n > (double)(r->base + r->len) || (write && r->constant)) break;
+      c_prev = c_last;
+      c_last = mid;
+      c_cache(r);
       return r;
     }
   }
@@ -4581,6 +4758,12 @@ yk yk_leaf_free(yk addr) {
   c_region *r = c_region_of(a, 1, 0);
   if ((double)r->base != a || r->constant) c_trap(concat(str(ascii("free of 0x")), str(hex_of(a))));
   r->live = 0;
+  if (yk_mcache_bytes == r->bytes) yk_mcache_len = 0;
+  c_release(r->bytes, r->len);
+  r->bytes = NULL;
+  /* A dead region traps as no region does, so the dead ones at the end leave the table (frames are
+     freed last-in, first-out: the table stays as deep as the live ones). */
+  while (c_nregions > 0 && !c_regions[c_nregions - 1].live) c_nregions--;
   return YK_UNDEFINED;
 }
 yk yk_leaf_load8(yk a) { return yk_number(*c_at(a, 1, 0)); }

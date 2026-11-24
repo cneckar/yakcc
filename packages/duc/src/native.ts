@@ -38,6 +38,29 @@ export interface ObjectOptions {
   readonly llc?: string;
   /** Extra target attributes (`-mattr`), e.g. `+d` for RISC-V's double-precision floats. */
   readonly attributes?: string;
+  /**
+   * LLVM's IR optimizations (`opt -O2`) before code generation: values out of stack slots into
+   * registers, inlining, folding. They keep IEEE semantics (the IR has no fast-math flags), so they
+   * change no result. Default: on, when `opt` is on the PATH.
+   */
+  readonly optimize?: boolean;
+}
+
+let optAvailable: boolean | undefined;
+/** The module's IR optimized by `opt -O2`, as bitcode; undefined when there is no `opt`. */
+function optimizeIr(ir: string, triple: string): Buffer | undefined {
+  if (optAvailable === false) return undefined;
+  const run = spawnSync("opt", ["-O2", `-mtriple=${triple}`, "-o", "-"], {
+    input: ir,
+    maxBuffer: 1 << 28,
+  });
+  if (run.error !== undefined) {
+    optAvailable = false;
+    return undefined;
+  }
+  optAvailable = true;
+  if (run.status !== 0) throw new NativeToolError(`opt failed: ${run.stderr.toString().trim()}`);
+  return run.stdout;
 }
 
 /** The default attributes a target needs for this subset: a hardware double. */
@@ -62,7 +85,11 @@ export function compileObject(m: LlvmModule, options: ObjectOptions = {}): Uint8
     "-o",
     "-",
   ];
-  const run = spawnSync(options.llc ?? "llc", args, { input: m.ir, maxBuffer: 1 << 26 });
+  const optimized = options.optimize === false ? undefined : optimizeIr(m.ir, triple);
+  const run = spawnSync(options.llc ?? "llc", args, {
+    input: optimized ?? m.ir,
+    maxBuffer: 1 << 26,
+  });
   if (run.error !== undefined)
     throw new NativeToolError(
       `llc could not be run (${run.error.message}): the native lowering needs LLVM's llc`,
