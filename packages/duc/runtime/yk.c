@@ -4653,6 +4653,31 @@ static _Noreturn void c_trap(yk message) {
 }
 static yk hex_of(double a) { return number_to_radix(a, 16); }
 
+/* Freed regions' bytes, by size (16 to 4096, in steps of 16), for the next region of that size: a
+   region's addresses are never reused, but its bytes may be (zeroed again). */
+static uint8_t *c_free_bytes[257];
+static uint8_t *c_bytes(uint32_t len) {
+  if (len <= 4096 && c_free_bytes[len / 16] != NULL) {
+    uint8_t *p = c_free_bytes[len / 16];
+    c_free_bytes[len / 16] = *(uint8_t **)p;
+    memset(p, 0, len);
+    return p;
+  }
+  uint8_t *p = calloc(len, 1);
+  if (p == NULL) {
+    fputs("out of memory\n", stderr);
+    exit(71);
+  }
+  return p;
+}
+static void c_release(uint8_t *p, uint32_t len) {
+  if (len <= 4096) {
+    *(uint8_t **)p = c_free_bytes[len / 16];
+    c_free_bytes[len / 16] = p;
+  } else
+    free(p);
+}
+
 static uint64_t c_alloc(double size, double align, int constant) {
   double a = align > 16 ? align : 16;
   uint64_t al = (uint64_t)a;
@@ -4665,11 +4690,7 @@ static uint64_t c_alloc(double size, double align, int constant) {
     if (c_nregions > 0) memcpy(grown, c_regions, (size_t)c_nregions * sizeof(c_region));
     c_regions = grown;
   }
-  uint8_t *bytes = calloc(len, 1);
-  if (bytes == NULL) {
-    fputs("out of memory\n", stderr);
-    exit(71);
-  }
+  uint8_t *bytes = c_bytes(len);
   c_regions[c_nregions++] = (c_region){base, len, constant, 1, bytes};
   c_next = base + len + 16;
   return base;
@@ -4715,7 +4736,7 @@ yk yk_leaf_free(yk addr) {
   if ((double)r->base != a || r->constant) c_trap(concat(str(ascii("free of 0x")), str(hex_of(a))));
   r->live = 0;
   if (yk_mcache_bytes == r->bytes) yk_mcache_len = 0;
-  free(r->bytes);
+  c_release(r->bytes, r->len);
   r->bytes = NULL;
   /* A dead region traps as no region does, so the dead ones at the end leave the table (frames are
      freed last-in, first-out: the table stays as deep as the live ones). */

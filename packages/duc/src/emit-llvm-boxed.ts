@@ -960,6 +960,20 @@ function lowerFunction(
   const truthy = (v: ValueId): string => {
     m.used.add("yk_truthy");
     const x = operand(v);
+    // true and false are themselves (a comparison's result, most often): no call.
+    const isTrue = fresh();
+    emit(`${isTrue} = icmp eq i64 ${x}, ${TRUE}`);
+    const isFalse = fresh();
+    emit(`${isFalse} = icmp eq i64 ${x}, ${FALSE}`);
+    const isBool = fresh();
+    emit(`${isBool} = or i1 ${isTrue}, ${isFalse}`);
+    const boolLabel = freshLabel("isbool");
+    const otherLabel = freshLabel("notbool");
+    const truthJoin = freshLabel("truth");
+    emit(`br i1 ${isBool}, label %${boolLabel}, label %${otherLabel}`);
+    block(boolLabel);
+    emit(`br label %${truthJoin}`);
+    block(otherLabel);
     // A number is falsy when it is 0, -0 or NaN; true and false are themselves; else the runtime's.
     const r = numberFast(
       [x],
@@ -978,7 +992,12 @@ function lowerFunction(
     );
     const b = fresh();
     emit(`${b} = icmp eq i64 ${r}, ${TRUE}`);
-    return b;
+    const otherEnd = currentLabel();
+    emit(`br label %${truthJoin}`);
+    block(truthJoin);
+    const t = fresh();
+    emit(`${t} = phi i1 [ ${isTrue}, %${boolLabel} ], [ ${b}, %${otherEnd} ]`);
+    return t;
   };
 
   /** Whether a value is a spread element (`...xs`): the list it is in expands it. */
