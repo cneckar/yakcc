@@ -162,7 +162,7 @@ describe("a function read into a name and called has no receiver (#1330)", () =>
       [
         {
           x: 1,
-          m: function (this: any) {
+          m: function (this: { x?: number } | undefined) {
             return this?.x ?? "none";
           },
         },
