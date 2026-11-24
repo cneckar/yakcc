@@ -101,8 +101,12 @@ export function needPrompt(task) {
   return `Task: ${task.spec}\n\nBefore writing any code, say what reusable library module would do the heavy lifting for this task, as one or two sentences for a code search: the capability, its inputs and outputs, the behavior that matters. No code. If the task is small enough that no library would help, reply NONE.`;
 }
 
-/** Lines of from-scratch code below which the routed arm writes instead of searching. */
-export const ROUTE_LINES = 60;
+/**
+ * Lines of from-scratch code below which the routed arm writes instead of searching. Tuned on
+ * Haiku 5.5 over 15, 30, 45 and 60 (README, "Tuning the threshold"): 15 was cheapest per passing
+ * task and passed every test.
+ */
+export const ROUTE_LINES = 15;
 
 /**
  * The routed arm's first prompt: write it now when it is small, else name the module to search
