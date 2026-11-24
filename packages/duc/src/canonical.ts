@@ -17,14 +17,21 @@ import { bytesToHex } from "@noble/hashes/utils.js";
  * `graphIdentity` hashes the structure alone. Renaming a local or changing a comment changes
  * annotations only, so the identity does not change.
  */
+import { ecmaScriptLabel } from "./ops.js";
 import { isRestParam, paramIndex } from "./params.js";
 import type { DiamondLabel, DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
 
 /**
- * Operations whose two operands can be swapped for every type of operand (#1275, decision 4A). Not
- * `+` (string concatenation does not commute), nor `&&` / `||` (their value is an operand).
+ * Operations whose two operands can be swapped for every value of their operands (#1275, decision
+ * 4A): ECMAScript's `===` and `!==` and their cases, and IEEE addition and multiplication. Not
+ * `js.add` (string concatenation does not commute), nor `&&` / `||` (their value is an operand).
  */
-const COMMUTATIVE = new Set(["===", "!=="]);
+const COMMUTATIVE_ECMASCRIPT = new Set(["===", "!=="]);
+const COMMUTATIVE_GENERIC = new Set(["f64.add", "f64.mul"]);
+const COMMUTATIVE = {
+  has: (label: string): boolean =>
+    COMMUTATIVE_GENERIC.has(label) || COMMUTATIVE_ECMASCRIPT.has(ecmaScriptLabel(label)),
+};
 
 /**
  * A closure that captures a constant has the constant in its own graph instead (#1276): the capture

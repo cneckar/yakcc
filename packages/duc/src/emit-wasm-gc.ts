@@ -645,7 +645,7 @@ const atomGraphs = new Map<string, DucGraph>();
 function atomGraph(key: string): DucGraph {
   let g = atomGraphs.get(key);
   if (g === undefined) {
-    g = liftAtom((ATOMS[key] as { source: string }).source);
+    g = ecmaScriptView(liftAtom((ATOMS[key] as { source: string }).source));
     atomGraphs.set(key, g);
   }
   return g;

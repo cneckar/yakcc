@@ -151,7 +151,7 @@ describe("exits (#1276)", () => {
     const g = liftAtom(src);
     expect(g.nodes.some((n) => n.kind === "loop" && n.loop !== undefined)).toBe(true);
     const thrown = g.nodes.find((n) => n.label === "throw");
-    const added = g.nodes.find((n) => n.label === "+");
+    const added = g.nodes.find((n) => n.label === "js.add");
     expect(thrown?.region).toMatch(/\.t$/);
     expect(added?.region).toMatch(/\.e$/);
     const code = emitTypeScript(g);
@@ -174,7 +174,7 @@ describe("exits (#1276)", () => {
       "export function f(n: number, a: boolean, b: boolean) { let i = 0; let s = 0; while (i < n) { const j = i + 1; if (a) { s = 1; } else if (b) { throw new Error('b'); } else { s = 2; } i = j; } return [i, s]; }",
     );
     const sels = g.nodes.filter((n) => n.kind === "sel");
-    const plus = g.nodes.find((n) => n.label === "+")?.outputs[0];
+    const plus = g.nodes.find((n) => n.label === "js.add")?.outputs[0];
     expect(sels.some((n) => n.inputs.includes(plus as string))).toBe(false);
   });
 

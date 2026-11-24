@@ -14,7 +14,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { type SpecYak, specHash } from "@yakcc/contracts";
-import { atomShape, liftAtom, packGraph } from "@yakcc/duc";
+import { atomShape, byMeaning, contractSignature, liftAtom, packGraph } from "@yakcc/duc";
 import { collectForestSlicePlans, shavePackage, slice } from "@yakcc/shave";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -66,7 +66,7 @@ async function submissionOf(
         shape.kind === "function" ? (shape.name !== undefined ? [shape.name] : []) : shape.names;
       const params = graph.nodes.filter((n) => n.kind === "param-source").length;
       const spec = contract(`${pkg}:${filePath}#${k}`, params);
-      const packed = packGraph(graph);
+      const packed = packGraph(byMeaning(graph, contractSignature(spec)));
       const name = shape.kind === "function" ? (shape.name ?? "") : "";
       batch.push({
         spec,
@@ -113,7 +113,7 @@ function oneStatementModule(
   const graph = liftAtom(source);
   const shape = atomShape(source);
   const spec = { ...contract("one", 0), effects } as SpecYak;
-  const packed = packGraph(graph);
+  const packed = packGraph(byMeaning(graph, contractSignature(spec)));
   return {
     batch: [
       {
@@ -336,7 +336,7 @@ describe("a corpus package as a shared submission (#1287, #1290)", () => {
         const graph = liftAtom(line);
         const shape = atomShape(line);
         const spec = contract(`${id}#${k}`, 0);
-        const packed = packGraph(graph);
+        const packed = packGraph(byMeaning(graph, contractSignature(spec)));
         batch.push({
           spec,
           specHash: specHash(spec),
