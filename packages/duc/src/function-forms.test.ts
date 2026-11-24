@@ -85,6 +85,11 @@ describe("a return inside a switch inside a loop (#1330)", () => {
       "export function f(xs) { let n = 0; for (const x of xs) { switch (x) { case 1: n = n + 100; break; case 2: return n; } n = n + 1; } return n; }",
       [1, 1, 3, 2, 9],
     ],
+    [
+      "a return under an if inside a case, with statements after it in the case and after the switch",
+      "export function f(t) { const out = []; for (let i = 0; i < t; i++) { switch (i % 3) { case 0: out.push('a'); break; case 1: if (i > 3) return out; out.push('b'); break; default: out.push('c'); } out.push(i); } return out; }",
+      7,
+    ],
   ];
   for (const [name, source, input] of LOOPS) {
     it(name, () => {
@@ -139,4 +144,3 @@ describe("an async iteration is stored and read back (#1330)", () => {
     expect(g.nodes.find((n) => n.kind === "loop")?.loop?.iterate?.of).toBe("async values");
   });
 });
-

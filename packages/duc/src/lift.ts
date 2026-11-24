@@ -776,7 +776,7 @@ class Lifter {
         if (
           Node.isIfStatement(stmt) &&
           full !== undefined &&
-          containsLoopJump(stmt, this.bodyExits.node)
+          this.holdsLoopExit(stmt, this.bodyExits.node)
         ) {
           const elseNode = stmt.getElseStatement();
           this.liftIf(
@@ -898,7 +898,32 @@ class Lifter {
       .getSourceFile()
       .getProject()
       .createSourceFile(`__switch${this.switchCount}.ts`, source, { overwrite: true });
-    return file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0];
+    return this.noteExits(
+      file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0],
+    );
+  }
+
+  /**
+   * A lowered statement's returns are the function's: in a loop's body, exits of the loop, as the
+   * returns of the statement it was lowered from are (#1330).
+   */
+  private noteExits(lowered: Node | undefined): Node | undefined {
+    for (const r of lowered?.getDescendantsOfKind(SyntaxKind.ReturnStatement) ?? [])
+      if (!isInsideNestedFunction(r, lowered as Node)) this.loweredExits.add(r.compilerNode);
+    return lowered;
+  }
+
+  /** The returns of lowered statements (see noteExits). */
+  private readonly loweredExits = new Set<import("ts-morph").ts.Node>();
+
+  /** Whether a statement holds an exit of the loop whose body is being lifted. */
+  private holdsLoopExit(stmt: Node, loop: Node): boolean {
+    return (
+      containsLoopJump(stmt, loop) ||
+      stmt
+        .getDescendantsOfKind(SyntaxKind.ReturnStatement)
+        .some((r) => this.loweredExits.has(r.compilerNode))
+    );
   }
 
   private tryCount = 0;
