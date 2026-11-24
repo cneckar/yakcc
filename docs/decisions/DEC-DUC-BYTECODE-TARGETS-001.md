@@ -62,6 +62,10 @@ the format lacks, classified (a), (b) or (c) as in #1299, before the lock.
   - bitwise operators (ToInt32 by exact double arithmetic, then 32-bit integer operations);
   - `Map` and `Set` (SameValueZero, insertion order; `keys`/`values`/`entries` as snapshot arrays), and method calls of receivers of any kind through one dispatch atom (`__ykInvoke`);
   - string methods `split`, `repeat`, `padStart`/`padEnd`, `lastIndexOf`, `trimStart`/`trimEnd`, `at`, and `replace`/`replaceAll` with a string pattern (GetSubstitution's `$$`, `$&`, `` $` ``, `$'`, or a callback); array methods `slice`, `at`, `lastIndexOf`, `concat` and `reverse`;
+  - increments, decrements and compound assignments (`a op= b` computes `a op b`; `++a` and `a++` both compute ToNumber(a) + 1, the graph holding the old value as ToNumber(a));
+  - optional chain links (`a?.k`, `a?.[key]`, `a?.m(...)`, `f?.(...)`); a plain link that reads one's result (`a?.b.c`) is refused, since the graph does not say whether the short-circuit covers it (classified (c), #1360);
+  - element reads of strings, arrays and values of any kind by keys of any kind (ToPropertyKey: an index, a canonical numeric string, or a property such as `length`);
+  - `Number.prototype.toString(radix)` as V8 writes it (DoubleToRadixCString, fractions included), and `toString` of booleans, arrays and objects through `__ykInvoke`;
   - `sort`, by default (undefined last, the rest as strings) and with a comparator, stable; spread (`...`) in array literals, in calls of values of any kind and of methods, in `Math.max`/`Math.min`, and in object literals (`Object.assign`'s copy); `Array.from` of an iterable or an array-like; `Math.max` and `Math.min` as function values, of every argument they are given, and `String` and `Number` as function values called with none (`""` and `0`); rest parameters (a call that spreads before one, or into a function with none, is the function value's call, its arguments an array). A comparator that is not consistent (one returning NaN) leaves the order to the implementation, as ECMA-262 does, so the tests do not compare it;
   - iteration: `for...in` (keys in ECMAScript's order: array indices ascending, then the others as made), `for...of` over arrays (read at each step, as the iterator does), strings (by code point) and values of any kind, and `Object.keys`, `values` and `entries`;
   - arrays of any values;
@@ -77,6 +81,7 @@ the format lacks, classified (a), (b) or (c) as in #1299, before the lock.
   - A function value's source text (`String(f)`), which a lowering does not keep.
   - Arrays with holes. An array element a reviver revives to undefined is deleted, which leaves a hole; the lowering's arrays have none, so it holds undefined (the same to reads, `length` and `JSON.stringify`; not to `Object.keys`, `in` or `forEach`). A reviver's and a replacer's `this` (the holder), which arrow functions do not see.
   - The engines' exact SyntaxError messages.
+  - Builtin methods read as properties (`"abc"["at"]`, `a.m?.()`): a builtin kind's methods are not values in the lowering, so such a read is undefined. A function value's `toString`.
   - The iterator protocol: a user's iterators and generators. Maps and sets iterate as snapshots, so an entry added while one is iterated is not visited, as it is in ECMAScript.
   - The engines' exact TypeError messages.
 - **(c) format gaps:** none found. The graph carried everything both lowerings need: the contract's types, the dataflow, and the heap order.
