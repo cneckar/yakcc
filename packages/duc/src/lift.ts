@@ -1820,8 +1820,9 @@ class Lifter {
       const thenValue = thenEnv.get(name) ?? beforeValue;
       const elseValue = elseEnv.get(name) ?? beforeValue;
       // A side that has thrown on every path never reaches here. When the other side's value was made
-      // before the if (or is a constant), it is the value; otherwise the join keeps the value from before
-      // on the dead side.
+      // before the if (or is a constant), it is the value; otherwise the join takes `undefined` on the
+      // dead side, never read: the value the name had before the if depends on how the source named
+      // its values, and the TypeScript lowering names them differently (#1316).
       // The heap token keeps the throwing side's: what follows waits for the branch (#1285).
       if (thenDead !== elseDead && name !== HEAP) {
         const live = thenDead ? elseValue : thenValue;
@@ -1832,9 +1833,10 @@ class Lifter {
           this.env.set(name, live);
           continue;
         }
+        const dead = this.undefinedValue();
         const [joined] = this.emit(
           "sel",
-          [condValue, thenDead ? beforeValue : live, thenDead ? live : beforeValue],
+          [condValue, thenDead ? dead : live, thenDead ? live : dead],
           1,
           { origin: { kind: "IfJoin", text: name } },
         );

@@ -163,6 +163,18 @@ describe("exits (#1276)", () => {
     expect(graphIdentity(liftAtom(code))).toBe(graphIdentity(g));
   });
 
+  it("a join's dead side, never read, is undefined: the source's names for its values do not reach the graph (#1316)", () => {
+    // A side that throws never reaches the join; what the name held before the if is not part of it.
+    const src =
+      'export function f(n: number, p: number) { while (p < n) { p++; if (p >= n) throw new Error("x"); while (p < n) { p++; } } return p; }';
+    const g = liftAtom(src);
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+    // The same function with the increment written into another name before the if.
+    const renamed =
+      'export function f(n: number, p: number) { while (p < n) { let q = p; q++; let r = q; if (q >= n) { throw new Error("x"); } else { while (r < n) { r++; } } p = r; } return p; }';
+    expect(graphIdentity(liftAtom(renamed))).toBe(graphIdentity(g));
+  });
+
   it("a join whose sides hold the same new value takes it, and a side that throws does not join", () => {
     expect(
       id(

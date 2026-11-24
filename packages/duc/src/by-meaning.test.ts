@@ -138,10 +138,7 @@ describe("round trip with the contract (#1310)", () => {
     for (const atom of sample) {
       const s = signatureOf(atom.source);
       if (s === undefined) continue;
-      const lifted = liftAtom(atom.source);
-      // Two seeds do not round-trip without a contract either (a join order, #1316): not this check's.
-      if (graphIdentity(liftAtom(emitTypeScript(lifted))) !== graphIdentity(lifted)) continue;
-      const g = byMeaning(lifted, s);
+      const g = byMeaning(liftAtom(atom.source), s);
       const back = byMeaning(liftAtom(emitTypeScript(g)), s);
       expect(graphIdentity(back), atom.name).toBe(graphIdentity(g));
       checked++;

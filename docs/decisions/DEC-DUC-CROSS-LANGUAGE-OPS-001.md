@@ -174,7 +174,7 @@ named by **meaning**, and each language's symbol is raised to the meaning it has
 - **Federation, authored graphs:** a model's line form is chosen under its contract, and the round trip relifts and chooses again.
 - **Federation receiver, check 3 (integrity):** the receiver chooses again under the contract and refuses a graph whose identity changes. A sender cannot store `js.add` where the contract's types make it `f64.add`, or the reverse.
 
-**Round trip.** Graph → TypeScript (through the view) → lift → choose under the same contract gives the same identity. This holds on every corpus-sample atom whose plain round trip holds; two seeds don't round-trip even without the choice, a join order tracked in #1316.
+**Round trip.** Graph → TypeScript (through the view) → lift → choose under the same contract gives the same identity. This holds on every corpus-sample atom (61 / 61, after the fix to a join's dead side in #1316).
 
 **Identity.**
 - Every lifted identity changed once: `LIFTER_VERSION` 41, and the pinned corpus sample was regenerated.
