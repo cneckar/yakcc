@@ -204,3 +204,59 @@ describe("a write to an outer name that a function expression of the same name s
     }
   });
 });
+
+describe("a switch that yields, in a generator's loop (#1330)", () => {
+  it("each case's yield is the generator's", () => {
+    agrees(
+      `export function f(items: string[]) {
+  function* report(xs: string[]) {
+    yield 'start';
+    for (const x of xs) {
+      switch (x) {
+        case 'a': { yield 'A'; yield 'a2'; break; }
+        case 'skip': continue;
+        default: yield x.toUpperCase();
+      }
+      yield '-';
+    }
+  }
+  return [...report(items)];
+}`,
+      [[[]], [["a", "b"]], [["skip", "a", "c"]]],
+    );
+  });
+});
+
+describe("a function declared in a block after a statement that may throw (#1330)", () => {
+  it("is bound on the side the rest is lifted on", () => {
+    agrees(
+      `export function f(i: boolean, t: boolean) {
+  const out: number[] = [];
+  if (i) { if (!t) { throw new RangeError('no'); } }
+  if (t) { out.push(1); } else { function g() { return 7; } out.push(g()); }
+  return out;
+}`,
+      [
+        [false, false],
+        [false, true],
+        [true, true],
+        [true, false],
+      ],
+    );
+  });
+});
+
+describe("a function declaration reading a class declared in its scope (#1330)", () => {
+  it("reads the class, whichever is written first", () => {
+    agrees(
+      `export function f(n: number) {
+  class P { static make(k: number) { return new P(k); } v: number; constructor(k: number) { this.v = k * 2; } }
+  function init(k: number) { return () => P.make(k).v; }
+  function later(k: number) { return Q.twice(k); }
+  class Q { static twice(k: number) { return k * 2; } }
+  return [init(n)(), later(n)];
+}`,
+      [[1], [5]],
+    );
+  });
+});

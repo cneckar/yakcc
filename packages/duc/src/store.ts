@@ -29,7 +29,7 @@ export const GRAPH_FORMAT_VERSION = 2;
  * same source (a new construct lifted, a canonical rule) changes identities, so it bumps this: a
  * stored graph from an older lifter is still valid, but relifting its source may give another.
  */
-export const LIFTER_VERSION = 58;
+export const LIFTER_VERSION = 59;
 
 /**
  * One reference's link: the reference, by reason, symbol and module, and what it links to: a
