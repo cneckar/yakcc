@@ -4632,7 +4632,7 @@ typedef struct {
 static c_region *c_regions = NULL;
 static uint32_t c_nregions = 0, c_capregions = 0;
 /* The last region an access found: most accesses are to it. */
-static uint32_t c_last = 0;
+static uint32_t c_last = 0, c_prev = 0;
 /* It, as the lowered code's inline loads and stores check it (#1369): its base, its length (0 when
    there is none), its bytes, and whether it may be written. */
 uint64_t yk_mcache_base = 0;
@@ -4693,13 +4693,24 @@ static uint64_t c_alloc(double size, double align, int constant) {
   uint8_t *bytes = c_bytes(len);
   c_regions[c_nregions++] = (c_region){base, len, constant, 1, bytes};
   c_next = base + len + 16;
+  /* A new region is the one its first accesses are to. */
+  c_prev = c_last;
+  c_last = c_nregions - 1;
+  c_cache(&c_regions[c_last]);
   return base;
 }
 static c_region *c_region_of(double a, uint32_t n, int write) {
-  if (c_last < c_nregions) {
-    c_region *r = &c_regions[c_last];
+  /* The last two regions found: a function alternating between two arrays hits one of them. */
+  uint32_t recent[2] = {c_last, c_prev};
+  for (int k = 0; k < 2; k++) {
+    if (recent[k] >= c_nregions) continue;
+    c_region *r = &c_regions[recent[k]];
     if (a >= (double)r->base && a + n <= (double)(r->base + r->len) && r->live && trunc(a) == a &&
         !(write && r->constant)) {
+      if (k == 1) {
+        c_prev = c_last;
+        c_last = recent[1];
+      }
       c_cache(r);
       return r;
     }
@@ -4713,6 +4724,7 @@ static c_region *c_region_of(double a, uint32_t n, int write) {
     else if (a >= (double)(r->base + r->len)) lo = mid + 1;
     else {
       if (!r->live || a + n > (double)(r->base + r->len) || (write && r->constant)) break;
+      c_prev = c_last;
       c_last = mid;
       c_cache(r);
       return r;
