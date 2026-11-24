@@ -1159,7 +1159,11 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
         result.push(arg);
       }
     }
-    return result;
+    // A non-atomic `new` with no such argument carries its control flow in its other arguments
+    // (a template literal, a ternary): descend into those that decompose further. With none, the
+    // `new` is glue, as a call is (DEC-SLICER-THROW-AND-ARGUMENTS-001).
+    if (result.length > 0) return result;
+    return ne.getArguments().filter((arg) => decomposableChildrenOf(arg).length > 0);
   }
 
   // ConditionalExpression: `cond ? then : else` — decompose to [condition, whenTrue, whenFalse].
@@ -1194,6 +1198,39 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
   if (kind === SyntaxKind.ReturnStatement) {
     const rs = node as Node & { getExpression?(): Node | undefined };
     const expr = rs.getExpression?.();
+    return expr !== undefined ? [expr] : [];
+  }
+
+  // ThrowStatement: descend into the thrown expression, as a return does.
+  //
+  // @decision DEC-SLICER-THROW-AND-ARGUMENTS-001
+  // title: throw descends into its expression; new descends into its decomposable arguments
+  // status: accepted
+  // rationale:
+  //   The self-shave bootstrap failed on @yakcc/duc/emit-wasm-gc.ts: a throw whose error is built
+  //   from a template literal with two inline ternaries,
+  //   `throw new E(\`${a ? b : c} … ${d ? e : f}\`)`. Three gaps met there:
+  //   ThrowStatement had no branch, and NewExpression descended only into function-like and
+  //   object-literal arguments. So the non-atomic throw had no children and recurse() threw
+  //   DidNotReachAtomError. Now a throw descends into its expression, and a non-atomic `new`
+  //   with no such argument descends into its arguments that decompose further, which reach the
+  //   existing TemplateExpression / ConditionalExpression branches.
+  // alternatives:
+  //   A. Rewrite the source site (compute the phrases first, then throw) — rejected: it moves a
+  //      pipeline gap into source-style discipline (DEC-SLICER-TEMPLATE-EXPRESSION-001's
+  //      argument), and the next such site breaks the bootstrap again.
+  //   B. Descend into every argument of a call or `new` — rejected: a call with no decomposable
+  //      child is glue by design (DEC-V2-SHAVE-CALLEXPRESSION-GLUE-001), and a plain identifier
+  //      argument has nothing to descend into. Only `new`, which had no glue route, changes.
+  // consequences:
+  //   - Throws, and constructions whose control flow sits in plain arguments, shave.
+  //   - A non-atomic `new` with nothing to descend into is glue, as a call already is
+  //     (DEC-V2-SHAVE-CALLEXPRESSION-GLUE-001); before, it threw.
+  //   - Atoms of previously-shaving files are unchanged: every new branch fires only where a
+  //     non-atomic throw or `new` previously threw DidNotReachAtomError. Calls are unchanged.
+  if (kind === SyntaxKind.ThrowStatement) {
+    const ts = node as Node & { getExpression?(): Node | undefined };
+    const expr = ts.getExpression?.();
     return expr !== undefined ? [expr] : [];
   }
 
@@ -1540,7 +1577,11 @@ export async function decompose(
       //   Rejected alternatives (per #399 body):
       //     1. Refactor each CallExpression to be decomposable (source-level edits, risk subtle behavior change)
       //     2. Extend decomposableChildrenOf() (unknown surface area, risks regressing currently-working files)
-      if (node.getKind() === SyntaxKind.CallExpression) {
+      // A `new` with nothing to descend into is glue too (DEC-SLICER-THROW-AND-ARGUMENTS-001).
+      if (
+        node.getKind() === SyntaxKind.CallExpression ||
+        node.getKind() === SyntaxKind.NewExpression
+      ) {
         leafCount += 1;
         const leaf: AtomLeaf = {
           kind: "atom",

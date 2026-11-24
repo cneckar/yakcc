@@ -1,6 +1,6 @@
 # DEC-DUC-CROSS-LANGUAGE-OPS-001: how operations are named across languages
 
-**Status:** **Proposed.** This is for the user to decide. It changes labels, and so identity: it must be decided before the format lock. Nothing here is implemented as a label change.
+**Status:** **Proposed, direction set by the user (2026-11-24):** operations are generic across languages wherever their meaning is shared, and per-language only where a meaning is unique to one language. Below: how that is done, and what is still to confirm.
 **Date:** 2026-11-23
 **Issues:**
 - https://github.com/cneckar/yakcc/issues/1298
@@ -89,19 +89,43 @@ the graph crosses.
 | Format content to fix before the lock | prefix scheme; one language per graph | prefix scheme; core membership; the core-selection rule | nothing new; the losses are permanent |
 | JavaScript lifter labels | unchanged (unprefixed = ECMAScript) | unchanged; the core is a subset of them | unchanged |
 
-## Proposal
+## Proposal: operations named by meaning
 
-**A: per-language operations, with the contract as the bridge between languages.**
-- The Python sample shows that a shared vocabulary either loses meaning or costs a third of every graph.
-- B's core is too small to make cross-language deduplication pay for an identity that depends on type inference.
-- A keeps every raise faithful, and keeps identity independent of raiser quality.
+The user's direction: **as much as possible generic, per-language only what is truly unique.**
 
-Cross-language reuse goes through what yakcc already keys on, the contract, together with differential tests between implementations. Identity is not used for it.
+The obstacle to "generic" is that a language's *symbol* is not an operation. Python's `%` and
+ECMAScript's `%` are two different operations that happen to share a symbol. So the vocabulary is
+named by **meaning**, and each language's symbol is raised to the meaning it has on its operands:
 
-**What the user is asked to decide:**
-1. A, B or C.
-2. For A or B: the prefix scheme. The proposal: `py:`, `go:`, `rs:`, and no prefix for ECMAScript, so no stored atom's identity changes.
-3. For A: whether a graph may mix languages' operations. The proposal: no. Languages meet at links, through the contract.
+| Generic operation | Python raises to it from | ECMAScript raises to it from |
+|---|---|---|
+| `f64.add`, `f64.sub`, `f64.mul` | `+ - *` on floats | `+ - *` on numbers |
+| `f64.div` (IEEE: a zero divisor gives ±Infinity or NaN) | — | `/` |
+| `f64.div.checked` (a zero divisor raises) | `/` | — |
+| `mod.floored` | `%` | — (but available to any language) |
+| `rem.truncated` | `math.fmod` | `%` |
+| `int.add` (unbounded) | `+` on ints | `+` on BigInt |
+| `str.concat` | `+` on strings | `+` on two strings |
+| `str.length.units16` / `str.length.codepoints` | — / `len(s)` | `s.length` / — |
+| `list.get.checked` (out of range raises) | `xs[i]` | — |
+| `list.get` (out of range gives undefined) | — | `xs[i]` |
+
+**Per-language, because the meaning is unique:**
+- ECMAScript's `+` on operands of unknown or mixed type, with ToPrimitive and its coercions (`js.add`);
+- `undefined`;
+- Python's tuple;
+- each language's exception classes, as data the generic `throw` carries.
+
+**What this does to identity:**
+- The same algorithm in two languages gets **one identity** wherever its operations are generic. A function over floats and strings raised from Python, and the same function lifted from ECMAScript, are the same graph.
+- Choosing a generic operation needs the operands' types. ECMAScript `a + b` is `f64.add` when both are numbers, `str.concat` when both are strings, and `js.add` otherwise.
+  The rule that picks the operation is part of the format, so a better type inference must not change which operation an atom already has. The proposed answer: the operation is chosen from the **contract's** types only, which are fixed with the atom.
+- **The JavaScript lifter's labels change:** today's unprefixed labels become these names. Every stored atom's identity changes once, before the lock.
+
+**To confirm:**
+1. The generic vocabulary's names, and its first membership (the table above, grown as each target needs).
+2. Operations chosen from the contract's types only, so identity does not move with inference.
+3. Relabelling the JavaScript lifter's operations before the lock.
 
 ## Not decided here
 
