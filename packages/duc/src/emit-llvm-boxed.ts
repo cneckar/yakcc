@@ -457,8 +457,20 @@ function lowerFunction(
     n.label === "CallExpression" ? leafValue.get(resolve(n.inputs[0] as ValueId)) : undefined;
   const numRange = new Map<ValueId, "i32" | "u32">();
   const bigWidth = new Map<ValueId, number>();
+  /** A BigInt the graph fixes: a literal, or __ykNumToBig of an integer literal (raise-c's `32n`). */
   const literalBig = (v: ValueId): bigint | undefined => {
     const p = producer.get(resolve(v));
+    if (
+      p?.kind === "op" &&
+      p.label === "CallExpression" &&
+      leafValue.get(resolve(p.inputs[0] as ValueId)) === "__ykNumToBig" &&
+      p.inputs.length === 2
+    ) {
+      const a = producer.get(resolve(p.inputs[1] as ValueId));
+      const x =
+        a?.kind === "literal-source" ? Number((a.label ?? "").replace(/_/g, "")) : Number.NaN;
+      return Number.isSafeInteger(x) ? BigInt(x) : undefined;
+    }
     if (p?.kind !== "literal-source" || !BIGINT_LITERAL.test(p.label ?? "")) return undefined;
     return BigInt((p.label as string).slice(0, -1).replace(/_/g, ""));
   };
@@ -1611,7 +1623,34 @@ function lowerFunction(
       if (callee !== undefined && isMath(callee.node.inputs[0] as ValueId)) {
         if (MATH1.has(callee.name) && args.length === 1) {
           const key = m.constant(callee.name, true);
-          set(out, call("yk_math1", `ptr ${key.ptr}, i64 ${args[0]}`));
+          const slow = (): string => call("yk_math1", `ptr ${key.ptr}, i64 ${args[0]}`);
+          // floor, ceil, trunc, sqrt and abs of a number: the exact LLVM intrinsic, inline (#1369).
+          const intrinsic = (
+            {
+              floor: "llvm.floor.f64",
+              ceil: "llvm.ceil.f64",
+              trunc: "llvm.trunc.f64",
+              sqrt: "llvm.sqrt.f64",
+              abs: "llvm.fabs.f64",
+            } as Record<string, string>
+          )[callee.name];
+          if (intrinsic !== undefined) {
+            m.intrinsics.add(`declare double @${intrinsic}(double)`);
+            set(
+              out,
+              numberFast(
+                [args[0] as string],
+                ([d]) => {
+                  const r = fresh();
+                  emit(`${r} = call double @${intrinsic}(double ${d})`);
+                  return boxDouble(r);
+                },
+                slow,
+              ),
+            );
+            return;
+          }
+          set(out, slow());
           return;
         }
         if ((callee.name === "min" || callee.name === "max") && ins.slice(1).some(isSpread)) {
@@ -2079,7 +2118,26 @@ function lowerFunction(
     else if (i < closure.captures) set(v, call("yk_capture", `ptr %closure, i64 ${i}`));
     else if ((p.label ?? "").endsWith("..."))
       set(v, call("yk_rest", `i64 %argc, ptr %argv, i64 ${i - closure.captures}`));
-    else set(v, call("yk_arg", `i64 %argc, ptr %argv, i64 ${i - closure.captures}`));
+    else {
+      // The argument, or undefined past argc: inline (#1369).
+      const k = i - closure.captures;
+      const has = fresh();
+      emit(`${has} = icmp ugt i64 %argc, ${k}`);
+      const at = fresh();
+      emit(`${at} = getelementptr i64, ptr %argv, i64 ${k}`);
+      const given = freshLabel("arg");
+      const join = freshLabel("argd");
+      const entryEnd = currentLabel();
+      emit(`br i1 ${has}, label %${given}, label %${join}`);
+      block(given);
+      const x = fresh();
+      emit(`${x} = load i64, ptr ${at}`);
+      emit(`br label %${join}`);
+      block(join);
+      const r = fresh();
+      emit(`${r} = phi i64 [ ${x}, %${given} ], [ ${UNDEFINED}, %${entryEnd} ]`);
+      set(v, r);
+    }
   });
   emitScope(undefined);
   if (scope?.outs !== undefined) {
