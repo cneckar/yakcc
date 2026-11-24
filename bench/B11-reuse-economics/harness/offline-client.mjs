@@ -10,6 +10,10 @@ export function offlineClient(tasksById) {
   const views = Object.fromEntries(Object.entries(tasksById).map(([id, t]) => [id, clientView(t)]));
   return {
     async complete(prompt) {
+      // The fallback arm's confirm turn: the offline client keeps nothing, so the dry run is
+      // deterministic (the scripted tests cover the compose path).
+      if (prompt.includes('{"use": [candidate numbers]}'))
+        return { text: '{"use": []}', inputTokens: Math.ceil(prompt.length / 4), outputTokens: 4 };
       const id = matchTaskId(prompt, views);
       const task = id ? views[id] : undefined;
       const text = task ? "```ts\n" + task.reference + "\n```" : "```ts\n// no task\n```";

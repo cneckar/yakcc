@@ -8,7 +8,7 @@
     "fallback"
   ],
   "seeds": 3,
-  "maxCalls": 297,
-  "maxInputTokens": 284745,
-  "maxOutputTokens": 594000
+  "maxCalls": 378,
+  "maxInputTokens": 400419,
+  "maxOutputTokens": 756000
 }

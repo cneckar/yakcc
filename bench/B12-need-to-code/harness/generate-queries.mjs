@@ -25,7 +25,9 @@ import { corpusDefinitions } from "../../B11-reuse-economics/harness/retrieve.mj
 import { buildCard } from "./cards.mjs";
 import { runExamples } from "./match.mjs";
 import {
+  DEFAULT_MAX_DOLLARS,
   DEFAULT_MODEL,
+  checkBudget,
   estimateCost,
   extractJson,
   mapLimit,
@@ -78,27 +80,20 @@ async function main() {
   const textOf = new Map(defs.map((d) => [`${d.sourceFile}#${d.name}@${d.lineStart}`, d.text]));
   const chosen = sample(cards, limit);
 
+  const chars = chosen.reduce(
+    (n, c) =>
+      n + DESCRIBE_SYSTEM.length + (textOf.get(c.id)?.length ?? 0) + ASK_SYSTEM.length + 800,
+    0,
+  );
+  const estimate = estimateCost(chars, chosen.length * 2 * 700, chosen.length * 2);
   if (argv.includes("--dry-run")) {
-    const chars = chosen.reduce(
-      (n, c) =>
-        n + DESCRIBE_SYSTEM.length + (textOf.get(c.id)?.length ?? 0) + ASK_SYSTEM.length + 800,
-      0,
-    );
-    console.log(
-      JSON.stringify(
-        {
-          functions: chosen.length,
-          packages: new Set(chosen.map((c) => c.pkg)).size,
-          estimate: estimateCost(chars, chosen.length * 2 * 700, chosen.length * 2),
-        },
-        null,
-        2,
-      ),
-    );
+    const packages = new Set(chosen.map((c) => c.pkg)).size;
+    console.log(JSON.stringify({ functions: chosen.length, packages, estimate }, null, 2));
     return;
   }
 
   const model = arg("model", DEFAULT_MODEL);
+  checkBudget(estimate, model, Number(arg("max-dollars", String(DEFAULT_MAX_DOLLARS))));
   const client = await modelClient({ model });
   const made = await mapLimit(chosen, Number(arg("concurrency", "6")), async (c) => {
     const code = maskName(textOf.get(c.id) ?? "", c.name);

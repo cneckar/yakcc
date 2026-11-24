@@ -1,0 +1,2560 @@
+{
+  "set": "seed",
+  "k": 5,
+  "largeNodes": 400,
+  "descriptions": 0,
+  "pools": {
+    "all": 2985,
+    "large roots": 253
+  },
+  "summary": {
+    "all": {
+      "positives": 30,
+      "negatives": 8,
+      "targetInPool": 1,
+      "top1": 0.4666666666666667,
+      "top5": 0.7666666666666667,
+      "top10": 0.8333333333333334,
+      "mrr": 0.5918662039714672,
+      "auroc": 0.7648809523809523,
+      "medianWriteTokens": 1426,
+      "medianLeverage": {
+        "claude-opus-5-5": 8.01123595505618,
+        "claude-sonnet-5-5": 8.01123595505618,
+        "claude-haiku-5-5": 8.01123595505618
+      },
+      "foundAndPays": 0.7
+    },
+    "large roots": {
+      "positives": 30,
+      "negatives": 8,
+      "targetInPool": 0.9333333333333333,
+      "top1": 0.5333333333333333,
+      "top5": 0.8333333333333334,
+      "top10": 0.8666666666666667,
+      "mrr": 0.6565656565656567,
+      "auroc": 0.8181818181818182,
+      "medianWriteTokens": 1426,
+      "medianLeverage": {
+        "claude-opus-5-5": 6.499544211485871,
+        "claude-sonnet-5-5": 6.499544211485871,
+        "claude-haiku-5-5": 6.499544211485871
+      },
+      "foundAndPays": 0.7666666666666667
+    }
+  },
+  "rows": {
+    "all": [
+      {
+        "id": "csv-to-records",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 4,
+        "top3": [
+          "csv-parse-6.2.1/lib/sync.js#push@9",
+          "csv-parse-6.2.1/lib/api/normalize_columns_array.js#normalize_columns_array@4",
+          "csv-parse-6.2.1/lib/api/index.js#transform@28"
+        ],
+        "topK": [
+          "csv-parse-6.2.1/lib/sync.js#push@9",
+          "csv-parse-6.2.1/lib/api/normalize_columns_array.js#normalize_columns_array@4",
+          "csv-parse-6.2.1/lib/api/index.js#transform@28",
+          "csv-parse-6.2.1/lib/sync.js#parse@3",
+          "csv-parse-6.2.1/lib/index.js#Parser@14",
+          "csv-parse-6.2.1/lib/api/normalize_options.js#normalize_options@5",
+          "csv-parse-6.2.1/lib/index.js#parse@79",
+          "csv-parse-6.2.1/lib/utils/is_object.js#is_object@1",
+          "csv-parse-6.2.1/lib/api/CsvError.js#CsvError@1",
+          "csv-parse-6.2.1/lib/utils/ResizeableBuffer.js#toString@48"
+        ],
+        "topSimilarity": 0.6849031191921348,
+        "top1Correct": false,
+        "writeTokens": 15444,
+        "requestTokens": 53,
+        "confirmInputTokens": 445,
+        "leverage": {
+          "claude-opus-5-5": 76.45544554455445,
+          "claude-sonnet-5-5": 76.45544554455445,
+          "claude-haiku-5-5": 76.45544554455445
+        }
+      },
+      {
+        "id": "highest-version-in-range",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 8,
+        "top3": [
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/subset.js#simpleSubset@76",
+          "semver-7.8.0/ranges/outside.js#outside@13"
+        ],
+        "topK": [
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/subset.js#simpleSubset@76",
+          "semver-7.8.0/ranges/outside.js#outside@13",
+          "semver-7.8.0/ranges/to-comparators.js#toComparators@6",
+          "semver-7.8.0/ranges/valid.js#validRange@4",
+          "semver-7.8.0/ranges/subset.js#subset@45",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7",
+          "semver-7.8.0/ranges/max-satisfying.js#maxSatisfying@6",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/classes/range.js#Range@6"
+        ],
+        "topSimilarity": 0.6876910180883771,
+        "top1Correct": false,
+        "writeTokens": 6896,
+        "requestTokens": 43,
+        "confirmInputTokens": 496,
+        "leverage": {
+          "claude-opus-5-5": 34.10484668644906,
+          "claude-sonnet-5-5": 34.10484668644906,
+          "claude-haiku-5-5": 34.104846686449065
+        }
+      },
+      {
+        "id": "version-satisfies-range",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/valid.js#validRange@4",
+          "semver-7.8.0/classes/range.js#intersects@170"
+        ],
+        "topK": [
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/valid.js#validRange@4",
+          "semver-7.8.0/classes/range.js#intersects@170",
+          "semver-7.8.0/ranges/subset.js#simpleSubset@76",
+          "semver-7.8.0/classes/range.js#Range@6",
+          "semver-7.8.0/classes/range.js#parseRange@100",
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "semver-7.8.0/ranges/to-comparators.js#toComparators@6",
+          "semver-7.8.0/ranges/subset.js#subset@45",
+          "semver-7.8.0/ranges/ltr.js#ltr@5"
+        ],
+        "topSimilarity": 0.742436206005908,
+        "top1Correct": true,
+        "writeTokens": 6822,
+        "requestTokens": 43,
+        "confirmInputTokens": 499,
+        "leverage": {
+          "claude-opus-5-5": 33.63905325443787,
+          "claude-sonnet-5-5": 33.63905325443787,
+          "claude-haiku-5-5": 33.63905325443787
+        }
+      },
+      {
+        "id": "lowest-version-of-range",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 3,
+        "top3": [
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7"
+        ],
+        "topK": [
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7",
+          "semver-7.8.0/ranges/ltr.js#ltr@5",
+          "semver-7.8.0/classes/range.js#intersects@170",
+          "semver-7.8.0/ranges/max-satisfying.js#maxSatisfying@6",
+          "semver-7.8.0/ranges/gtr.js#gtr@5",
+          "semver-7.8.0/ranges/outside.js#outside@13",
+          "semver-7.8.0/functions/coerce.js#coerce@7",
+          "semver-7.8.0/ranges/valid.js#validRange@4"
+        ],
+        "topSimilarity": 0.6881249546334478,
+        "top1Correct": false,
+        "writeTokens": 7118,
+        "requestTokens": 20,
+        "confirmInputTokens": 482,
+        "leverage": {
+          "claude-opus-5-5": 40.35147392290249,
+          "claude-sonnet-5-5": 40.35147392290249,
+          "claude-haiku-5-5": 40.35147392290249
+        }
+      },
+      {
+        "id": "range-within-range",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 26,
+        "top3": [
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7"
+        ],
+        "topK": [
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7",
+          "semver-7.8.0/classes/range.js#isSatisfiable@238",
+          "semver-7.8.0/ranges/max-satisfying.js#maxSatisfying@6",
+          "semver-7.8.0/ranges/ltr.js#ltr@5",
+          "semver-7.8.0/ranges/outside.js#outside@13",
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "semver-7.8.0/classes/range.js#intersects@170",
+          "semver-7.8.0/classes/semver.js#SemVer@9"
+        ],
+        "topSimilarity": 0.625203650433822,
+        "top1Correct": false,
+        "writeTokens": 8144,
+        "requestTokens": 25,
+        "confirmInputTokens": 447,
+        "leverage": {
+          "claude-opus-5-5": 46.69724770642202,
+          "claude-sonnet-5-5": 46.69724770642202,
+          "claude-haiku-5-5": 46.69724770642202
+        }
+      },
+      {
+        "id": "parse-iso8601",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "date-fns-4.1.0/parseJSON.cjs#parseJSON@41",
+          "date-fns-4.1.0/parseISO.cjs#validateWeekDate@275"
+        ],
+        "topK": [
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "date-fns-4.1.0/parseJSON.cjs#parseJSON@41",
+          "date-fns-4.1.0/parseISO.cjs#validateWeekDate@275",
+          "zod-3.25.76/v4/core/api.cjs#_isoDateTime@364",
+          "date-fns-4.1.0/parseISO.cjs#dayOfISOWeekYear@244",
+          "validator-13.15.35/lib/isISO8601.js#isValidDate@15",
+          "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "date-fns-4.1.0/parseISO.cjs#parseDate@164",
+          "zod-3.25.76/src/v4/mini/iso.ts#datetime@15"
+        ],
+        "topSimilarity": 0.7058558853883894,
+        "top1Correct": true,
+        "writeTokens": 1639,
+        "requestTokens": 50,
+        "confirmInputTokens": 336,
+        "leverage": {
+          "claude-opus-5-5": 9.249435665914222,
+          "claude-sonnet-5-5": 9.249435665914222,
+          "claude-haiku-5-5": 9.249435665914222
+        }
+      },
+      {
+        "id": "format-iso8601",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "zod-3.25.76/v4/core/api.cjs#_isoDateTime@364",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "date-fns-4.1.0/parseJSON.cjs#parseJSON@41"
+        ],
+        "topK": [
+          "zod-3.25.76/v4/core/api.cjs#_isoDateTime@364",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "date-fns-4.1.0/parseJSON.cjs#parseJSON@41",
+          "zod-3.25.76/v4/core/api.js#_isoDateTime@225",
+          "zod-3.25.76/src/v4/classic/iso.ts#datetime@23",
+          "zod-3.25.76/src/v3/types.ts#datetime@1106",
+          "zod-3.25.76/src/v4/core/api.ts#_isoDateTime@467",
+          "zod-3.25.76/v4/core/api.cjs#_isoDate@375",
+          "zod-3.25.76/v3/types.js#datetime@864",
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45"
+        ],
+        "topSimilarity": 0.72112873240107,
+        "top1Correct": false,
+        "writeTokens": 682,
+        "requestTokens": 43,
+        "confirmInputTokens": 357,
+        "leverage": {
+          "claude-opus-5-5": 3.9105504587155964,
+          "claude-sonnet-5-5": 3.9105504587155964,
+          "claude-haiku-5-5": 3.9105504587155964
+        }
+      },
+      {
+        "id": "deep-copy",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "lodash-4.17.21/_cloneTypedArray.js#cloneTypedArray@11",
+          "lodash-4.17.21/_baseClone.js#baseClone@90",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32"
+        ],
+        "topK": [
+          "lodash-4.17.21/_cloneTypedArray.js#cloneTypedArray@11",
+          "lodash-4.17.21/_baseClone.js#baseClone@90",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "lodash-4.17.21/_copyObject.js#copyObject@14",
+          "lodash-4.17.21/_cloneBuffer.js#cloneBuffer@24",
+          "lodash-4.17.21/_copyArray.js#copyArray@9",
+          "lodash-4.17.21/toPlainObject.js#toPlainObject@28",
+          "lodash-4.17.21/_copySymbolsIn.js#copySymbolsIn@12",
+          "zod-3.25.76/src/v3/helpers/util.ts#objectValues@33",
+          "zod-3.25.76/src/v3/helpers/parseUtil.ts#makeIssue@6"
+        ],
+        "topSimilarity": 0.6743924963559258,
+        "top1Correct": false,
+        "writeTokens": 2859,
+        "requestTokens": 45,
+        "confirmInputTokens": 472,
+        "leverage": {
+          "claude-opus-5-5": 14.33801404212638,
+          "claude-sonnet-5-5": 14.33801404212638,
+          "claude-haiku-5-5": 14.338014042126378
+        }
+      },
+      {
+        "id": "deep-merge-objects",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "lodash-4.17.21/_copyObject.js#copyObject@14"
+        ],
+        "topK": [
+          "zod-3.25.76/src/v4/core/schemas.ts#mergeValues@2139",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "lodash-4.17.21/_copyObject.js#copyObject@14",
+          "lodash-4.17.21/_baseMerge.js#baseMerge@20",
+          "lodash-4.17.21/_copyArray.js#copyArray@9",
+          "lodash-4.17.21/toPlainObject.js#toPlainObject@28",
+          "zod-3.25.76/v3/types.cjs#merge@2115",
+          "zod-3.25.76/src/v3/types.ts#merge@2685",
+          "zod-3.25.76/src/v4/mini/schemas.ts#merge@794",
+          "zod-3.25.76/src/v4/core/util.ts#merge@592"
+        ],
+        "topSimilarity": 0.6687958300164816,
+        "top1Correct": false,
+        "writeTokens": 2372,
+        "requestTokens": 37,
+        "confirmInputTokens": 485,
+        "leverage": {
+          "claude-opus-5-5": 12.22680412371134,
+          "claude-sonnet-5-5": 12.22680412371134,
+          "claude-haiku-5-5": 12.22680412371134
+        }
+      },
+      {
+        "id": "rate-limit-calls",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "lodash-4.17.21/debounce.js#leadingEdge@99"
+        ],
+        "topK": [
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "lodash-4.17.21/debounce.js#leadingEdge@99",
+          "lodash-4.17.21/debounce.js#trailingEdge@138",
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "lodash-4.17.21/debounce.js#flush@158",
+          "lru-cache-11.3.6/dist/esm/index.js#forEach@707",
+          "lodash-4.17.21/debounce.js#remainingWait@108",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "p-limit-7.3.0/index.js#limitFunction@117"
+        ],
+        "topSimilarity": 0.6578722844376421,
+        "top1Correct": true,
+        "writeTokens": 1426,
+        "requestTokens": 33,
+        "confirmInputTokens": 425,
+        "leverage": {
+          "claude-opus-5-5": 8.01123595505618,
+          "claude-sonnet-5-5": 8.01123595505618,
+          "claude-haiku-5-5": 8.01123595505618
+        }
+      },
+      {
+        "id": "delay-until-quiet",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "lodash-4.17.21/debounce.js#remainingWait@108"
+        ],
+        "topK": [
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "lodash-4.17.21/debounce.js#remainingWait@108",
+          "lodash-4.17.21/debounce.js#shouldInvoke@118",
+          "lodash-4.17.21/debounce.js#cancel@150",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "lodash-4.17.21/debounce.js#trailingEdge@138",
+          "lodash-4.17.21/debounce.js#debounced@162",
+          "lodash-4.17.21/debounce.js#leadingEdge@99",
+          "lodash-4.17.21/debounce.js#flush@158"
+        ],
+        "topSimilarity": 0.6964699245453532,
+        "top1Correct": true,
+        "writeTokens": 1315,
+        "requestTokens": 48,
+        "confirmInputTokens": 384,
+        "leverage": {
+          "claude-opus-5-5": 7.115800865800866,
+          "claude-sonnet-5-5": 7.115800865800866,
+          "claude-haiku-5-5": 7.115800865800866
+        }
+      },
+      {
+        "id": "set-at-deep-path",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "lodash-4.17.21/set.js#set@31",
+          "lodash-4.17.21/_baseSet.js#baseSet@17",
+          "lodash-4.17.21/get.js#get@28"
+        ],
+        "topK": [
+          "lodash-4.17.21/set.js#set@31",
+          "lodash-4.17.21/_baseSet.js#baseSet@17",
+          "lodash-4.17.21/get.js#get@28",
+          "lodash-4.17.21/_isKey.js#isKey@16",
+          "lodash-4.17.21/_baseAssignValue.js#baseAssignValue@12",
+          "zod-3.25.76/src/v4/core/util.ts#cached@218",
+          "zod-3.25.76/src/v4/core/util.ts#defineLazy@251",
+          "lodash-4.17.21/_castPath.js#castPath@14",
+          "zod-3.25.76/src/v4/core/util.ts#set@262",
+          "zod-3.25.76/v4/core/util.cjs#set@112"
+        ],
+        "topSimilarity": 0.7852549350917998,
+        "top1Correct": true,
+        "writeTokens": 1100,
+        "requestTokens": 31,
+        "confirmInputTokens": 485,
+        "leverage": {
+          "claude-opus-5-5": 5.851063829787234,
+          "claude-sonnet-5-5": 5.851063829787234,
+          "claude-haiku-5-5": 5.851063829787234
+        }
+      },
+      {
+        "id": "bounded-cache-with-ttl",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 5,
+        "top3": [
+          "lru-cache-11.3.6/dist/esm/index.js#entries@592",
+          "lru-cache-11.3.6/dist/esm/index.js#pop@999",
+          "lru-cache-11.3.6/dist/esm/index.js#rentries@607"
+        ],
+        "topK": [
+          "lru-cache-11.3.6/dist/esm/index.js#entries@592",
+          "lru-cache-11.3.6/dist/esm/index.js#pop@999",
+          "lru-cache-11.3.6/dist/esm/index.js#rentries@607",
+          "lru-cache-11.3.6/dist/esm/index.js#keys@620",
+          "lru-cache-11.3.6/dist/esm/index.js#LRUCache@94",
+          "lru-cache-11.3.6/dist/esm/index.js#dump@794",
+          "lodash-4.17.21/_Stack.js#Stack@15",
+          "lodash-4.17.21/_MapCache.js#MapCache@14",
+          "lru-cache-11.3.6/dist/esm/index.js#values@646",
+          "lru-cache-11.3.6/dist/esm/index.js#rkeys@634"
+        ],
+        "topSimilarity": 0.6623554856646547,
+        "top1Correct": false,
+        "writeTokens": 14728,
+        "requestTokens": 50,
+        "confirmInputTokens": 400,
+        "leverage": {
+          "claude-opus-5-5": 77.51578947368421,
+          "claude-sonnet-5-5": 77.51578947368421,
+          "claude-haiku-5-5": 77.51578947368421
+        }
+      },
+      {
+        "id": "limit-concurrent-promises",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 5,
+        "top3": [
+          "p-limit-7.3.0/index.js#resumeNext@19",
+          "p-limit-7.3.0/index.js#enqueue@50",
+          "p-limit-7.3.0/index.js#set@94"
+        ],
+        "topK": [
+          "p-limit-7.3.0/index.js#resumeNext@19",
+          "p-limit-7.3.0/index.js#enqueue@50",
+          "p-limit-7.3.0/index.js#set@94",
+          "p-limit-7.3.0/index.js#limitFunction@117",
+          "p-limit-7.3.0/index.js#pLimit@3",
+          "p-limit-7.3.0/index.js#next@27",
+          "p-limit-7.3.0/index.js#run@32",
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "p-limit-7.3.0/index.js#value@78",
+          "p-limit-7.3.0/index.js#value@107"
+        ],
+        "topSimilarity": 0.7031565478170191,
+        "top1Correct": false,
+        "writeTokens": 780,
+        "requestTokens": 39,
+        "confirmInputTokens": 253,
+        "leverage": {
+          "claude-opus-5-5": 5.213903743315508,
+          "claude-sonnet-5-5": 5.213903743315508,
+          "claude-haiku-5-5": 5.213903743315508
+        }
+      },
+      {
+        "id": "throttle-async-calls",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "p-throttle-8.1.0/index.js#weightInWindowAt@109"
+        ],
+        "topK": [
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "p-throttle-8.1.0/index.js#weightInWindowAt@109",
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "p-throttle-8.1.0/index.js#windowedDelay@75",
+          "p-throttle-8.1.0/index.js#execute@207",
+          "p-throttle-8.1.0/index.js#strictDelay@94",
+          "p-throttle-8.1.0/index.js#throttled@174",
+          "p-throttle-8.1.0/index.js#insertTickSorted@64",
+          "p-throttle-8.1.0/index.js#get@296"
+        ],
+        "topSimilarity": 0.7519330486162586,
+        "top1Correct": false,
+        "writeTokens": 2124,
+        "requestTokens": 39,
+        "confirmInputTokens": 442,
+        "leverage": {
+          "claude-opus-5-5": 11.334044823906083,
+          "claude-sonnet-5-5": 11.334044823906083,
+          "claude-haiku-5-5": 11.334044823906083
+        }
+      },
+      {
+        "id": "validate-email",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "validator-13.15.35/lib/isEmail.js#validateDisplayName@42",
+          "validator-13.15.35/lib/isIP.js#isIP@44"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "validator-13.15.35/lib/isEmail.js#validateDisplayName@42",
+          "validator-13.15.35/lib/isIP.js#isIP@44",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+          "validator-13.15.35/lib/util/algorithms.js#verhoeffCheck@77",
+          "jsonwebtoken-9.0.2/sign.js#validateOptions@61",
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "validator-13.15.35/lib/isURL.js#isURL@64",
+          "validator-13.15.35/lib/isIdentityCard.js#checkAddressCode@257"
+        ],
+        "topSimilarity": 0.6791443184890764,
+        "top1Correct": true,
+        "writeTokens": 2323,
+        "requestTokens": 43,
+        "confirmInputTokens": 447,
+        "leverage": {
+          "claude-opus-5-5": 12.073804573804575,
+          "claude-sonnet-5-5": 12.073804573804575,
+          "claude-haiku-5-5": 12.073804573804573
+        }
+      },
+      {
+        "id": "validate-url",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "validator-13.15.35/lib/isURL.js#isURL@64",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "validator-13.15.35/lib/isURL.js#cleanUpProtocol@94"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isURL.js#isURL@64",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "validator-13.15.35/lib/isURL.js#cleanUpProtocol@94",
+          "jsonwebtoken-9.0.2/sign.js#validateOptions@61",
+          "jsonwebtoken-9.0.2/sign.js#validate@42",
+          "validator-13.15.35/lib/whitelist.js#whitelist@9",
+          "validator-13.15.35/lib/isEmail.js#validateDisplayName@42",
+          "validator-13.15.35/lib/isPort.js#isPort@9",
+          "jsonwebtoken-9.0.2/sign.js#validatePayload@65",
+          "zod-3.25.76/src/v3/types.ts#ip@1098"
+        ],
+        "topSimilarity": 0.6951570912095175,
+        "top1Correct": true,
+        "writeTokens": 2993,
+        "requestTokens": 47,
+        "confirmInputTokens": 381,
+        "leverage": {
+          "claude-opus-5-5": 16.337336244541486,
+          "claude-sonnet-5-5": 16.337336244541486,
+          "claude-haiku-5-5": 16.337336244541486
+        }
+      },
+      {
+        "id": "canonical-email",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "validator-13.15.35/lib/normalizeEmail.js#dotsReplacer@63",
+          "zod-3.25.76/v4/core/api.cjs#_lowercase@668"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "validator-13.15.35/lib/normalizeEmail.js#dotsReplacer@63",
+          "zod-3.25.76/v4/core/api.cjs#_lowercase@668",
+          "zod-3.25.76/v4/core/api.js#_lowercase@535",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "zod-3.25.76/src/v4/core/api.ts#_lowercase@955",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "zod-3.25.76/src/v4/core/api.ts#_email@89",
+          "zod-3.25.76/v4/core/api.cjs#_email@156",
+          "zod-3.25.76/v4/core/api.js#_email@17"
+        ],
+        "topSimilarity": 0.7139947479517044,
+        "top1Correct": true,
+        "writeTokens": 806,
+        "requestTokens": 39,
+        "confirmInputTokens": 308,
+        "leverage": {
+          "claude-opus-5-5": 5.018679950186799,
+          "claude-sonnet-5-5": 5.018679950186799,
+          "claude-haiku-5-5": 5.0186799501868
+        }
+      },
+      {
+        "id": "password-strength",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 3,
+        "top3": [
+          "validator-13.15.35/lib/isStrongPassword.js#analyzePassword@46",
+          "validator-13.15.35/lib/isIBAN.js#hasValidIbanFormat@126",
+          "validator-13.15.35/lib/isStrongPassword.js#isStrongPassword@88"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isStrongPassword.js#analyzePassword@46",
+          "validator-13.15.35/lib/isIBAN.js#hasValidIbanFormat@126",
+          "validator-13.15.35/lib/isStrongPassword.js#isStrongPassword@88",
+          "validator-13.15.35/lib/isIBAN.js#hasValidIbanChecksum@162",
+          "validator-13.15.35/lib/isStrongPassword.js#scorePassword@70",
+          "validator-13.15.35/lib/isTaxID.js#ptPtCheck@1090",
+          "validator-13.15.35/lib/isTaxID.js#slSiCheck@1204",
+          "zod-3.25.76/v4/core/api.cjs#_minLength@646",
+          "validator-13.15.35/lib/isStrongPassword.js#countChars@32",
+          "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64"
+        ],
+        "topSimilarity": 0.6495403661774448,
+        "top1Correct": false,
+        "writeTokens": 780,
+        "requestTokens": 44,
+        "confirmInputTokens": 442,
+        "leverage": {
+          "claude-opus-5-5": 4.054054054054054,
+          "claude-sonnet-5-5": 4.054054054054054,
+          "claude-haiku-5-5": 4.0540540540540535
+        }
+      },
+      {
+        "id": "time-ordered-id",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 168,
+        "top3": [
+          "nanoid-3.3.12/async/index.cjs#customAlphabet@21",
+          "nanoid-3.3.12/index.browser.cjs#customAlphabet@47",
+          "nanoid-3.3.12/async/index.js#customAlphabet@13"
+        ],
+        "topK": [
+          "nanoid-3.3.12/async/index.cjs#customAlphabet@21",
+          "nanoid-3.3.12/index.browser.cjs#customAlphabet@47",
+          "nanoid-3.3.12/async/index.js#customAlphabet@13",
+          "nanoid-3.3.12/nanoid.js#nanoid@1",
+          "bcryptjs-2.4.3/src/bcrypt/prng/accum.js#init@9",
+          "bcryptjs-2.4.3/dist/bcrypt.js#safeStringCompare@240",
+          "lodash-4.17.21/now.js#now@19",
+          "lru-cache-11.3.6/dist/esm/index.js#keys@620",
+          "bcryptjs-2.4.3/src/bcrypt.js#safeStringCompare@200",
+          "nanoid-3.3.12/index.browser.cjs#nanoid@50"
+        ],
+        "topSimilarity": 0.6865005373977032,
+        "top1Correct": false,
+        "writeTokens": 742,
+        "requestTokens": 43,
+        "confirmInputTokens": 229,
+        "leverage": {
+          "claude-opus-5-5": 4.986559139784946,
+          "claude-sonnet-5-5": 4.986559139784946,
+          "claude-haiku-5-5": 4.986559139784946
+        }
+      },
+      {
+        "id": "name-based-id",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "uuid-11.1.1/dist/esm/v35.js#v35@13",
+          "uuid-11.1.1/dist/cjs/v35.js#v35@17",
+          "uuid-11.1.1/dist/cjs/v5.js#v5@9"
+        ],
+        "topK": [
+          "uuid-11.1.1/dist/esm/v35.js#v35@13",
+          "uuid-11.1.1/dist/cjs/v35.js#v35@17",
+          "uuid-11.1.1/dist/cjs/v5.js#v5@9",
+          "uuid-11.1.1/dist/esm/v5.js#v5@4",
+          "validator-13.15.35/lib/isTaxID.js#slSiCheck@1204",
+          "lru-cache-11.3.6/dist/esm/index.js#keys@620",
+          "uuid-11.1.1/dist/cjs/v3.js#v3@9",
+          "uuid-11.1.1/dist/esm/v3.js#v3@4",
+          "toposort-2.0.2/index.js#uniqueNodes@93",
+          "zod-3.25.76/v4/core/schemas.cjs#generateFastpass@752"
+        ],
+        "topSimilarity": 0.6370099513569726,
+        "top1Correct": true,
+        "writeTokens": 682,
+        "requestTokens": 39,
+        "confirmInputTokens": 416,
+        "leverage": {
+          "claude-opus-5-5": 3.743139407244786,
+          "claude-sonnet-5-5": 3.743139407244786,
+          "claude-haiku-5-5": 3.743139407244786
+        }
+      },
+      {
+        "id": "md5-digest",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "uuid-11.1.1/dist/cjs/md5.js#md5@4",
+          "uuid-11.1.1/dist/esm/md5.js#md5@2",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3"
+        ],
+        "topK": [
+          "uuid-11.1.1/dist/cjs/md5.js#md5@4",
+          "uuid-11.1.1/dist/esm/md5.js#md5@2",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5ff@125",
+          "uuid-11.1.1/dist/cjs/v3.js#v3@9",
+          "uuid-11.1.1/dist/esm/v3.js#v3@4",
+          "uuid-11.1.1/dist/esm/sha1.js#sha1@2",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5hh@131",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5gg@128",
+          "uuid-11.1.1/dist/cjs/sha1.js#sha1@4"
+        ],
+        "topSimilarity": 0.739410866188259,
+        "top1Correct": true,
+        "writeTokens": 64,
+        "requestTokens": 12,
+        "confirmInputTokens": 243,
+        "leverage": {
+          "claude-opus-5-5": 0.5306799336650083,
+          "claude-sonnet-5-5": 0.5306799336650083,
+          "claude-haiku-5-5": 0.5306799336650083
+        }
+      },
+      {
+        "id": "sha1-digest",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "uuid-11.1.1/dist/cjs/sha1.js#sha1@4",
+          "uuid-11.1.1/dist/esm/sha1.js#sha1@2",
+          "uuid-11.1.1/dist/cjs/md5.js#md5@4"
+        ],
+        "topK": [
+          "uuid-11.1.1/dist/cjs/sha1.js#sha1@4",
+          "uuid-11.1.1/dist/esm/sha1.js#sha1@2",
+          "uuid-11.1.1/dist/cjs/md5.js#md5@4",
+          "uuid-11.1.1/dist/esm/md5.js#md5@2",
+          "lru-cache-11.3.6/dist/esm/index.js#values@646",
+          "lru-cache-11.3.6/dist/esm/index.js#keys@620",
+          "lru-cache-11.3.6/dist/esm/index.js#rkeys@634",
+          "lru-cache-11.3.6/dist/esm/index.js#rvalues@660",
+          "nanoid-3.3.12/async/index.browser.cjs#nanoid@42",
+          "nanoid-3.3.12/async/index.browser.js#nanoid@17"
+        ],
+        "topSimilarity": 0.7216009730212731,
+        "top1Correct": true,
+        "writeTokens": 65,
+        "requestTokens": 12,
+        "confirmInputTokens": 194,
+        "leverage": {
+          "claude-opus-5-5": 0.5866425992779783,
+          "claude-sonnet-5-5": 0.5866425992779783,
+          "claude-haiku-5-5": 0.5866425992779782
+        }
+      },
+      {
+        "id": "closest-by-edits",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 8,
+        "top3": [
+          "lodash-4.17.21/_trimmedEndIndex.js#trimmedEndIndex@12",
+          "bcryptjs-2.4.3/dist/bcrypt.js#safeStringCompare@240",
+          "bcryptjs-2.4.3/src/bcrypt.js#safeStringCompare@200"
+        ],
+        "topK": [
+          "lodash-4.17.21/_trimmedEndIndex.js#trimmedEndIndex@12",
+          "bcryptjs-2.4.3/dist/bcrypt.js#safeStringCompare@240",
+          "bcryptjs-2.4.3/src/bcrypt.js#safeStringCompare@200",
+          "ms-2.1.3/index.js#parse@48",
+          "semver-7.8.0/functions/sort.js#sort@4",
+          "lru-cache-11.3.6/dist/esm/index.js#find@685",
+          "zod-3.25.76/v4/core/api.js#_minLength@513",
+          "fastest-levenshtein-1.0.16/esm/mod.js#closest@155",
+          "lru-cache-11.3.6/dist/esm/index.js#set@872",
+          "validator-13.15.35/lib/isTaxID.js#cnpjCharToValue@1016"
+        ],
+        "topSimilarity": 0.5881273763565043,
+        "top1Correct": false,
+        "writeTokens": 892,
+        "requestTokens": 31,
+        "confirmInputTokens": 303,
+        "leverage": {
+          "claude-opus-5-5": 5.883905013192612,
+          "claude-sonnet-5-5": 5.883905013192612,
+          "claude-haiku-5-5": 5.883905013192613
+        }
+      },
+      {
+        "id": "object-schema-validation",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 24,
+        "top3": [
+          "jsonwebtoken-9.0.2/sign.js#validateOptions@61",
+          "jsonwebtoken-9.0.2/sign.js#validate@42",
+          "jsonwebtoken-9.0.2/sign.js#validatePayload@65"
+        ],
+        "topK": [
+          "jsonwebtoken-9.0.2/sign.js#validateOptions@61",
+          "jsonwebtoken-9.0.2/sign.js#validate@42",
+          "jsonwebtoken-9.0.2/sign.js#validatePayload@65",
+          "lodash-4.17.21/isObjectLike.js#isObjectLike@25",
+          "zod-3.25.76/v3/types.js#strict@2029",
+          "lodash-4.17.21/_arrayEach.js#arrayEach@10",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@833",
+          "zod-3.25.76/src/v3/types.ts#create@3180",
+          "zod-3.25.76/v4/core/to-json-schema.cjs#isTransforming@756",
+          "lodash-4.17.21/set.js#set@31"
+        ],
+        "topSimilarity": 0.6637487374287299,
+        "top1Correct": false,
+        "writeTokens": 17590,
+        "requestTokens": 57,
+        "confirmInputTokens": 360,
+        "leverage": {
+          "claude-opus-5-5": 93.06878306878306,
+          "claude-sonnet-5-5": 93.06878306878306,
+          "claude-haiku-5-5": 93.06878306878306
+        }
+      },
+      {
+        "id": "string-schema-rules",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 38,
+        "top3": [
+          "zod-3.25.76/src/v4/core/regexes.ts#string@118",
+          "zod-3.25.76/src/v4/core/api.ts#_isoDateTime@467",
+          "zod-3.25.76/src/v4/core/api.ts#_isoDate@485"
+        ],
+        "topK": [
+          "zod-3.25.76/src/v4/core/regexes.ts#string@118",
+          "zod-3.25.76/src/v4/core/api.ts#_isoDateTime@467",
+          "zod-3.25.76/src/v4/core/api.ts#_isoDate@485",
+          "zod-3.25.76/src/v4/core/api.ts#_minLength@921",
+          "zod-3.25.76/v4/core/to-json-schema.js#process@13",
+          "zod-3.25.76/v4/core/api.js#_minLength@513",
+          "zod-3.25.76/v3/types.cjs#toLowerCase@973",
+          "zod-3.25.76/src/v4/core/api.ts#_stringFormat@1573",
+          "zod-3.25.76/src/v4/core/api.ts#_isoTime@500",
+          "zod-3.25.76/src/v3/types.ts#toLowerCase@1236"
+        ],
+        "topSimilarity": 0.6680527282986689,
+        "top1Correct": false,
+        "writeTokens": 17694,
+        "requestTokens": 47,
+        "confirmInputTokens": 367,
+        "leverage": {
+          "claude-opus-5-5": 98.0820399113082,
+          "claude-sonnet-5-5": 98.0820399113082,
+          "claude-haiku-5-5": 98.0820399113082
+        }
+      },
+      {
+        "id": "base64-decode",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 13,
+        "top3": [
+          "bcryptjs-2.4.3/dist/bcrypt.js#base64_decode@447",
+          "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_decode@75",
+          "bcryptjs-2.4.3/dist/bcrypt.js#base64_encode@410"
+        ],
+        "topK": [
+          "bcryptjs-2.4.3/dist/bcrypt.js#base64_decode@447",
+          "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_decode@75",
+          "bcryptjs-2.4.3/dist/bcrypt.js#base64_encode@410",
+          "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_encode@38",
+          "base64-js-1.5.1/index.js#_byteLength@49",
+          "base64-js-1.5.1/index.js#getLens@22",
+          "validator-13.15.35/lib/isJWT.js#isJWT@10",
+          "bcryptjs-2.4.3/dist/bcrypt.js#finish@1328",
+          "bcryptjs-2.4.3/src/bcrypt/impl.js#finish@641",
+          "bcryptjs-2.4.3/dist/bcrypt.js#stringToBytes@361"
+        ],
+        "topSimilarity": 0.7629028904034562,
+        "top1Correct": false,
+        "writeTokens": 427,
+        "requestTokens": 27,
+        "confirmInputTokens": 261,
+        "leverage": {
+          "claude-opus-5-5": 3.067528735632184,
+          "claude-sonnet-5-5": 3.067528735632184,
+          "claude-haiku-5-5": 3.0675287356321843
+        }
+      },
+      {
+        "id": "dependency-order",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "toposort-2.0.2/index.js#toposort@37",
+          "toposort-2.0.2/index.js#visit@59",
+          "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202"
+        ],
+        "topK": [
+          "toposort-2.0.2/index.js#toposort@37",
+          "toposort-2.0.2/index.js#visit@59",
+          "zod-3.25.76/src/v4/classic/tests/assignability.test.ts#createSortItemSchema@202",
+          "toposort-2.0.2/index.js#makeOutgoingEdges@103",
+          "semver-7.8.0/functions/sort.js#sort@4",
+          "zod-3.25.76/v3/types.cjs#create@2493",
+          "zod-3.25.76/src/v3/types.ts#create@3180",
+          "zod-3.25.76/src/v3/types.ts#merge@2685",
+          "lru-cache-11.3.6/dist/esm/index.js#rforEach@720",
+          "lodash-4.17.21/debounce.js#debounce@66"
+        ],
+        "topSimilarity": 0.6246214128080515,
+        "top1Correct": true,
+        "writeTokens": 466,
+        "requestTokens": 33,
+        "confirmInputTokens": 288,
+        "leverage": {
+          "claude-opus-5-5": 3.094289508632138,
+          "claude-sonnet-5-5": 3.094289508632138,
+          "claude-haiku-5-5": 3.094289508632138
+        }
+      },
+      {
+        "id": "compiled-json-pointer",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+          "jsonpointer-5.0.1/jsonpointer.js#set@79",
+          "jsonpointer-5.0.1/jsonpointer.js#get@66"
+        ],
+        "topK": [
+          "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+          "jsonpointer-5.0.1/jsonpointer.js#set@79",
+          "jsonpointer-5.0.1/jsonpointer.js#get@66",
+          "jsonpointer-5.0.1/jsonpointer.js#compilePointer@49",
+          "jsonpointer-5.0.1/jsonpointer.js#setter@16",
+          "zod-3.25.76/v4/core/util.cjs#defineLazy@101",
+          "lodash-4.17.21/_getAllKeys.js#getAllKeys@12",
+          "zod-3.25.76/src/v4/core/util.ts#defineLazy@251",
+          "zod-3.25.76/v4/core/util.js#defineLazy@57",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@829"
+        ],
+        "topSimilarity": 0.7704374830616186,
+        "top1Correct": true,
+        "writeTokens": 617,
+        "requestTokens": 26,
+        "confirmInputTokens": 407,
+        "leverage": {
+          "claude-opus-5-5": 3.685782556750299,
+          "claude-sonnet-5-5": 3.685782556750299,
+          "claude-haiku-5-5": 3.6857825567502984
+        }
+      },
+      {
+        "id": "custom-alphabet-ids",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "nanoid-3.3.12/index.browser.cjs#customAlphabet@47",
+          "nanoid-3.3.12/index.browser.cjs#customRandom@8",
+          "nanoid-3.3.12/async/index.cjs#customAlphabet@21"
+        ],
+        "topK": [
+          "nanoid-3.3.12/index.browser.cjs#customAlphabet@47",
+          "nanoid-3.3.12/index.browser.cjs#customRandom@8",
+          "nanoid-3.3.12/async/index.cjs#customAlphabet@21",
+          "nanoid-3.3.12/index.browser.js#customRandom@3",
+          "nanoid-3.3.12/async/index.js#customAlphabet@13",
+          "nanoid-3.3.12/index.cjs#customRandom@32",
+          "nanoid-3.3.12/index.js#customRandom@21",
+          "nanoid-3.3.12/async/index.browser.cjs#customAlphabet@3",
+          "nanoid-3.3.12/async/index.browser.js#customAlphabet@2",
+          "nanoid-3.3.12/non-secure/index.cjs#customAlphabet@10"
+        ],
+        "topSimilarity": 0.726800772434553,
+        "top1Correct": true,
+        "writeTokens": 433,
+        "requestTokens": 29,
+        "confirmInputTokens": 253,
+        "leverage": {
+          "claude-opus-5-5": 3.1017191977077365,
+          "claude-sonnet-5-5": 3.1017191977077365,
+          "claude-haiku-5-5": 3.1017191977077365
+        }
+      },
+      {
+        "id": "yaml-parse",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "zod-3.25.76/v3/types.cjs#_parse@3017",
+          "validator-13.15.35/lib/util/multilineRegex.js#multilineRegexp@15"
+        ],
+        "topK": [
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "zod-3.25.76/v3/types.cjs#_parse@3017",
+          "validator-13.15.35/lib/util/multilineRegex.js#multilineRegexp@15",
+          "zod-3.25.76/src/v3/tests/primitive.test.ts#f@48",
+          "lodash-4.17.21/isObject.js#isObject@26",
+          "zod-3.25.76/src/v3/tests/primitive.test.ts#f@53",
+          "lodash-4.17.21/isPlainObject.js#isPlainObject@49",
+          "zod-3.25.76/src/v3/tests/primitive.test.ts#f@63",
+          "lodash-4.17.21/toPlainObject.js#toPlainObject@28",
+          "zod-3.25.76/src/v3/tests/primitive.test.ts#f@160"
+        ],
+        "topSimilarity": 0.5645476662691801,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 26,
+        "confirmInputTokens": 328,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "markdown-render",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "lodash-4.17.21/_toSource.js#toSource@14",
+          "validator-13.15.35/lib/isEmail.js#validateDisplayName@42",
+          "lodash-4.17.21/_getAllKeys.js#getAllKeys@12"
+        ],
+        "topK": [
+          "lodash-4.17.21/_toSource.js#toSource@14",
+          "validator-13.15.35/lib/isEmail.js#validateDisplayName@42",
+          "lodash-4.17.21/_getAllKeys.js#getAllKeys@12",
+          "lodash-4.17.21/toString.js#toString@24",
+          "lodash-4.17.21/_getAllKeysIn.js#getAllKeysIn@13",
+          "zod-3.25.76/v3/types.cjs#_parse@1629",
+          "zod-3.25.76/v3/types.cjs#_parse@1651",
+          "zod-3.25.76/v3/types.cjs#_parse@1673",
+          "zod-3.25.76/v3/types.cjs#_parse@1747",
+          "lodash-4.17.21/_copySymbolsIn.js#copySymbolsIn@12"
+        ],
+        "topSimilarity": 0.556398886825344,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 24,
+        "confirmInputTokens": 367,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "deflate-compress",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "bcryptjs-2.4.3/dist/bcrypt.js#base64_encode@410",
+          "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_encode@38",
+          "base64-js-1.5.1/index.js#_byteLength@49"
+        ],
+        "topK": [
+          "bcryptjs-2.4.3/dist/bcrypt.js#base64_encode@410",
+          "bcryptjs-2.4.3/src/bcrypt/util/base64.js#base64_encode@38",
+          "base64-js-1.5.1/index.js#_byteLength@49",
+          "nanoid-3.3.12/async/index.browser.cjs#nanoid@42",
+          "nanoid-3.3.12/async/index.browser.js#nanoid@17",
+          "base64-js-1.5.1/index.js#fromByteArray@119",
+          "nanoid-3.3.12/index.browser.cjs#nanoid@50",
+          "nanoid-3.3.12/index.browser.js#nanoid@20",
+          "base64-js-1.5.1/index.js#toByteArray@53",
+          "base64-js-1.5.1/index.js#tripletToBase64@99"
+        ],
+        "topSimilarity": 0.6089948920378719,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 19,
+        "confirmInputTokens": 219,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "cron-next-run",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "bcryptjs-2.4.3/dist/bcrypt.js#next@1210",
+          "ms-2.1.3/index.js#parse@48",
+          "date-fns-4.1.0/parseJSON.cjs#parseJSON@41"
+        ],
+        "topK": [
+          "bcryptjs-2.4.3/dist/bcrypt.js#next@1210",
+          "ms-2.1.3/index.js#parse@48",
+          "date-fns-4.1.0/parseJSON.cjs#parseJSON@41",
+          "zod-3.25.76/src/v3/types.ts#ZodDate@1875",
+          "bcryptjs-2.4.3/src/bcrypt/impl.js#next@523",
+          "zod-3.25.76/src/v3/types.ts#_parse@1876",
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "zod-3.25.76/v3/types.js#_parse@1504",
+          "date-fns-4.1.0/parseISO.cjs#parseDateUnit@197",
+          "zod-3.25.76/v3/types.cjs#_parse@1517"
+        ],
+        "topSimilarity": 0.649064541178826,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 20,
+        "confirmInputTokens": 384,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "text-line-diff",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "date-fns-4.1.0/differenceInMilliseconds.cjs#differenceInMilliseconds@27",
+          "zod-3.25.76/src/v4/core/doc.ts#Doc@3",
+          "lodash-4.17.21/eq.js#eq@33"
+        ],
+        "topK": [
+          "date-fns-4.1.0/differenceInMilliseconds.cjs#differenceInMilliseconds@27",
+          "zod-3.25.76/src/v4/core/doc.ts#Doc@3",
+          "lodash-4.17.21/eq.js#eq@33",
+          "zod-3.25.76/src/v4/core/doc.ts#write@20",
+          "zod-3.25.76/v4/core/doc.cjs#write@16",
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "zod-3.25.76/src/v4/core/doc.ts#compile@36",
+          "validator-13.15.35/lib/util/multilineRegex.js#multilineRegexp@15",
+          "zod-3.25.76/v4/core/doc.cjs#compile@30",
+          "semver-7.8.0/functions/sort.js#sort@4"
+        ],
+        "topSimilarity": 0.5603761451327702,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 25,
+        "confirmInputTokens": 252,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "route-matching",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "zod-3.25.76/v4/core/to-json-schema.cjs#extractToDef@570",
+          "zod-3.25.76/src/v4/classic/schemas.ts#url@453",
+          "zod-3.25.76/src/v4/core/api.ts#_url@188"
+        ],
+        "topK": [
+          "zod-3.25.76/v4/core/to-json-schema.cjs#extractToDef@570",
+          "zod-3.25.76/src/v4/classic/schemas.ts#url@453",
+          "zod-3.25.76/src/v4/core/api.ts#_url@188",
+          "zod-3.25.76/src/v4/mini/schemas.ts#url@181",
+          "zod-3.25.76/v4/core/api.cjs#_url@213",
+          "zod-3.25.76/src/v4/classic/tests/to-json-schema.test.ts#override@1271",
+          "zod-3.25.76/v4/mini/schemas.js#url@78",
+          "zod-3.25.76/v4/classic/schemas.js#url@182",
+          "zod-3.25.76/v4/core/api.js#_url@74",
+          "zod-3.25.76/src/v4/mini/schemas.ts#base64url@384"
+        ],
+        "topSimilarity": 0.6440938217059953,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 27,
+        "confirmInputTokens": 214,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "currency-formatting",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "validator-13.15.35/lib/isCurrency.js#currencyRegex@10",
+          "validator-13.15.35/lib/isCurrency.js#isCurrency@77",
+          "validator-13.15.35/lib/isDecimal.js#decimalRegExp@12"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isCurrency.js#currencyRegex@10",
+          "validator-13.15.35/lib/isCurrency.js#isCurrency@77",
+          "validator-13.15.35/lib/isDecimal.js#decimalRegExp@12",
+          "validator-13.15.35/lib/util/algorithms.js#reverseMultiplyAndSum@64",
+          "validator-13.15.35/lib/isTaxID.js#isTaxID@1396",
+          "validator-13.15.35/lib/isDecimal.js#isDecimal@22",
+          "validator-13.15.35/lib/util/algorithms.js#iso7064Check@20",
+          "validator-13.15.35/lib/util/algorithms.js#verhoeffCheck@77",
+          "lodash-4.17.21/toNumber.js#toNumber@43",
+          "zod-3.25.76/src/v4/core/errors.ts#toDotPath@392"
+        ],
+        "topSimilarity": 0.6660386116796202,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 30,
+        "confirmInputTokens": 435,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "image-resize",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "csv-parse-6.2.1/lib/utils/ResizeableBuffer.js#ResizeableBuffer@1",
+          "csv-parse-6.2.1/lib/utils/ResizeableBuffer.js#resize@41",
+          "csv-parse-6.2.1/lib/api/init_state.js#init_state@13"
+        ],
+        "topK": [
+          "csv-parse-6.2.1/lib/utils/ResizeableBuffer.js#ResizeableBuffer@1",
+          "csv-parse-6.2.1/lib/utils/ResizeableBuffer.js#resize@41",
+          "csv-parse-6.2.1/lib/api/init_state.js#init_state@13",
+          "csv-parse-6.2.1/lib/utils/ResizeableBuffer.js#prepend@7",
+          "csv-parse-6.2.1/lib/utils/ResizeableBuffer.js#append@31",
+          "lodash-4.17.21/_cloneArrayBuffer.js#cloneArrayBuffer@10",
+          "lodash-4.17.21/_cloneDataView.js#cloneDataView@11",
+          "lodash-4.17.21/_cloneBuffer.js#cloneBuffer@24",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "lodash-4.17.21/_cloneTypedArray.js#cloneTypedArray@11"
+        ],
+        "topSimilarity": 0.6126617657679894,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 19,
+        "confirmInputTokens": 189,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      }
+    ],
+    "large roots": [
+      {
+        "id": "csv-to-records",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "csv-parse-6.2.1/lib/api/index.js#transform@28",
+          "csv-parse-6.2.1/lib/sync.js#parse@3",
+          "csv-parse-6.2.1/lib/index.js#Parser@14"
+        ],
+        "topK": [
+          "csv-parse-6.2.1/lib/api/index.js#transform@28",
+          "csv-parse-6.2.1/lib/sync.js#parse@3",
+          "csv-parse-6.2.1/lib/index.js#Parser@14",
+          "csv-parse-6.2.1/lib/api/normalize_options.js#normalize_options@5",
+          "csv-parse-6.2.1/lib/index.js#parse@79",
+          "csv-parse-6.2.1/lib/api/init_state.js#init_state@13",
+          "validator-13.15.35/lib/isDate.js#isDate@32",
+          "lodash-4.17.21/keysIn.js#keysIn@28",
+          "lodash-4.17.21/keys.js#keys@33",
+          "lodash-4.17.21/_getAllKeys.js#getAllKeys@12"
+        ],
+        "topSimilarity": 0.7488564788433224,
+        "top1Correct": false,
+        "writeTokens": 15444,
+        "requestTokens": 53,
+        "confirmInputTokens": 522,
+        "leverage": {
+          "claude-opus-5-5": 71.03955841766329,
+          "claude-sonnet-5-5": 71.03955841766329,
+          "claude-haiku-5-5": 71.03955841766329
+        }
+      },
+      {
+        "id": "highest-version-in-range",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 8,
+        "top3": [
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/outside.js#outside@13",
+          "semver-7.8.0/ranges/valid.js#validRange@4"
+        ],
+        "topK": [
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/outside.js#outside@13",
+          "semver-7.8.0/ranges/valid.js#validRange@4",
+          "semver-7.8.0/classes/range.js#Range@6",
+          "semver-7.8.0/ranges/ltr.js#ltr@5",
+          "semver-7.8.0/ranges/to-comparators.js#toComparators@6",
+          "semver-7.8.0/ranges/subset.js#subset@45",
+          "semver-7.8.0/ranges/max-satisfying.js#maxSatisfying@6",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7"
+        ],
+        "topSimilarity": 0.6876910180883771,
+        "top1Correct": false,
+        "writeTokens": 6896,
+        "requestTokens": 43,
+        "confirmInputTokens": 498,
+        "leverage": {
+          "claude-opus-5-5": 34.03751233958539,
+          "claude-sonnet-5-5": 34.03751233958539,
+          "claude-haiku-5-5": 34.03751233958538
+        }
+      },
+      {
+        "id": "version-satisfies-range",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/valid.js#validRange@4",
+          "semver-7.8.0/classes/range.js#Range@6"
+        ],
+        "topK": [
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/valid.js#validRange@4",
+          "semver-7.8.0/classes/range.js#Range@6",
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "semver-7.8.0/ranges/to-comparators.js#toComparators@6",
+          "semver-7.8.0/ranges/subset.js#subset@45",
+          "semver-7.8.0/ranges/ltr.js#ltr@5",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7",
+          "semver-7.8.0/ranges/outside.js#outside@13",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5"
+        ],
+        "topSimilarity": 0.742436206005908,
+        "top1Correct": true,
+        "writeTokens": 6822,
+        "requestTokens": 43,
+        "confirmInputTokens": 486,
+        "leverage": {
+          "claude-opus-5-5": 34.07592407592408,
+          "claude-sonnet-5-5": 34.07592407592408,
+          "claude-haiku-5-5": 34.07592407592408
+        }
+      },
+      {
+        "id": "lowest-version-of-range",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 4,
+        "top3": [
+          "semver-7.8.0/ranges/ltr.js#ltr@5",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/functions/satisfies.js#satisfies@4"
+        ],
+        "topK": [
+          "semver-7.8.0/ranges/ltr.js#ltr@5",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7",
+          "semver-7.8.0/ranges/gtr.js#gtr@5",
+          "semver-7.8.0/ranges/outside.js#outside@13",
+          "semver-7.8.0/ranges/max-satisfying.js#maxSatisfying@6",
+          "semver-7.8.0/functions/coerce.js#coerce@7",
+          "semver-7.8.0/classes/range.js#Range@6",
+          "semver-7.8.0/ranges/subset.js#subset@45"
+        ],
+        "topSimilarity": 0.6468158302239725,
+        "top1Correct": false,
+        "writeTokens": 7118,
+        "requestTokens": 20,
+        "confirmInputTokens": 477,
+        "leverage": {
+          "claude-opus-5-5": 40.58152793614595,
+          "claude-sonnet-5-5": 40.58152793614595,
+          "claude-haiku-5-5": 40.58152793614595
+        }
+      },
+      {
+        "id": "range-within-range",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 24,
+        "top3": [
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7"
+        ],
+        "topK": [
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/min-satisfying.js#minSatisfying@5",
+          "semver-7.8.0/ranges/min-version.js#minVersion@7",
+          "semver-7.8.0/ranges/max-satisfying.js#maxSatisfying@6",
+          "semver-7.8.0/ranges/outside.js#outside@13",
+          "semver-7.8.0/ranges/ltr.js#ltr@5",
+          "semver-7.8.0/classes/semver.js#SemVer@9",
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "semver-7.8.0/functions/lt.js#lt@4",
+          "semver-7.8.0/functions/rcompare.js#rcompare@4"
+        ],
+        "topSimilarity": 0.625203650433822,
+        "top1Correct": false,
+        "writeTokens": 8144,
+        "requestTokens": 25,
+        "confirmInputTokens": 512,
+        "leverage": {
+          "claude-opus-5-5": 43.45784418356457,
+          "claude-sonnet-5-5": 43.45784418356457,
+          "claude-haiku-5-5": 43.45784418356457
+        }
+      },
+      {
+        "id": "parse-iso8601",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "validator-13.15.35/lib/isDate.js#isDate@32"
+        ],
+        "topK": [
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "validator-13.15.35/lib/isDate.js#isDate@32",
+          "zod-3.25.76/src/v3/types.ts#ZodDate@1875",
+          "zod-3.25.76/v3/types.cjs#ZodDate@1516",
+          "zod-3.25.76/v3/types.js#ZodDate@1503",
+          "zod-3.25.76/src/v3/types.ts#ZodOptional@4483",
+          "uuid-11.1.1/dist/cjs/v6.js#v6@6",
+          "uuid-11.1.1/dist/esm/v6.js#v6@4",
+          "zod-3.25.76/v3/types.cjs#ZodOptional@3347"
+        ],
+        "topSimilarity": 0.7058558853883894,
+        "top1Correct": true,
+        "writeTokens": 1639,
+        "requestTokens": 50,
+        "confirmInputTokens": 451,
+        "leverage": {
+          "claude-opus-5-5": 8.186813186813186,
+          "claude-sonnet-5-5": 8.186813186813186,
+          "claude-haiku-5-5": 8.186813186813188
+        }
+      },
+      {
+        "id": "format-iso8601",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "validator-13.15.35/lib/isDate.js#isDate@32"
+        ],
+        "topK": [
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "validator-13.15.35/lib/isDate.js#isDate@32",
+          "zod-3.25.76/src/v3/types.ts#ZodDate@1875",
+          "uuid-11.1.1/dist/cjs/v6.js#v6@6",
+          "uuid-11.1.1/dist/cjs/v1.js#v1@7",
+          "uuid-11.1.1/dist/esm/v6.js#v6@4",
+          "uuid-11.1.1/dist/esm/v1.js#v1@4",
+          "uuid-11.1.1/dist/esm/v7.js#v7@4",
+          "zod-3.25.76/v4/core/to-json-schema.cjs#JSONSchemaGenerator@7"
+        ],
+        "topSimilarity": 0.706466878068665,
+        "top1Correct": true,
+        "writeTokens": 682,
+        "requestTokens": 43,
+        "confirmInputTokens": 434,
+        "leverage": {
+          "claude-opus-5-5": 3.5932560590094837,
+          "claude-sonnet-5-5": 3.5932560590094837,
+          "claude-haiku-5-5": 3.5932560590094833
+        }
+      },
+      {
+        "id": "deep-copy",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 3,
+        "top3": [
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "lodash-4.17.21/toPlainObject.js#toPlainObject@28",
+          "lodash-4.17.21/_baseClone.js#baseClone@90"
+        ],
+        "topK": [
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "lodash-4.17.21/toPlainObject.js#toPlainObject@28",
+          "lodash-4.17.21/_baseClone.js#baseClone@90",
+          "lodash-4.17.21/set.js#set@31",
+          "lodash-4.17.21/keysIn.js#keysIn@28",
+          "zod-3.25.76/src/v3/helpers/parseUtil.ts#addIssueToContext@72",
+          "lru-cache-11.3.6/dist/esm/index.js#LRUCache@94",
+          "zod-3.25.76/v3/helpers/parseUtil.js#addIssueToContext@32",
+          "lodash-4.17.21/cloneDeep.js#cloneDeep@25",
+          "validator-13.15.35/lib/isDate.js#isDate@32"
+        ],
+        "topSimilarity": 0.626402581103852,
+        "top1Correct": false,
+        "writeTokens": 2859,
+        "requestTokens": 45,
+        "confirmInputTokens": 638,
+        "leverage": {
+          "claude-opus-5-5": 12.291487532244195,
+          "claude-sonnet-5-5": 12.291487532244195,
+          "claude-haiku-5-5": 12.291487532244195
+        }
+      },
+      {
+        "id": "deep-merge-objects",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "lodash-4.17.21/toPlainObject.js#toPlainObject@28",
+          "lodash-4.17.21/_baseMerge.js#baseMerge@20"
+        ],
+        "topK": [
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "lodash-4.17.21/toPlainObject.js#toPlainObject@28",
+          "lodash-4.17.21/_baseMerge.js#baseMerge@20",
+          "lodash-4.17.21/_baseClone.js#baseClone@90",
+          "lodash-4.17.21/set.js#set@31",
+          "lodash-4.17.21/_baseAssignIn.js#baseAssignIn@13",
+          "lodash-4.17.21/_baseAssign.js#baseAssign@13",
+          "lodash-4.17.21/keysIn.js#keysIn@28",
+          "lodash-4.17.21/keys.js#keys@33",
+          "lodash-4.17.21/_getAllKeysIn.js#getAllKeysIn@13"
+        ],
+        "topSimilarity": 0.6400579532126118,
+        "top1Correct": true,
+        "writeTokens": 2372,
+        "requestTokens": 37,
+        "confirmInputTokens": 644,
+        "leverage": {
+          "claude-opus-5-5": 10.504871567759078,
+          "claude-sonnet-5-5": 10.504871567759078,
+          "claude-haiku-5-5": 10.504871567759078
+        }
+      },
+      {
+        "id": "rate-limit-calls",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45"
+        ],
+        "topK": [
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "lru-cache-11.3.6/dist/esm/index.js#LRUCache@94",
+          "p-limit-7.3.0/index.js#limitFunction@117",
+          "lodash-4.17.21/set.js#set@31",
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "fastest-levenshtein-1.0.16/esm/mod.js#closest@155",
+          "lodash-4.17.21/_isIterateeCall.js#isIterateeCall@16"
+        ],
+        "topSimilarity": 0.6578722844376421,
+        "top1Correct": true,
+        "writeTokens": 1426,
+        "requestTokens": 33,
+        "confirmInputTokens": 632,
+        "leverage": {
+          "claude-opus-5-5": 6.499544211485871,
+          "claude-sonnet-5-5": 6.499544211485871,
+          "claude-haiku-5-5": 6.499544211485871
+        }
+      },
+      {
+        "id": "delay-until-quiet",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45"
+        ],
+        "topK": [
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "lru-cache-11.3.6/dist/esm/index.js#LRUCache@94",
+          "p-limit-7.3.0/index.js#limitFunction@117",
+          "lodash-4.17.21/_isIterateeCall.js#isIterateeCall@16",
+          "lodash-4.17.21/set.js#set@31",
+          "uuid-11.1.1/dist/cjs/v7.js#v7@7",
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "lodash-4.17.21/keysIn.js#keysIn@28"
+        ],
+        "topSimilarity": 0.6964699245453532,
+        "top1Correct": true,
+        "writeTokens": 1315,
+        "requestTokens": 48,
+        "confirmInputTokens": 632,
+        "leverage": {
+          "claude-opus-5-5": 5.610068259385666,
+          "claude-sonnet-5-5": 5.610068259385666,
+          "claude-haiku-5-5": 5.610068259385665
+        }
+      },
+      {
+        "id": "set-at-deep-path",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "lodash-4.17.21/set.js#set@31",
+          "lodash-4.17.21/get.js#get@28",
+          "lodash-4.17.21/_baseSet.js#baseSet@17"
+        ],
+        "topK": [
+          "lodash-4.17.21/set.js#set@31",
+          "lodash-4.17.21/get.js#get@28",
+          "lodash-4.17.21/_baseSet.js#baseSet@17",
+          "lodash-4.17.21/keysIn.js#keysIn@28",
+          "lodash-4.17.21/_castPath.js#castPath@14",
+          "lodash-4.17.21/toPlainObject.js#toPlainObject@28",
+          "lodash-4.17.21/_baseGet.js#baseGet@12",
+          "lodash-4.17.21/keys.js#keys@33",
+          "lodash-4.17.21/_baseClone.js#baseClone@90",
+          "zod-3.25.76/v3/types.js#ZodMap@2715"
+        ],
+        "topSimilarity": 0.7852549350917998,
+        "top1Correct": true,
+        "writeTokens": 1100,
+        "requestTokens": 31,
+        "confirmInputTokens": 530,
+        "leverage": {
+          "claude-opus-5-5": 5.583756345177665,
+          "claude-sonnet-5-5": 5.583756345177665,
+          "claude-haiku-5-5": 5.583756345177665
+        }
+      },
+      {
+        "id": "bounded-cache-with-ttl",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "lru-cache-11.3.6/dist/esm/index.js#LRUCache@94",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "lodash-4.17.21/debounce.js#debounce@66"
+        ],
+        "topK": [
+          "lru-cache-11.3.6/dist/esm/index.js#LRUCache@94",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "lodash-4.17.21/_baseClone.js#baseClone@90",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "lodash-4.17.21/_baseSet.js#baseSet@17",
+          "lodash-4.17.21/cloneDeep.js#cloneDeep@25",
+          "lodash-4.17.21/toPlainObject.js#toPlainObject@28",
+          "lodash-4.17.21/_baseAssignIn.js#baseAssignIn@13",
+          "lodash-4.17.21/keysIn.js#keysIn@28"
+        ],
+        "topSimilarity": 0.6223221377108106,
+        "top1Correct": true,
+        "writeTokens": 14728,
+        "requestTokens": 50,
+        "confirmInputTokens": 770,
+        "leverage": {
+          "claude-opus-5-5": 55.78787878787879,
+          "claude-sonnet-5-5": 55.78787878787879,
+          "claude-haiku-5-5": 55.78787878787879
+        }
+      },
+      {
+        "id": "limit-concurrent-promises",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "p-limit-7.3.0/index.js#limitFunction@117",
+          "p-limit-7.3.0/index.js#pLimit@3",
+          "lodash-4.17.21/throttle.js#throttle@51"
+        ],
+        "topK": [
+          "p-limit-7.3.0/index.js#limitFunction@117",
+          "p-limit-7.3.0/index.js#pLimit@3",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "zod-3.25.76/v3/types.js#ZodPromise@3133",
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "zod-3.25.76/src/v3/types.ts#ZodArray@2234",
+          "zod-3.25.76/v3/types.cjs#ZodPromise@3168",
+          "fastest-levenshtein-1.0.16/esm/mod.js#closest@155",
+          "zod-3.25.76/v3/types.cjs#ZodFunction@2898"
+        ],
+        "topSimilarity": 0.5956983404272674,
+        "top1Correct": false,
+        "writeTokens": 780,
+        "requestTokens": 39,
+        "confirmInputTokens": 435,
+        "leverage": {
+          "claude-opus-5-5": 4.193548387096774,
+          "claude-sonnet-5-5": 4.193548387096774,
+          "claude-haiku-5-5": 4.193548387096774
+        }
+      },
+      {
+        "id": "throttle-async-calls",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "lodash-4.17.21/debounce.js#debounce@66"
+        ],
+        "topK": [
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "p-throttle-8.1.0/index.js#pThrottle@21",
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "zod-3.25.76/v3/types.js#ZodObject@1879",
+          "zod-3.25.76/v3/types.cjs#ZodObject@1901",
+          "zod-3.25.76/v3/types.js#ZodNever@1709",
+          "lru-cache-11.3.6/dist/esm/index.js#LRUCache@94",
+          "zod-3.25.76/src/v3/types.ts#ZodObject@2450",
+          "zod-3.25.76/v3/types.js#ZodIntersection@2536",
+          "fastest-levenshtein-1.0.16/esm/mod.js#distance@141"
+        ],
+        "topSimilarity": 0.7519330486162586,
+        "top1Correct": false,
+        "writeTokens": 2124,
+        "requestTokens": 39,
+        "confirmInputTokens": 588,
+        "leverage": {
+          "claude-opus-5-5": 9.806094182825484,
+          "claude-sonnet-5-5": 9.806094182825484,
+          "claude-haiku-5-5": 9.806094182825484
+        }
+      },
+      {
+        "id": "validate-email",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "validator-13.15.35/lib/isIPRange.js#isIPRange@13"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "validator-13.15.35/lib/isFQDN.js#isFQDN@18",
+          "zod-3.25.76/v3/types.js#ZodString@477",
+          "zod-3.25.76/v3/types.cjs#ZodString@486",
+          "zod-3.25.76/src/v3/types.ts#ZodString@730",
+          "lodash-4.17.21/_baseAssign.js#baseAssign@13",
+          "lodash-4.17.21/_isIterateeCall.js#isIterateeCall@16"
+        ],
+        "topSimilarity": 0.6791443184890764,
+        "top1Correct": true,
+        "writeTokens": 2323,
+        "requestTokens": 43,
+        "confirmInputTokens": 432,
+        "leverage": {
+          "claude-opus-5-5": 12.265047518479408,
+          "claude-sonnet-5-5": 12.265047518479408,
+          "claude-haiku-5-5": 12.265047518479408
+        }
+      },
+      {
+        "id": "validate-url",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "validator-13.15.35/lib/isURL.js#isURL@64",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "validator-13.15.35/lib/isJWT.js#isJWT@10"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isURL.js#isURL@64",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "validator-13.15.35/lib/isJWT.js#isJWT@10",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+          "validator-13.15.35/lib/isFQDN.js#isFQDN@18",
+          "semver-7.8.0/functions/lt.js#lt@4",
+          "semver-7.8.0/functions/eq.js#eq@4",
+          "semver-7.8.0/functions/gt.js#gt@4",
+          "semver-7.8.0/ranges/gtr.js#gtr@5"
+        ],
+        "topSimilarity": 0.6951570912095175,
+        "top1Correct": true,
+        "writeTokens": 2993,
+        "requestTokens": 47,
+        "confirmInputTokens": 442,
+        "leverage": {
+          "claude-opus-5-5": 15.317297850562948,
+          "claude-sonnet-5-5": 15.317297850562948,
+          "claude-haiku-5-5": 15.317297850562948
+        }
+      },
+      {
+        "id": "canonical-email",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "validator-13.15.35/lib/isIPRange.js#isIPRange@13",
+          "lodash-4.17.21/set.js#set@31",
+          "lodash-4.17.21/keysIn.js#keysIn@28",
+          "lodash-4.17.21/_castPath.js#castPath@14",
+          "lodash-4.17.21/_getAllKeysIn.js#getAllKeysIn@13",
+          "zod-3.25.76/v4/core/api.js#_stringbool@834"
+        ],
+        "topSimilarity": 0.7139947479517044,
+        "top1Correct": true,
+        "writeTokens": 806,
+        "requestTokens": 39,
+        "confirmInputTokens": 503,
+        "leverage": {
+          "claude-opus-5-5": 4.038076152304609,
+          "claude-sonnet-5-5": 4.038076152304609,
+          "claude-haiku-5-5": 4.038076152304609
+        }
+      },
+      {
+        "id": "password-strength",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "validator-13.15.35/lib/isStrongPassword.js#isStrongPassword@88",
+          "validator-13.15.35/lib/isCurrency.js#isCurrency@77",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isStrongPassword.js#isStrongPassword@88",
+          "validator-13.15.35/lib/isCurrency.js#isCurrency@77",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "zod-3.25.76/v3/types.js#ZodString@477",
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "zod-3.25.76/v3/types.js#ZodRecord@2661",
+          "zod-3.25.76/src/v3/types.ts#ZodString@730",
+          "validator-13.15.35/lib/isURL.js#isURL@64",
+          "lodash-4.17.21/_getAllKeysIn.js#getAllKeysIn@13",
+          "lodash-4.17.21/_getAllKeys.js#getAllKeys@12"
+        ],
+        "topSimilarity": 0.5950147772974865,
+        "top1Correct": true,
+        "writeTokens": 780,
+        "requestTokens": 44,
+        "confirmInputTokens": 464,
+        "leverage": {
+          "claude-opus-5-5": 3.9634146341463414,
+          "claude-sonnet-5-5": 3.9634146341463414,
+          "claude-haiku-5-5": 3.9634146341463414
+        }
+      },
+      {
+        "id": "time-ordered-id",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 3,
+        "top3": [
+          "csv-parse-6.2.1/lib/api/normalize_options.js#normalize_options@5",
+          "zod-3.25.76/v4/core/to-json-schema.cjs#JSONSchemaGenerator@7",
+          "uuid-11.1.1/dist/esm/v7.js#v7@4"
+        ],
+        "topK": [
+          "csv-parse-6.2.1/lib/api/normalize_options.js#normalize_options@5",
+          "zod-3.25.76/v4/core/to-json-schema.cjs#JSONSchemaGenerator@7",
+          "uuid-11.1.1/dist/esm/v7.js#v7@4",
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "uuid-11.1.1/dist/cjs/v7.js#v7@7",
+          "zod-3.25.76/v4/core/to-json-schema.js#JSONSchemaGenerator@3",
+          "semver-7.8.0/functions/eq.js#eq@4",
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "zod-3.25.76/v3/types.cjs#ZodEnum@3063",
+          "semver-7.8.0/functions/lt.js#lt@4"
+        ],
+        "topSimilarity": 0.562555505707011,
+        "top1Correct": false,
+        "writeTokens": 742,
+        "requestTokens": 43,
+        "confirmInputTokens": 458,
+        "leverage": {
+          "claude-opus-5-5": 3.8129496402877696,
+          "claude-sonnet-5-5": 3.8129496402877696,
+          "claude-haiku-5-5": 3.812949640287769
+        }
+      },
+      {
+        "id": "name-based-id",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "uuid-11.1.1/dist/esm/v35.js#v35@13",
+          "uuid-11.1.1/dist/cjs/v35.js#v35@17",
+          "uuid-11.1.1/dist/cjs/v5.js#v5@9"
+        ],
+        "topK": [
+          "uuid-11.1.1/dist/esm/v35.js#v35@13",
+          "uuid-11.1.1/dist/cjs/v35.js#v35@17",
+          "uuid-11.1.1/dist/cjs/v5.js#v5@9",
+          "uuid-11.1.1/dist/esm/v5.js#v5@4",
+          "uuid-11.1.1/dist/cjs/v3.js#v3@9",
+          "uuid-11.1.1/dist/esm/v3.js#v3@4",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@833",
+          "zod-3.25.76/v4/core/to-json-schema.cjs#toJSONSchema@723",
+          "zod-3.25.76/v4/core/to-json-schema.js#JSONSchemaGenerator@3",
+          "zod-3.25.76/v4/core/to-json-schema.cjs#JSONSchemaGenerator@7"
+        ],
+        "topSimilarity": 0.6370099513569726,
+        "top1Correct": true,
+        "writeTokens": 682,
+        "requestTokens": 39,
+        "confirmInputTokens": 356,
+        "leverage": {
+          "claude-opus-5-5": 4.00705052878966,
+          "claude-sonnet-5-5": 4.00705052878966,
+          "claude-haiku-5-5": 4.00705052878966
+        }
+      },
+      {
+        "id": "md5-digest",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+          "uuid-11.1.1/dist/cjs/v3.js#v3@9",
+          "uuid-11.1.1/dist/esm/v3.js#v3@4"
+        ],
+        "topK": [
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+          "uuid-11.1.1/dist/cjs/v3.js#v3@9",
+          "uuid-11.1.1/dist/esm/v3.js#v3@4",
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+          "uuid-11.1.1/dist/cjs/v35.js#v35@17",
+          "uuid-11.1.1/dist/cjs/v7.js#v7@7",
+          "uuid-11.1.1/dist/esm/v35.js#v35@13",
+          "uuid-11.1.1/dist/cjs/v5.js#v5@9",
+          "uuid-11.1.1/dist/esm/v7.js#v7@4",
+          "uuid-11.1.1/dist/esm/v5.js#v5@4"
+        ],
+        "topSimilarity": 0.6833754789715176,
+        "top1Correct": true,
+        "writeTokens": 64,
+        "requestTokens": 12,
+        "confirmInputTokens": 321,
+        "leverage": {
+          "claude-opus-5-5": 0.4698972099853157,
+          "claude-sonnet-5-5": 0.4698972099853157,
+          "claude-haiku-5-5": 0.46989720998531576
+        }
+      },
+      {
+        "id": "sha1-digest",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+          "uuid-11.1.1/dist/cjs/v35.js#v35@17",
+          "uuid-11.1.1/dist/esm/v35.js#v35@13"
+        ],
+        "topK": [
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+          "uuid-11.1.1/dist/cjs/v35.js#v35@17",
+          "uuid-11.1.1/dist/esm/v35.js#v35@13",
+          "uuid-11.1.1/dist/cjs/v5.js#v5@9",
+          "uuid-11.1.1/dist/esm/v1.js#v1@4",
+          "uuid-11.1.1/dist/cjs/v1.js#v1@7",
+          "uuid-11.1.1/dist/esm/v5.js#v5@4",
+          "lru-cache-11.3.6/dist/esm/index.js#LRUCache@94",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+          "uuid-11.1.1/dist/cjs/v1ToV6.js#v1ToV6@5"
+        ],
+        "topSimilarity": 0.7186704825076345,
+        "top1Correct": true,
+        "writeTokens": 65,
+        "requestTokens": 12,
+        "confirmInputTokens": 339,
+        "leverage": {
+          "claude-opus-5-5": 0.46494992846924177,
+          "claude-sonnet-5-5": 0.46494992846924177,
+          "claude-haiku-5-5": 0.4649499284692417
+        }
+      },
+      {
+        "id": "closest-by-edits",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 33,
+        "top3": [
+          "semver-7.8.0/functions/sort.js#sort@4",
+          "semver-7.8.0/functions/rsort.js#rsort@4",
+          "validator-13.15.35/lib/isDate.js#isDate@32"
+        ],
+        "topK": [
+          "semver-7.8.0/functions/sort.js#sort@4",
+          "semver-7.8.0/functions/rsort.js#rsort@4",
+          "validator-13.15.35/lib/isDate.js#isDate@32",
+          "semver-7.8.0/ranges/subset.js#subset@45",
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "semver-7.8.0/functions/satisfies.js#satisfies@4",
+          "semver-7.8.0/ranges/valid.js#validRange@4",
+          "semver-7.8.0/functions/compare-loose.js#compareLoose@4",
+          "semver-7.8.0/ranges/ltr.js#ltr@5",
+          "semver-7.8.0/ranges/to-comparators.js#toComparators@6"
+        ],
+        "topSimilarity": 0.5850441669972266,
+        "top1Correct": false,
+        "writeTokens": 892,
+        "requestTokens": 31,
+        "confirmInputTokens": 466,
+        "leverage": {
+          "claude-opus-5-5": 4.84256243213898,
+          "claude-sonnet-5-5": 4.84256243213898,
+          "claude-haiku-5-5": 4.84256243213898
+        }
+      },
+      {
+        "id": "object-schema-validation",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 4,
+        "top3": [
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@833",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#JSONSchemaGenerator@72",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@828"
+        ],
+        "topK": [
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@833",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#JSONSchemaGenerator@72",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@828",
+          "zod-3.25.76/v3/types.js#ZodObject@1879",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@829",
+          "zod-3.25.76/v4/core/to-json-schema.cjs#toJSONSchema@723",
+          "zod-3.25.76/v4/core/to-json-schema.js#toJSONSchema@718",
+          "lodash-4.17.21/_isIterateeCall.js#isIterateeCall@16",
+          "zod-3.25.76/v3/locales/en.cjs#errorMap@5",
+          "zod-3.25.76/v3/types.js#ZodFunction@2868"
+        ],
+        "topSimilarity": 0.6832762789541259,
+        "top1Correct": false,
+        "writeTokens": 17590,
+        "requestTokens": 57,
+        "confirmInputTokens": 556,
+        "leverage": {
+          "claude-opus-5-5": 77.08150744960561,
+          "claude-sonnet-5-5": 77.08150744960561,
+          "claude-haiku-5-5": 77.08150744960561
+        }
+      },
+      {
+        "id": "string-schema-rules",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 3,
+        "top3": [
+          "validator-13.15.35/lib/isDate.js#isDate@32",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "zod-3.25.76/v3/types.js#ZodString@477"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isDate.js#isDate@32",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "zod-3.25.76/v3/types.js#ZodString@477",
+          "zod-3.25.76/v3/types.cjs#ZodRecord@2688",
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "validator-13.15.35/lib/normalizeEmail.js#normalizeEmail@69",
+          "validator-13.15.35/lib/isEmail.js#isEmail@66",
+          "zod-3.25.76/v3/types.cjs#ZodString@486",
+          "zod-3.25.76/v3/types.js#ZodRecord@2661",
+          "validator-13.15.35/lib/isURL.js#isURL@64"
+        ],
+        "topSimilarity": 0.6142370543641918,
+        "top1Correct": false,
+        "writeTokens": 17694,
+        "requestTokens": 47,
+        "confirmInputTokens": 487,
+        "leverage": {
+          "claude-opus-5-5": 86.56555772994129,
+          "claude-sonnet-5-5": 86.56555772994129,
+          "claude-haiku-5-5": 86.56555772994129
+        }
+      },
+      {
+        "id": "base64-decode",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 2,
+        "top3": [
+          "validator-13.15.35/lib/isJWT.js#isJWT@10",
+          "base64-js-1.5.1/index.js#toByteArray@53",
+          "uuid-11.1.1/dist/cjs/v35.js#v35@17"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isJWT.js#isJWT@10",
+          "base64-js-1.5.1/index.js#toByteArray@53",
+          "uuid-11.1.1/dist/cjs/v35.js#v35@17",
+          "uuid-11.1.1/dist/cjs-browser/md5.js#md5@3",
+          "uuid-11.1.1/dist/esm/v35.js#v35@13",
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+          "zod-3.25.76/v3/types.js#ZodString@477",
+          "uuid-11.1.1/dist/esm/v3.js#v3@4",
+          "uuid-11.1.1/dist/cjs/v3.js#v3@9",
+          "uuid-11.1.1/dist/esm/v7.js#v7@4"
+        ],
+        "topSimilarity": 0.6279340681416115,
+        "top1Correct": false,
+        "writeTokens": 427,
+        "requestTokens": 27,
+        "confirmInputTokens": 348,
+        "leverage": {
+          "claude-opus-5-5": 2.7266922094508304,
+          "claude-sonnet-5-5": 2.7266922094508304,
+          "claude-haiku-5-5": 2.72669220945083
+        }
+      },
+      {
+        "id": "dependency-order",
+        "positive": true,
+        "targetInPool": false,
+        "targetRank": null,
+        "top3": [
+          "semver-7.8.0/functions/sort.js#sort@4",
+          "fastest-levenshtein-1.0.16/esm/mod.js#distance@141",
+          "lodash-4.17.21/_baseClone.js#baseClone@90"
+        ],
+        "topK": [
+          "semver-7.8.0/functions/sort.js#sort@4",
+          "fastest-levenshtein-1.0.16/esm/mod.js#distance@141",
+          "lodash-4.17.21/_baseClone.js#baseClone@90",
+          "lodash-4.17.21/_baseMerge.js#baseMerge@20",
+          "lodash-4.17.21/set.js#set@31",
+          "lru-cache-11.3.6/dist/esm/index.js#LRUCache@94",
+          "semver-7.8.0/ranges/gtr.js#gtr@5",
+          "semver-7.8.0/ranges/ltr.js#ltr@5",
+          "semver-7.8.0/classes/comparator.js#Comparator@5",
+          "lodash-4.17.21/_baseGet.js#baseGet@12"
+        ],
+        "topSimilarity": 0.5751090275799015,
+        "top1Correct": false,
+        "writeTokens": 466,
+        "requestTokens": 33,
+        "confirmInputTokens": 527,
+        "leverage": {
+          "claude-opus-5-5": 2.348790322580645,
+          "claude-sonnet-5-5": 2.348790322580645,
+          "claude-haiku-5-5": 2.348790322580645
+        }
+      },
+      {
+        "id": "compiled-json-pointer",
+        "positive": true,
+        "targetInPool": true,
+        "targetRank": 1,
+        "top3": [
+          "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+          "lodash-4.17.21/_getAllKeys.js#getAllKeys@12",
+          "lodash-4.17.21/_getAllKeysIn.js#getAllKeysIn@13"
+        ],
+        "topK": [
+          "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+          "lodash-4.17.21/_getAllKeys.js#getAllKeys@12",
+          "lodash-4.17.21/_getAllKeysIn.js#getAllKeysIn@13",
+          "lodash-4.17.21/set.js#set@31",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#JSONSchemaGenerator@72",
+          "lodash-4.17.21/_baseGet.js#baseGet@12",
+          "zod-3.25.76/v4/core/to-json-schema.js#JSONSchemaGenerator@3",
+          "zod-3.25.76/v4/core/to-json-schema.cjs#JSONSchemaGenerator@7",
+          "lodash-4.17.21/_castPath.js#castPath@14"
+        ],
+        "topSimilarity": 0.7704374830616186,
+        "top1Correct": true,
+        "writeTokens": 617,
+        "requestTokens": 26,
+        "confirmInputTokens": 571,
+        "leverage": {
+          "claude-opus-5-5": 3.081918081918082,
+          "claude-sonnet-5-5": 3.081918081918082,
+          "claude-haiku-5-5": 3.081918081918082
+        }
+      },
+      {
+        "id": "custom-alphabet-ids",
+        "positive": true,
+        "targetInPool": false,
+        "targetRank": null,
+        "top3": [
+          "zod-3.25.76/src/v3/types.ts#custom@4913",
+          "zod-3.25.76/src/v3/types.ts#instanceOfType@5036",
+          "zod-3.25.76/v3/types.cjs#custom@3605"
+        ],
+        "topK": [
+          "zod-3.25.76/src/v3/types.ts#custom@4913",
+          "zod-3.25.76/src/v3/types.ts#instanceOfType@5036",
+          "zod-3.25.76/v3/types.cjs#custom@3605",
+          "zod-3.25.76/v3/types.cjs#instanceOfType@3684",
+          "zod-3.25.76/v4/core/to-json-schema.js#toJSONSchema@718",
+          "base64-js-1.5.1/index.js#toByteArray@53",
+          "csv-parse-6.2.1/lib/api/normalize_options.js#normalize_options@5",
+          "zod-3.25.76/v3/types.js#custom@3560",
+          "zod-3.25.76/v4/core/to-json-schema.cjs#toJSONSchema@723",
+          "zod-3.25.76/v3/types.js#ZodString@477"
+        ],
+        "topSimilarity": 0.5368244956754936,
+        "top1Correct": false,
+        "writeTokens": 433,
+        "requestTokens": 29,
+        "confirmInputTokens": 436,
+        "leverage": {
+          "claude-opus-5-5": 2.457434733257662,
+          "claude-sonnet-5-5": 2.457434733257662,
+          "claude-haiku-5-5": 2.457434733257662
+        }
+      },
+      {
+        "id": "yaml-parse",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "lodash-4.17.21/toPlainObject.js#toPlainObject@28",
+          "lodash-4.17.21/_getAllKeys.js#getAllKeys@12",
+          "lodash-4.17.21/keys.js#keys@33"
+        ],
+        "topK": [
+          "lodash-4.17.21/toPlainObject.js#toPlainObject@28",
+          "lodash-4.17.21/_getAllKeys.js#getAllKeys@12",
+          "lodash-4.17.21/keys.js#keys@33",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "lodash-4.17.21/_getAllKeysIn.js#getAllKeysIn@13",
+          "lodash-4.17.21/keysIn.js#keysIn@28",
+          "lodash-4.17.21/set.js#set@31",
+          "lodash-4.17.21/_baseClone.js#baseClone@90",
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "csv-parse-6.2.1/lib/api/normalize_options.js#normalize_options@5"
+        ],
+        "topSimilarity": 0.5907502743831083,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 26,
+        "confirmInputTokens": 565,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "markdown-render",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "lodash-4.17.21/_getAllKeysIn.js#getAllKeysIn@13",
+          "lodash-4.17.21/_getAllKeys.js#getAllKeys@12",
+          "lodash-4.17.21/keysIn.js#keysIn@28"
+        ],
+        "topK": [
+          "lodash-4.17.21/_getAllKeysIn.js#getAllKeysIn@13",
+          "lodash-4.17.21/_getAllKeys.js#getAllKeys@12",
+          "lodash-4.17.21/keysIn.js#keysIn@28",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "zod-3.25.76/v3/locales/en.cjs#errorMap@5",
+          "zod-3.25.76/src/v3/locales/en.ts#errorMap@4",
+          "zod-3.25.76/v3/locales/en.js#errorMap@3",
+          "zod-3.25.76/v3/helpers/parseUtil.js#addIssueToContext@32",
+          "lodash-4.17.21/_baseClone.js#baseClone@90",
+          "lodash-4.17.21/toPlainObject.js#toPlainObject@28"
+        ],
+        "topSimilarity": 0.5151603616446411,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 24,
+        "confirmInputTokens": 488,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "deflate-compress",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "base64-js-1.5.1/index.js#toByteArray@53",
+          "uuid-11.1.1/dist/cjs/v4.js#v4@6",
+          "uuid-11.1.1/dist/esm/v7.js#v7@4"
+        ],
+        "topK": [
+          "base64-js-1.5.1/index.js#toByteArray@53",
+          "uuid-11.1.1/dist/cjs/v4.js#v4@6",
+          "uuid-11.1.1/dist/esm/v7.js#v7@4",
+          "uuid-11.1.1/dist/cjs/v7.js#v7@7",
+          "uuid-11.1.1/dist/cjs/v35.js#v35@17",
+          "uuid-11.1.1/dist/esm/v35.js#v35@13",
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "uuid-11.1.1/dist/cjs/v3.js#v3@9",
+          "uuid-11.1.1/dist/cjs/v5.js#v5@9"
+        ],
+        "topSimilarity": 0.5855273635328158,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 19,
+        "confirmInputTokens": 296,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "cron-next-run",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "zod-3.25.76/src/v3/types.ts#ZodDate@1875",
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "zod-3.25.76/v3/types.cjs#ZodDate@1516"
+        ],
+        "topK": [
+          "zod-3.25.76/src/v3/types.ts#ZodDate@1875",
+          "date-fns-4.1.0/parseISO.cjs#parseISO@45",
+          "zod-3.25.76/v3/types.cjs#ZodDate@1516",
+          "zod-3.25.76/v3/types.js#ZodDate@1503",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "validator-13.15.35/lib/isDate.js#isDate@32",
+          "lodash-4.17.21/debounce.js#debounce@66",
+          "lodash-4.17.21/throttle.js#throttle@51",
+          "jsonpointer-5.0.1/jsonpointer.js#compile@86",
+          "lru-cache-11.3.6/dist/esm/index.js#LRUCache@94"
+        ],
+        "topSimilarity": 0.6616915007247435,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 20,
+        "confirmInputTokens": 439,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "text-line-diff",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "semver-7.8.0/functions/sort.js#sort@4",
+          "semver-7.8.0/functions/rsort.js#rsort@4"
+        ],
+        "topK": [
+          "semver-7.8.0/ranges/intersects.js#intersects@4",
+          "semver-7.8.0/functions/sort.js#sort@4",
+          "semver-7.8.0/functions/rsort.js#rsort@4",
+          "semver-7.8.0/functions/gte.js#gte@4",
+          "semver-7.8.0/ranges/to-comparators.js#toComparators@6",
+          "semver-7.8.0/functions/gt.js#gt@4",
+          "semver-7.8.0/ranges/valid.js#validRange@4",
+          "semver-7.8.0/functions/lt.js#lt@4",
+          "semver-7.8.0/ranges/subset.js#subset@45",
+          "semver-7.8.0/functions/eq.js#eq@4"
+        ],
+        "topSimilarity": 0.5675146145717759,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 25,
+        "confirmInputTokens": 454,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "route-matching",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "validator-13.15.35/lib/isURL.js#isURL@64",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@833"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isURL.js#isURL@64",
+          "validator-13.15.35/lib/isMailtoURI.js#isMailtoURI@58",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@833",
+          "zod-3.25.76/v4/core/to-json-schema.js#JSONSchemaGenerator@3",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@829",
+          "zod-3.25.76/v4/core/to-json-schema.cjs#JSONSchemaGenerator@7",
+          "zod-3.25.76/v4/core/to-json-schema.cjs#toJSONSchema@723",
+          "zod-3.25.76/v4/core/to-json-schema.js#toJSONSchema@718",
+          "zod-3.25.76/src/v4/core/to-json-schema.ts#toJSONSchema@828",
+          "lodash-4.17.21/_baseGet.js#baseGet@12"
+        ],
+        "topSimilarity": 0.6133132205362377,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 27,
+        "confirmInputTokens": 502,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "currency-formatting",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "validator-13.15.35/lib/isCurrency.js#isCurrency@77",
+          "validator-13.15.35/lib/isDate.js#isDate@32",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45"
+        ],
+        "topK": [
+          "validator-13.15.35/lib/isCurrency.js#isCurrency@77",
+          "validator-13.15.35/lib/isDate.js#isDate@32",
+          "date-fns-4.1.0/formatISO.cjs#formatISO@45",
+          "lodash-4.17.21/_castPath.js#castPath@14",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "zod-3.25.76/v3/types.js#ZodSymbol@1614",
+          "zod-3.25.76/v4/locales/ar.cjs#default_1@138",
+          "lodash-4.17.21/_createAssigner.js#createAssigner@11",
+          "zod-3.25.76/v3/helpers/parseUtil.js#addIssueToContext@32",
+          "zod-3.25.76/src/v3/helpers/parseUtil.ts#addIssueToContext@72"
+        ],
+        "topSimilarity": 0.6611512864283501,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 30,
+        "confirmInputTokens": 489,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      },
+      {
+        "id": "image-resize",
+        "positive": false,
+        "targetInPool": null,
+        "targetRank": null,
+        "top3": [
+          "csv-parse-6.2.1/lib/api/init_state.js#init_state@13",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18"
+        ],
+        "topK": [
+          "csv-parse-6.2.1/lib/api/init_state.js#init_state@13",
+          "lodash-4.17.21/_baseMergeDeep.js#baseMergeDeep@32",
+          "uuid-11.1.1/dist/cjs-browser/sha1.js#sha1@18",
+          "lodash-4.17.21/_baseClone.js#baseClone@90",
+          "zod-3.25.76/v3/helpers/parseUtil.js#addIssueToContext@32",
+          "lodash-4.17.21/_baseMerge.js#baseMerge@20",
+          "zod-3.25.76/src/v3/helpers/parseUtil.ts#addIssueToContext@72",
+          "lodash-4.17.21/_getAllKeys.js#getAllKeys@12",
+          "lodash-4.17.21/cloneDeep.js#cloneDeep@25",
+          "zod-3.25.76/v3/types.js#ZodLiteral@2999"
+        ],
+        "topSimilarity": 0.592139515756715,
+        "top1Correct": false,
+        "writeTokens": 0,
+        "requestTokens": 19,
+        "confirmInputTokens": 482,
+        "leverage": {
+          "claude-opus-5-5": null,
+          "claude-sonnet-5-5": null,
+          "claude-haiku-5-5": null
+        }
+      }
+    ]
+  }
+}
