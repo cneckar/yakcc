@@ -6,6 +6,9 @@
 
 ## (c) — format gaps that must enter identity: these block the lock (to lane core)
 
+> **Resolved (2026-11-24) by #1305** (lane core, the literal normal form for #1303). A template's label now holds its cooked text, and regex flags are sorted. `` `\x61${a}` `` and `` `a${a}` `` share an identity, and so do `/a/gi` and `/a/ig`. The sample's identities were regenerated for that format change. `emitEntry` now disagrees only through the UTF-16 gap (A1): it is identical on every target once characters past U+FFFF are left out. A2 is closed.
+
+
 **No (c) item comes from Python, Go or Rust semantics.** Every disagreement and refusal below is
 a missing piece of a lowering's runtime or an analysis that can be stored beside the graph. Two
 gaps in the **normal form of literal labels** were found, though. Fixing either changes

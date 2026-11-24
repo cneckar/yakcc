@@ -85,6 +85,13 @@ atom is checked by the same differential tests against the TypeScript reference.
 - **The typed subset:** every emit case `emitWasm` lowers, `emitWasmGc` lowers too, with the same results.
 - **Refused for now, with reasons:** ToString of a number, `==` across types, string methods not yet written as atoms, objects, arrays, closures and throws.
 
+**Progress, slice 2 (Number::toString and arrays of numbers):**
+- **Number::toString is a runtime atom** (`__ykNumberToString`). It uses Burger and Dybvig's free-format algorithm, which gives the shortest digits that round-trip, the closest, with ties to an even digit as V8 does. It works on exact big integers, which are atoms too (`BIGNUM_ATOMS`: limbs in base 2^24 in a `number[]`), followed by ECMAScript's layout of the digits. It equals V8's `String(x)` on 2977 doubles, as JavaScript and as WasmGC. The doubles include the specials, subnormals, both ends of the range, the layout's boundaries, powers of two and ten, and random bit patterns.
+- **Three more primitives:** a double's high and low 32 bits, and a one-unit string.
+- **Arrays of numbers:** a struct of a length and a growable `(array (mut f64))`, with `push`, `pop`, element reads and writes, and `length`. Heap operations keep their order (`loweringView`'s `after`).
+  Element reads and writes are lowered only in runtime atoms for now: an out-of-range read is undefined in JavaScript, and a program's typed number cannot hold it.
+- **ToString in programs:** a string `+` with a number or a boolean, `String(x)`, `x.toString()` and template literals.
+
 **What stays from B:** its tests. Every program the linear-memory build passes, the WasmGC build must pass on the same inputs. After that, B is removed.
 
 ## Evidence

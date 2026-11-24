@@ -15,7 +15,7 @@ import { emitTypeScript } from "./emit-ts.js";
 import { emitWasmGc, instantiateWasmGc } from "./emit-wasm-gc.js";
 import { WasmEmitError, emitWasm } from "./emit-wasm.js";
 import { liftAtom } from "./lift.js";
-import { RUNTIME_ATOMS, RUNTIME_PRIMITIVES_JS } from "./wasm-runtime-atoms.js";
+import { BIGNUM_ATOMS, RUNTIME_ATOMS, RUNTIME_PRIMITIVES_JS } from "./wasm-runtime-atoms.js";
 
 /** Strings with every kind of unit: ASCII, whitespace of every class, lone and paired surrogates. */
 const unit = fc.oneof(
@@ -61,18 +61,38 @@ const position = fc.oneof(
   fc.double(),
 );
 
-/** A runtime atom's source run as JavaScript, with the primitives as the engine has them. */
-function atomInJs(key: string): (...a: unknown[]) => unknown {
-  const src = runnable(emitTypeScript(liftAtom((RUNTIME_ATOMS[key] as { source: string }).source)));
-  const names = Object.keys(RUNTIME_PRIMITIVES_JS);
-  return new Function(...names, `${src}; return f;`)(
-    ...names.map((n) => RUNTIME_PRIMITIVES_JS[n as keyof typeof RUNTIME_PRIMITIVES_JS]),
-  ) as (...a: unknown[]) => unknown;
-}
+const ALL_ATOMS = { ...RUNTIME_ATOMS, ...BIGNUM_ATOMS } as Record<
+  string,
+  { source: string; inputs: readonly string[]; output: string }
+>;
+
+/**
+ * The runtime atoms as JavaScript: each lifted and written back by `emitTypeScript`, run with the
+ * primitives as the engine has them and with the other atoms it calls.
+ */
+const JS_ATOMS: Record<string, (...a: unknown[]) => unknown> = (() => {
+  const env: Record<string, (...a: unknown[]) => unknown> = {
+    ...(RUNTIME_PRIMITIVES_JS as unknown as Record<string, (...a: unknown[]) => unknown>),
+  };
+  const names = [...Object.keys(ALL_ATOMS), ...Object.keys(RUNTIME_PRIMITIVES_JS)];
+  for (const [k, a] of Object.entries(ALL_ATOMS)) {
+    const src = runnable(emitTypeScript(liftAtom(a.source)));
+    env[k] = new Function(...names, `${src}; return f;`)(
+      ...names.map(
+        (n) =>
+          (...x: unknown[]) =>
+            env[n]?.(...x),
+      ),
+    ) as (...a: unknown[]) => unknown;
+  }
+  return env;
+})();
+const atomInJs = (key: string): ((...a: unknown[]) => unknown) =>
+  JS_ATOMS[key] as (...a: unknown[]) => unknown;
 
 /** A runtime atom lowered alone: a module whose `f` is the atom. */
 async function atomInWasm(key: string): Promise<(...a: unknown[]) => unknown> {
-  const a = RUNTIME_ATOMS[key] as { source: string; inputs: readonly string[]; output: string };
+  const a = ALL_ATOMS[key] as { source: string; inputs: readonly string[]; output: string };
   return instantiateWasmGc(emitWasmGc(liftAtom(a.source), { inputs: a.inputs, output: a.output }));
 }
 
@@ -147,7 +167,113 @@ describe("runtime atoms define the builtins exactly (#1300)", () => {
   }
 });
 
+/** Doubles of every kind: specials, boundaries of the layout, subnormals, and random bit patterns. */
+const DOUBLES: number[] = (() => {
+  const xs = [
+    0,
+    -0,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    1,
+    -1,
+    0.1,
+    0.2,
+    0.30000000000000004,
+    1 / 3,
+    123.456,
+    1e21,
+    1e-7,
+    1e-6,
+    1.5e-7,
+    123e-20,
+    1e20,
+    9.999999999999999e20,
+    2 ** 53,
+    2 ** 53 + 2,
+    2 ** 63,
+    5e-324,
+    2.2250738585072014e-308,
+    2.225073858507201e-308,
+    Number.MAX_VALUE,
+    4.35,
+    9007199254740994,
+    123456789012345680000,
+    -2.5e-7,
+    1e-323,
+  ];
+  for (let i = -1080; i <= 1030; i += 7) xs.push(2 ** i);
+  for (let i = -330; i <= 310; i += 3) xs.push(10 ** i, 3 * 10 ** i);
+  const dv = new DataView(new ArrayBuffer(8));
+  let seed = 1300;
+  const next = (): number => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed;
+  };
+  for (let i = 0; i < 1500; i++) {
+    dv.setUint32(0, next() * 2 + (next() % 2));
+    dv.setUint32(4, next() * 2 + (next() % 2));
+    xs.push(dv.getFloat64(0));
+  }
+  return xs;
+})();
+
+describe("Number::toString as a runtime atom (#1300)", () => {
+  it(`the shortest round-trip digits and ECMAScript's layout, as V8 writes them, on ${DOUBLES.length} doubles: as JavaScript and as WasmGC`, async () => {
+    const js = atomInJs("__ykNumberToString");
+    const wasm = await atomInWasm("__ykNumberToString");
+    const bad: string[] = [];
+    for (const x of DOUBLES) {
+      const want = String(x);
+      for (const [how, got] of [
+        ["js", js(x)],
+        ["wasm", wasm(x)],
+      ] as const)
+        if (got !== want) bad.push(`${how} ${want}: ${String(got)}`);
+    }
+    expect(bad.slice(0, 5)).toEqual([]);
+  }, 300_000);
+
+  it("the big-integer atoms agree with BigInt", async () => {
+    const limbs = (b: bigint): number[] => {
+      const out: number[] = [];
+      for (let v = b; v > 0n; v >>= 24n) out.push(Number(v & 0xffffffn));
+      return out;
+    };
+    const value = (xs: readonly number[]): bigint =>
+      xs.reduceRight((acc, l) => (acc << 24n) + BigInt(l), 0n);
+    const big = fc.bigInt({ min: 0n, max: 2n ** 200n });
+    const add = atomInJs("__ykBigAdd");
+    const sub = atomInJs("__ykBigSub");
+    const cmp = atomInJs("__ykBigCmp");
+    const mul = atomInJs("__ykBigMulSmall");
+    const from = atomInJs("__ykBigFromInt");
+    for (const [a, b] of fc.sample(fc.tuple(big, big), { numRuns: 300, seed: 1300 })) {
+      expect(value(add(limbs(a), limbs(b)) as number[])).toBe(a + b);
+      expect(cmp(limbs(a), limbs(b))).toBe(a < b ? -1 : a > b ? 1 : 0);
+      const [hi, lo] = a >= b ? [a, b] : [b, a];
+      const d = sub(limbs(hi), limbs(lo)) as number[];
+      expect(value(d)).toBe(hi - lo);
+      expect(d.length === 0 || d[d.length - 1] !== 0).toBe(true);
+      expect(value(mul(limbs(a), 10) as number[])).toBe(a * 10n);
+    }
+    for (const n of [0, 1, 2 ** 24 - 1, 2 ** 24, 2 ** 53 - 1])
+      expect(value(from(n) as number[])).toBe(BigInt(n));
+  }, 120_000);
+});
+
 const PROGRAMS: [string, string, string[], string, fc.Arbitrary<unknown[]>][] = [
+  [
+    "numbers and booleans made strings: +, String, toString, templates",
+    'export function f(n: number, m: number, b: boolean): string { const s = "n=" + n; return s + "|" + String(m / 3) + "|" + (n * m).toString() + `<${n - m}:${b}>` + b + String(b) + (1 + n) + ""; }',
+    ["number", "number", "boolean"],
+    "string",
+    fc.tuple(
+      fc.oneof(fc.double(), fc.integer()),
+      fc.oneof(fc.double(), fc.constantFrom(0, -0, 1e21, 1e-7, 3)),
+      fc.boolean(),
+    ),
+  ],
   [
     "concatenation, length, literals, equality",
     'export function f(a: string, b: string): number { const c = a + "|" + b; return c === b + a ? -1 : c.length * 10 + (a < b ? 1 : 0) + (a >= b ? 2 : 0); }',
@@ -254,14 +380,10 @@ describe("what the WasmGC lowering refuses, with the reason (#1300)", () => {
     }
     return "lowered";
   };
-  it("a number joined to a string, == across types, a method not yet an atom, an undefined result", () => {
+  it("== across types, a method not yet an atom, an undefined result, element access in a program", () => {
     expect(
-      refusal(
-        "export function f(s: string, n: number): string { return s + n; }",
-        ["string", "number"],
-        "string",
-      ),
-    ).toMatch(/ToString of a number/);
+      refusal("export function f(a: number[]): number { return a[0]; }", ["number[]"], "number"),
+    ).toMatch(/element read .* not in the subset of a program yet/);
     expect(
       refusal(
         "export function f(s: string, n: number): boolean { return s == n; }",
