@@ -47,7 +47,7 @@ export const ATOMS: Readonly<Record<string, RuntimeAtom>> = {
  * A value's type: a number, a boolean, a string, an array of numbers, or a value of any of these
  * kinds or undefined or null.
  */
-export type WT = "f64" | "i32" | "str" | "nums" | "any";
+export type WT = "f64" | "i32" | "str" | "nums" | "arr" | "any";
 
 /** The f64 operations: arithmetic, Math's native functions, and comparisons (to an i32). */
 export type F64Op =
@@ -83,6 +83,7 @@ export type Ins =
   | { readonly op: "const.undef" }
   | { readonly op: "const.null" }
   | { readonly op: "nums.of"; readonly n: number }
+  | { readonly op: "arr.of"; readonly n: number }
   | { readonly op: "get"; readonly i: number }
   | { readonly op: "set"; readonly i: number }
   | { readonly op: "call"; readonly fn: string }
@@ -91,6 +92,7 @@ export type Ins =
   | { readonly op: "f64.of.i32" }
   | { readonly op: "str.len" }
   | { readonly op: "nums.len" }
+  | { readonly op: "arr.len" }
   | { readonly op: "to.any"; readonly from: WT }
   | { readonly op: "from.any"; readonly to: WT }
   | { readonly op: "ref.eq" }
@@ -154,6 +156,10 @@ export const PRIMITIVES: Readonly<Record<string, { params: WT[]; result: WT }>> 
   __ykBool: { params: ["any"], result: "i32" },
   __ykStr: { params: ["any"], result: "str" },
   __ykArr: { params: ["any"], result: "nums" },
+  __ykArrAny: { params: ["any"], result: "arr" },
+  // Undefined as a value; and the point where a TypeError is thrown (a trap until exceptions).
+  __ykUndef: { params: [], result: "any" },
+  __ykTypeError: { params: [], result: "any" },
   __ykSame: { params: ["any", "any"], result: "i32" },
 };
 
@@ -165,6 +171,14 @@ export const ARRAY_PRIMITIVES: Readonly<Record<string, { params: WT[]; result: W
   numsSet: { params: ["nums", "f64", "f64"], result: "nums" },
   // A program's element read: the element, or undefined at an index that is not one.
   numsAt: { params: ["nums", "f64"], result: "any" },
+  // A program's pop: undefined from an empty array.
+  numsPopAny: { params: ["nums"], result: "any" },
+  // An array of any values: the same operations, its elements values of any kind. A read out of
+  // range, or at an index that is not one, is undefined; a pop of an empty array is undefined.
+  arrPush: { params: ["arr", "any"], result: "f64" },
+  arrPop: { params: ["arr"], result: "any" },
+  arrAt: { params: ["arr", "f64"], result: "any" },
+  arrSet: { params: ["arr", "f64", "any"], result: "arr" },
 };
 
 /**
@@ -272,6 +286,7 @@ export class StackProgram {
       this.funcs.set(fkey, { kind: "primitive", ...p });
       // A write at the end of an array is a push.
       if (key === "numsSet") this.primitive("numsPush");
+      if (key === "arrSet") this.primitive("arrPush");
     }
     return { fn: fkey, params: p.params, result: p.result };
   }
@@ -305,6 +320,8 @@ function wt(t: DucType | undefined, what: string): WT {
   if (t.k === "boolean") return "i32";
   if (t.k === "string") return "str";
   if (t.k === "array" && t.of?.k === "num") return "nums";
+  // An array of anything else holds values of any kind.
+  if (t.k === "array") return "arr";
   // A value that may be of more than one kind, undefined or null.
   if (t.k === "unknown" || t.k === "null" || t.k === "undefined") return "any";
   if (t.k === "union") {
@@ -394,6 +411,7 @@ function lowerFunction(
             i32: "a boolean",
             str: "a string",
             nums: "an array of numbers",
+            arr: "an array",
             any: "a value of any kind",
             undef: "undefined",
             "?": "nothing yet",
@@ -417,6 +435,39 @@ function lowerFunction(
     if (trusted && a === "undef") return b;
     if (trusted && b === "undef") return a;
     return "any";
+  };
+  /** The empty array literals something other than a number is stored in. */
+  const grown = new Set<ValueId>();
+  /** The empty array literals an array value may be: through carries, choices and writes. */
+  const arrayOrigins = (v0: ValueId, seen = new Set<ValueId>()): ValueId[] => {
+    const v = resolve(v0);
+    if (seen.has(v)) return [];
+    seen.add(v);
+    const carry = carryOf.get(v);
+    if (carry !== undefined) {
+      const rec = carry.loop.loop as DucLoop;
+      return [
+        ...arrayOrigins(carry.loop.inputs[carry.i] as ValueId, seen),
+        ...arrayOrigins(rec.next[carry.i] as ValueId, seen),
+      ];
+    }
+    const p = producer.get(v);
+    if (p === undefined) return [];
+    if (p.kind === "loop")
+      return arrayOrigins((p.loop as DucLoop).carry[p.outputs.indexOf(v)] as ValueId, seen);
+    if (p.kind === "sel" || owners.get(p.id) !== undefined)
+      return [
+        ...arrayOrigins(p.inputs[1] as ValueId, seen),
+        ...arrayOrigins(p.inputs[2] as ValueId, seen),
+      ];
+    if (p.kind === "op" && p.label === "ArrayLiteral" && p.inputs.length === 0) return [v];
+    if (p.kind === "op" && p.label === "[]=") return arrayOrigins(p.inputs[0] as ValueId, seen);
+    return [];
+  };
+  /** A store of a value of type `t` in an array of numbers: a non-number grows its literals. */
+  const stored = (arr: ValueId, t: VT | "?"): void => {
+    if (t === "?" || t === "f64") return;
+    for (const o of arrayOrigins(arr)) grown.add(o);
   };
   /**
    * A closure call's signature: its captures' types, then its arguments' (a missing argument is
@@ -498,10 +549,10 @@ function lowerFunction(
       if (t0 === "?") return "?";
       if (typeof t0 === "object" && t0.call.k === "math")
         return MATH_CONSTANTS[member] !== undefined ? "f64" : { call: { k: "math", name: member } };
-      if (t0 === "nums") {
+      if (t0 === "nums" || t0 === "arr") {
         if (member === "length") return "f64";
         if (member === "push" || member === "pop")
-          return { call: { k: "method", recv: ins[0] as ValueId, name: `nums.${member}` } };
+          return { call: { k: "method", recv: ins[0] as ValueId, name: `${t0}.${member}` } };
         throw new LoweringError(`the array method ${member} is not in the subset yet`);
       }
       if (t0 === "any")
@@ -528,8 +579,13 @@ function lowerFunction(
       if (callee.k === "string-of") return "str";
       if (callee.k === "number-of") return "f64";
       if (callee.k === "prim") return (PRIMITIVES[callee.name] as { result: WT }).result;
-      if (callee.k === "method" && callee.name === "nums.push") return "f64";
-      if (callee.k === "method" && callee.name === "nums.pop") return "f64";
+      if (callee.k === "method" && callee.name === "nums.push") {
+        stored(callee.recv, ins[1] === undefined ? "?" : get(ins[1] as ValueId));
+        return "f64";
+      }
+      if (callee.k === "method" && callee.name === "nums.pop") return trusted ? "f64" : "any";
+      if (callee.k === "method" && callee.name === "arr.push") return "f64";
+      if (callee.k === "method" && callee.name === "arr.pop") return "any";
       if (callee.k === "method" && callee.name === "toString") return "str";
       if (callee.k === "atom")
         return wt(parseType((ATOMS[callee.name] as { output: string }).output), callee.name);
@@ -548,38 +604,45 @@ function lowerFunction(
       if (known.some((x) => typeof x === "object")) throw new LoweringError("+ of a function");
       if (known.length === 0) return "?";
       // An array's primitive is its join, a string: + of one concatenates.
-      if (known.some((x) => x === "str" || x === "nums")) return "str";
+      if (known.some((x) => x === "str" || x === "nums" || x === "arr")) return "str";
       // A value of any kind may be a string: ECMAScript's + decides (the runtime atom).
       if (known.some((x) => x === "any")) return known.length === 2 ? "any" : "?";
       return "f64";
     }
     if (label === "ArrayLiteral") {
-      for (let i = 0; i < ins.length; i++) {
-        const t = operand(i);
-        if (t !== "?" && t !== "f64")
-          throw new LoweringError("an array literal of other than numbers");
-      }
-      return "nums";
+      // As TypeScript types it: numbers make an array of numbers; anything else, or nothing in a
+      // program (an array that grows), an array of any values. In a runtime atom, [] is of numbers.
+      const ts = ins.map((_, i) => operand(i));
+      if (ts.some((t) => typeof t === "object"))
+        throw new LoweringError("an array of functions is not in the subset yet");
+      // An empty array is of numbers until something else is stored in it (TypeScript's evolving
+      // array): then it holds values of any kind.
+      if (ins.length === 0) return grown.has(v) ? "arr" : "nums";
+      if (ts.every((t) => t === "f64")) return "nums";
+      if (ts.some((t) => t !== "?" && t !== "f64")) return "arr";
+      return "?";
     }
     if (label === "ElementAccess" && ins.length === 2) {
       const t0 = operand(0);
       if (t0 === "?") return "?";
-      if (t0 !== "nums")
+      if (t0 === "str" || t0 === "any") return "any";
+      if (t0 !== "nums" && t0 !== "arr")
         throw new LoweringError(`an element read of ${show(t0)} is not in the subset`);
       const t1 = operand(1);
       if (t1 !== "?" && t1 !== "f64")
         throw new LoweringError(`an element read at ${show(t1)} is not in the subset yet`);
       // In a program a read out of range is undefined: a value of any kind.
-      return trusted ? "f64" : "any";
+      return t0 === "nums" && trusted ? "f64" : "any";
     }
     if (label === "[]=" && ins.length === 3) {
       const t0 = operand(0);
       if (t0 === "?") return "?";
-      if (t0 !== "nums")
+      if (t0 !== "nums" && t0 !== "arr")
         throw new LoweringError(`an element write to ${show(t0)} is not in the subset`);
+      if (t0 === "nums") stored(ins[0] as ValueId, get(ins[2] as ValueId));
       if (!trusted)
         throw new LoweringError("an element write is not in the subset of a program yet");
-      return "nums";
+      return t0;
     }
     if (label.startsWith("template:")) {
       // The label holds the template's cooked text, its value (the literal normal form, #1303).
@@ -617,7 +680,9 @@ function lowerFunction(
     (v) => resolve(v) === v,
   );
   for (let round = 0, changed = true; changed; round++) {
-    if (round > allValues.length + 2) throw new LoweringError("the types do not settle");
+    if (round > (allValues.length + 2) * (grown.size + 1) + 2)
+      throw new LoweringError("the types do not settle");
+    const grownBefore = grown.size;
     changed = false;
     for (const v of allValues) {
       const t = computeType(v);
@@ -629,6 +694,12 @@ function lowerFunction(
         types.set(v, t);
         changed = true;
       }
+    }
+    // A literal that grew retypes everything that flows from it: the types start again (the
+    // literals only grow, so this happens at most once for each).
+    if (grown.size !== grownBefore) {
+      types.clear();
+      changed = true;
     }
   }
   /** A value's settled type: never typed is undefined (it never has a value). */
@@ -664,6 +735,7 @@ function lowerFunction(
     else if (t === "f64") emit({ op: "const.f64", x: Number.NaN });
     else if (t === "i32") emit({ op: "const.i32", x: 0 });
     else if (t === "nums") emit({ op: "nums.of", n: 0 });
+    else if (t === "arr") emit({ op: "arr.of", n: 0 });
     else emit({ op: "const.str", s: "" });
   };
   /** Push a string constant: its UTF-16 units, as a new array. */
@@ -690,7 +762,7 @@ function lowerFunction(
       pushText("false");
       push(v);
       select("str");
-    } else call(mod.atom("__ykJoinNums"), [v], "ToString");
+    } else call(mod.atom(t === "nums" ? "__ykJoinNums" : "__ykJoinAny"), [v], "ToString");
   };
   /** Push a value; `want` is the type it is used as (an undefined stands for that type's default). */
   /**
@@ -782,8 +854,8 @@ function lowerFunction(
     if (typeof t !== "string" || t === "undef")
       throw new LoweringError("a value made a number has no value here");
     if (t === "str") call(mod.atom("__ykStringToNumber"), [v], "ToNumber");
-    else if (t === "nums") {
-      call(mod.atom("__ykJoinNums"), [v], "ToNumber");
+    else if (t === "nums" || t === "arr") {
+      call(mod.atom(t === "nums" ? "__ykJoinNums" : "__ykJoinAny"), [v], "ToNumber");
       emit({ op: "call", fn: mod.atom("__ykStringToNumber").fn });
     } else pushAs(v, "f64", "an operand");
   };
@@ -800,9 +872,9 @@ function lowerFunction(
       emit({ op: "str.len" });
       return;
     }
-    if (t === "nums") {
+    if (t === "nums" || t === "arr") {
       // An array is an object: always truthy.
-      emit({ op: "drop", t: "nums" }, { op: "const.i32", x: 1 });
+      emit({ op: "drop", t }, { op: "const.i32", x: 1 });
       return;
     }
     emit({ op: "const.f64", x: 0 }, { op: "f64", name: "ne" });
@@ -862,9 +934,9 @@ function lowerFunction(
         set(out);
         return;
       }
-      if (t0 === "nums" && label === ".length") {
+      if ((t0 === "nums" || t0 === "arr") && label === ".length") {
         push(ins[0] as ValueId);
-        emit({ op: "nums.len" }, { op: "f64.of.i32" });
+        emit({ op: t0 === "nums" ? "nums.len" : "arr.len" }, { op: "f64.of.i32" });
         set(out);
         return;
       }
@@ -903,7 +975,13 @@ function lowerFunction(
           throw new LoweringError("push of other than one value is not in the subset yet");
         call(mod.primitive("numsPush"), [callee.recv, args[0] as ValueId], "push");
       } else if (callee.k === "method" && callee.name === "nums.pop") {
-        call(mod.primitive("numsPop"), [callee.recv], "pop");
+        call(mod.primitive(trusted ? "numsPop" : "numsPopAny"), [callee.recv], "pop");
+      } else if (callee.k === "method" && callee.name === "arr.push") {
+        if (args.length !== 1)
+          throw new LoweringError("push of other than one value is not in the subset yet");
+        call(mod.primitive("arrPush"), [callee.recv, args[0] as ValueId], "push");
+      } else if (callee.k === "method" && callee.name === "arr.pop") {
+        call(mod.primitive("arrPop"), [callee.recv], "pop");
       } else if (callee.k === "prim") call(mod.primitive(callee.name), args, callee.name);
       else if (callee.k === "atom") call(mod.atom(callee.name), args, callee.name);
       else if (callee.k === "closure") {
@@ -948,21 +1026,33 @@ function lowerFunction(
       return;
     }
     if (label === "ArrayLiteral") {
-      if (ins.length === 0) pushDefault("nums");
-      else {
+      if (t === "nums") {
         for (const v of ins) pushNumber(v);
         emit({ op: "nums.of", n: ins.length });
+      } else {
+        for (const v of ins) push(v, "any");
+        emit({ op: "arr.of", n: ins.length });
       }
       set(out);
       return;
     }
     if (label === "ElementAccess") {
-      call(mod.primitive(t === "any" ? "numsAt" : "numsGet"), ins, "an element read");
+      const of = opType(ins[0] as ValueId);
+      if (of === "str" || of === "any") {
+        // A string's unit, or any value's element: the runtime atom.
+        push(ins[0] as ValueId, "any");
+        pushNumber(ins[1] as ValueId);
+        emit({ op: "call", fn: mod.atom("__ykIndex").fn });
+        set(out);
+        return;
+      }
+      const prim = of === "arr" ? "arrAt" : t === "any" ? "numsAt" : "numsGet";
+      call(mod.primitive(prim), ins, "an element read");
       set(out);
       return;
     }
     if (label === "[]=") {
-      call(mod.primitive("numsSet"), ins, "an element write");
+      call(mod.primitive(t === "arr" ? "arrSet" : "numsSet"), ins, "an element write");
       set(out);
       return;
     }
@@ -1026,14 +1116,14 @@ function lowerFunction(
       // ECMAScript's IsStrictlyEqual, IsLooselyEqual and IsLessThan over these types. An array of
       // numbers is an object: equal only to itself, and a primitive (its join) where one is needed.
       const strictly = label === "===" || label === "!==";
-      const strLike = (t: WT) => t === "str" || t === "nums";
+      const strLike = (t: WT) => t === "str" || t === "nums" || t === "arr";
       if (ta === tb && equality) {
         if (ta === "str") call(mod.atom("__ykStrEquals"), [a, b], label);
         else {
           push(a);
           push(b);
           emit(
-            ta === "nums" || ta === "any"
+            ta === "nums" || ta === "arr" || ta === "any"
               ? { op: "ref.eq" }
               : ta === "i32"
                 ? { op: "i32", name: "eq" }
@@ -1087,6 +1177,7 @@ function lowerFunction(
           i32: "boolean",
           str: "string",
           nums: "object",
+          arr: "object",
           undef: "undefined",
         };
         const name0 = typeof t0 === "string" ? names[t0] : undefined;
@@ -1209,10 +1300,20 @@ function lowerFunction(
   if (typeof computed !== "string" || computed === "undef")
     throw new LoweringError("the result has no value here");
   const result = declared ?? computed;
-  if (result !== computed && computed !== "any" && result !== "any")
+  if (
+    result !== computed &&
+    computed !== "any" &&
+    result !== "any" &&
+    !(computed === "arr" && result === "nums")
+  )
     throw new LoweringError(
       `the result is ${show(computed)}, and the contract says ${show(result)}`,
     );
-  push(g.obs[0] as ValueId, result);
+  if (computed === "arr" && result === "nums") {
+    // The contract's array of numbers, from an array that held values of any kind: a new one, each
+    // element read as a number (nothing else holds the array once it is returned).
+    push(g.obs[0] as ValueId, "arr");
+    emit({ op: "call", fn: mod.atom("__ykArrToNums").fn });
+  } else push(g.obs[0] as ValueId, result);
   return { result, locals, code };
 }
