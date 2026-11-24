@@ -131,7 +131,29 @@ yk yk_number(double d) {
 
 yk yk_bool(int b) { return b ? YK_TRUE : YK_FALSE; }
 
+/* Memory the runtime never frees (there is no collector yet): bumped out of zeroed chunks, 16-byte
+   aligned. A large request has a chunk of its own. */
 static void *alloc(size_t n) {
+  static uint8_t *chunk = NULL;
+  static size_t left = 0;
+  n = (n + 15) & ~(size_t)15;
+  if (n > (1u << 16)) {
+    void *p = calloc(1, n);
+    if (p == NULL) abort();
+    return p;
+  }
+  if (n > left) {
+    chunk = calloc(1, 1u << 20);
+    if (chunk == NULL) abort();
+    left = 1u << 20;
+  }
+  void *p = chunk;
+  chunk += n;
+  left -= n;
+  return p;
+}
+/* Memory that is freed (scratch buffers, coroutine stacks): the C library's. */
+static void *scratch(size_t n) {
   void *p = calloc(1, n);
   if (p == NULL) abort();
   return p;
@@ -147,7 +169,7 @@ static yk string_of(yk_string *s) { return BOX(T_STRING, s); }
 
 /* A string from UTF-8 bytes, as a source literal is written. */
 yk yk_string_utf8(const char *p, uint64_t n) {
-  uint16_t *tmp = alloc((size_t)n * 2 + 2);
+  uint16_t *tmp = scratch((size_t)n * 2 + 2);
   uint32_t len = 0;
   for (uint64_t i = 0; i < n;) {
     uint32_t c = (unsigned char)p[i];
@@ -499,15 +521,25 @@ int yk_truthy(yk v) {
 }
 
 yk yk_add(yk a, yk b) {
+  if (is_number(a) && is_number(b)) return yk_number(num(a) + num(b));
   a = to_primitive(a);
   b = to_primitive(b);
   if (is_string(a) || is_string(b)) return concat(str(to_string(a)), str(to_string(b)));
   if (numeric_pair(&a, &b)) return big_binary(a, b, '+');
   return yk_number(to_number(a) + to_number(b));
 }
-yk yk_sub(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '-') : yk_number(to_number(a) - to_number(b)); }
-yk yk_mul(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '*') : yk_number(to_number(a) * to_number(b)); }
-yk yk_div(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '/') : yk_number(to_number(a) / to_number(b)); }
+yk yk_sub(yk a, yk b) {
+  if (is_number(a) && is_number(b)) return yk_number(num(a) - num(b));
+  return numeric_pair(&a, &b) ? big_binary(a, b, '-') : yk_number(to_number(a) - to_number(b));
+}
+yk yk_mul(yk a, yk b) {
+  if (is_number(a) && is_number(b)) return yk_number(num(a) * num(b));
+  return numeric_pair(&a, &b) ? big_binary(a, b, '*') : yk_number(to_number(a) * to_number(b));
+}
+yk yk_div(yk a, yk b) {
+  if (is_number(a) && is_number(b)) return yk_number(num(a) / num(b));
+  return numeric_pair(&a, &b) ? big_binary(a, b, '/') : yk_number(to_number(a) / to_number(b));
+}
 yk yk_mod(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '%') : yk_number(fmod(to_number(a), to_number(b))); }
 yk yk_neg(yk a) {
   a = to_primitive(a);
@@ -562,6 +594,10 @@ yk yk_ne(yk a, yk b) { return yk_bool(!loose_equal(a, b)); }
 
 /* IsLessThan: -1 for undefined (a NaN took part), else 0 or 1. */
 static int less_than(yk a, yk b) {
+  if (is_number(a) && is_number(b)) {
+    double x = num(a), y = num(b);
+    return x != x || y != y ? -1 : x < y;
+  }
   a = to_primitive(a);
   b = to_primitive(b);
   if (is_string(a) && is_string(b)) {
@@ -1456,8 +1492,8 @@ static int canonical_index(yk_string *s, uint32_t *out) {
 
 static yk_array *ordered_keys(yk_object *o) {
   yk_array *r = new_array(o->len);
-  uint32_t *idx = alloc((size_t)o->len * sizeof(uint32_t) + 4);
-  yk *ik = alloc((size_t)o->len * sizeof(yk) + 8);
+  uint32_t *idx = scratch((size_t)o->len * sizeof(uint32_t) + 4);
+  yk *ik = scratch((size_t)o->len * sizeof(yk) + 8);
   uint32_t n = 0;
   for (uint32_t i = 0; i < o->len; i++) {
     uint32_t k;
@@ -1620,7 +1656,7 @@ static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv,
   }
   if (key_is(key, "sort")) {
     if (f != YK_UNDEFINED && !is_closure(f)) type_error("the comparator is not a function");
-    yk *tmp = alloc((size_t)(a->len + 1) * sizeof(yk));
+    yk *tmp = scratch((size_t)(a->len + 1) * sizeof(yk));
     merge_sort(a->items, tmp, a->len, f);
     free(tmp);
     return *out = recv, 1;
@@ -1668,6 +1704,9 @@ static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv,
 /* --- bitwise operators, on ToInt32 / ToUint32 --- */
 
 static uint32_t to_uint32(yk v) {
+  /* A number below 2^63 in magnitude: its int64 conversion truncates, and its low 32 bits are the
+     value modulo 2^32, as ECMA-262's ToUint32. */
+  if (is_number(v) && fabs(num(v)) < 9.2e18) return (uint32_t)(int64_t)num(v);
   double d = to_number(v);
   if (d != d || isinf(d)) return 0;
   d = trunc(d);
@@ -3150,7 +3189,7 @@ static void coro_resume(coro *co, yk value, int mode) {
   co->mode = mode;
   current_coro = co;
   if (co->state == 0) {
-    co->stack = alloc(CORO_STACK);
+    co->stack = scratch(CORO_STACK);
     getcontext(&co->ctx);
     co->ctx.uc_stack.ss_sp = co->stack;
     co->ctx.uc_stack.ss_size = CORO_STACK;
@@ -4525,6 +4564,8 @@ typedef struct {
 } c_region;
 static c_region *c_regions = NULL;
 static uint32_t c_nregions = 0, c_capregions = 0;
+/* The last region an access found: most accesses are to it. */
+static uint32_t c_last = 0;
 static uint64_t c_next = 0x10000;
 static yk c_data_keys = 0; /* an object: a constant's content, to its address */
 
@@ -4545,13 +4586,22 @@ static uint64_t c_alloc(double size, double align, int constant) {
     if (c_nregions > 0) memcpy(grown, c_regions, (size_t)c_nregions * sizeof(c_region));
     c_regions = grown;
   }
-  uint8_t *bytes = alloc(len);
-  memset(bytes, 0, len);
+  uint8_t *bytes = calloc(len, 1);
+  if (bytes == NULL) {
+    fputs("out of memory\n", stderr);
+    exit(71);
+  }
   c_regions[c_nregions++] = (c_region){base, len, constant, 1, bytes};
   c_next = base + len + 16;
   return base;
 }
 static c_region *c_region_of(double a, uint32_t n, int write) {
+  if (c_last < c_nregions) {
+    c_region *r = &c_regions[c_last];
+    if (a >= (double)r->base && a + n <= (double)(r->base + r->len) && r->live && trunc(a) == a &&
+        !(write && r->constant))
+      return r;
+  }
   if (!(a == a && !isinf(a) && trunc(a) == a)) c_trap(concat(str(ascii("address ")), str(number_to_string(a))));
   uint32_t lo = 0, hi = c_nregions;
   while (lo < hi) {
@@ -4561,6 +4611,7 @@ static c_region *c_region_of(double a, uint32_t n, int write) {
     else if (a >= (double)(r->base + r->len)) lo = mid + 1;
     else {
       if (!r->live || a + n > (double)(r->base + r->len) || (write && r->constant)) break;
+      c_last = mid;
       return r;
     }
   }
@@ -4581,6 +4632,11 @@ yk yk_leaf_free(yk addr) {
   c_region *r = c_region_of(a, 1, 0);
   if ((double)r->base != a || r->constant) c_trap(concat(str(ascii("free of 0x")), str(hex_of(a))));
   r->live = 0;
+  free(r->bytes);
+  r->bytes = NULL;
+  /* A dead region traps as no region does, so the dead ones at the end leave the table (frames are
+     freed last-in, first-out: the table stays as deep as the live ones). */
+  while (c_nregions > 0 && !c_regions[c_nregions - 1].live) c_nregions--;
   return YK_UNDEFINED;
 }
 yk yk_leaf_load8(yk a) { return yk_number(*c_at(a, 1, 0)); }
