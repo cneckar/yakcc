@@ -605,8 +605,9 @@ export const BIGNUM_ATOMS: Readonly<Record<string, RuntimeAtom>> = {
     }
   }
   // Scale: the smallest k with (r + m+) / s below 10^k (at or below when even), by an estimate
-  // from the logarithm and an exact correction.
-  let k = Math.ceil(Math.log10(x) - 1e-10);
+  // from the binary exponent (x = mant 2^e, mant below 2^53: log10 x below (e + 53) log10 2) and an
+  // exact correction both ways, so the estimate needs no host function.
+  let k = Math.ceil((e + 53) * 0.3010299956639812);
   if (k >= 0) __ykBigMulPow10(s, k);
   else {
     __ykBigMulPow10(r, -k);

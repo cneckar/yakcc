@@ -190,27 +190,12 @@ const hostArg = fc.oneof(
 );
 
 describe.skipIf(!jdk)("ECMAScript's host functions on a JVM agree with V8 (#1311)", () => {
+  // Only the host functions whose result is exact by definition (the rest are refused: see
+  // encodeHost). V8's sin, exp, pow, ... are llvm-libc's or its own fdlibm ports, and StrictMath's
+  // differ from them on some arguments; a sample cannot show they never do.
   const HOST: [string, number][] = [
     ["%", 2],
-    ["**", 2],
-    ...[
-      "round",
-      "sign",
-      "fround",
-      "expm1",
-      "log",
-      "log1p",
-      "log10",
-      "sin",
-      "cos",
-      "tan",
-      "asin",
-      "acos",
-      "atan",
-      "sinh",
-      "tanh",
-    ].map((m): [string, number] => [`Math.${m}`, 1]),
-    ...["pow"].map((m): [string, number] => [`Math.${m}`, 2]),
+    ...["round", "sign", "fround"].map((m): [string, number] => [`Math.${m}`, 1]),
   ];
   for (const [fn, arity] of HOST)
     it(`${fn}, on 1000 arguments`, () => {
@@ -247,7 +232,14 @@ describe("what the JVM lowering refuses, with the reason (#1311)", () => {
         "number",
       ),
     ).toMatch(/Math.asinh has no exact counterpart on the JVM yet/);
-    // V8's exp differs from StrictMath's in the last place: refused, not approximated.
+    // V8's exp, sin and pow (and so **) are not StrictMath's: refused, not approximated.
+    for (const [src, name] of [
+      ["export function f(x: number): number { return Math.sin(x); }", "Math.sin"],
+      ["export function f(x: number): number { return x ** 2; }", "\\*\\*"],
+    ])
+      expect(refusal(src as string, ["number"], "number")).toMatch(
+        new RegExp(`${name} has no exact counterpart on the JVM yet`),
+      );
     expect(
       refusal("export function f(x: number): number { return Math.exp(x); }", ["number"], "number"),
     ).toMatch(/Math.exp has no exact counterpart on the JVM yet/);
