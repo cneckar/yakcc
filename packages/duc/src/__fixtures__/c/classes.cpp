@@ -67,6 +67,34 @@ template <class T> struct Box {
   int sign() const { return is_signed ? -1 : 1; }
 };
 using Word = int;
+
+// C++17 and later forms: an inheriting and a delegating constructor, a static member function
+// called through this, a trailing return type, a constexpr table built by a function.
+struct Base {
+  int v;
+  Base(int a, int b) : v(a * 3 - b) {}
+};
+struct Derived : Base {
+  using Base::Base;
+  static int twice(int x) { return 2 * x; }
+  int get() { return this->twice(v); }
+};
+struct Pair {
+  int first;
+  long second;
+  Pair(int a) : Pair(a, -a) {}
+  Pair(int a, long b) : first(a), second(b * 2) {}
+};
+auto add3(int x) -> int { return x + 3; }
+struct Table {
+  unsigned char v[64];
+};
+constexpr Table build() {
+  Table t{};
+  for (int i = 0; i < 64; i++) t.v[i] = (unsigned char)(i * 37 + 11);
+  return t;
+}
+static constexpr Table table = build();
 } // namespace yk
 
 extern "C" {
@@ -118,6 +146,26 @@ int yk_box(int a, int b) {
   w += *bi.data();
   bi.cap = 0;
   return w * bi.sign() + bu.sign() * 1000 + bu.used + int(bu.buf[0]);
+}
+
+int yk_modern(int a, int b) {
+  int arr[5] = {a, b, a - b, 7, -1};
+  int sum = 0;
+  for (int x : arr) {
+    if (x < 0) continue;
+    sum += x;
+  }
+  if (int r = a % 7; r > 2) sum += r;
+  yk::Pair p(b);
+  auto [f, s] = p;
+  sum += f + int(s);
+  int out = 0;
+  if (__builtin_mul_overflow(a, b * 100000, &out)) sum += 1;
+  else sum += out & 0xff;
+  unsigned char small = 0;
+  sum += __builtin_add_overflow(a & 0xff, 200, &small) ? 1000 : small;
+  yk::Derived d(a, b);
+  return sum + d.get() + yk::add3(a) + yk::table.v[(a & 63)];
 }
 
 }
