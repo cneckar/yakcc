@@ -301,6 +301,46 @@ function normalizeJumps(
   return sf;
 }
 
+/**
+ * Whether a scope between a node and `scope` (exclusive) declares `name`: a block's or a clause's
+ * own declaration, a function's parameter, a loop header's or a catch clause's binding. A read of the
+ * name from the node is that declaration's, not one in `scope`.
+ */
+function declaredBetween(node: Node, name: string, scope: Node | undefined): boolean {
+  const declares = (st: Node): boolean =>
+    Node.isVariableStatement(st)
+      ? st.getDeclarations().some((d) => patternNames(d.getNameNode()).includes(name))
+      : (Node.isFunctionDeclaration(st) || Node.isClassDeclaration(st)) && st.getName() === name;
+  for (
+    let p: Node | undefined = node.getParent();
+    p !== undefined && p.compilerNode !== scope?.compilerNode;
+    p = p.getParent()
+  ) {
+    if (Node.isBlock(p) || Node.isCaseClause(p) || Node.isDefaultClause(p)) {
+      if (p.getStatements().some(declares)) return true;
+    } else if (isFunctionLikeNode(p)) {
+      if (
+        (p as FunctionLike)
+          .getParameters()
+          .some((param) => patternNames(param.getNameNode()).includes(name))
+      )
+        return true;
+    } else if (Node.isForStatement(p) || Node.isForOfStatement(p) || Node.isForInStatement(p)) {
+      const init = p.getInitializer();
+      if (
+        init !== undefined &&
+        Node.isVariableDeclarationList(init) &&
+        init.getDeclarations().some((d) => patternNames(d.getNameNode()).includes(name))
+      )
+        return true;
+    } else if (Node.isCatchClause(p)) {
+      const v = p.getVariableDeclaration();
+      if (v !== undefined && patternNames(v.getNameNode()).includes(name)) return true;
+    }
+  }
+  return false;
+}
+
 /** The innermost loop around a node, inside its own function. */
 function ownLoop(n: Node): Node | undefined {
   for (let p: Node | undefined = n.getParent(); p !== undefined; p = p.getParent()) {
@@ -876,19 +916,19 @@ class Lifter {
       const isVar = stmt.getDeclarationKind() === VariableDeclarationKind.Var;
       for (const decl of stmt.getDeclarations())
         for (const name of patternNames(decl.getNameNode())) {
+          // A closure reads this binding only where no scope between it and this one declares
+          // the name again (#1292): an inner block's own `const r` is the `r` its closure reads.
+          const readsThis = (fn: Node): boolean =>
+            this.readNamesOf(fn).includes(name) && !declaredBetween(fn, name, stmt.getParent());
           const readEarlier =
             stmts
               .slice(0, isVar ? j + 1 : j)
-              .some((earlier) =>
-                functionsWithin(earlier).some((fn) => this.readNamesOf(fn).includes(name)),
-              ) ||
+              .some((earlier) => functionsWithin(earlier).some(readsThis)) ||
             // A closure in a let's or const's own initializer that reads it when it runs, after
             // the initializer (#1330): `const c = eos(s, () => c())`. One that is the initializer
             // itself is `function-self`.
             (!isVar &&
-              functionsWithin(stmt).some(
-                (fn) => this.readNamesOf(fn).includes(name) && constInitializedBy(fn) !== name,
-              ));
+              functionsWithin(stmt).some((fn) => readsThis(fn) && constInitializedBy(fn) !== name));
           // A `let` or `const` too, read by a closure made before it, which runs after it is
           // initialized (#1297); or assigned by a closure in its own initializer (`let id =
           // setTimeout(() => { id = null })`). A const arrow calling itself is `function-self`.
@@ -2705,12 +2745,24 @@ class Lifter {
                 label: "true",
               })[0] as ValueId));
         // The body ends on every path, so a continue, a break or a return ends only its own path.
-        if (guard !== undefined) this.liftStatements(guard.rest, []);
-        else if (Node.isBlock(body)) this.liftStatements(body.getStatements(), []);
-        else this.liftStatement(body, []);
+        // With no continue of its own, a `for` loop's update is the last statement of its body
+        // (`for (..; c; u) B` is `while (c) { B; u }`): a statement that takes the rest of the body
+        // onto its sides takes the update too, as it would the same update written in the body
+        // (#1292, the round trip).
+        const update =
+          incrementor !== undefined && !loopJumpsOf(node).some((j) => Node.isContinueStatement(j))
+            ? syntheticFile(node, "__update", `${incrementor.getText()};`).getStatements()[0]
+            : undefined;
+        const tail = update !== undefined ? [update] : [];
+        const tookUpdate =
+          guard !== undefined
+            ? this.liftStatements(guard.rest, tail)
+            : Node.isBlock(body)
+              ? this.liftStatements(body.getStatements(), tail)
+              : this.liftStatement(body, tail);
         // A body that throws on every path still may run no iterations.
         this.dead = false;
-        if (incrementor !== undefined) {
+        if (incrementor !== undefined && !(update !== undefined && tookUpdate)) {
           const after = stopped();
           if (after === undefined) this.liftExpr(incrementor);
           else

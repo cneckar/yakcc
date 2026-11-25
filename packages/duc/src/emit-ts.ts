@@ -350,6 +350,17 @@ function emitFunction(
     }
   }
 
+  /** The nodes written inline in a value's expression, the value's own producer included. */
+  const inlineWithin = (v: ValueId | undefined): DucNode[] => {
+    const p = v === undefined ? undefined : producer.get(v);
+    if (p === undefined || !inline.has(p.id)) return [];
+    return [p, ...p.inputs.flatMap((i) => inlineWithin(i))];
+  };
+  /** Whether a heap operation written inline in `a` is ordered after one written inline in `b`. */
+  const orderedAfter = (a: ValueId | undefined, b: ValueId | undefined): boolean => {
+    const made = new Set(inlineWithin(b).flatMap((n) => n.outputs));
+    return inlineWithin(a).some((n) => (after.get(n.id) ?? []).some((v) => made.has(v)));
+  };
   /** A value as an expression: its name, or its inline expression. */
   const ref = (v: ValueId): string => {
     const p = producer.get(v);
@@ -379,7 +390,14 @@ function emitFunction(
     const label = node.label ?? "";
     const ins = node.inputs;
     const arg = (i: number): string => ref(ins[i] as ValueId);
-    if (BINARY.has(label) && ins.length === 2) return `${arg(0)} ${label} ${arg(1)}`;
+    if (BINARY.has(label) && ins.length === 2) {
+      // `===` and `!==` have their operands in canonical order, not in the order they are read: an
+      // operand written inline whose heap operation comes after one in the other operand is
+      // written second, so the reads run in their order (#1292).
+      if ((label === "===" || label === "!==") && orderedAfter(ins[0], ins[1]))
+        return `${arg(1)} ${label} ${arg(0)}`;
+      return `${arg(0)} ${label} ${arg(1)}`;
+    }
     if (label === "," && ins.length === 2) return `(${arg(0)}, ${arg(1)})`;
     if (PREFIX.has(label) && ins.length === 1) return `${label}${arg(0)}`;
     if (label === "TypeOfExpression") return `typeof ${arg(0)}`;
@@ -759,6 +777,12 @@ function emitFunction(
         ? { cond: rec.cond as ValueId, line: `if (!(${ref(rec.cond as ValueId)})) break;` }
         : undefined,
     );
+    // An invariant the body never uses (the condition of a branch left empty, `if (x) {}`) is still
+    // read in the body: lifted again, the read is the same invariant (#1292).
+    const unused = rec.invariant
+      .filter((v) => (consumers.get(v) ?? []).length === 0)
+      .map((v) => `${ref(v)};`);
+    body.unshift(...unused);
     const next = rec.next.map((v, i) => `${carried[i]} = ${ref(v)};`);
     // Tested again after the pass, on the carried values the next pass starts from, so a stop
     // leaves before the next element is pulled (#1330). Only a condition over the carried values

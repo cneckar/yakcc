@@ -51,7 +51,19 @@ export function loweringView(g: DucGraph): LoweringView {
     if (p.kind === "carry-source" && isHeapToken(p)) return [];
     if (p.kind === "loop" && p.loop !== undefined) {
       const i = p.outputs.indexOf(v);
-      if (heapCarries.get(p.id)?.has(i) === true) return resolve(p.loop.next[i] as ValueId, seen);
+      const carries = heapCarries.get(p.id);
+      if (carries?.has(i) === true) {
+        const inside = resolve(p.loop.next[i] as ValueId, seen);
+        if (inside.length > 0) return inside;
+        // A body with no heap operation of its own: the loop is one (an iteration reads its iterable
+        // at each step), so what is ordered after it comes after the loop (#1292), by a value it
+        // makes, or a value of its body (an element, a condition): after a value inside a loop body
+        // is after the loop. A loop with neither is ordered by where it starts.
+        const kept = p.outputs.filter((_, j) => !carries.has(j));
+        const within = kept[0] ?? p.loop.iterate?.element ?? p.loop.cond;
+        if (within !== undefined) return [within];
+        return [...carries].flatMap((j) => resolve(p.inputs[j] as ValueId, seen));
+      }
     }
     return [v];
   };
