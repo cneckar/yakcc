@@ -746,12 +746,16 @@ static yk symbol_iterator(void) { return well_known_symbol(3); }
 static yk symbol_async_iterator(void) { return well_known_symbol(0); }
 static int string_equal(yk_string *a, yk_string *b);
 static int symbol_member(yk sym, yk key, yk *out);
+static yk make_error(const char *name, yk message);
+_Noreturn void yk_throw(yk v);
 static yk proto_lookup(yk v, yk key);
 static yk tail_proto(yk v);
 static int has_own(yk v, yk key);
 static yk object_to_string(yk v);
 static yk method_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
 static yk object_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
+static yk named(yk f, yk name);
+static yk case_convert(yk v, int upper);
 /* Property keys equal: the same symbol, or strings of the same units. */
 static int key_equal(yk a, yk b) {
   if (a == b) return 1;
@@ -1062,7 +1066,12 @@ static int key_is(yk key, const char *name) {
 }
 
 yk yk_get(yk obj, yk key) {
-  if (is_nullish(obj)) type_error(obj == YK_NULL ? "Cannot read properties of null" : "Cannot read properties of undefined");
+  if (is_nullish(obj)) {
+    /* V8's message: the property read, by its key. */
+    yk k = is_symbol(key) ? symbol_descriptive(key) : to_string(key);
+    yk m = concat(str(ascii(obj == YK_NULL ? "Cannot read properties of null (reading '" : "Cannot read properties of undefined (reading '")), str(k));
+    yk_throw(make_error("TypeError", concat(str(m), str(ascii("')")))));
+  }
   if (is_string(obj)) {
     yk_string *s = str(obj);
     if (key_is(key, "length")) return yk_number(s->len);
@@ -1199,6 +1208,8 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
   }
   if (is_string(recv)) {
     yk_string *s0 = str(recv);
+    if (key_is(key, "toUpperCase") || key_is(key, "toLocaleUpperCase")) return case_convert(recv, 1);
+    if (key_is(key, "toLowerCase") || key_is(key, "toLocaleLowerCase")) return case_convert(recv, 0);
     if (key_is(key, "includes") || key_is(key, "startsWith") || key_is(key, "endsWith")) {
       yk_string *t = str(to_string(arg0));
       int64_t len = s0->len;
@@ -1989,7 +2000,7 @@ static yk intrinsic_proto(int which) {
   o->proto = which == I_OBJECT ? YK_NULL : intrinsic_proto(I_OBJECT);
   for (const char *const *m = intrinsic_table[which].methods; *m != NULL; m++) {
     yk key = ascii(*m);
-    own_set(o, key, yk_closure_new(which == I_OBJECT ? object_thunk_code : method_thunk_code, 1, 1, &key));
+    own_set(o, key, named(yk_closure_new(which == I_OBJECT ? object_thunk_code : method_thunk_code, 1, 1, &key), key));
   }
   for (const char *const *g = intrinsic_table[which].getters; *g != NULL; g++) {
     yk key = ascii(*g);
@@ -2000,7 +2011,7 @@ static yk intrinsic_proto(int which) {
   if (which == I_MAP) own_set(o, symbol_iterator(), yk_get(p, ascii("entries")));
   if (which == I_STRING) {
     yk key = symbol_iterator();
-    own_set(o, key, yk_closure_new(method_thunk_code, 1, 1, &key));
+    own_set(o, key, named(yk_closure_new(method_thunk_code, 1, 1, &key), ascii("[Symbol.iterator]")));
   }
   return p;
 }
@@ -3548,9 +3559,14 @@ static yk builtin_set(void *c, yk s, uint64_t argc, const yk *argv) {
   return set;
 }
 
+/* A built-in function's name (its `name` property). */
+static yk named(yk f, yk name) {
+  own_set(own_props(f), ascii("name"), name);
+  return f;
+}
 static yk with_methods(yk_code code, int n, const char *const *names, const yk_code *codes) {
   yk f = code != NULL ? yk_closure_new(code, 0, 0, NULL) : yk_object_of(0, NULL, NULL);
-  for (int i = 0; i < n; i++) yk_set(f, ascii(names[i]), yk_closure_new(codes[i], 0, 0, NULL));
+  for (int i = 0; i < n; i++) yk_set(f, ascii(names[i]), named(yk_closure_new(codes[i], 0, 0, NULL), ascii(names[i])));
   return f;
 }
 
@@ -3998,6 +4014,242 @@ static yk builtin_array(void *c, yk self, uint64_t argc, const yk *argv) {
   return yk_array_of(argc, argv);
 }
 
+/* --- case mapping (String.prototype.toUpperCase / toLowerCase): Unicode's full mappings, as Node
+   gives them (case.h, generated from Node), and the final sigma rule (a Σ ending a word is ς). --- */
+#include "case.h"
+static const case_map *case_find(const case_map *table, int n, uint32_t cp) {
+  int lo = 0, hi = n - 1;
+  while (lo <= hi) {
+    int mid = (lo + hi) / 2;
+    if (table[mid].cp == cp) return &table[mid];
+    if (table[mid].cp < cp) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return NULL;
+}
+static uint32_t code_point_at(const yk_string *s, uint32_t i, uint32_t *width) {
+  uint16_t c = s->units[i];
+  if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s->len && s->units[i + 1] >= 0xDC00 && s->units[i + 1] <= 0xDFFF) {
+    *width = 2;
+    return 0x10000 + ((uint32_t)(c - 0xD800) << 10) + (s->units[i + 1] - 0xDC00);
+  }
+  *width = 1;
+  return c;
+}
+/* Whether a code point is cased or case-ignorable enough for the final sigma rule: a letter that
+   has a case mapping (approximated by the tables), and not a case-ignorable mark. */
+static int is_cased(uint32_t cp) {
+  return case_find(upper_map, N_UPPER, cp) != NULL || case_find(lower_map, N_LOWER, cp) != NULL;
+}
+static yk case_convert(yk v, int upper) {
+  yk_string *s = str(v);
+  uint16_t *out = scratch(((size_t)s->len * 3 + 2) * sizeof(uint16_t));
+  uint32_t n = 0;
+  for (uint32_t i = 0; i < s->len;) {
+    uint32_t w, cp = code_point_at(s, i, &w);
+    if (!upper && cp == 0x3A3) {
+      /* Final_Sigma: preceded by a cased letter and not followed by one (skipping ignorables). */
+      int before = 0, after = 0;
+      for (int64_t j = (int64_t)i - 1; j >= 0; j--) {
+        uint16_t u = s->units[j];
+        if (u == 0x27 || u == 0xAD || u == 0x2019 || (u >= 0x300 && u <= 0x36F)) continue;
+        before = is_cased(u);
+        break;
+      }
+      for (uint32_t j = i + 1; j < s->len; j++) {
+        uint16_t u = s->units[j];
+        if (u == 0x27 || u == 0xAD || u == 0x2019 || (u >= 0x300 && u <= 0x36F)) continue;
+        after = is_cased(u);
+        break;
+      }
+      out[n++] = before && !after ? 0x3C2 : 0x3C3;
+      i += w;
+      continue;
+    }
+    const case_map *m = upper ? case_find(upper_map, N_UPPER, cp) : case_find(lower_map, N_LOWER, cp);
+    if (m != NULL)
+      for (int k = 0; k < m->n; k++) out[n++] = m->to[k];
+    else
+      for (uint32_t k = 0; k < w; k++) out[n++] = s->units[i + k];
+    i += w;
+  }
+  yk_string *r = new_string(n);
+  memcpy(r->units, out, (size_t)n * 2);
+  free(out);
+  return string_of(r);
+}
+
+/* --- URI handling (ECMA-262 19.2.6) and the legacy escape/unescape (B.2.1) --- */
+static _Noreturn void uri_error(void) {
+  yk_throw(make_error("URIError", ascii("URI malformed")));
+}
+static int in_set(uint16_t c, const char *set) {
+  if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return 1;
+  return c < 128 && c != 0 && strchr(set, (char)c) != NULL;
+}
+/* Encode: each code unit outside the unescaped set as the %XX bytes of its code point's UTF-8. */
+static yk uri_encode(yk v, const char *unescaped) {
+  yk_string *s = str(to_string(v));
+  yk_array *parts = new_array(4);
+  uint16_t *out = scratch(((size_t)s->len * 12 + 2) * sizeof(uint16_t));
+  uint32_t n = 0;
+  static const char hex[] = "0123456789ABCDEF";
+  for (uint32_t i = 0; i < s->len; i++) {
+    uint16_t c = s->units[i];
+    if (in_set(c, unescaped)) {
+      out[n++] = c;
+      continue;
+    }
+    uint32_t cp = c;
+    if (c >= 0xDC00 && c <= 0xDFFF) uri_error();
+    if (c >= 0xD800 && c <= 0xDBFF) {
+      if (i + 1 >= s->len || s->units[i + 1] < 0xDC00 || s->units[i + 1] > 0xDFFF) uri_error();
+      cp = 0x10000 + ((c - 0xD800) << 10) + (s->units[++i] - 0xDC00);
+    }
+    uint8_t b[4];
+    int k;
+    if (cp < 0x80) b[0] = (uint8_t)cp, k = 1;
+    else if (cp < 0x800) b[0] = (uint8_t)(0xC0 | cp >> 6), b[1] = (uint8_t)(0x80 | (cp & 63)), k = 2;
+    else if (cp < 0x10000)
+      b[0] = (uint8_t)(0xE0 | cp >> 12), b[1] = (uint8_t)(0x80 | ((cp >> 6) & 63)), b[2] = (uint8_t)(0x80 | (cp & 63)), k = 3;
+    else
+      b[0] = (uint8_t)(0xF0 | cp >> 18), b[1] = (uint8_t)(0x80 | ((cp >> 12) & 63)),
+      b[2] = (uint8_t)(0x80 | ((cp >> 6) & 63)), b[3] = (uint8_t)(0x80 | (cp & 63)), k = 4;
+    for (int j = 0; j < k; j++) {
+      out[n++] = '%';
+      out[n++] = (uint16_t)hex[b[j] >> 4];
+      out[n++] = (uint16_t)hex[b[j] & 15];
+    }
+  }
+  (void)parts;
+  yk_string *r = new_string(n);
+  memcpy(r->units, out, (size_t)n * 2);
+  free(out);
+  return string_of(r);
+}
+static int hex_value(uint16_t c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+/* Decode: each %XX… as the UTF-8 it is (a reserved character's escape kept as it is). */
+static yk uri_decode(yk v, const char *reserved) {
+  yk_string *s = str(to_string(v));
+  uint16_t *out = scratch(((size_t)s->len + 2) * sizeof(uint16_t));
+  uint32_t n = 0;
+  for (uint32_t i = 0; i < s->len; i++) {
+    uint16_t c = s->units[i];
+    if (c != '%') {
+      out[n++] = c;
+      continue;
+    }
+    uint32_t start = i;
+    if (i + 2 >= s->len || hex_value(s->units[i + 1]) < 0 || hex_value(s->units[i + 2]) < 0) uri_error();
+    uint8_t b = (uint8_t)(hex_value(s->units[i + 1]) * 16 + hex_value(s->units[i + 2]));
+    i += 2;
+    if (b < 0x80) {
+      if (reserved[0] != 0 && strchr(reserved, (char)b) != NULL && b != 0)
+        for (uint32_t j = start; j <= i; j++) out[n++] = s->units[j];
+      else
+        out[n++] = b;
+      continue;
+    }
+    int k = (b & 0xE0) == 0xC0 ? 2 : (b & 0xF0) == 0xE0 ? 3 : (b & 0xF8) == 0xF0 ? 4 : 0;
+    if (k == 0) uri_error();
+    uint32_t cp = b & (0xFF >> (k + 1));
+    for (int j = 1; j < k; j++) {
+      if (i + 3 >= s->len || s->units[i + 1] != '%') uri_error();
+      int h1 = hex_value(s->units[i + 2]), h2 = hex_value(s->units[i + 3]);
+      if (h1 < 0 || h2 < 0) uri_error();
+      uint8_t cb = (uint8_t)(h1 * 16 + h2);
+      if ((cb & 0xC0) != 0x80) uri_error();
+      cp = (cp << 6) | (cb & 63);
+      i += 3;
+    }
+    static const uint32_t least[5] = {0, 0, 0x80, 0x800, 0x10000};
+    if (cp < least[k] || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) uri_error();
+    if (cp < 0x10000) out[n++] = (uint16_t)cp;
+    else {
+      cp -= 0x10000;
+      out[n++] = (uint16_t)(0xD800 + (cp >> 10));
+      out[n++] = (uint16_t)(0xDC00 + (cp & 0x3FF));
+    }
+  }
+  yk_string *r = new_string(n);
+  memcpy(r->units, out, (size_t)n * 2);
+  free(out);
+  return string_of(r);
+}
+static yk builtin_encode_uri_component(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return uri_encode(argc > 0 ? argv[0] : YK_UNDEFINED, "-_.!~*'()");
+}
+static yk builtin_encode_uri(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return uri_encode(argc > 0 ? argv[0] : YK_UNDEFINED, "-_.!~*'();/?:@&=+$,#");
+}
+static yk builtin_decode_uri_component(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return uri_decode(argc > 0 ? argv[0] : YK_UNDEFINED, "");
+}
+static yk builtin_decode_uri(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return uri_decode(argc > 0 ? argv[0] : YK_UNDEFINED, ";/?:@&=+$,#");
+}
+static yk builtin_escape(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk_string *in = str(to_string(argc > 0 ? argv[0] : YK_UNDEFINED));
+  uint16_t *out = scratch(((size_t)in->len * 6 + 2) * sizeof(uint16_t));
+  uint32_t n = 0;
+  static const char hex[] = "0123456789ABCDEF";
+  for (uint32_t i = 0; i < in->len; i++) {
+    uint16_t ch = in->units[i];
+    if (in_set(ch, "@*_+-./")) out[n++] = ch;
+    else if (ch < 256) {
+      out[n++] = '%', out[n++] = (uint16_t)hex[ch >> 4], out[n++] = (uint16_t)hex[ch & 15];
+    } else {
+      out[n++] = '%', out[n++] = 'u';
+      for (int sh = 12; sh >= 0; sh -= 4) out[n++] = (uint16_t)hex[(ch >> sh) & 15];
+    }
+  }
+  yk_string *r = new_string(n);
+  memcpy(r->units, out, (size_t)n * 2);
+  free(out);
+  return string_of(r);
+}
+static yk builtin_unescape(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk_string *in = str(to_string(argc > 0 ? argv[0] : YK_UNDEFINED));
+  yk_string *r = new_string(in->len);
+  uint32_t n = 0;
+  for (uint32_t i = 0; i < in->len; i++) {
+    uint16_t ch = in->units[i];
+    if (ch == '%' && i + 5 < in->len && in->units[i + 1] == 'u') {
+      int h[4], ok = 1;
+      for (int j = 0; ok && j < 4; j++) ok = (h[j] = hex_value(in->units[i + 2 + j])) >= 0;
+      if (ok) {
+        r->units[n++] = (uint16_t)(h[0] << 12 | h[1] << 8 | h[2] << 4 | h[3]);
+        i += 5;
+        continue;
+      }
+    }
+    if (ch == '%' && i + 2 < in->len && hex_value(in->units[i + 1]) >= 0 && hex_value(in->units[i + 2]) >= 0) {
+      r->units[n++] = (uint16_t)(hex_value(in->units[i + 1]) * 16 + hex_value(in->units[i + 2]));
+      i += 2;
+      continue;
+    }
+    r->units[n++] = ch;
+  }
+  r->len = n;
+  return string_of(r);
+}
+/* eval: no code is compiled at run time here. */
+static yk builtin_eval(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s, (void)argc, (void)argv;
+  type_error("eval compiles code at run time, which the native runtime does not");
+  return YK_UNDEFINED;
+}
 static yk builtin_string(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
   if (argc > 0 && is_symbol(argv[0])) return symbol_descriptive(argv[0]);
@@ -6429,7 +6681,7 @@ static yk leaf_value(const char *name, uint64_t n) {
   return 0;
 }
 
-#define N_GLOBALS 24
+#define N_GLOBALS 31
 static yk global_raw(const char *name, uint64_t n);
 static yk global_this(void);
 static yk reflect_global(void);
@@ -6441,6 +6693,7 @@ yk yk_global(const char *name, uint64_t n) {
   if (n == 8 && memcmp(name, "Function", 8) == 0) return function_global();
   yk v = global_raw(name, n);
   if (!is_closure(v)) return v;
+  if (!has_own(v, ascii("name"))) named(v, yk_string_utf8(name, n));
   static const char *const ctors[] = {"Object", "Array", "String", "Number", "Boolean", "Symbol", "BigInt",
                                       "Map", "Set", "Promise", "Error", "TypeError", "RangeError", "SyntaxError"};
   static const int which[] = {I_OBJECT, I_ARRAY, I_STRING, I_NUMBER, I_BOOLEAN, I_SYMBOL, I_BIGINT,
@@ -6472,14 +6725,18 @@ static yk global_raw(const char *name, uint64_t n) {
                                          "Error", "TypeError", "RangeError", "SyntaxError",
                                          "Map", "Set", "Object", "JSON", "Symbol", "Promise",
                                          "__yakccTryAsync", "queueMicrotask", "__yakccTryGen",
-                                         "__yakccTryAsyncGen"};
+                                         "__yakccTryAsyncGen", "encodeURIComponent", "encodeURI",
+                                         "decodeURIComponent", "decodeURI", "escape", "unescape", "eval"};
   static yk_code codes[N_GLOBALS] = {builtin_string, builtin_number, builtin_boolean,
                                      builtin_parse_float, builtin_parse_int, builtin_is_nan,
                                      builtin_is_finite, builtin_array, NULL, builtin_try,
                                      builtin_error, builtin_type_error, builtin_range_error,
                                      builtin_syntax_error, builtin_map, builtin_set, builtin_object,
                                      NULL, NULL, builtin_promise, try_async_body,
-                                     builtin_queue_microtask, try_gen_code, try_async_gen_code};
+                                     builtin_queue_microtask, try_gen_code, try_async_gen_code,
+                                     builtin_encode_uri_component, builtin_encode_uri,
+                                     builtin_decode_uri_component, builtin_decode_uri, builtin_escape,
+                                     builtin_unescape, builtin_eval};
   for (int i = 0; i < N_GLOBALS; i++)
     if (strlen(names[i]) == n && memcmp(names[i], name, n) == 0) {
       if (fns[i] != 0) return fns[i];

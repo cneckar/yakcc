@@ -100,6 +100,16 @@ const PROGRAMS: [string, string, number][] = [
   // + with ToPrimitive, string concatenation and Number::toString's shortest digits.
   ["+ on every pair of kinds", "export function f(a, b) { return a + b; }", 2],
   [
+    "toUpperCase and toLowerCase: full Unicode mappings and final sigma, as Node (#1331)",
+    "export function f(a, b) { const xs = [String(a), String(b), 'straße ŉ ﬀ İ ǅ', 'ΟΔΥΣΣΕΥΣ Σ ΑΣ. ΑΣ\\u0301 ΑΣΑ', 'Привет Ǆ ǈ', '\\ud801\\udc00\\ud801\\udc28 ᾳ ﬆ ΐ', 'Σ', 'aΣ', 'aΣb']; return xs.map((x) => [x.toUpperCase(), x.toLowerCase(), x.toLocaleUpperCase(), x.toLocaleLowerCase()]); }",
+    2,
+  ],
+  [
+    "URI handling, escape/unescape, and built-in functions' names (#1331)",
+    "export function f(a, b) { const t = (g) => { try { return g(); } catch (e) { return e.name; } }; const x = String(a) + ' é/?#[]&=' + String(b) + '\\ud83d\\ude00'; const e1 = encodeURIComponent(x), e2 = encodeURI(x); return [e1, e2, decodeURIComponent(e1) === x, decodeURI(e2) === x, decodeURI('%3B%2F%41%e2%82%ac'), t(() => decodeURIComponent('%')), t(() => decodeURIComponent('%E0%A4%A')), t(() => decodeURIComponent('%C0%80')), t(() => encodeURIComponent('\\ud800')), escape(x), unescape(escape(x)) === x, unescape('%u0041%41%zz'), decodeURI.name, [].join.name, Array.name, Object.keys.name, String.prototype.slice.name]; }",
+    2,
+  ],
+  [
     "the intrinsics: uncurryThis as primordials makes it, descriptors, ownKeys, prototypes, apply and bind (#1331)",
     "export function f(a, b) { const { apply, bind, call } = Function.prototype; const uncurryThis = bind.bind(call); const join = uncurryThis(Array.prototype.join); const slice = uncurryThis(String.prototype.slice); const hasOwn = uncurryThis(Object.prototype.hasOwnProperty); const sym = Symbol('s'); const o = { x: 1, [sym]: 2 }; Object.defineProperty(o, 'g', { get() { return this.x + 10; }, enumerable: true, configurable: true }); const d = Object.getOwnPropertyDescriptor(o, 'x'); const gd = Object.getOwnPropertyDescriptor(o, 'g'); const n = Object.create(null); n.k = String(a); const max = (...xs) => xs.length; const bound = function (p, q) { return [this.tag, p, q]; }.bind({ tag: 't' }, b); return [join([1, 2, a], '-'), slice(String(a) + 'xyz', 1), hasOwn(o, 'x'), hasOwn(o, 'nope'), Reflect.ownKeys(o).length, typeof Reflect.ownKeys(o)[2], d.value, d.writable, typeof gd.get, o.g, Object.getPrototypeOf([]) === Array.prototype, Object.getPrototypeOf(Object.prototype), Object.getPrototypeOf(n), typeof n.toString, Object.keys(n), ({}).toString(), Object.prototype.toString.call([]), [].join === Array.prototype.join, typeof globalThis.Array, globalThis.globalThis === globalThis, apply.call(max, null, [1, 2, 3]), bound('q'), Reflect.apply(max, null, [a, b]), Reflect.getPrototypeOf(Map.prototype) === Object.prototype, 'x' in o, Reflect.has(o, 'toString'), Object.hasOwn(o, 'g')]; }",
     2,
