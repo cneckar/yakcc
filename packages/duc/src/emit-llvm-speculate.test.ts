@@ -38,7 +38,9 @@ describe.skipIf(!canRun("x86_64-linux"))("parameter speculation, natively (#1369
         // Intermediate NaNs (Infinity - Infinity, 0 * Infinity) read only by arithmetic.
         const t = a * Infinity - b * Infinity;
         const u = -(t * 0);
-        return [s, a < b, a | b, -a, a % 3, Math.floor(a), a * 2 + b, t + 1, u < 1, u * 2 - t, Math.sqrt(u) + a];
+        const tab = [1.5, -2, 0.25];
+        const read = [tab[a & 1], tab[(a >>> 31) | 0], tab[a >>> 30], tab[b & 3], tab[(b & 1) >>> 0]];
+        return [read, s, a < b, a | b, -a, a % 3, Math.floor(a), a * 2 + b, t + 1, u < 1, u * 2 - t, Math.sqrt(u) + a];
       }
       function h(a) { return a - 1; }
       const o = { valueOf() { return 4; } };

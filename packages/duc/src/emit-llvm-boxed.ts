@@ -669,6 +669,51 @@ function lowerFunction(
     "__ykF64Make",
     "__ykF32",
   ]);
+  // Integer intervals (#1369): an index the graph bounds (`x & 1`, `x >>> 31`, …) reads a
+  // constant table in range, so the read is a number with no check.
+  const intervals = new Map<ValueId, readonly [number, number] | null>();
+  const intRange = (v0: ValueId): readonly [number, number] | undefined => {
+    const v = resolve(v0);
+    if (intervals.has(v)) return intervals.get(v) ?? undefined;
+    intervals.set(v, null); // a cycle bounds nothing
+    let r: readonly [number, number] | undefined;
+    const lit = literalNumber(v);
+    const p = producer.get(v);
+    if (lit !== undefined) r = Number.isInteger(lit) ? [lit, lit] : undefined;
+    else if (p?.kind === "op" && p.inputs.length === 2) {
+      const a = p.inputs[0] as ValueId;
+      const b = p.inputs[1] as ValueId;
+      const ra = intRange(a);
+      const rb = intRange(b);
+      const i32 = (x: readonly [number, number] | undefined) =>
+        x !== undefined && x[0] >= -(2 ** 31) && x[1] < 2 ** 31;
+      const u32 = (x: readonly [number, number] | undefined) =>
+        x !== undefined && x[0] >= 0 && x[1] < 2 ** 32;
+      // Each value an interval bounds is a Number (an operand with one is a Number, and a Number
+      // with a BigInt throws; `>>>` throws on a BigInt): the result is a Number or never made.
+      if (p.label === "&") {
+        // A non-negative mask bounds the result: ToInt32 of a mask in [0, 2^31) is itself.
+        const mask = (x: readonly [number, number] | undefined) =>
+          x !== undefined && x[0] >= 0 && x[1] < 2 ** 31 ? x[1] : undefined;
+        const m = mask(rb) ?? mask(ra);
+        if (m !== undefined) r = [0, m];
+      } else if (p.label === ">>>" && rb !== undefined && rb[0] === rb[1]) {
+        const k = (((rb[0] % 32) + 32) % 32) as number;
+        r = k === 0 ? (u32(ra) ? ra : [0, 2 ** 32 - 1]) : [0, 2 ** (32 - k) - 1];
+      } else if (p.label === "|" && rb !== undefined && rb[0] === 0 && rb[1] === 0 && i32(ra))
+        r = ra;
+      else if (p.label === "|" && ra !== undefined && ra[0] === 0 && ra[1] === 0 && i32(rb)) r = rb;
+    }
+    intervals.set(v, r ?? null);
+    return r;
+  };
+  /** A constant table read whose index the intervals keep in range: always an element. */
+  const tableInRange = (n: DucNode): boolean => {
+    if (n.kind !== "op" || n.label !== "ElementAccess" || n.inputs.length !== 2) return false;
+    const table = constTables.get(resolve(n.inputs[0] as ValueId));
+    const r = intRange(n.inputs[1] as ValueId);
+    return table !== undefined && r !== undefined && r[0] >= 0 && r[1] < table.n;
+  };
   const provenNumber = new Set<ValueId>();
   {
     const loopOf = new Map<ValueId, { loop: DucNode; i: number; carry: boolean }>();
@@ -714,7 +759,7 @@ function lowerFunction(
           const leaf = leafOf(n);
           const callee = lbl === "CallExpression" ? memberOf(ins[0] as ValueId) : undefined;
           let yes = false;
-          if (numRange.has(o)) yes = true;
+          if (numRange.has(o) || tableInRange(n)) yes = true;
           else if (leaf !== undefined) yes = NUMBER_LEAVES.has(leaf);
           else if (callee !== undefined && isMath(callee.node.inputs[0] as ValueId)) yes = true;
           else if (ins.length === 2 && ["+", "-", "*", "/", "%"].includes(lbl))
@@ -1829,6 +1874,20 @@ function lowerFunction(
     }
     if (lbl === "ElementAccess" && ins.length === 2) {
       const table = constTables.get(resolve(ins[0] as ValueId));
+      if (table !== undefined && tableInRange(n)) {
+        // An index the intervals keep in range: the load alone.
+        const idx = operand(ins[1] as ValueId);
+        const d = fresh();
+        emit(`${d} = bitcast i64 ${idx} to double`);
+        const i = fresh();
+        emit(`${i} = fptosi double ${d} to i64`);
+        const p = fresh();
+        emit(`${p} = getelementptr [${table.n} x i64], ptr ${table.global}, i64 0, i64 ${i}`);
+        const r = fresh();
+        emit(`${r} = load i64, ptr ${p}`);
+        set(out, r);
+        return;
+      }
       if (table !== undefined) {
         // A constant table's element at an integer index in range: a load; else the array's read.
         const idx = operand(ins[1] as ValueId);
