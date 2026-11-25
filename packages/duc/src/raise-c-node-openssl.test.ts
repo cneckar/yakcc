@@ -114,7 +114,7 @@ describe.skipIf(!hasClang)("Node's OpenSSL, shaved from C, against node:crypto",
 
   it("OpenSSL shaves with no refusal, its C library down to the leaves", () => {
     expect([...fixture.refused]).toEqual([]);
-    expect(ossl.refused.slice(0, 30)).toEqual([]);
+    expect(ossl.refused.slice(0, 60)).toEqual([]);
     expect(musl.refused).toEqual([]);
     expect(musl.missing).toEqual([]);
   });

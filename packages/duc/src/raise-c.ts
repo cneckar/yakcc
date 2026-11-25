@@ -5765,7 +5765,18 @@ export function shaveCUnit(
     // char>, allocator<char>>>`: the layout whose arguments are a prefix of these, at each.)
     const want = recordKey(name);
     const lt = want.indexOf("<");
-    if (lt < 0) return undefined;
+    if (lt < 0) {
+      // An unnamed record clang names by its typedef (`typedef struct { .. } niels_s;` is
+      // `struct niels_s` in a desugared type): the unnamed layout of that typedef.
+      const tag = /^(?:struct|union) (\w+)$/.exec(name.trim());
+      if (tag === null || name.trim() === `struct ${UNNAMED_GUARD}`) return undefined;
+      for (const n of dumpOf(tag[1] as string)) {
+        if (n.kind !== "TypedefDecl" || n.name !== tag[1]) continue;
+        const key2 = unnamedRecord(n);
+        if (key2 !== undefined && key2 !== name) return layouts.get(key2);
+      }
+      return undefined;
+    }
     const head = want.slice(0, lt + 1);
     let byHead = layoutsByHead.get(head);
     if (byHead === undefined) {
@@ -6740,6 +6751,8 @@ const VECTOR_OPS: Readonly<Record<string, VectorOp>> = {
   },
 };
 
+/** (A name no record has: guards the typedef fallback above from recursion.) */
+const UNNAMED_GUARD = "\u0000";
 let flattened = 0;
 /**
  * A switch whose body's labels gotos from outside it name (llhttp's state machine: each case a
