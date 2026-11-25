@@ -29,6 +29,7 @@
 #define _GNU_SOURCE /* ucontext: an async function's or a generator's own stack (#1295) */
 #include <math.h>
 #include <setjmp.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1337,8 +1338,9 @@ static int object_index_get(yk obj, uint32_t i, yk *out) {
   return 1;
 }
 /* One code unit's string: below 256, the one string of it (made once; the collector keeps the table). */
+yk yk_units[256]; /* the lowering reads it too (emit-llvm-boxed.ts's indexRead) */
 static yk unit_string(uint16_t u) {
-  static yk units[256];
+  yk *units = yk_units;
   if (u < 256 && units[u] != 0) return units[u];
   yk_string *c = new_string(1);
   c->units[0] = u;
@@ -6599,6 +6601,29 @@ typedef struct {
   int32_t type;
 } yk_view;
 
+/* The lowering reads these fields itself (emit-llvm-boxed.ts's indexRead and lengthRead, as LLVM
+   struct types): each struct's fields up to those keep this order and these types. */
+struct yk_array_mirror { uint32_t len, cap; yk *items; yk props; uint8_t *holes; };
+struct yk_object_mirror { uint32_t len, cap; yk *keys, *values; int32_t error, kind; yk proto; yk *regex; yk_array *entries; void *ext; };
+struct yk_view_mirror { yk buffer; uint32_t offset, length; int32_t type; };
+struct yk_buffer_mirror { uint32_t len; uint8_t *data; };
+_Static_assert(offsetof(yk_array, len) == offsetof(struct yk_array_mirror, len) &&
+                   offsetof(yk_array, items) == offsetof(struct yk_array_mirror, items) &&
+                   offsetof(yk_array, holes) == offsetof(struct yk_array_mirror, holes),
+               "yk_array's layout is the lowering's");
+_Static_assert(offsetof(yk_object, kind) == offsetof(struct yk_object_mirror, kind) &&
+                   offsetof(yk_object, ext) == offsetof(struct yk_object_mirror, ext),
+               "yk_object's layout is the lowering's");
+_Static_assert(offsetof(yk_view, buffer) == offsetof(struct yk_view_mirror, buffer) &&
+                   offsetof(yk_view, offset) == offsetof(struct yk_view_mirror, offset) &&
+                   offsetof(yk_view, length) == offsetof(struct yk_view_mirror, length) &&
+                   offsetof(yk_view, type) == offsetof(struct yk_view_mirror, type),
+               "yk_view's layout is the lowering's");
+_Static_assert(offsetof(yk_buffer, data) == offsetof(struct yk_buffer_mirror, data),
+               "yk_buffer's layout is the lowering's");
+_Static_assert(offsetof(yk_string, len) == 0 && offsetof(yk_string, units) == 4,
+               "a string's length, then its units");
+
 enum { TA_I8, TA_U8, TA_U8C, TA_I16, TA_U16, TA_I32, TA_U32, TA_F32, TA_F64, TA_BI64, TA_BU64, TA_COUNT };
 static const char *const ta_names[TA_COUNT] = {"Int8Array",   "Uint8Array",    "Uint8ClampedArray",
                                                "Int16Array",  "Uint16Array",   "Int32Array",
@@ -6607,6 +6632,7 @@ static const char *const ta_names[TA_COUNT] = {"Int8Array",   "Uint8Array",    "
 static const uint32_t ta_size[TA_COUNT] = {1, 1, 1, 2, 2, 4, 4, 4, 8, 8, 8};
 #define K_BUFFER 6
 #define K_TYPED 7
+_Static_assert(K_TYPED == 7 && TA_U32 == 6 && TA_U8 == 1, "the kinds and element types the lowering reads");
 #define K_DATAVIEW 8
 
 static yk_object *object_of_kind(yk v, int32_t kind) {
