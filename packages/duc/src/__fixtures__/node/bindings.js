@@ -235,6 +235,16 @@ module.exports = {
     hrtime: () => {},
     hrtimeBigInt: () => {},
   },
+  // fs (libuv): what fs.js reads at load; its operations are lane:c's (#1365).
+  fs: {
+    FSReqCallback: class FSReqCallback {},
+    statValues: new Float64Array(36),
+    bigintStatValues: new BigInt64Array(36),
+    statFsValues: new Float64Array(7),
+    bigintStatFsValues: new BigInt64Array(7),
+    kUsePromises: Symbol("fs_use_promises_symbol"),
+    kFsStatsFieldsNumber: 18,
+  },
   // url (ada): only read when a URL is parsed.
   url: {},
   string_decoder: {
