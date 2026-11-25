@@ -441,6 +441,24 @@ class ModuleBuilder {
     string,
     { of: string; rawBlocks: number; regs: number; rec?: boolean }
   >();
+  /** Each `.num` clone with an `.int` clone: the ranges the `.int` clone takes its parameters (by
+   * position) in (#1369). */
+  readonly intClones = new Map<string, ReadonlyMap<number, NumRange>>();
+  /** Calls of a `.num` clone with arguments of known ranges: each thunk's clone, its arguments'
+   * ranges by position, and its signature's raw blocks, record slot and registers. */
+  readonly intCalled = new Map<
+    string,
+    {
+      of: string;
+      ranges: readonly (NumRange | "both" | undefined)[];
+      rawBlocks: number;
+      regs: number;
+      rec: boolean;
+      /** The call passes boxed arguments only (not all proven numbers): the thunk checks them and
+       * passes the `.int` clone its registers, else calls this, the function's own entry. */
+      boxed?: string;
+    }
+  >();
   private closures = 0;
 
   constant(text: string, nul = false): { ptr: string; length: number } {
@@ -1327,7 +1345,7 @@ function lowerFunction(
   const allNumbers = (vs: readonly ValueId[]): boolean =>
     vs.every((v0) => {
       const v = resolve(v0);
-      if (provenNumber.has(v)) return true;
+      if (provenNumber.has(v) || numRange.has(v)) return true;
       const p = producer.get(v);
       const t = (p?.label ?? "").replace(/_/g, "");
       return (
@@ -3950,9 +3968,50 @@ function lowerFunction(
             rec: true,
           });
         }
+        let callee = `${target}${rec !== undefined ? ".rec" : ""}${numbers ? ".num" : ""}`;
+        const boxedCall =
+          !numbers &&
+          blocks === undefined &&
+          arity !== undefined &&
+          args.length >= arity &&
+          !ins.slice(1).some(isSpread);
+        if (numbers || boxedCall) {
+          // Arguments of known integer ranges: a thunk the module resolves to the callee's `.int`
+          // clone when it takes them in those ranges, else to its `.num` clone (#1369).
+          const ranges = Array.from({ length: arity as number }, (_, k) => {
+            const v = ins[k + 1] as ValueId | undefined;
+            if (v === undefined) return undefined;
+            const r = numRange.get(resolve(v));
+            if (r !== undefined) return r;
+            const x = literalNumber(v);
+            return x !== undefined && Number.isInteger(x) && !Object.is(x, -0)
+              ? x >= -(2 ** 31) && x < 2 ** 31
+                ? x >= 0
+                  ? ("both" as const)
+                  : ("i32" as const)
+                : x >= 0 && x < 2 ** 32
+                  ? ("u32" as const)
+                  : undefined
+              : undefined;
+          });
+          if (ranges.some((r) => r !== undefined)) {
+            const code = ranges.map((r) => (r === undefined ? "x" : r[0])).join("");
+            const of = numbers ? callee : `${callee}.num`;
+            const thunk = `${of}.${numbers ? "r" : "b"}${code}`;
+            m.intCalled.set(thunk, {
+              of,
+              ranges,
+              rawBlocks: blocks?.length ?? 0,
+              regs: (arity as number) - (blocks?.length ?? 0),
+              rec: rec !== undefined,
+              ...(numbers ? {} : { boxed: callee }),
+            });
+            callee = thunk;
+          }
+        }
         const r1 = fresh();
         emit(
-          `${r1} = call i64 @${target}${rec !== undefined ? ".rec" : ""}${numbers ? ".num" : ""}(ptr ${ptr}, i64 ${superRecv}, i64 ${args.length}, ptr ${argv}${rawPass}${rec !== undefined ? `, ptr ${rec.slot}` : ""}${regPass})`,
+          `${r1} = call i64 @${callee}(ptr ${ptr}, i64 ${superRecv}, i64 ${args.length}, ptr ${argv}${rawPass}${rec !== undefined ? `, ptr ${rec.slot}` : ""}${regPass})`,
         );
         const yesEnd = currentLabel();
         emit(`br label %${join}`);
@@ -4773,9 +4832,50 @@ function lowerFunction(
       }
     }
     for (const v of clash) ranged.delete(v);
+    // Parameters every use of which is a ToInt32's (a bitwise operation's operand, perhaps after +
+    // or -): an `.int` clone takes them in the int range too, though only a caller that has them
+    // in it calls it so (this clone does not check them: a function with no loop gains nothing).
+    const users = new Map<ValueId, DucNode[]>();
+    for (const n of g.nodes)
+      for (const v of n.inputs) {
+        const r = resolve(v as ValueId);
+        users.set(r, [...(users.get(r) ?? []), n]);
+      }
+    const intUse = (v: ValueId, depth: number): boolean => {
+      const us = users.get(v) ?? [];
+      return (
+        us.length > 0 &&
+        us.every(
+          (u) =>
+            u.kind === "op" &&
+            (["|", "&", "^", "<<", ">>", ">>>"].includes(u.label ?? "") ||
+              (depth < 4 &&
+                (u.label === "+" || u.label === "-") &&
+                u.inputs.length === 2 &&
+                intUse(u.outputs[0] as ValueId, depth + 1))),
+        )
+      );
+    };
+    const consumed = new Map<ValueId, NumRange>();
+    params.forEach((p, pi) => {
+      const v = p.outputs[0] as ValueId;
+      if (pi < closure.captures || (p.label ?? "").endsWith("...") || ranged.has(v)) return;
+      if (numberParams.has(v) && intUse(v, 0)) consumed.set(v, "int");
+    });
+    const assumed = new Map<ValueId, NumRange>([...ranged, ...consumed]);
+    const intClone = `${name.replace(/"/g, "")}.int`;
+    if (assumed.size > 0) {
+      const byPosition = new Map<number, NumRange>();
+      params.forEach((p, pi) => {
+        const r = assumed.get(p.outputs[0] as ValueId);
+        if (r !== undefined) byPosition.set(pi - closure.captures, r);
+      });
+      m.intClones.set(name.replace(/"/g, ""), byPosition);
+      lowerFunction(m, source, intClone, closure, scope, numberParams, rawParams, recOut, assumed);
+    }
     if (ranged.size > 0) {
       let ok = "true";
-      for (const [v, r] of ranged) {
+      for (const [v, r] of assumed) {
         // A number parameter's register, else its argument (a number checked here).
         const x = operand(v);
         if (!numberParams.has(v)) {
@@ -4815,8 +4915,7 @@ function lowerFunction(
       const bodyL = freshLabel("body");
       emit(`br i1 ${ok}, label %${intL}, label %${bodyL}`);
       block(intL);
-      const clone = `${name.replace(/"/g, "")}.int`;
-      lowerFunction(m, source, clone, closure, scope, numberParams, rawParams, recOut, ranged);
+      const clone = intClone;
       const r = fresh();
       emit(
         `${r} = tail call i64 @${clone}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead}${regList.map((k) => `, i64 %n${k}`).join("")})`,
@@ -5647,6 +5746,138 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         `define internal i64 @${clone}(ptr %closure, i64 %this, i64 %argc, ptr %argv${ps.map((p) => `, ${p}`).join("")}${ns}) {`,
         `  %r = tail call i64 @${of}(ptr %closure, i64 %this, i64 %argc, ptr %argv${ps.map((p) => `, ${p}`).join("")})`,
         "  ret i64 %r",
+        "}",
+        "",
+      ].join("\n"),
+    );
+  }
+  // Calls with arguments of known ranges (#1369): the callee's `.int` clone when it takes each of
+  // them in a range the argument's is within, else its `.num` clone.
+  const within = (a: NumRange | "both" | undefined, want: NumRange): boolean =>
+    a !== undefined && (a === want || a === "both" || want === "int");
+  for (const [thunk, { of, ranges, rawBlocks, regs, rec, boxed }] of m.intCalled) {
+    const takes = m.intClones.get(of);
+    if (boxed !== undefined) {
+      // Boxed arguments: each the `.int` clone takes is checked an integer of its range, every
+      // other a number (its register); then the `.int` clone, else the function's own entry.
+      const recPass = rec ? ", ptr %recout" : "";
+      const head = `define internal i64 @${thunk}(ptr %closure, i64 %this, i64 %argc, ptr %argv${recPass}) alwaysinline {`;
+      const own = `  %r = tail call i64 @${boxed}(ptr %closure, i64 %this, i64 %argc, ptr %argv${recPass})`;
+      if (takes === undefined || [...takes.keys()].some((k) => k >= regs)) {
+        m.functions.push([head, own, "  ret i64 %r", "}", ""].join("\n"));
+        continue;
+      }
+      const lines: string[] = [];
+      let ok = "true";
+      for (let k = 0; k < regs; k++) {
+        lines.push(
+          `  %p${k} = getelementptr i64, ptr %argv, i64 ${k}`,
+          `  %n${k} = load i64, ptr %p${k}`,
+        );
+        const want = takes.get(k);
+        if (want !== undefined && within(ranges[k], want)) continue;
+        if (ranges[k] !== undefined && want === undefined) continue;
+        lines.push(
+          `  %u${k} = icmp ult i64 %n${k}, ${NUMBER_LIMIT}`,
+          `  %q${k} = and i1 ${ok}, %u${k}`,
+        );
+        ok = `%q${k}`;
+        if (want === undefined) continue;
+        const lo = want === "u32" ? "0.0" : "-2147483648.0";
+        const hi = want === "i32" ? "2147483648.0" : "4294967296.0";
+        lines.push(
+          `  %d${k} = bitcast i64 %n${k} to double`,
+          `  %lo${k} = fcmp oge double %d${k}, ${lo}`,
+          `  %hi${k} = fcmp olt double %d${k}, ${hi}`,
+          `  %in${k} = and i1 %lo${k}, %hi${k}`,
+          `  %s${k} = select i1 %in${k}, double %d${k}, double 0.0`,
+          `  %w${k} = fptosi double %s${k} to i64`,
+          `  %b${k} = sitofp i64 %w${k} to double`,
+          `  %e${k} = fcmp oeq double %b${k}, %d${k}`,
+          `  %z${k} = icmp ne i64 %n${k}, -9223372036854775808`,
+          `  %a${k} = and i1 %in${k}, %e${k}`,
+          `  %c${k} = and i1 %a${k}, %z${k}`,
+          `  %ok${k} = and i1 ${ok}, %c${k}`,
+        );
+        ok = `%ok${k}`;
+      }
+      const regPass = Array.from({ length: regs }, (_, k) => `, i64 %n${k}`).join("");
+      m.functions.push(
+        [
+          head,
+          ...lines,
+          `  br i1 ${ok}, label %int, label %own`,
+          "int:",
+          `  %r1 = tail call i64 @${of}.int(ptr %closure, i64 %this, i64 %argc, ptr %argv${recPass}${regPass})`,
+          "  ret i64 %r1",
+          "own:",
+          `  %r2 = tail call i64 @${boxed}(ptr %closure, i64 %this, i64 %argc, ptr %argv${recPass})`,
+          "  ret i64 %r2",
+          "}",
+          "",
+        ].join("\n"),
+      );
+      continue;
+    }
+    const ps = Array.from({ length: rawBlocks }, (_, j) => [`ptr %rb${j}`, `i64 %rl${j}`]).flat();
+    if (rec) ps.push("ptr %recout");
+    const ns = Array.from({ length: regs }, (_, j) => `i64 %n${j}`);
+    const all = [...ps, ...ns];
+    const pass = all.map((p) => `, ${p}`).join("");
+    const head = `define internal i64 @${thunk}(ptr %closure, i64 %this, i64 %argc, ptr %argv${pass}) alwaysinline {`;
+    const callTo = (to: string, r: string): string =>
+      `  ${r} = tail call i64 @${to}(ptr %closure, i64 %this, i64 %argc, ptr %argv${pass})`;
+    if (takes === undefined) {
+      m.functions.push([head, callTo(of, "%r"), "  ret i64 %r", "}", ""].join("\n"));
+      continue;
+    }
+    // Each argument the `.int` clone takes in a range the call does not prove: checked here (a
+    // number register: an integer of that range, not -0).
+    const body: string[] = [];
+    let ok = "true";
+    let t = 0;
+    for (const [k, want] of takes) {
+      if (within(ranges[k], want)) continue;
+      // (With raw block arguments, a position is not its register's: the `.num` clone then.)
+      if (rawBlocks > 0 || k >= regs) {
+        ok = "false";
+        break;
+      }
+      const x = `%n${k}`;
+      const lo = want === "u32" ? "0.0" : "-2147483648.0";
+      const hi = want === "i32" ? "2147483648.0" : "4294967296.0";
+      body.push(
+        `  %d${t} = bitcast i64 ${x} to double`,
+        `  %lo${t} = fcmp oge double %d${t}, ${lo}`,
+        `  %hi${t} = fcmp olt double %d${t}, ${hi}`,
+        `  %in${t} = and i1 %lo${t}, %hi${t}`,
+        `  %s${t} = select i1 %in${t}, double %d${t}, double 0.0`,
+        `  %w${t} = fptosi double %s${t} to i64`,
+        `  %b${t} = sitofp i64 %w${t} to double`,
+        `  %e${t} = fcmp oeq double %b${t}, %d${t}`,
+        `  %z${t} = icmp ne i64 ${x}, -9223372036854775808`,
+        `  %a${t} = and i1 %in${t}, %e${t}`,
+        `  %c${t} = and i1 %a${t}, %z${t}`,
+        `  %ok${t} = and i1 ${ok}, %c${t}`,
+      );
+      ok = `%ok${t}`;
+      t++;
+    }
+    if (ok === "false") {
+      m.functions.push([head, callTo(of, "%r"), "  ret i64 %r", "}", ""].join("\n"));
+      continue;
+    }
+    m.functions.push(
+      [
+        head,
+        ...body,
+        `  br i1 ${ok}, label %int, label %num`,
+        "int:",
+        callTo(`${of}.int`, "%r1"),
+        "  ret i64 %r1",
+        "num:",
+        callTo(of, "%r2"),
+        "  ret i64 %r2",
         "}",
         "",
       ].join("\n"),

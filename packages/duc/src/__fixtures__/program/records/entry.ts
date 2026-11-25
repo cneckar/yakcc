@@ -39,3 +39,14 @@ export function hashLoop(seed: unknown, n: number): unknown {
   }
   return [x, y];
 }
+
+// Calls whose arguments are not proven: each checked where the call is (an integer clone's, or
+// the function's own).
+export function stepAll(values: unknown[]): unknown {
+  const out: unknown[] = [];
+  for (let i = 0; i + 1 < values.length; i++) {
+    const r = step(values[i] as number, values[i + 1] as number);
+    out.push(r.a, r.b, rot(values[i] as number, 5));
+  }
+  return out;
+}
