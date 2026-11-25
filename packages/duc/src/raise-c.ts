@@ -24,6 +24,7 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readFileSync,
   readSync,
   readdirSync,
   renameSync,
@@ -2641,6 +2642,11 @@ function raiseBody(
           externals.add("abort");
           return "abort()";
         }
+        // SSE2's and SSSE3's integer intrinsics (ada's, simdutf's and Node's zlib's fast paths):
+        // a vector is its 16 bytes, and a vector made is a fresh object's address, as a record
+        // returned. (`_mm_shuffle_epi32` is a macro of `__builtin_ia32_pshufd`.)
+        const vec = vectorIntrinsic(name, kids.slice(1), ret);
+        if (vec !== undefined) return vec;
         // (A record argument is passed by address: see argOf.)
         const args = kids
           .slice(1)
@@ -2651,52 +2657,6 @@ function raiseBody(
                 ? argOf(x)
                 : expr(x),
           );
-        // SSE2's integer intrinsics (x86-64's baseline; ada's and simdutf's fast paths): a vector
-        // is its 16 bytes, and a vector made is a fresh object's address, as a record returned.
-        if (
-          /^_mm_(loadu_si128|set1_epi8|cmpeq_epi8|or_si128|and_si128|movemask_epi8)$/.test(name)
-        ) {
-          const xs = kids.slice(1);
-          const r = temp({ k: "f64" });
-          // (Into the return slot the caller gives, C++, or a fresh object.)
-          const into = ret.applies ? ret.slot()[0] : undefined;
-          const alloc = `(${r} = ${into ?? "__ykAlloc(16, 16)"})`;
-          const at = (b: string, i: number): string => (i === 0 ? b : `(${b} + ${i})`);
-          const lanes = Array.from({ length: 16 }, (_, i) => i);
-          const operand = (x: ClangNode): string => {
-            const v = temp({ k: "f64" });
-            return `(${v} = ${argOf(x)})`;
-          };
-          switch (name) {
-            case "_mm_loadu_si128": {
-              const p = temp({ k: "f64" });
-              return `(${alloc}, (${p} = ${expr(xs[0] as ClangNode)}), __ykStore64(${r}, __ykLoad64(${p})), __ykStore64(${at(r, 8)}, __ykLoad64(${at(p, 8)})), ${r})`;
-            }
-            case "_mm_set1_epi8": {
-              const v = temp({ k: "i32" });
-              return `(${alloc}, (${v} = ${expr(xs[0] as ClangNode)} & 255), ${lanes.map((i) => `__ykStore8(${at(r, i)}, ${v})`).join(", ")}, ${r})`;
-            }
-            case "_mm_cmpeq_epi8": {
-              const a = operand(xs[0] as ClangNode);
-              const b = operand(xs[1] as ClangNode);
-              const [va, vb] = [a.slice(1, a.indexOf(" =")), b.slice(1, b.indexOf(" ="))];
-              return `(${alloc}, ${a}, ${b}, ${lanes.map((i) => `__ykStore8(${at(r, i)}, __ykLoad8(${at(va, i)}) === __ykLoad8(${at(vb, i)}) ? 255 : 0)`).join(", ")}, ${r})`;
-            }
-            case "_mm_or_si128":
-            case "_mm_and_si128": {
-              const op = name === "_mm_or_si128" ? "|" : "&";
-              const a = operand(xs[0] as ClangNode);
-              const b = operand(xs[1] as ClangNode);
-              const [va, vb] = [a.slice(1, a.indexOf(" =")), b.slice(1, b.indexOf(" ="))];
-              return `(${alloc}, ${a}, ${b}, ${[0, 8].map((i) => `__ykStore64(${at(r, i)}, __ykLoad64(${at(va, i)}) ${op} __ykLoad64(${at(vb, i)}))`).join(", ")}, ${r})`;
-            }
-            default: {
-              const a = operand(xs[0] as ClangNode);
-              const va = a.slice(1, a.indexOf(" ="));
-              return `(${a}, ${lanes.map((i) => `((__ykLoad8(${at(va, i)}) >>> 7) << ${i})`).join(" | ")})`;
-            }
-          }
-        }
         if (name === "bit_cast") {
           const to = typeOf(e);
           const from = typeOf(kids[1] as ClangNode);
@@ -3165,6 +3125,51 @@ function raiseBody(
    * An argument (C++): a value; bound to a reference, the address of the object it names, or of a
    * slot holding a temporary.
    */
+  /**
+   * An SSE2 or SSSE3 integer intrinsic over 16-byte vectors (see the call in expr): the vector's
+   * lanes loaded and stored through memory, or undefined for another name.
+   */
+  /** A vector seen through its casts to other vector types (`(__v4si)(__m128i)v`): the same bytes. */
+  const unvector = (x: ClangNode): ClangNode => {
+    let n = x;
+    while (
+      (n.kind === "ParenExpr" ||
+        ((n.kind === "CStyleCastExpr" || n.kind === "ImplicitCastExpr") &&
+          (n.castKind === "BitCast" ||
+            n.castKind === "NoOp" ||
+            n.castKind === "LValueToRValue"))) &&
+      typeOf(n).k === "rec" &&
+      (n.inner ?? [])[0] !== undefined &&
+      typeOf((n.inner ?? [])[0] as ClangNode).k === "rec"
+    )
+      n = (n.inner ?? [])[0] as ClangNode;
+    return n;
+  };
+  const vectorIntrinsic = (
+    name: string,
+    xs: readonly ClangNode[],
+    ret: Ret,
+  ): string | undefined => {
+    if (!/^(_mm_\w+|__builtin_ia32_pshufd)$/.test(name) || !(name in VECTOR_OPS)) return undefined;
+    const op = VECTOR_OPS[name] as VectorOp;
+    if (xs.length !== op.args.length) throw new RaiseCError(`${name} with ${xs.length} arguments`);
+    const parts: string[] = [];
+    // The operands, in order: a vector's address, or a scalar's value (a lane's, an immediate's).
+    const vals = xs.map((x, i) => {
+      const v = temp(op.args[i] === "v" || op.args[i] === "p" ? { k: "f64" } : typeOf(x));
+      parts.push(`(${v} = ${op.args[i] === "v" ? argOf(unvector(x)) : expr(x)})`);
+      return v;
+    });
+    if (op.result === "v") {
+      const r = temp({ k: "f64" });
+      const into = ret.applies ? ret.slot()[0] : undefined;
+      // (The result after every operand is read: one of them may be where it goes.)
+      const lanes = op.lanes(vals, r);
+      const t = temp({ k: "f64" });
+      return `(${parts.join(", ")}${parts.length > 0 ? ", " : ""}(${t} = __ykAlloc(16, 16)), ${lanes.map((l) => l.replaceAll("@R", t)).join(", ")}, (${r} = ${into ?? "__ykAlloc(16, 16)"}), __ykStore64(${r}, __ykLoad64(${t})), __ykStore64((${r} + 8), __ykLoad64((${t} + 8))), __ykFree(${t}), ${r})`;
+    }
+    return `(${parts.join(", ")}${parts.length > 0 ? ", " : ""}${op.lanes(vals, "")[0]})`;
+  };
   const argOf = (x: ClangNode): string => {
     const cat = (x as { valueCategory?: string }).valueCategory;
     // A record by value: a copy in a slot of this frame, its address.
@@ -3845,6 +3850,23 @@ function raiseBody(
         return;
       case "NullStmt":
         return;
+      // `cpuid` (clang's cpuid.h, `__cpuid` and `__cpuid_count`): each register from the leaf.
+      case "GCCAsmStmt": {
+        if (!isCpuid(s)) throw new RaiseCError("an asm statement other than cpuid");
+        const [leafOf, subOf] = kids.slice(4) as [ClangNode, ClangNode?];
+        const leaf = temp({ k: "u32" });
+        const sub = temp({ k: "u32" });
+        push(`${leaf} = ${expr(leafOf)} >>> 0;`);
+        push(`${sub} = ${subOf === undefined ? "0" : `${expr(subOf)} >>> 0`};`);
+        externals.add("__yk_cpuid");
+        kids.slice(0, 4).forEach((out, reg) => {
+          const t = typeOf(out);
+          push(
+            `${write(place(out), convert(`__yk_cpuid(${leaf}, ${sub}, ${reg})`, { k: "u32" }, t))};`,
+          );
+        });
+        return;
+      }
       // A statement with attributes ([[fallthrough]], __attribute__((fallthrough))): the statement.
       case "AttributedStmt":
         stmt(kids[kids.length - 1] as ClangNode);
@@ -6224,6 +6246,212 @@ function staticDefinition(
   return { size: sizeOf(t), align: alignOf(t), init };
 }
 
+let cpuidHeader: string | undefined;
+/**
+ * Whether an asm statement is clang's `cpuid` (`__cpuid(leaf, a, b, c, d)`, `__cpuid_count(leaf,
+ * sub, ..)`): four outputs and the leaf (and subleaf), spelled at an `__asm` of clang's
+ * cpuid.h (a JSON dump has no asm text).
+ */
+function isCpuid(s: ClangNode): boolean {
+  const n = (s.inner ?? []).length;
+  if (n !== 5 && n !== 6) return false;
+  const loc = (s as { range?: { begin?: { spellingLoc?: { offset?: number; file?: string } } } })
+    .range?.begin?.spellingLoc;
+  if (loc?.offset === undefined) return false;
+  if (loc.file !== undefined && !loc.file.endsWith("/cpuid.h")) return false;
+  if (cpuidHeader === undefined) {
+    try {
+      const dir = execFileSync("clang", ["-print-resource-dir"], { encoding: "utf8" }).trim();
+      cpuidHeader = readFileSync(join(dir, "include", "cpuid.h"), "utf8");
+    } catch {
+      cpuidHeader = "";
+    }
+  }
+  // (x86-64's spelling keeps rbx around it: `xchgq %rbx,%q1; cpuid; xchgq %rbx,%q1`.)
+  const text = cpuidHeader.slice(loc.offset, loc.offset + 200);
+  return /^__asm\b/.test(text) && /\bcpuid\b/.test(text.slice(0, text.indexOf(":") >>> 0));
+}
+
+/** An intrinsic's operands (v: a vector, p: an address, s: a scalar) and result (v, or a scalar). */
+interface VectorOp {
+  readonly args: readonly ("v" | "p" | "s")[];
+  readonly result: "v" | "s";
+  /** Its lanes stored at `@R` (a vector result), or its value (a scalar result: the one string). */
+  readonly lanes: (a: readonly string[], r: string) => string[];
+}
+const at = (b: string, i: number): string => (i === 0 ? b : `(${b} + ${i})`);
+const n16 = Array.from({ length: 16 }, (_, i) => i);
+const n8 = n16.slice(0, 8);
+const n4 = n16.slice(0, 4);
+const ld8 = (v: string, i: number): string => `__ykLoad8(${at(v, i)})`;
+const ld16 = (v: string, i: number): string => `__ykLoad16(${at(v, i)})`;
+const ld32 = (v: string, i: number): string => `__ykLoad32(${at(v, i)})`;
+const s8 = (x: string): string => `((${x} << 24) >> 24)`;
+const s16 = (x: string): string => `((${x} << 16) >> 16)`;
+const st8 = (i: number, x: string): string => `__ykStore8(${at("@R", i)}, (${x}) & 255)`;
+const st16 = (i: number, x: string): string => `__ykStore16(${at("@R", i)}, (${x}) & 65535)`;
+const st32 = (i: number, x: string): string => `__ykStore32(${at("@R", i)}, (${x}) >>> 0)`;
+const sat16 = (x: string): string => `Math.max(-32768, Math.min(32767, ${x}))`;
+/** The intrinsics (Intel's definitions, lane by lane, little-endian). */
+const VECTOR_OPS: Readonly<Record<string, VectorOp>> = {
+  _mm_loadu_si128: {
+    args: ["p"],
+    result: "v",
+    lanes: ([p]) =>
+      [0, 8].map((i) => `__ykStore64(${at("@R", i)}, __ykLoad64(${at(p as string, i)}))`),
+  },
+  _mm_storeu_si128: {
+    args: ["p", "v"],
+    result: "s",
+    lanes: ([p, v]) => [
+      `(${[0, 8].map((i) => `__ykStore64(${at(p as string, i)}, __ykLoad64(${at(v as string, i)}))`).join(", ")}, undefined)`,
+    ],
+  },
+  _mm_setzero_si128: {
+    args: [],
+    result: "v",
+    lanes: () => [0, 8].map((i) => `__ykStore64(${at("@R", i)}, 0n)`),
+  },
+  _mm_set1_epi8: { args: ["s"], result: "v", lanes: ([x]) => n16.map((i) => st8(i, x as string)) },
+  _mm_set1_epi16: {
+    args: ["s"],
+    result: "v",
+    lanes: ([x]) => n8.map((i) => st16(2 * i, x as string)),
+  },
+  _mm_set1_epi32: {
+    args: ["s"],
+    result: "v",
+    lanes: ([x]) => n4.map((i) => st32(4 * i, x as string)),
+  },
+  _mm_set1_epi64x: {
+    args: ["s"],
+    result: "v",
+    lanes: ([x]) => [0, 8].map((i) => `__ykStore64(${at("@R", i)}, ${x})`),
+  },
+  // (_mm_set_*: the highest lane first; _mm_setr_*: the lowest.)
+  _mm_set_epi8: {
+    args: n16.map(() => "s"),
+    result: "v",
+    lanes: (a) => n16.map((i) => st8(i, a[15 - i] as string)),
+  },
+  _mm_setr_epi8: {
+    args: n16.map(() => "s"),
+    result: "v",
+    lanes: (a) => n16.map((i) => st8(i, a[i] as string)),
+  },
+  _mm_set_epi16: {
+    args: n8.map(() => "s"),
+    result: "v",
+    lanes: (a) => n8.map((i) => st16(2 * i, a[7 - i] as string)),
+  },
+  _mm_set_epi32: {
+    args: n4.map(() => "s"),
+    result: "v",
+    lanes: (a) => n4.map((i) => st32(4 * i, a[3 - i] as string)),
+  },
+  _mm_set_epi64x: {
+    args: ["s", "s"],
+    result: "v",
+    lanes: ([hi, lo]) => [`__ykStore64(@R, ${lo})`, `__ykStore64((@R + 8), ${hi})`],
+  },
+  _mm_cmpeq_epi8: {
+    args: ["v", "v"],
+    result: "v",
+    lanes: ([a, b]) =>
+      n16.map((i) => st8(i, `${ld8(a as string, i)} === ${ld8(b as string, i)} ? 255 : 0`)),
+  },
+  _mm_or_si128: {
+    args: ["v", "v"],
+    result: "v",
+    lanes: ([a, b]) =>
+      [0, 8].map(
+        (i) =>
+          `__ykStore64(${at("@R", i)}, __ykLoad64(${at(a as string, i)}) | __ykLoad64(${at(b as string, i)}))`,
+      ),
+  },
+  _mm_and_si128: {
+    args: ["v", "v"],
+    result: "v",
+    lanes: ([a, b]) =>
+      [0, 8].map(
+        (i) =>
+          `__ykStore64(${at("@R", i)}, __ykLoad64(${at(a as string, i)}) & __ykLoad64(${at(b as string, i)}))`,
+      ),
+  },
+  _mm_movemask_epi8: {
+    args: ["v"],
+    result: "s",
+    lanes: ([a]) => [n16.map((i) => `((${ld8(a as string, i)} >>> 7) << ${i})`).join(" | ")],
+  },
+  _mm_add_epi32: {
+    args: ["v", "v"],
+    result: "v",
+    lanes: ([a, b]) =>
+      n4.map((i) => st32(4 * i, `${ld32(a as string, 4 * i)} + ${ld32(b as string, 4 * i)}`)),
+  },
+  _mm_slli_epi32: {
+    args: ["v", "s"],
+    result: "v",
+    lanes: ([a, n]) =>
+      n4.map((i) => st32(4 * i, `(${n} > 31 ? 0 : ${ld32(a as string, 4 * i)} << ${n})`)),
+  },
+  _mm_subs_epu16: {
+    args: ["v", "v"],
+    result: "v",
+    lanes: ([a, b]) =>
+      n8.map((i) =>
+        st16(2 * i, `Math.max(0, ${ld16(a as string, 2 * i)} - ${ld16(b as string, 2 * i)})`),
+      ),
+  },
+  // The sums of absolute differences of each half's 8 bytes, in its 64-bit lane.
+  _mm_sad_epu8: {
+    args: ["v", "v"],
+    result: "v",
+    lanes: ([a, b]) =>
+      [0, 8].map(
+        (h) =>
+          `__ykStore64(${at("@R", h)}, BigInt(${n8.map((j) => `Math.abs(${ld8(a as string, h + j)} - ${ld8(b as string, h + j)})`).join(" + ")}))`,
+      ),
+  },
+  // Unsigned bytes of a times signed bytes of b, pairs added, saturated to 16 bits.
+  _mm_maddubs_epi16: {
+    args: ["v", "v"],
+    result: "v",
+    lanes: ([a, b]) =>
+      n8.map((i) =>
+        st16(
+          2 * i,
+          sat16(
+            `${ld8(a as string, 2 * i)} * ${s8(ld8(b as string, 2 * i))} + ${ld8(a as string, 2 * i + 1)} * ${s8(ld8(b as string, 2 * i + 1))}`,
+          ),
+        ),
+      ),
+  },
+  // Signed 16-bit lanes multiplied, pairs added into 32 bits.
+  _mm_madd_epi16: {
+    args: ["v", "v"],
+    result: "v",
+    lanes: ([a, b]) =>
+      n4.map((i) =>
+        st32(
+          4 * i,
+          `${s16(ld16(a as string, 4 * i))} * ${s16(ld16(b as string, 4 * i))} + ${s16(ld16(a as string, 4 * i + 2))} * ${s16(ld16(b as string, 4 * i + 2))}`,
+        ),
+      ),
+  },
+  __builtin_ia32_pshufd: {
+    args: ["v", "s"],
+    result: "v",
+    lanes: ([a, imm]) =>
+      n4.map((i) => st32(4 * i, `__ykLoad32(${a} + 4 * ((${imm} >> ${2 * i}) & 3))`)),
+  },
+  _mm_cvtsi128_si32: {
+    args: ["v"],
+    result: "s",
+    lanes: ([a]) => [`(${ld32(a as string, 0)} | 0)`],
+  },
+};
+
 let flattened = 0;
 /**
  * A switch whose body's labels gotos from outside it name (llhttp's state machine: each case a
@@ -7013,12 +7241,78 @@ export class CExit extends Error {
  * allows, so malloc maps); write and writev go to `io.write`; anything else is -ENOSYS. A target
  * implements the same leaf with its system-call instruction.
  */
+/**
+ * The host's `cpuid`, as far as the operating system reports it (Linux's /proc/cpuinfo): leaf 0's
+ * highest leaf and vendor, leaf 1's and leaf 7's feature bits for the flags it names, zero
+ * elsewhere. (A native build runs the instruction itself.)
+ */
+let cpuFlags: { vendor: string; flags: Set<string> } | undefined;
+export function hostCpuid(leaf: number, sub: number): readonly number[] {
+  if (cpuFlags === undefined) {
+    let text = "";
+    try {
+      text = readFileSync("/proc/cpuinfo", "utf8");
+    } catch {}
+    const field = (k: string): string =>
+      new RegExp(`^${k}\\s*:\\s*(.*)$`, "m").exec(text)?.[1]?.trim() ?? "";
+    cpuFlags = { vendor: field("vendor_id"), flags: new Set(field("flags").split(/\s+/)) };
+  }
+  const { vendor, flags } = cpuFlags;
+  const bits = (map: Record<string, number>): number =>
+    Object.entries(map).reduce((v, [f, b]) => (flags.has(f) ? v | (1 << b) : v), 0) >>> 0;
+  const word = (i: number): number =>
+    [0, 1, 2, 3].reduce((v, j) => v | ((vendor.charCodeAt(4 * i + j) & 255) << (8 * j)), 0) >>> 0;
+  if (leaf === 0) return [7, word(0), word(2), word(1)];
+  if (leaf === 1)
+    return [
+      0,
+      0,
+      bits({
+        pni: 0,
+        pclmulqdq: 1,
+        ssse3: 9,
+        fma: 12,
+        cx16: 13,
+        sse4_1: 19,
+        sse4_2: 20,
+        movbe: 22,
+        popcnt: 23,
+        aes: 25,
+        xsave: 26,
+        avx: 28,
+        f16c: 29,
+        rdrand: 30,
+      }),
+      bits({ fpu: 0, tsc: 4, cx8: 8, cmov: 15, mmx: 23, fxsr: 24, sse: 25, sse2: 26 }),
+    ];
+  if (leaf === 7 && sub === 0)
+    return [
+      0,
+      bits({
+        bmi1: 3,
+        avx2: 5,
+        bmi2: 8,
+        erms: 9,
+        avx512f: 16,
+        avx512dq: 17,
+        adx: 19,
+        avx512bw: 30,
+        avx512vl: 31,
+      }),
+      bits({ avx512vbmi: 1, vpclmulqdq: 10, avx512_vbmi2: 6 }),
+      0,
+    ];
+  return [0, 0, 0, 0];
+}
+
 export function createCSystem(
   memory: ReturnType<typeof createCMemory>,
   io: {
     readonly write?: (fd: number, bytes: Uint8Array) => void;
     /** The clock, in nanoseconds since the epoch (default: the host's). */
     readonly now?: () => bigint;
+    /** `cpuid`'s registers for a leaf and subleaf (default: the host's, see hostCpuid). */
+    readonly cpuid?: (leaf: number, sub: number) => readonly number[];
   } = {},
 ) {
   const { leaves } = memory;
@@ -7089,6 +7383,9 @@ export function createCSystem(
         e: bigint,
         _f: bigint,
       ) => call(nr, a, b, c, d, e),
+      /** `cpuid`: register `reg` (eax, ebx, ecx, edx) of leaf `leaf` (and subleaf), the host's. */
+      __yk_cpuid: (leaf: number, sub: number, reg: number): number =>
+        (io.cpuid ?? hostCpuid)(leaf >>> 0, sub >>> 0)[reg & 3] ?? 0,
       /** The thread's control block: zeroed, its first word its own address. */
       __yk_tp: (): bigint => {
         if (tp === undefined) {
