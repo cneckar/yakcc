@@ -3526,6 +3526,23 @@ function lowerFunction(
         const made = producer.get(resolve(v))?.closure !== undefined;
         values.push(made ? call("yk_name_method", `i64 ${operand(v)}, i64 ${key}`) : operand(v));
       }
+      // Every key a name, none twice: the runtime fills the object at once (no key looked for).
+      const names = slots.map((x) =>
+        x.kind === "computed" ? undefined : (x as { name: string }).name,
+      );
+      if (
+        names.every((nm) => nm !== undefined) &&
+        new Set(names).size === names.length &&
+        keys.length > 0
+      ) {
+        m.intrinsics.add("declare i64 @yk_object_of_distinct(i64, ptr, ptr)");
+        const r = fresh();
+        emit(
+          `${r} = call i64 @yk_object_of_distinct(i64 ${keys.length}, ptr ${list(keys)}, ptr ${list(values)})`,
+        );
+        set(out, r);
+        return;
+      }
       set(out, call("yk_object_of", `i64 ${keys.length}, ptr ${list(keys)}, ptr ${list(values)}`));
       return;
     }

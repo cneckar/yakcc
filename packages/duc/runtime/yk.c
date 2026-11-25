@@ -2173,6 +2173,18 @@ yk yk_delete(yk obj, yk key) {
 }
 yk yk_delete_named(yk obj, const char *name, uint64_t n) { return yk_delete(obj, yk_string_utf8(name, n)); }
 
+/* An object literal whose keys the lowering knows are distinct strings: its arrays filled at once. */
+yk yk_object_of_distinct(uint64_t n, const yk *keys, const yk *values) {
+  yk_object *o = alloc(sizeof(yk_object));
+  uint32_t cap = n < 4 ? 4 : (uint32_t)n;
+  o->keys = alloc((size_t)cap * sizeof(yk));
+  o->values = alloc((size_t)cap * sizeof(yk));
+  memcpy(o->keys, keys, (size_t)n * sizeof(yk));
+  memcpy(o->values, values, (size_t)n * sizeof(yk));
+  o->len = (uint32_t)n;
+  o->cap = cap;
+  return BOX(T_OBJECT, o);
+}
 /* An object literal: its keys (by ToPropertyKey) and values, in source order. */
 yk yk_object_of(uint64_t n, const yk *keys, const yk *values) {
   yk_object *o = alloc(sizeof(yk_object));
