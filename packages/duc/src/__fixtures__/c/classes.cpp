@@ -46,6 +46,29 @@ static void bump(int &r, int by) { r += by; }
 
 }  // namespace yk
 
+namespace yk {
+// A class template with a nested class, a constant static member, an anonymous union and
+// default member initializers (the shapes of libstdc++'s std::string).
+template <class T> struct Box {
+  static constexpr bool is_signed = T(-1) < T(0);
+  struct Hider {
+    T *p;
+    Hider(T *q) : p(q) {}
+  };
+  Hider hider;
+  int used = 0;
+  bool local = true;
+  union {
+    T buf[4];
+    long cap;
+  };
+  Box(T *q) : hider(q) { buf[0] = T(); }
+  T *data() { return local ? buf : hider.p; }
+  int sign() const { return is_signed ? -1 : 1; }
+};
+using Word = int;
+} // namespace yk
+
 extern "C" {
 
 int yk_point(int a, int b) {
@@ -83,6 +106,18 @@ int yk_refs(int a, int b) {
   auto add = [&x, b](int k) { x += k * b; return x; };
   add(2);
   return add(a) + r;
+}
+
+int yk_box(int a, int b) {
+  int out = b;
+  yk::Box<int> bi(&out);
+  yk::Box<unsigned> bu(nullptr);
+  bi.buf[1] = a;
+  yk::Word w = bi.data()[1] + bi.data()[0] + bi.used;
+  bi.local = a > b;
+  w += *bi.data();
+  bi.cap = 0;
+  return w * bi.sign() + bu.sign() * 1000 + bu.used + int(bu.buf[0]);
 }
 
 }

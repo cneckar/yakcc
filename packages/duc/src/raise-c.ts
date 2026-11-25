@@ -272,6 +272,9 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
             tag: f.tag,
             owner,
           };
+          // A template's specialization is dumped in full once, and as a reference elsewhere.
+          const seen = byId.get(d.id);
+          if (seen !== undefined && seen.end - seen.start > d.end - d.start) continue;
           byId.set(d.id, d);
           if (d.mangled !== undefined && d.body) byMangled.set(d.mangled, d);
           if (f.previous !== undefined) {
@@ -616,6 +619,10 @@ function parseType(spelled: string, depth = 0): CType {
     const e = unitTypedef(raw);
     if (e !== undefined) return parseType(e, depth + 1);
   }
+  // An anonymous member record (C++), desugared (`std::basic_string<char>::(anonymous union at
+  // f.h:204:7)`): the record, tagged as its spelling says.
+  const anon = /\((?:anonymous|unnamed) (struct|union|class) at [^()]*\)$/.exec(raw);
+  if (anon !== null) return { k: "rec", name: `${anon[1]} ${raw}` };
   if (/\)$/.test(raw)) return { k: "fn" };
   if (raw === "long double" && unitLongDouble64) return F64;
   if (raw === "long double") throw new RaiseCError(`the C type "${raw}" is not raised yet`);
@@ -889,7 +896,7 @@ export interface Callee {
 export type CalleeResolver = (callee: Callee) => string | undefined;
 
 /** A variable at namespace or file scope, by name and type: its declaration, when clang has it. */
-export type GlobalResolver = (name: string, type: string) => ClangNode | undefined;
+export type GlobalResolver = (name: string, type: string, id?: string) => ClangNode | undefined;
 
 const RESERVED = new Set([
   "arguments",
@@ -1053,6 +1060,8 @@ export interface CxxUnit {
   readonly isVirtual: (methodId: string) => boolean;
   /** A function's parameter's default argument (its expression), by the function's id. */
   readonly defaultArgOf: (fnId: string, index: number) => ClangNode | undefined;
+  /** A member's default initializer (`bool has = false;`), by the member's id. */
+  readonly fieldInitOf: (fieldId: string) => ClangNode | undefined;
   /**
    * A lambda's call operator, by its id: the closure's type, and its captures (each captured
    * variable's id, in the closure's field order, by reference or by copy).
@@ -1603,7 +1612,7 @@ function raiseBody(
     const id = d.id ?? "";
     let decl = globalDecls.get(id);
     if (decl === undefined) {
-      decl = resolveGlobal(d.name ?? "", normType(d.type?.qualType ?? ""));
+      decl = resolveGlobal(d.name ?? "", normType(d.type?.qualType ?? ""), d.id);
       if (decl === undefined || initOf(decl) === undefined)
         throw new RaiseCError(
           `the variable "${d.name}" outside the function, with no initializer clang has`,
@@ -1658,7 +1667,7 @@ function raiseBody(
     // A record, or an array of records, is memory (its members are at offsets): static memory.
     const t = ctype(d.type);
     if (t.k === "rec" || (t.k === "arr" && t.of.k === "rec")) return false;
-    const decl = resolveGlobal(d.name ?? "", normType(d.type?.qualType ?? ""));
+    const decl = resolveGlobal(d.name ?? "", normType(d.type?.qualType ?? ""), d.id);
     return (
       decl !== undefined &&
       initOf(decl) !== undefined &&
@@ -1667,7 +1676,7 @@ function raiseBody(
   };
   /** Whether this unit has a global's initializer. */
   const hasInit = (d: ClangNode): boolean => {
-    const decl = resolveGlobal(d.name ?? "", normType(d.type?.qualType ?? ""));
+    const decl = resolveGlobal(d.name ?? "", normType(d.type?.qualType ?? ""), d.id);
     return decl !== undefined && initOf(decl) !== undefined;
   };
   /** A global that is module state: its static memory. */
@@ -1798,7 +1807,7 @@ function raiseBody(
           };
         const arrow = (e as { isArrow?: boolean }).isArrow === true;
         const baseT = arrow ? (typeOf(k0) as CType & { k: "ptr" }).to : typeOf(k0);
-        const field = layoutOf(baseT).fields.get(e.name ?? "");
+        const field = layoutOf(baseT).fields.get(memberName(e));
         if (field === undefined) throw new RaiseCError(`the field "${e.name}"`);
         let addr: string;
         if (arrow) addr = expr(k0);
@@ -1927,6 +1936,7 @@ function raiseBody(
       case "CXXBoolLiteralExpr":
         return e.value === "true" || (e as { value?: unknown }).value === true ? "true" : "false";
       case "ImplicitValueInitExpr":
+      case "CXXScalarValueInitExpr":
         return zeroOf(typeOf(e));
       case "UnaryExprOrTypeTraitExpr": {
         const arg = (e as { argType?: { qualType: string; desugaredQualType?: string } }).argType;
@@ -2204,8 +2214,9 @@ function raiseBody(
           type: normType(d?.type?.qualType ?? ""),
           id: d?.id,
         });
-        if (key === undefined)
+        if (key === undefined) {
           throw new RaiseCError(`the operator ${d?.name ?? callee.kind} is not in the unit`);
+        }
         return `${key}(${kids.slice(1).map(argOf).join(", ")})`;
       }
       case "ConditionalOperator":
@@ -2657,7 +2668,7 @@ function raiseBody(
     const d = base.referencedDecl;
     const fields = d === undefined ? undefined : puns.get(d.id ?? "");
     if (fields === undefined || d === undefined) return undefined;
-    const field = fields.get(e.name ?? "");
+    const field = fields.get(memberName(e));
     if (field === undefined) throw new RaiseCError(`the union member ${e.name}`);
     return { word: declName(d), field };
   };
@@ -3407,7 +3418,11 @@ function raiseBody(
         return;
       }
       default:
-        if (s.kind.endsWith("Operator") || s.kind.endsWith("Expr")) {
+        if (
+          s.kind.endsWith("Operator") ||
+          s.kind.endsWith("Expr") ||
+          s.kind === "ExprWithCleanups"
+        ) {
           push(`${expr(s)};`);
           return;
         }
@@ -3471,8 +3486,12 @@ function raiseBody(
     }
     const rec: CType = { k: "rec", name: thisRecord as string };
     const l = layoutOf(rec);
-    const value = (init.inner ?? [])[0];
-    const any = (init as { anyInit?: { name?: string } }).anyInit;
+    const any = (init as { anyInit?: { name?: string; id?: string } }).anyInit;
+    let value = (init.inner ?? [])[0];
+    if (value?.kind === "CXXDefaultInitExpr" && any?.id !== undefined) {
+      value = unitCxx?.fieldInitOf(any.id);
+      if (value === undefined) throw new RaiseCError(`the default initializer of ${any.name}`);
+    }
     const base = (init as { baseInit?: { qualType?: string } }).baseInit;
     if (any !== undefined) {
       const f = l.fields.get(any.name ?? "");
@@ -3918,7 +3937,22 @@ export function shaveCUnit(
     if (!ambiguous) keyOf.set(sig(c.name, c.type), key);
     return key;
   };
-  const resolveGlobal: GlobalResolver = (name, type) => {
+  const resolveGlobal: GlobalResolver = (name, type, id) => {
+    // An indexed unit: the declaration the reference names (a class template instance's static
+    // member, not its pattern's), through its redeclarations, the one with an initializer.
+    if (indexed !== undefined && id !== undefined && indexed.byId.has(id)) {
+      let first = id;
+      for (let g = 0; indexed.previous.has(first) && g < 1000; g++)
+        first = indexed.previous.get(first) as string;
+      for (let at: string | undefined = first, g = 0; at !== undefined && g < 1000; g++) {
+        const d = indexed.byId.get(at);
+        if (d !== undefined && d.kind === "VarDecl") {
+          const n = readDecl(indexed, d);
+          if (initOf(n) !== undefined) return n;
+        }
+        at = indexed.next.get(at);
+      }
+    }
     const nodes = dumpOf(name);
     let hit: ClangNode | undefined;
     const walk = (n: ClangNode, inFunction: boolean): void => {
@@ -3946,6 +3980,26 @@ export function shaveCUnit(
   const findRecord = (record: string): ClangNode | undefined => {
     if (indexed === undefined) return undefined;
     const bare = record.replace(/^(struct|class|union) /, "");
+    // A class nested in a class template's instance (`std::basic_string<char>::_Alloc_hider`):
+    // the member class of that name in the instance.
+    let depth = 0;
+    let cut = -1;
+    for (let i = 0; i < bare.length; i++) {
+      const c = bare[i];
+      if (c === "<") depth++;
+      else if (c === ">") depth--;
+      else if (c === ":" && bare[i + 1] === ":" && depth === 0) cut = i;
+    }
+    if (cut > 0 && bare.slice(0, cut).includes("<")) {
+      const outer = findRecord(`struct ${bare.slice(0, cut)}`);
+      const name = bare.slice(cut + 2);
+      return (outer?.inner ?? []).find(
+        (c) =>
+          RECORD_KINDS.has(c.kind ?? "") &&
+          c.name === name &&
+          (c as { completeDefinition?: boolean }).completeDefinition === true,
+      );
+    }
     const lt = bare.indexOf("<");
     const base = (lt < 0 ? bare : bare.slice(0, lt)).split("::").pop() ?? "";
     const canon = (t: string): string => recordKey(t).replace(/\s+/g, "");
@@ -3977,14 +4031,24 @@ export function shaveCUnit(
             const parent = indexed.byId.get(fnId)?.parent;
             const cls = parent === undefined ? undefined : indexed.byId.get(parent);
             if (cls === undefined || !RECORD_KINDS.has(cls.kind)) return undefined;
-            // A class template's instance: its name with its arguments.
-            const args =
-              cls.kind === "ClassTemplateSpecializationDecl"
-                ? (readDecl(indexed, cls).inner ?? [])
-                    .filter((a) => a.kind === "TemplateArgument")
-                    .map((a) => a.type?.qualType ?? String((a as { value?: unknown }).value ?? ""))
-                : [];
-            return `${cls.tag ?? "struct"} ${cls.name}${args.length > 0 ? `<${args.join(", ")}>` : ""}`;
+            // A class template's instance: its name with its arguments; a class nested in one,
+            // qualified by it.
+            const named = (c: IndexedDecl, depth: number): string => {
+              const args =
+                c.kind === "ClassTemplateSpecializationDecl"
+                  ? (readDecl(indexed, c).inner ?? [])
+                      .filter((a) => a.kind === "TemplateArgument")
+                      .map(
+                        (a) => a.type?.qualType ?? String((a as { value?: unknown }).value ?? ""),
+                      )
+                  : [];
+              const own = `${c.name}${args.length > 0 ? `<${args.join(", ")}>` : ""}`;
+              const outer = c.parent === undefined ? undefined : indexed.byId.get(c.parent);
+              return outer !== undefined && RECORD_KINDS.has(outer.kind) && depth < 8
+                ? `${named(outer, depth + 1)}::${own}`
+                : own;
+            };
+            return `${cls.tag ?? "struct"} ${named(cls, 0)}`;
           },
           constructorOf: (record, type) => {
             const node = findRecord(record);
@@ -4038,6 +4102,23 @@ export function shaveCUnit(
               };
             });
             return { record: lambda.type?.qualType ?? "", captures };
+          },
+          fieldInitOf: (fieldId) => {
+            const d = indexed.byId.get(fieldId);
+            if (d === undefined) return undefined;
+            const initOfField = (x: IndexedDecl): ClangNode | undefined =>
+              (readDecl(indexed, x).inner ?? []).find((c) => !/Attr$/.test(c.kind ?? ""));
+            const own = initOfField(d);
+            if (own !== undefined) return own;
+            // (A class template's instance may not have it instantiated: its template's, alike.)
+            const owner = d.parent === undefined ? undefined : indexed.byId.get(d.parent)?.name;
+            for (const x of indexed.byName.get(d.name) ?? []) {
+              if (x.kind !== "FieldDecl" || x.id === d.id) continue;
+              if (x.parent === undefined || indexed.byId.get(x.parent)?.name !== owner) continue;
+              const i = initOfField(x);
+              if (i !== undefined) return i;
+            }
+            return undefined;
           },
           defaultArgOf: (fnId, index) => {
             const d = indexed.byId.get(fnId);
@@ -4286,6 +4367,21 @@ export function shaveCUnit(
     for (const n of dumpOf(name)) walk(n);
     if (hit !== undefined) return hit;
     if (anonymous !== undefined) return unnamedRecord(anonymous);
+    // A namespace's typedef or alias by its qualified name (`std::string`), in an indexed unit:
+    // the one of that bare name inside a namespace of the qualifier's name.
+    const scoped = /^(?:([A-Za-z_]\w*)::)+([A-Za-z_]\w*)$/.exec(name);
+    if (indexed !== undefined && scoped !== null) {
+      const [space, bare] = [scoped[1] as string, scoped[2] as string];
+      const spaces = (indexed.byName.get(space) ?? []).filter((d) => d.kind === "NamespaceDecl");
+      for (const d of indexed.byName.get(bare) ?? []) {
+        if (d.kind !== "TypedefDecl" && d.kind !== "TypeAliasDecl") continue;
+        if (d.parent !== undefined || !spaces.some((s) => s.start < d.start && d.end <= s.end))
+          continue;
+        const n = readDecl(indexed, d);
+        const t = n.type?.desugaredQualType ?? n.type?.qualType;
+        if (t !== undefined && t !== name && !/\b_[A-Z]\w*\b/.test(t)) return t;
+      }
+    }
     // An alias template's instance (`ada::result<url_aggregator>`, `template <class T> using
     // result = tl::expected<T, errors>`): its type with the arguments for its parameters.
     const lt = name.indexOf("<");
@@ -4670,7 +4766,7 @@ function staticDefinition(
     }
     if (n.kind === "MemberExpr" && (n as { isArrow?: boolean }).isArrow !== true) {
       const base = address((n.inner ?? [])[0] as ClangNode);
-      const field = layoutOf(typeOf((n.inner ?? [])[0] as ClangNode)).fields.get(n.name ?? "");
+      const field = layoutOf(typeOf((n.inner ?? [])[0] as ClangNode)).fields.get(memberName(n));
       if (base.k === "static" && field !== undefined)
         return { ...base, addend: base.addend + field.offset };
     }
@@ -4746,6 +4842,14 @@ const FIXED_WIDTH: Readonly<Record<string, string>> = {
   intptr_t: "long",
   ptrdiff_t: "long",
 };
+/** An anonymous member's key in its record's fields: its record's key. */
+const anonymousField = (type: string): string =>
+  `(anonymous) ${recordKey(type).replace(/^(struct|union|class) /, "")}`;
+/** A member expression's key in its record's fields (an anonymous member's, by its type). */
+const memberName = (e: ClangNode): string =>
+  e.name === "" || e.name === undefined
+    ? anonymousField(e.type?.desugaredQualType ?? e.type?.qualType ?? "")
+    : e.name;
 // An unnamed record is named by where it is: the layout dump writes `(unnamed at rel/f.h:17:2)`,
 // a type `(unnamed struct at /abs/f.h:17:2)`; both are keyed `(unnamed at f.h:17:2)`.
 const recordKey = (name: string): string =>
@@ -4800,6 +4904,11 @@ export function recordLayouts(dump: string): Map<string, RecordLayout> {
       }
       if (/vtable pointer\)$/.test(text)) {
         vptr ??= Number(m[1]);
+        continue;
+      }
+      // An anonymous member record: keyed by its type (a member expression names it by that).
+      if (/\((?:unnamed|anonymous)(?: struct| union| class)? at [^()]*\)$/.test(text)) {
+        fields.set(anonymousField(text), { offset: Number(m[1]), type: text });
         continue;
       }
       const name = /([A-Za-z_]\w*)$/.exec(text)?.[1];
