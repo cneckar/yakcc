@@ -142,6 +142,26 @@ describe.skipIf(!canRun("x86_64-linux"))("programs, natively (#1333)", () => {
     );
   }, 600_000);
 
+  it("record results: a function's object literal read by key without being made (#1369)", async () => {
+    const run = nativeProgram("records", here("./__fixtures__/program/records/entry.ts"));
+    const calls: [string, unknown[]][] = [
+      ["sums", [0]],
+      ["sums", [500]],
+      ["mixed", [3, 4]],
+      ["mixed", ["a", 2]],
+      ["mixed", [null, undefined]],
+    ];
+    const got = run(calls);
+    const ref = (await import("./__fixtures__/program/records/entry.js")) as unknown as Record<
+      string,
+      (...x: unknown[]) => unknown
+    >;
+    const want = calls.map(([m, a]) => ref[m]?.(...a));
+    expect(got.map((g, i) => same(g, want[i]) || [calls[i], g, want[i]])).toEqual(
+      calls.map(() => true),
+    );
+  }, 600_000);
+
   it("@yakcc/contracts' canonicalize and contract id (BLAKE3 from @noble/hashes), from their sources, equal Node's", () => {
     const run = nativeProgram("contract-id", here("./__fixtures__/program/contract-id-entry.ts"));
     const specs = fc.sample(spec, { numRuns: 100, seed: 1333 });
