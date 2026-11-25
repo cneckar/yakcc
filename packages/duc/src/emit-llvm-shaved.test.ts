@@ -414,7 +414,9 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
     const run = nativeUnitWith("musl", atoms, DRIVERS);
     // tRaw's blocks reach rawPass's and rawOver's raw variants, and rawPass's its callee's.
     const lowered = readFileSync(join(work, "musl", "m.ll"), "utf8");
-    expect(lowered.match(/call i64 @m0_s\d+\.raw\(/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
+    expect(lowered.match(/call i64 @m0_s\d+\.raw(\.num)?\(/g)?.length ?? 0).toBeGreaterThanOrEqual(
+      3,
+    );
     // The reference: the raised sources and the drivers in Node, over createCMemory.
     const memory = createCMemory();
     const leaves = {

@@ -432,6 +432,10 @@ class ModuleBuilder {
   readonly matchers = new Map<string, string>();
   /** Each atom an operation references (#1362), lowered once: its function's name. */
   readonly atoms = new Map<string, string>();
+  /** The number clones lowered (#1369): a function's `<name>.num`. */
+  readonly numClones = new Set<string>();
+  /** The number clones calls name, each its function's and its raw arguments' parameter list. */
+  readonly numCalled = new Map<string, { of: string; rawBlocks: number; regs: number }>();
   private closures = 0;
 
   constant(text: string, nul = false): { ptr: string; length: number } {
@@ -472,6 +476,8 @@ interface ModuleScope {
   readonly direct?: (name: string) => string | undefined;
   /** For a direct callee: the arguments its `.raw` variant takes as a block's bytes and length. */
   readonly rawArgs?: (name: string) => ReadonlySet<number> | undefined;
+  /** For a direct callee: how many parameters it has. */
+  readonly arity?: (name: string) => number | undefined;
   /** For a statement: the globals its results (its graph's observations) are stored in, in order. */
   readonly outs?: readonly string[];
 }
@@ -610,6 +616,17 @@ function lowerFunction(
 ): void {
   const rawList = [...(rawParams ?? [])].sort((a, b) => a - b);
   const rawHead = rawList.map((k) => `, ptr %rawb${k}, i64 %rawl${k}`).join("");
+  // A number clone's arguments, in registers too (#1369): each but a raw block's, when there is no
+  // rest parameter (a caller with them at hand passes them; the entry its loaded ones).
+  const argCount =
+    closure === undefined
+      ? 0
+      : source.nodes.filter((n) => n.kind === "param-source").length - closure.captures;
+  const regList = source.nodes.some(
+    (n) => n.kind === "param-source" && (n.label ?? "").endsWith("..."),
+  )
+    ? undefined
+    : Array.from({ length: argCount }, (_, k) => k).filter((k) => rawParams?.has(k) !== true);
   // An async function's or a generator's body is lowered as any function's: the runtime runs it as a
   // coroutine, which await and yield suspend (#1295). The closure carries the mode.
   if (source.mode !== undefined && closure === undefined)
@@ -1076,8 +1093,10 @@ function lowerFunction(
     const numericUse = (n: DucNode): boolean =>
       n.kind === "op" &&
       ((n.inputs.length === 2 &&
-        (FAST_ARITH[n.label ?? ""] !== undefined || FAST_COMPARE[n.label ?? ""] !== undefined)) ||
-        (n.inputs.length === 1 && n.label === "-")) &&
+        (FAST_ARITH[n.label ?? ""] !== undefined ||
+          FAST_COMPARE[n.label ?? ""] !== undefined ||
+          FAST_BITWISE[n.label ?? ""] !== undefined)) ||
+        (n.inputs.length === 1 && (n.label === "-" || n.label === "~"))) &&
       allNumbers(n.inputs as readonly ValueId[]);
     // A float store's value: its fast path writes the double as it is, its slow path (a runtime
     // call) canonicalizes it first. Only a store whose own result nothing reads (it orders after).
@@ -3063,9 +3082,30 @@ function lowerFunction(
                   return `, ptr ${l.slot}, i64 ${l.size}`;
                 })
                 .join("");
+        // Every argument a number (but a raw block's, which a clone never speculates on), and every
+        // parameter given: the callee's number clone, directly (a thunk to it when it has none).
+        const target = `${direct}${blocks === undefined ? "" : ".raw"}`;
+        const arity = scope?.arity?.(calleeName as string);
+        const numbers =
+          arity !== undefined &&
+          args.length >= arity &&
+          ins.slice(1).every((x) => (blocks ?? []).includes(resolve(x)) || allNumbers([x]));
+        if (numbers)
+          m.numCalled.set(`${target}.num`, {
+            of: target,
+            rawBlocks: blocks?.length ?? 0,
+            regs: (arity as number) - (blocks?.length ?? 0),
+          });
+        const rawAt = blocks === undefined ? undefined : scope?.rawArgs?.(calleeName as string);
+        const regPass = numbers
+          ? Array.from({ length: arity as number }, (_, k) => k)
+              .filter((k) => rawAt?.has(k) !== true)
+              .map((k) => `, i64 ${args[k]}`)
+              .join("")
+          : "";
         const r1 = fresh();
         emit(
-          `${r1} = call i64 @${direct}${blocks === undefined ? "" : ".raw"}(ptr ${ptr}, i64 ${superRecv}, i64 ${args.length}, ptr ${argv}${rawPass})`,
+          `${r1} = call i64 @${target}${numbers ? ".num" : ""}(ptr ${ptr}, i64 ${superRecv}, i64 ${args.length}, ptr ${argv}${rawPass}${regPass})`,
         );
         const yesEnd = currentLabel();
         emit(`br label %${join}`);
@@ -3129,6 +3169,14 @@ function lowerFunction(
       if (bitwise !== undefined) {
         const unrangedA = !numRange.has(resolve(ins[0] as ValueId));
         const unrangedB = !numRange.has(resolve(ins[1] as ValueId));
+        // A raw operand (rawNumbers) reaches the runtime's operation canonical.
+        const canon = (v: ValueId, x: string): string =>
+          rawNumbers.has(resolve(v)) ? canonicalBits(x) : x;
+        const bitwiseSlow = (): string =>
+          call(
+            BINARY[lbl] as string,
+            `i64 ${canon(ins[0] as ValueId, a)}, i64 ${canon(ins[1] as ValueId, b)}`,
+          );
         set(
           out,
           numberFast(
@@ -3148,7 +3196,7 @@ function lowerFunction(
               emit(`${bits} = bitcast double ${d} to i64`);
               return bits;
             },
-            slow,
+            bitwiseSlow,
             // ToInt32 inline needs |x| < 2^63: known for a value the range inference holds.
             unrangedA && unrangedB
               ? ([x, y]) => {
@@ -3263,7 +3311,11 @@ function lowerFunction(
               emit(`${bits} = bitcast double ${f} to i64`);
               return bits;
             },
-            slow,
+            () =>
+              call(
+                UNARY[lbl] as string,
+                `i64 ${rawNumbers.has(resolve(ins[0] as ValueId)) ? canonicalBits(x) : x}`,
+              ),
             numRange.has(resolve(ins[0] as ValueId))
               ? undefined
               : ([d]) => smallDouble(d as string),
@@ -3539,6 +3591,13 @@ function lowerFunction(
     else if (i < closure.captures) set(v, call("yk_capture", `ptr %closure, i64 ${i}`));
     else if ((p.label ?? "").endsWith("..."))
       set(v, call("yk_rest", `i64 %argc, ptr %argv, i64 ${i - closure.captures}`));
+    else if (
+      numberParams !== undefined &&
+      numberParams.size > 0 &&
+      regList !== undefined &&
+      regList.includes(i - closure.captures)
+    )
+      set(v, `%n${i - closure.captures}`);
     else if (rawParams?.has(i - closure.captures) === true) {
       // A raw block argument: its bytes and length; its address is never read (0, as a local
       // block's is, so a constant offset from it folds).
@@ -3615,7 +3674,9 @@ function lowerFunction(
         numericUse.has(p.outputs[0] as ValueId),
     );
     if (speculated.length > 0) {
-      const clone = m.closureName(`${name.replace(/"/g, "")}.num`);
+      // Named for its function, so a caller whose arguments are numbers calls it directly.
+      const clone = `${name.replace(/"/g, "")}.num`;
+      m.numClones.add(clone);
       lowerFunction(
         m,
         source,
@@ -3639,10 +3700,21 @@ function lowerFunction(
       block(spec);
       const r = fresh();
       emit(
-        `${r} = tail call i64 @${clone}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawList.map((k) => `, ptr %rawb${k}, i64 %rawl${k}`).join("")})`,
+        `${r} = tail call i64 @${clone}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead}${(regList ?? []).map((k) => `, i64 ${operand(params[k + closure.captures]?.outputs[0] as ValueId)}`).join("")})`,
       );
       emit(`ret i64 ${r}`);
       block(general);
+      // The general lowering, a function of its own: this entry, only the checks, stays small
+      // (no frame of its own to set up before the clone's tail call).
+      const gen = `${name.replace(/"/g, "")}.gen`;
+      lowerFunction(m, source, gen, closure, scope, new Set(), rawParams);
+      const r2 = fresh();
+      emit(
+        `${r2} = tail call i64 @${gen}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead})`,
+      );
+      emit(`ret i64 ${r2}`);
+      finish();
+      return;
     }
   }
   // Pointer parameters read or written at constant offsets (#1369): the span they reach is looked
@@ -3779,22 +3851,25 @@ function lowerFunction(
   } else if (g.obs.length === 0) emit(`ret i64 ${UNDEFINED}`);
   else emit(`ret i64 ${operand(g.obs[0] as ValueId)}`);
 
-  const head =
-    closure === undefined
-      ? `define i64 @${name}(${params.map((_, i) => `i64 %p${i}`).join(", ")}) {`
-      : `define internal i64 @${name}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead}) {`;
-  m.functions.push(
-    [
-      head,
-      "entry:",
-      ...[...slots.values()].map((s) => `  ${s} = alloca i64`),
-      ...[...bigSlots.values()].map((s) => `  ${s} = alloca i128`),
-      ...entryAllocas,
-      ...body,
-      "}",
-      "",
-    ].join("\n"),
-  );
+  finish();
+  function finish(): void {
+    const head =
+      closure === undefined
+        ? `define i64 @${name}(${params.map((_, i) => `i64 %p${i}`).join(", ")}) {`
+        : `define internal i64 @${name}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead}${numberParams !== undefined && numberParams.size > 0 ? (regList ?? []).map((k) => `, i64 %n${k}`).join("") : ""})${numberParams?.size === 0 ? " noinline" : ""} {`;
+    m.functions.push(
+      [
+        head,
+        "entry:",
+        ...[...slots.values()].map((s) => `  ${s} = alloca i64`),
+        ...[...bigSlots.values()].map((s) => `  ${s} = alloca i128`),
+        ...entryAllocas,
+        ...body,
+        "}",
+        "",
+      ].join("\n"),
+    );
+  }
 }
 
 /**
@@ -4023,6 +4098,14 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
       if (uses.size > 0) rawUses.set(fn, { i, uses });
     }),
   );
+  const arities = new Map<string, number>();
+  modules.forEach((mod, i) =>
+    mod.statements.forEach((st, k) => {
+      const ps = st.graph.nodes.filter((n) => n.kind === "param-source");
+      if (st.kind === "function" && !ps.some((n) => (n.label ?? "").endsWith("...")))
+        arities.set(`m${i}_s${k}`, ps.length);
+    }),
+  );
   const rawSets = new Map<string, Set<number>>();
   for (const [fn, r] of rawUses) rawSets.set(fn, new Set(r.uses.keys()));
   for (let changed = true; changed; ) {
@@ -4087,6 +4170,10 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         return true;
       },
       direct: (name) => directOf(i, name),
+      arity: (name) => {
+        const fn = directOf(i, name);
+        return fn === undefined ? undefined : arities.get(fn);
+      },
       rawArgs: (name) => {
         const fn = directOf(i, name);
         const set = fn === undefined ? undefined : rawSets.get(fn);
@@ -4222,6 +4309,21 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
       `define i64 @${symbol}() {\nentry:\n  %r = call i64 ${g(i, "init")}()\n  ret i64 %r\n}\n`,
     );
   });
+  // A number clone a call names that its function has none of: the function itself.
+  for (const [clone, { of, rawBlocks, regs }] of m.numCalled) {
+    if (m.numClones.has(clone)) continue;
+    const ps = Array.from({ length: rawBlocks }, (_, j) => [`ptr %rb${j}`, `i64 %rl${j}`]).flat();
+    const ns = Array.from({ length: regs }, (_, j) => `, i64 %n${j}`).join("");
+    m.functions.push(
+      [
+        `define internal i64 @${clone}(ptr %closure, i64 %this, i64 %argc, ptr %argv${ps.map((p) => `, ${p}`).join("")}${ns}) {`,
+        `  %r = tail call i64 @${of}(ptr %closure, i64 %this, i64 %argc, ptr %argv${ps.map((p) => `, ${p}`).join("")})`,
+        "  ret i64 %r",
+        "}",
+        "",
+      ].join("\n"),
+    );
+  }
   const ir = [
     "; yakcc native lowering, a package's modules (#1292, #1290)",
     'source_filename = "modules"',
