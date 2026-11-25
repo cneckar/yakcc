@@ -10,12 +10,13 @@ import { liftAtom } from "./lift.js";
  * `start` when sticky), as `[start, end, group1Start, group1End, …]` (-1 for a group that did not
  * take part), or null. It backtracks as ECMAScript's pattern semantics say: alternatives in order,
  * greedy and lazy quantifiers, the empty check, captures reset on each repetition, lookahead,
+ * lookbehind (its body matched backward, right to left, as the specification's direction -1 says),
  * backreferences.
  *
  * Covered: flags g, i (ASCII and Latin-1 case folding), m, s, u (code points), y, d; alternation,
  * groups (capturing, named, non-capturing), quantifiers (*, +, ?, {n,m}, lazy), classes and their
- * escapes (\d \w \s and negations), anchors and \b \B, lookahead, backreferences (numbered and
- * named), the character escapes. Refused, with the reason: lookbehind, Unicode property escapes
+ * escapes (\d \w \s and negations), anchors and \b \B, lookahead and lookbehind, backreferences
+ * (numbered and named), the character escapes. Refused, with the reason: Unicode property escapes
  * (\p{…}), case folding beyond Latin-1, a dynamic `new RegExp(…)`.
  */
 import type { DucGraph } from "./types.js";
@@ -39,7 +40,7 @@ type Node =
   | { t: "bol" }
   | { t: "eol" }
   | { t: "boundary"; negate: boolean }
-  | { t: "look"; negate: boolean; body: Node }
+  | { t: "look"; negate: boolean; behind?: boolean; body: Node }
   | { t: "backref"; index: number; name?: string };
 
 const DIGIT: Range[] = [[48, 57]];
@@ -255,8 +256,13 @@ export function parseRegex(pattern: string, flags: string): ParsedRegex {
         if (pattern[at++] !== ")") fail("an unterminated lookahead");
         return { t: "look", negate, body };
       }
-      if (pattern.startsWith("?<=", at) || pattern.startsWith("?<!", at))
-        fail("lookbehind is not in the subset yet");
+      if (pattern.startsWith("?<=", at) || pattern.startsWith("?<!", at)) {
+        const negate = pattern[at + 2] === "!";
+        at += 3;
+        const body = parseAlt();
+        if (pattern[at++] !== ")") fail("an unterminated lookbehind");
+        return { t: "look", negate, behind: true, body };
+      }
       let name: string | undefined;
       if (pattern.startsWith("?<", at)) {
         const close = pattern.indexOf(">", at);
@@ -446,23 +452,32 @@ export function regexMatcherSource(
       : ranges
           .map(([lo, hi]) => (lo === hi ? `${v} === ${lo}` : `(${v} >= ${lo} && ${v} <= ${hi})`))
           .join(" || ");
-  const emit = (node: Node): string => {
+  // Backward (inside a lookbehind): the code point (or code unit) ending at i, and its width.
+  const readBack = unicode
+    ? "let c = s.charCodeAt(i - 1); let w = 1; if (c >= 56320 && c <= 57343 && i >= 2) { const h = s.charCodeAt(i - 2); if (h >= 55296 && h <= 56319) { c = (h - 55296) * 1024 + (c - 56320) + 65536; w = 2; } }"
+    : "const c = s.charCodeAt(i - 1); const w = 1;";
+  /** A character test at i: forward it reads the character at i; backward, the one ending at i. */
+  const step = (back: boolean, test: string): string =>
+    back
+      ? `if (i <= 0) return false; ${readBack} if (${test}) return false; return k(i - w);`
+      : `if (i >= n) return false; ${read} if (${test}) return false; return k(i + w);`;
+  const emit = (node: Node, back = false): string => {
     const name = `n${count++}`;
     let body: string;
     switch (node.t) {
       case "char": {
         const want = fold ? upper(node.c) : node.c;
-        body = `if (i >= n) return false; ${read} if (${canon("c")} !== ${want}) return false; return k(i + w);`;
+        body = step(back, `${canon("c")} !== ${want}`);
         break;
       }
       case "any":
-        body = `if (i >= n) return false; ${read} ${dotAll ? "" : "if (c === 10 || c === 13 || c === 8232 || c === 8233) return false;"} return k(i + w);`;
+        body = step(back, dotAll ? "false" : "c === 10 || c === 13 || c === 8232 || c === 8233");
         break;
       case "class": {
         let test = `(${rangesTest("c", node.ranges)})`;
         if (fold)
           test = `(${test} || ${rangesTest("lo(c)", node.ranges)} || ${rangesTest("up(c)", node.ranges)})`;
-        body = `if (i >= n) return false; ${read} if (${node.negate ? "" : "!"}${test}) return false; return k(i + w);`;
+        body = step(back, `${node.negate ? "" : "!"}${test}`);
         break;
       }
       case "seq": {
@@ -470,7 +485,8 @@ export function regexMatcherSource(
           body = "return k(i);";
           break;
         }
-        const parts = node.items.map(emit);
+        // Backward, the items are matched last first.
+        const parts = (back ? [...node.items].reverse() : node.items).map((x) => emit(x, back));
         let chain = "k";
         for (let p = parts.length - 1; p > 0; p--)
           chain = `(j${p}) => ${parts[p]}(j${p}, ${chain})`;
@@ -478,20 +494,22 @@ export function regexMatcherSource(
         break;
       }
       case "alt":
-        body = `return ${node.alts.map((a) => `${emit(a)}(i, k)`).join(" || ")};`;
+        body = `return ${node.alts.map((a) => `${emit(a, back)}(i, k)`).join(" || ")};`;
         break;
       case "group": {
-        const inner = emit(node.body);
+        const inner = emit(node.body, back);
         if (node.index === undefined) {
           body = `return ${inner}(i, k);`;
           break;
         }
         const s0 = 2 * node.index;
-        body = `return ${inner}(i, (j) => { const qs = caps[${s0}]; const qe = caps[${s0 + 1}]; caps[${s0}] = i; caps[${s0 + 1}] = j; if (k(j)) return true; caps[${s0}] = qs; caps[${s0 + 1}] = qe; return false; });`;
+        // Backward, the group's text runs from where it ended (j) to where it began (i).
+        const [from, to] = back ? ["j", "i"] : ["i", "j"];
+        body = `return ${inner}(i, (j) => { const qs = caps[${s0}]; const qe = caps[${s0 + 1}]; caps[${s0}] = ${from}; caps[${s0 + 1}] = ${to}; if (k(j)) return true; caps[${s0}] = qs; caps[${s0 + 1}] = qe; return false; });`;
         break;
       }
       case "repeat": {
-        const inner = emit(node.body);
+        const inner = emit(node.body, back);
         const reset = groupsWithin(node.body);
         const save = reset
           .map(
@@ -521,7 +539,7 @@ export function regexMatcherSource(
         body = `const a = i > 0 && word(s.charCodeAt(i - 1)); const b = i < n && word(s.charCodeAt(i)); if ((a !== b) === ${!node.negate}) return k(i); return false;`;
         break;
       case "look": {
-        const inner = emit(node.body);
+        const inner = emit(node.body, node.behind === true);
         const reset = groupsWithin(node.body);
         const restore = reset.map((g) => `caps[${2 * g}] = -1; caps[${2 * g + 1}] = -1;`).join(" ");
         body = node.negate
@@ -531,7 +549,9 @@ export function regexMatcherSource(
       }
       case "backref": {
         const s0 = 2 * node.index;
-        body = `const a = caps[${s0}]; const b = caps[${s0 + 1}]; if (a < 0 || b < 0) return k(i); const len = b - a; if (i + len > n) return false; let t = 0; while (t < len) { if (${canon("s.charCodeAt(a + t)")} !== ${canon("s.charCodeAt(i + t)")}) return false; t = t + 1; } return k(i + len);`;
+        body = back
+          ? `const a = caps[${s0}]; const b = caps[${s0 + 1}]; if (a < 0 || b < 0) return k(i); const len = b - a; if (i - len < 0) return false; let t = 0; while (t < len) { if (${canon("s.charCodeAt(a + t)")} !== ${canon("s.charCodeAt(i - len + t)")}) return false; t = t + 1; } return k(i - len);`
+          : `const a = caps[${s0}]; const b = caps[${s0 + 1}]; if (a < 0 || b < 0) return k(i); const len = b - a; if (i + len > n) return false; let t = 0; while (t < len) { if (${canon("s.charCodeAt(a + t)")} !== ${canon("s.charCodeAt(i + t)")}) return false; t = t + 1; } return k(i + len);`;
         break;
       }
     }
