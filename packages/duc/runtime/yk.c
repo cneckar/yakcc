@@ -2062,9 +2062,9 @@ yk yk_set(yk obj, yk key, yk value) {
   }
   if (is_array(obj)) {
     yk_array *a = arr(obj);
-    int64_t i = index_of_key(key);
+    int64_t i = is_symbol(key) ? -1 : index_of_key(key);
     if (i < 0) {
-      if (key_is(to_string(key), "length")) {
+      if (!is_symbol(key) && key_is(to_string(key), "length")) {
         double n = to_number(value);
         if (n < 0 || n != floor(n) || n > 4294967295.0) yk_throw(make_error("RangeError", ascii("Invalid array length")));
         uint32_t was = a->len;
@@ -8068,6 +8068,12 @@ yk yk_in(yk key, yk obj) {
     return YK_FALSE;
   }
   if (is_array(obj)) {
+    if (is_symbol(key)) {
+      /* Its own symbol keys, then Array.prototype's. */
+      yk v;
+      if (arr(obj)->props != 0 && own_get((yk_object *)PTR(arr(obj)->props), key, &v)) return YK_TRUE;
+      return yk_bool(chain_get(intrinsic_proto(I_ARRAY), key, &v));
+    }
     if (key_is(to_string(key), "length")) return YK_TRUE;
     int64_t i = index_of_key(key);
     return yk_bool(i >= 0 && i < arr(obj)->len && !array_hole(arr(obj), (uint32_t)i));
