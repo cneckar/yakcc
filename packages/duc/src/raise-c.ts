@@ -575,7 +575,7 @@ function parseType(spelled: string, depth = 0): CType {
   const raw = spelled
     .replace(/__attribute__\(\(.*?\)\)\s*/g, "")
     // (Qualifiers inside a template's arguments are part of its name: `<const char *>`.)
-    .replace(/<[^]*>|\b(?:const|volatile|restrict|__restrict)\b/g, (m) =>
+    .replace(/<[\s\S]*>|\b(?:const|volatile|restrict|__restrict)\b/g, (m) =>
       m.startsWith("<") ? m : "",
     )
     .replace(/\s*\bnoexcept\b(\([^)]*\))?/g, "")
