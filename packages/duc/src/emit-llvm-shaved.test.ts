@@ -353,6 +353,16 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
       ],
       ["readAt", "export function f(p: number): number { return __ykLoad32(p); }"],
       [
+        // Accesses at constant offsets inside the function's own frame, before and after it is
+        // freed and its bytes reused, and one past its end (#1369).
+        "frameUse",
+        "export function f(n: number, past: boolean): unknown { const a = __ykAlloc(24, 8); __ykStoreF64(a + 8, n); __ykStore32(a + (2 * 8), n); const x = __ykLoadF64(a + (1 * 8)); const y = __ykLoad32(a + 16); if (past) return [x, y, __ykLoad8(a + 32)]; __ykFree(a); const b = __ykAlloc(24, 8); __ykStoreF64(b + 8, 1.5); return [x, y, b > a, __ykLoadF64(a + 8)]; }",
+      ],
+      [
+        "tFrame",
+        "export function f(n: number, past: boolean): unknown { try { return frameUse(n, past); } catch (e) { return (e as Error).message; } }",
+      ],
+      [
         // One access site, its cache holding a region that is freed and whose bytes are reused:
         // the stale address still traps (#1369).
         "tStale",
@@ -409,7 +419,15 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
         ],
       ]);
     }
-    calls.push(["tTrap", [0]], ["tTrap", [99]], ["tStale", [5]], ["tStale", [-3]]);
+    calls.push(
+      ["tTrap", [0]],
+      ["tTrap", [99]],
+      ["tStale", [5]],
+      ["tStale", [-3]],
+      ["tFrame", [7, false]],
+      ["tFrame", [-2.5, false]],
+      ["tFrame", [3, true]],
+    );
     const got = run(calls);
     const bad: string[] = [];
     calls.forEach(([fn, args], i) => {

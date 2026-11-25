@@ -4783,6 +4783,8 @@ yk yk_leaf_free(yk addr) {
 }
 /* A frame's block, as the lowered code allocates it (#1369): __ykAlloc of a constant integral size
    and alignment, with no boxing; the address is a number's bits. */
+/* The bytes of the frame yk_frame_alloc made last: the lowered code's accesses inside it. */
+uint8_t *yk_frame_bytes = NULL;
 uint64_t yk_frame_alloc(uint64_t size, uint64_t align) {
   /* A small frame with freed bytes of its size at hand: c_alloc's steps, on integers, the bytes
      zeroed inline. Anything else is c_alloc's. */
@@ -4800,12 +4802,14 @@ uint64_t yk_frame_alloc(uint64_t size, uint64_t align) {
     c_prev = c_last;
     c_last = c_nregions - 1;
     c_cache(&c_regions[c_last]);
+    yk_frame_bytes = p;
     double d = (double)base;
     uint64_t bits;
     memcpy(&bits, &d, 8);
     return bits;
   }
   double a = (double)c_alloc((double)size, (double)align, 0);
+  yk_frame_bytes = c_regions[c_nregions - 1].bytes;
   uint64_t bits;
   memcpy(&bits, &a, 8);
   return bits;
