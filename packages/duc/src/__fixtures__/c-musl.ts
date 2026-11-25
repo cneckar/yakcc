@@ -79,12 +79,17 @@ const allSources = (): string[] => {
 };
 
 /** The musl source file that defines a function or a variable. */
-export function definingFile(name: string, variable = false): string | undefined {
+export function definingFile(
+  name: string,
+  variable = false,
+  /** A file found not to define it (qsort.c defines __qsort_r; qsort is qsort_nr.c's). */
+  not?: string,
+): string | undefined {
   const o = OVERRIDES[name];
   if (o !== undefined) return `${MUSL}${o}`;
   const all = allSources();
   if (!variable) {
-    const byName = all.find((f) => f.endsWith(`/${name}.c`));
+    const byName = all.find((f) => f.endsWith(`/${name}.c`) && f !== not);
     if (byName !== undefined) return byName;
   }
   const esc = name.replace(/\$/g, "\\$");
@@ -93,7 +98,7 @@ export function definingFile(name: string, variable = false): string | undefined
     : new RegExp(
         `(^|\\n)[^\\n;()]*\\b${esc}\\s*\\([^;]*\\)\\s*\\{|(weak|strong)_alias\\(\\w+,\\s*${esc}\\)`,
       );
-  return all.find((f) => re.test(readFileSync(f, "utf8")));
+  return all.find((f) => f !== not && re.test(readFileSync(f, "utf8")));
 }
 
 /** A closure of musl shaved from `roots`: its atoms (aliases mapped) and units, and what failed. */
@@ -109,6 +114,7 @@ export function shaveMusl(roots: readonly string[]): {
   const missing = new Set<string>();
   const seen = new Set<string>();
   const weakIn = new Map<string, string>();
+  const notIn = new Map<string, string>(); // a function -> the file of its name, which does not define it
   const todo = [...roots];
   const unitName = (f: string): string => f.slice(MUSL.length);
   while (todo.length > 0) {
@@ -124,7 +130,8 @@ export function shaveMusl(roots: readonly string[]): {
     // A weak alias in a file already shaved (`weak_alias(dummy, __aio_close)`) is what a static
     // link uses when nothing else brings the strong definition in; mallocng's are overrides.
     const file =
-      (OVERRIDES[name] === undefined ? weakIn.get(name) : undefined) ?? definingFile(name);
+      (OVERRIDES[name] === undefined ? weakIn.get(name) : undefined) ??
+      definingFile(name, false, notIn.get(name));
     if (file === undefined || !existsSync(file)) {
       missing.add(name);
       continue;
@@ -133,6 +140,16 @@ export function shaveMusl(roots: readonly string[]): {
       readFileSync(file, "utf8"),
     )?.[1];
     const unit = shaveCUnit(file, [alias ?? name], MUSL_ARGS, "clang", unitName(file));
+    // (The file of its name does not define it: the one that does.)
+    if (!unit.atoms.has(alias ?? name) && unit.refused.size === 0) {
+      const other = definingFile(name, false, file);
+      if (other !== undefined && other !== file) {
+        todo.push(name);
+        seen.delete(name);
+        notIn.set(name, file);
+        continue;
+      }
+    }
     for (const m of readFileSync(file, "utf8").matchAll(/weak_alias\(\w+,\s*(\w+)\)/g))
       if (!weakIn.has(m[1] as string)) weakIn.set(m[1] as string, file);
     units.push(unit);
