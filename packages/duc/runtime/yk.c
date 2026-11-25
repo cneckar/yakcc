@@ -4770,6 +4770,9 @@ static c_region *c_region_of(double a, uint32_t n, int write) {
   c_trap(concat(str(ascii(what)), str(hex_of(a))));
 }
 static uint8_t *c_at(yk addr, uint32_t n, int write) {
+  /* An address is a number as it is (Number.isInteger, no conversion): anything else traps with
+     its string, as the definition's template does. */
+  if (addr >= ((yk)T_SPECIAL << 48)) c_trap(concat(str(ascii("address ")), str(to_string(addr))));
   double a = to_number(addr);
   c_region *r = c_region_of(a, n, write);
   return r->bytes + (uint64_t)(a - (double)r->base);
@@ -4783,6 +4786,47 @@ yk yk_leaf_free(yk addr) {
 }
 /* A frame's block, as the lowered code allocates it (#1369): __ykAlloc of a constant integral size
    and alignment, with no boxing; the address is a number's bits. */
+/* A span a function reads or writes through a pointer parameter (#1369): the bytes of
+   [p, p + n) if one live region (writable, for `write`) of at most 4096 bytes holds them, with its
+   header's address and its base, which the lowered code checks before each access; else NULL, with
+   a header that never matches. Never traps: an access that would is the leaf's. */
+static uint64_t c_no_header = 0;
+uint8_t *yk_span(uint64_t pbits, uint64_t n, int32_t write, uint8_t **hdr, uint64_t *base) {
+  *hdr = (uint8_t *)&c_no_header;
+  *base = 1;
+  if (pbits >= ((uint64_t)T_SPECIAL << 48)) return NULL;
+  double a;
+  memcpy(&a, &pbits, 8);
+  if (!(a >= 0 && a < 9007199254740992.0)) return NULL;
+  uint64_t u = (uint64_t)a;
+  if ((double)u != a) return NULL;
+  /* The caller's frame, most often: among the last regions made or found. */
+  uint32_t recent[3] = {c_nregions - 1, c_last, c_prev};
+  for (int k = 0; k < 3; k++) {
+    if (recent[k] >= c_nregions) continue;
+    c_region *r = &c_regions[recent[k]];
+    if (u - r->base < r->len) {
+      if (!r->live || u - r->base + n > r->len || (write && r->constant) || r->len > 4096) return NULL;
+      *hdr = r->bytes - 16;
+      *base = r->base;
+      return r->bytes + (u - r->base);
+    }
+  }
+  uint32_t lo = 0, hi = c_nregions;
+  while (lo < hi) {
+    uint32_t mid = (lo + hi) / 2;
+    c_region *r = &c_regions[mid];
+    if (u < r->base) hi = mid;
+    else if (u - r->base >= r->len) lo = mid + 1;
+    else {
+      if (!r->live || u - r->base + n > r->len || (write && r->constant) || r->len > 4096) return NULL;
+      *hdr = r->bytes - 16;
+      *base = r->base;
+      return r->bytes + (u - r->base);
+    }
+  }
+  return NULL;
+}
 /* The bytes of the frame yk_frame_alloc made last: the lowered code's accesses inside it. */
 uint8_t *yk_frame_bytes = NULL;
 uint64_t yk_frame_alloc(uint64_t size, uint64_t align) {

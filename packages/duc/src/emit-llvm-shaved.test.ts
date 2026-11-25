@@ -359,6 +359,15 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
         "export function f(n: number, past: boolean): unknown { const a = __ykAlloc(24, 8); __ykStoreF64(a + 8, n); __ykStore32(a + (2 * 8), n); const x = __ykLoadF64(a + (1 * 8)); const y = __ykLoad32(a + 16); if (past) return [x, y, __ykLoad8(a + 32)]; __ykFree(a); const b = __ykAlloc(24, 8); __ykStoreF64(b + 8, 1.5); return [x, y, b > a, __ykLoadF64(a + 8)]; }",
       ],
       [
+        // A pointer parameter read and written at constant offsets: its span looked up on entry.
+        "spanUse",
+        "export function f(p: number, mode: number): unknown { const a = __ykLoad32(p) | 0; if (mode === 1) __ykFree(p); if (mode === 2) __ykStore32(p + 4, 9); const b = __ykLoadF64(p + 8); __ykStoreF64(p + 16, b + a); return [a, b, __ykLoadF64(p + (2 * 8))]; }",
+      ],
+      [
+        "tSpan",
+        'export function f(kind: number, mode: number): unknown { let p: unknown = 0; if (kind === 0) { p = __ykAlloc(24, 8); __ykStore32(p as number, 5); __ykStoreF64((p as number) + 8, 2.5); } if (kind === 1) p = __ykData("u32", [1, 2, 3, 4, 5, 6]); if (kind === 2) p = "x"; if (kind === 3) p = __ykAlloc(12, 4); if (kind === 4) { p = __ykAlloc(24, 8); __ykFree(p as number); } try { return spanUse(p as number, mode); } catch (e) { return (e as Error).message; } }',
+      ],
+      [
         "tFrame",
         "export function f(n: number, past: boolean): unknown { try { return frameUse(n, past); } catch (e) { return (e as Error).message; } }",
       ],
@@ -424,6 +433,9 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
       ["tTrap", [99]],
       ["tStale", [5]],
       ["tStale", [-3]],
+      ...[0, 1, 2, 3, 4].flatMap((kind) =>
+        [0, 1, 2].map((mode) => ["tSpan", [kind, mode]] as [string, unknown[]]),
+      ),
       ["tFrame", [7, false]],
       ["tFrame", [-2.5, false]],
       ["tFrame", [3, true]],

@@ -1105,37 +1105,42 @@ function lowerFunction(
    * the address an integer inside the runtime's cached region (and it writable, for a store);
    * `slow` (the runtime's leaf) otherwise.
    */
-  /** This function's frames (`__ykAlloc` of a constant size): their bytes', base's slots, length. */
-  const frames = new Map<ValueId, { bytes: string; base: string; len: number }>();
+  /** An integer the graph fixes: a literal, or + - * of such (raise-c's `i * 8`). */
+  const constantInt = (c0: ValueId, depth = 0): number | undefined => {
+    const lit = literalNumber(c0);
+    if (lit !== undefined) return Number.isSafeInteger(lit) ? lit : undefined;
+    const q = producer.get(resolve(c0));
+    if (depth > 8 || q?.kind !== "op" || q.inputs.length !== 2) return undefined;
+    const a = constantInt(q.inputs[0] as ValueId, depth + 1);
+    const b = constantInt(q.inputs[1] as ValueId, depth + 1);
+    if (a === undefined || b === undefined) return undefined;
+    const r =
+      q.label === "+" ? a + b : q.label === "-" ? a - b : q.label === "*" ? a * b : undefined;
+    return r !== undefined && Number.isSafeInteger(r) ? r : undefined;
+  };
+  /**
+   * Known spans of memory (#1369): this function's frames (`__ykAlloc` of a constant size) and the
+   * pointer parameters it reads at constant offsets. Each: slots for the address's own byte, the
+   * region's header and the region's base (the header holds it while the region lives), and the
+   * span's length.
+   */
+  const frames = new Map<ValueId, { bytes: string; hdr: string; base: string; len: number }>();
   /** An address that is a frame plus a constant inside it, its access of `size` bytes in bounds. */
   const frameAccess = (
     v0: ValueId,
     size: number,
-  ): { bytes: string; base: string; off: number } | undefined => {
+  ): { bytes: string; hdr: string; base: string; off: number } | undefined => {
     const v = resolve(v0);
     let f = frames.get(v);
     let off = 0;
     if (f === undefined) {
       const p = producer.get(v);
       if (p?.kind !== "op" || p.label !== "+" || p.inputs.length !== 2) return undefined;
-      // An integer the graph fixes: a literal, or + - * of such (raise-c's `i * 8`).
-      const constant = (c0: ValueId, depth = 0): number | undefined => {
-        const lit = literalNumber(c0);
-        if (lit !== undefined) return lit;
-        const q = producer.get(resolve(c0));
-        if (depth > 8 || q?.kind !== "op" || q.inputs.length !== 2) return undefined;
-        const a = constant(q.inputs[0] as ValueId, depth + 1);
-        const b = constant(q.inputs[1] as ValueId, depth + 1);
-        if (a === undefined || b === undefined) return undefined;
-        const r =
-          q.label === "+" ? a + b : q.label === "-" ? a - b : q.label === "*" ? a * b : undefined;
-        return r !== undefined && Number.isSafeInteger(r) ? r : undefined;
-      };
       for (const [x, y] of [
         [p.inputs[0], p.inputs[1]],
         [p.inputs[1], p.inputs[0]],
       ] as [ValueId, ValueId][]) {
-        const k = constant(y);
+        const k = constantInt(y);
         const g0 = frames.get(resolve(x));
         if (g0 !== undefined && k !== undefined && Number.isInteger(k)) {
           f = g0;
@@ -1146,7 +1151,7 @@ function lowerFunction(
     // A frame's bytes up to 4096 stay the runtime's when it is freed (others go back to the C
     // library), so reading its header after a free is defined.
     if (f === undefined || f.len > 4096 || off < 0 || off + size > f.len) return undefined;
-    return { bytes: f.bytes, base: f.base, off };
+    return { bytes: f.bytes, hdr: f.hdr, base: f.base, off };
   };
   const memoryAccess = (
     mem: { size: number; ty: string; kind: "u" | "f64" | "f32"; store: boolean },
@@ -1155,7 +1160,12 @@ function lowerFunction(
     /** Which operands (the address, a store's value) the number proof holds. */
     proven: readonly boolean[] = [],
     /** The address is this function's frame at a constant offset: its bytes' and base's slots. */
-    frame?: { readonly bytes: string; readonly base: string; readonly off: number },
+    frame?: {
+      readonly bytes: string;
+      readonly hdr: string;
+      readonly base: string;
+      readonly off: number;
+    },
   ): string => {
     for (const d of MEM_CACHE_DECLS) m.intrinsics.add(d);
     m.intrinsics.add("declare double @llvm.fabs.f64(double)");
@@ -1189,7 +1199,7 @@ function lowerFunction(
       const bytes = fresh();
       emit(`${bytes} = load ptr, ptr ${frame.bytes}`);
       const header = fresh();
-      emit(`${header} = getelementptr i8, ptr ${bytes}, i64 -16`);
+      emit(`${header} = load ptr, ptr ${frame.hdr}`);
       const owner = fresh();
       emit(`${owner} = load i64, ptr ${header}`);
       const base = fresh();
@@ -2077,11 +2087,19 @@ function lowerFunction(
           // Its bytes and base, for the accesses at constant offsets inside it.
           const k = frames.size;
           const bytesSlot = `%fb${k}`;
+          const hdrSlot = `%fh${k}`;
           const baseSlot = `%fa${k}`;
-          entryAllocas.push(`  ${bytesSlot} = alloca ptr`, `  ${baseSlot} = alloca i64`);
+          entryAllocas.push(
+            `  ${bytesSlot} = alloca ptr`,
+            `  ${hdrSlot} = alloca ptr`,
+            `  ${baseSlot} = alloca i64`,
+          );
           const bytes = fresh();
           emit(`${bytes} = load ptr, ptr @yk_frame_bytes`);
           emit(`store ptr ${bytes}, ptr ${bytesSlot}`);
+          const hdr = fresh();
+          emit(`${hdr} = getelementptr i8, ptr ${bytes}, i64 -16`);
+          emit(`store ptr ${hdr}, ptr ${hdrSlot}`);
           const d = fresh();
           emit(`${d} = bitcast i64 ${r} to double`);
           const base = fresh();
@@ -2089,6 +2107,7 @@ function lowerFunction(
           emit(`store i64 ${base}, ptr ${baseSlot}`);
           frames.set(out as ValueId, {
             bytes: bytesSlot,
+            hdr: hdrSlot,
             base: baseSlot,
             len: size <= 16 ? 16 : Math.ceil(size / 16) * 16,
           });
@@ -2763,6 +2782,61 @@ function lowerFunction(
       emit(`${r} = musttail call i64 @${clone}(ptr %closure, i64 %this, i64 %argc, ptr %argv)`);
       emit(`ret i64 ${r}`);
       block(general);
+    }
+  }
+  // Pointer parameters read or written at constant offsets (#1369): the span they reach is looked
+  // up once, here; each access then checks only that its region still lives.
+  if (closure !== undefined) {
+    const spans = new Map<ValueId, { len: number; write: boolean; uses: number }>();
+    for (const n of g.nodes) {
+      const leaf = leafOf(n);
+      const mem = leaf === undefined ? undefined : MEM_INLINE[leaf];
+      if (mem === undefined || n.inputs.length < 2) continue;
+      const addr = resolve(n.inputs[1] as ValueId);
+      const pa = producer.get(addr);
+      let base: ValueId | undefined;
+      let off: number | undefined;
+      if (pa?.kind === "param-source") {
+        base = addr;
+        off = 0;
+      } else if (pa?.kind === "op" && pa.label === "+" && pa.inputs.length === 2)
+        for (const [x, y] of [
+          [pa.inputs[0], pa.inputs[1]],
+          [pa.inputs[1], pa.inputs[0]],
+        ] as [ValueId, ValueId][]) {
+          const k = constantInt(y);
+          if (producer.get(resolve(x))?.kind === "param-source" && k !== undefined) {
+            base = resolve(x);
+            off = k;
+          }
+        }
+      if (base === undefined || off === undefined || off < 0 || off + mem.size > 4096) continue;
+      const sp = spans.get(base) ?? { len: 0, write: false, uses: 0 };
+      spans.set(base, {
+        len: Math.max(sp.len, off + mem.size),
+        write: sp.write || mem.store,
+        uses: sp.uses + 1,
+      });
+    }
+    for (const [pv, sp] of spans) {
+      const index = params.findIndex((p) => p.outputs[0] === pv);
+      if (index < closure.captures || sp.uses < 2) continue;
+      m.intrinsics.add("declare ptr @yk_span(i64, i64, i32, ptr, ptr)");
+      const k = frames.size;
+      const bytesSlot = `%fb${k}`;
+      const hdrSlot = `%fh${k}`;
+      const baseSlot = `%fa${k}`;
+      entryAllocas.push(
+        `  ${bytesSlot} = alloca ptr`,
+        `  ${hdrSlot} = alloca ptr`,
+        `  ${baseSlot} = alloca i64`,
+      );
+      const at = fresh();
+      emit(
+        `${at} = call ptr @yk_span(i64 ${operand(pv)}, i64 ${sp.len}, i32 ${sp.write ? 1 : 0}, ptr ${hdrSlot}, ptr ${baseSlot})`,
+      );
+      emit(`store ptr ${at}, ptr ${bytesSlot}`);
+      frames.set(pv, { bytes: bytesSlot, hdr: hdrSlot, base: baseSlot, len: sp.len });
     }
   }
   emitScope(undefined);
