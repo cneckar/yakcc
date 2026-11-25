@@ -16,3 +16,8 @@ the C/C++ front end to shave (#1367):
   `c/include/brotli/decode.h`, MIT, `deps/brotli/LICENSE`): the `c/` tree behind
   `zlib.brotliCompress` and `brotliDecompress`. The fixture `src/__fixtures__/c/node-brotli.c`
   compresses in one call and decompresses as a stream.
+- `deps/zlib/` (Chromium's zlib, `1.3.1-e00f703`, zlib's license, `deps/zlib/LICENSE`): the
+  library behind `node:zlib`, which gives different deflate bytes from zlib 1.3.1's own. The core
+  files, `contrib/optimizations/` and the x86 SIMD files (Node's x64 build); the test shaves the
+  portable configuration (`CPU_NO_SIMD`, as Node builds it for a CPU without SIMD), whose streams
+  equal Node's. The fixture `src/__fixtures__/c/node-zlib.c` runs it as Node's binding does.
