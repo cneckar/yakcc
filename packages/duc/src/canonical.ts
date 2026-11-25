@@ -437,6 +437,9 @@ export function canonicalizeGraph(
   const hoisted = hoistLiterals(rawNodes, rawObs, rawBranches);
   const { obs, branches } = hoisted;
   const nodes = inlineLiteralCaptures(hoisted.nodes);
+  // A capture inlined leaves its outer source unread, which the next pass removes (with what it
+  // alone read): canonicalizing is idempotent only after that pass, so it runs here (#1292).
+  const inlined = nodes.some((n, i) => n !== hoisted.nodes[i]);
   const producer = new Map<ValueId, { node: DucNode; index: number }>();
   for (const node of nodes) node.outputs.forEach((v, index) => producer.set(v, { node, index }));
 
@@ -865,6 +868,7 @@ export function canonicalizeGraph(
     obs: canonicalObs,
     ...(canonicalBranches.length > 0 ? { branches: canonicalBranches } : {}),
   };
+  if (inlined) return canonicalizeGraph(graph.nodes, graph.obs, graph.branches ?? []);
   canonicalGraphs.add(graph);
   return graph;
 }
