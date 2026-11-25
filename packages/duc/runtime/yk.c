@@ -2285,14 +2285,17 @@ yk yk_object_of_distinct(uint64_t n, const yk *keys, const yk *values) {
 }
 /* An object literal: its keys (by ToPropertyKey) and values, in source order. */
 yk yk_object_of(uint64_t n, const yk *keys, const yk *values) {
-  yk_object *o = alloc(sizeof(yk_object));
-  o->len = o->cap = 0;
+  uint32_t cap = n < 4 ? 4 : (uint32_t)n;
+  yk_object *o = alloc(sizeof(yk_object) + (size_t)cap * 2 * sizeof(yk));
+  o->len = 0;
   o->error = 0;
   o->kind = 0;
   o->proto = 0;
   o->regex = NULL;
   o->entries = NULL;
-  o->keys = o->values = NULL;
+  o->keys = (yk *)(o + 1);
+  o->values = o->keys + cap;
+  o->cap = cap;
   o->index = NULL;
   o->index_cap = 0;
   o->privates = NULL;
@@ -5843,9 +5846,11 @@ static void coro_resume(coro *co, yk value, int mode) {
   handler *saved = handlers;
   co->transfer = value;
   co->mode = mode;
+  /* Its stack is made before it is current: a collection in that alloc is still on the stack it
+     was called from, which it scans as that (from gc_main_sp only once the switch is made). */
+  if (co->state == 0) co->stack = alloc(CORO_STACK); /* on the heap: a suspended coroutine's frames are scanned */
   current_coro = co;
   if (co->state == 0) {
-    co->stack = alloc(CORO_STACK); /* on the heap: a suspended coroutine's frames are scanned */
     getcontext(&co->ctx);
     co->ctx.uc_stack.ss_sp = co->stack;
     co->ctx.uc_stack.ss_size = CORO_STACK;
