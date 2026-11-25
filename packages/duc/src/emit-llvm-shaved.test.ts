@@ -349,7 +349,7 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
       ],
       [
         "tQsort",
-        "export function f(xs: number[]): unknown { const a = __ykAlloc(xs.length * 4, 16); for (let i = 0; i < xs.length; i++) __ykStore32(a + 4 * i, xs[i] as number); qsort(a, BigInt(xs.length), 4n, cmpInt); const out: number[] = []; for (let i = 0; i < xs.length; i++) out.push(__ykLoad32(a + 4 * i) | 0); return out; }",
+        "export function f(xs: number[]): unknown { const a = __ykAlloc(xs.length * 4, 16); for (let i = 0; i < xs.length; i++) __ykStore32(a + 4 * i, xs[i] as number); qsort(a, BigInt(xs.length), 4n, __ykFnAddr(cmpInt)); const out: number[] = []; for (let i = 0; i < xs.length; i++) out.push(__ykLoad32(a + 4 * i) | 0); return out; }",
       ],
       ["readAt", "export function f(p: number): number { return __ykLoad32(p); }"],
       [

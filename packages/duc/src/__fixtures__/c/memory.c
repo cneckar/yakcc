@@ -1,5 +1,6 @@
 /* C's memory, for the C front end (#1363): pointers, &, *, [], ->, structs, arrays and unions by
  * clang's layout, string literals. Compiled natively with -fwrapv and shaved; both must agree. */
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -130,4 +131,115 @@ negative:
   t = -a;
 done:
   return t;
+}
+
+/* Module state: a file-scope static, a global table, pointers into them and a function pointer in
+ * static initializers, and a static local; each call changes them, so a sequence of calls checks
+ * that the state persists. */
+static int counter = 5;
+int yk_global_table[4] = {1, 2, 3, 4};
+static int *ptrs[2] = {&yk_global_table[1], &counter};
+static int (*cmp)(const void *, const void *) = yk_cmp_int;
+static const char *greeting = "hi";
+int yk_state(int a) {
+  static int calls;
+  calls++;
+  counter += a;
+  yk_global_table[a & 3] += counter;
+  return counter * 100 + *ptrs[0] + *ptrs[1] + calls * 7 + cmp(&a, &counter) + greeting[1];
+}
+
+/* Variable arguments: int, long and double through va_arg, a va_list passed on, and va_copy. */
+static long yk_sum_va(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  long t = 0;
+  for (int i = 0; i < n; i++) {
+    if (i % 3 == 2) t += (long)(va_arg(ap, double) * 10);
+    else if (i % 3 == 1) t += va_arg(ap, long);
+    else t += va_arg(ap, int);
+  }
+  va_end(ap);
+  return t;
+}
+static int yk_vcount(const char *fmt, va_list ap) {
+  int t = 0;
+  for (; *fmt; fmt++) {
+    if (*fmt == 'd') t += va_arg(ap, int);
+    else if (*fmt == 's') {
+      const char *s = va_arg(ap, const char *);
+      while (*s) t += *s++;
+    }
+  }
+  return t;
+}
+static int yk_count(const char *fmt, ...) {
+  va_list ap, aq;
+  va_start(ap, fmt);
+  va_copy(aq, ap);
+  int a = yk_vcount(fmt, ap);
+  int b = yk_vcount(fmt, aq);
+  va_end(aq);
+  va_end(ap);
+  return a * 1000 + b;
+}
+int yk_varargs(int a, int b) {
+  return (int)yk_sum_va(5, a, (long)b * 1000000000L, 2.5, b, (long)a) + yk_count("dsd", a, "hey", b);
+}
+
+/* Bit-fields: unsigned, signed (sign-extended), 40 bits wide, one bit; set, compound-assigned,
+ * incremented, read back, and an assignment's value. */
+struct flags {
+  unsigned a : 3;
+  int b : 5;
+  unsigned long long c : 40;
+  unsigned char d : 1;
+  short e : 7;
+};
+int yk_bits(int x, int y) {
+  struct flags f = {1};
+  f.b = y;
+  f.c = (unsigned long long)x * 1000003u;
+  f.d = y;
+  f.e = x - y;
+  f.a += x;
+  f.b++;
+  f.e -= 3;
+  int last = (f.b = x);
+  return f.a + f.b * 10 + (int)(f.c % 100000) + f.d * 7 + f.e * 1000 + last * 3;
+}
+
+/* A switch whose case labels are inside its statements (musl's vfprintf), a goto back to a label
+ * of its body, a continue of the loop outside it, a default, and a goto out. */
+int yk_switch(int a, int b) {
+  static const char ops[] = "npxodu cmsC!z";
+  int n = 0, r = 0;
+  for (int k = 0; k < 6; k++) {
+    char c = ops[(unsigned)(a + k * b) % 13];
+    if (c == '!' && b > 5) goto overflow;
+    switch (c) {
+    case 'n': n++; continue;
+    case 'p': r = 2;
+    case 'x': r += 3;
+      if (0) {
+    case 'o': r = 5;
+      } if (0) {
+    case 'd': r = 7;
+    case 'u': r += 1;
+      }
+      if (r > 40 + b) goto overflow;
+      break;
+    narrow_c:
+    case 'c': r = r * 2 + 9; break;
+    case 'm': if (1) r = 4; else
+    case 's': r = 6;
+      break;
+    case 'C': if (!(b & 1)) goto narrow_c; r = 11; continue;
+    default: r -= 1;
+    }
+    n += r;
+  }
+  return n;
+overflow:
+  return -n - 1;
 }

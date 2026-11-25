@@ -193,6 +193,8 @@ const LEAVES: Readonly<Record<string, [string, number]>> = {
   __ykStoreF64: ["yk_leaf_store_f64", 2],
   __ykStoreF32: ["yk_leaf_store_f32", 2],
   __ykF32: ["yk_leaf_f32", 1],
+  __ykFnAddr: ["yk_leaf_fn_addr", 1],
+  __ykFnAt: ["yk_leaf_fn_at", 1],
 };
 /**
  * The memory leaves with an inline fast path (#1369): an access to the region the runtime's cache

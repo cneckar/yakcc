@@ -5494,6 +5494,32 @@ static uint8_t *c_at(yk addr, uint32_t n, int write) {
 }
 
 yk yk_leaf_alloc(yk size, yk align) { return yk_number((double)c_alloc(to_number(size), to_number(align), 0)); }
+/* Function pointers (raise-c's __ykFnAddr/__ykFnAt): a function's address is 0x7f0000000000 plus
+ * 16 per function, in the order first taken (as createCMemory's), the same for every use of the
+ * function, outside the data; a call through a pointer looks it up. */
+static yk *fn_values;
+static uint64_t *fn_addrs;
+static size_t fn_count, fn_cap;
+yk yk_leaf_fn_addr(yk f) {
+  for (size_t i = 0; i < fn_count; i++)
+    if (fn_values[i] == f) return yk_number((double)fn_addrs[i]);
+  if (fn_count == fn_cap) {
+    fn_cap = fn_cap == 0 ? 16 : fn_cap * 2;
+    fn_values = realloc(fn_values, fn_cap * sizeof *fn_values);
+    fn_addrs = realloc(fn_addrs, fn_cap * sizeof *fn_addrs);
+    if (fn_values == NULL || fn_addrs == NULL) abort();
+  }
+  fn_values[fn_count] = f;
+  fn_addrs[fn_count] = 0x7f0000000000ULL + 16 * (uint64_t)fn_count;
+  return yk_number((double)fn_addrs[fn_count++]);
+}
+yk yk_leaf_fn_at(yk a) {
+  uint64_t x = (uint64_t)to_number(a);
+  for (size_t i = 0; i < fn_count; i++)
+    if (fn_addrs[i] == x) return fn_values[i];
+  type_error("memory trap: a call through a pointer that is no function's");
+  return YK_UNDEFINED;
+}
 static void c_free(double a);
 yk yk_leaf_free(yk addr) {
   c_free(to_number(addr));
@@ -5904,6 +5930,8 @@ LEAF_VALUE1(leaf_v_f64_hi, yk_leaf_f64_hi)
 LEAF_VALUE1(leaf_v_f64_lo, yk_leaf_f64_lo)
 LEAF_VALUE2(leaf_v_f64_make, yk_leaf_f64_make)
 LEAF_VALUE2(leaf_v_alloc, yk_leaf_alloc)
+LEAF_VALUE1(leaf_v_fn_addr, yk_leaf_fn_addr)
+LEAF_VALUE1(leaf_v_fn_at, yk_leaf_fn_at)
 LEAF_VALUE1(leaf_v_free, yk_leaf_free)
 LEAF_VALUE2(leaf_v_data, yk_leaf_data)
 LEAF_VALUE1(leaf_v_load8, yk_leaf_load8)
@@ -5919,7 +5947,7 @@ LEAF_VALUE2(leaf_v_store64, yk_leaf_store64)
 LEAF_VALUE2(leaf_v_store_f64, yk_leaf_store_f64)
 LEAF_VALUE2(leaf_v_store_f32, yk_leaf_store_f32)
 LEAF_VALUE1(leaf_v_f32, yk_leaf_f32)
-#define N_LEAVES 29
+#define N_LEAVES 31
 static yk leaf_value(const char *name, uint64_t n) {
   static const char *names[N_LEAVES] = {"__ykI32Mul", "__ykU64", "__ykI64", "__ykNumToBig",
                                         "__ykBigToI32", "__ykBigToU32", "__ykBigToF64",
@@ -5928,7 +5956,7 @@ static yk leaf_value(const char *name, uint64_t n) {
                                         "__ykAlloc", "__ykFree", "__ykData", "__ykLoad8", "__ykLoad16",
                                         "__ykLoad32", "__ykLoad64", "__ykLoadF64", "__ykLoadF32",
                                         "__ykStore8", "__ykStore16", "__ykStore32", "__ykStore64",
-                                        "__ykStoreF64", "__ykStoreF32", "__ykF32"};
+                                        "__ykStoreF64", "__ykStoreF32", "__ykF32", "__ykFnAddr", "__ykFnAt"};
   static const yk_code codes[N_LEAVES] = {leaf_v_i32mul, leaf_v_u64, leaf_v_i64, leaf_v_num_to_big,
                                           leaf_v_big_to_i32, leaf_v_big_to_u32, leaf_v_big_to_f64,
                                           leaf_v_f64_to_i64, leaf_v_f64_bits, leaf_v_f64_from_bits,
@@ -5936,7 +5964,7 @@ static yk leaf_value(const char *name, uint64_t n) {
                                           leaf_v_alloc, leaf_v_free, leaf_v_data, leaf_v_load8, leaf_v_load16,
                                           leaf_v_load32, leaf_v_load64, leaf_v_load_f64, leaf_v_load_f32,
                                           leaf_v_store8, leaf_v_store16, leaf_v_store32, leaf_v_store64,
-                                          leaf_v_store_f64, leaf_v_store_f32, leaf_v_f32};
+                                          leaf_v_store_f64, leaf_v_store_f32, leaf_v_f32, leaf_v_fn_addr, leaf_v_fn_at};
   static yk fns[N_LEAVES];
   for (int i = 0; i < N_LEAVES; i++)
     if (strlen(names[i]) == n && memcmp(names[i], name, n) == 0)

@@ -12,12 +12,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import fc from "fast-check";
-import { ts } from "ts-morph";
 import { afterAll, describe, expect, it } from "vitest";
-import { emitTypeScript } from "./emit-ts.js";
-import { liftAtom } from "./lift.js";
+import { type Fn, type CMemory as Mem, hex, link } from "./__fixtures__/c-link.js";
 import { C_LEAVES_JS, createCMemory, recordLayouts, shaveCUnit } from "./raise-c.js";
-import type { DucGraph } from "./types.js";
 
 const repo = fileURLToPath(new URL("../../../", import.meta.url));
 // The SQLite yakcc runs on, pinned by the lockfile through @yakcc/registry's better-sqlite3.
@@ -64,47 +61,6 @@ const hasClang = (() => {
 const work = mkdtempSync(join(tmpdir(), "yakcc-raise-c-sqlite-"));
 afterAll(() => rmSync(work, { recursive: true, force: true }));
 
-type Fn = (...a: unknown[]) => unknown;
-const opaque = (g: DucGraph): string[] =>
-  g.nodes.flatMap((n) => [
-    ...(/#[0-9a-f]{16}$/.test(n.label ?? "") ? [n.label as string] : []),
-    ...(n.closure !== undefined ? opaque(n.closure) : []),
-  ]);
-
-function link(
-  atoms: ReadonlyMap<string, { source: string }>,
-  lowered: boolean,
-  memory: ReturnType<typeof createCMemory>,
-): Record<string, Fn> {
-  const leaves = {
-    ...(C_LEAVES_JS as unknown as Record<string, Fn>),
-    ...(memory.leaves as unknown as Record<string, Fn>),
-  };
-  const env: Record<string, Fn> = { ...leaves };
-  const names = [...Object.keys(leaves), ...atoms.keys()];
-  for (const [key, atom] of atoms) {
-    let source = atom.source;
-    if (lowered) {
-      const g = liftAtom(source);
-      expect(opaque(g), key).toEqual([]);
-      source = emitTypeScript(g);
-    }
-    const js = ts
-      .transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } })
-      .outputText.replace(/^export /m, "");
-    env[key] = new Function(...names, `${js}; return f;`)(
-      ...names.map(
-        (n) =>
-          (...x: unknown[]) =>
-            env[n]?.(...x),
-      ),
-    ) as Fn;
-  }
-  return env;
-}
-
-const hex = (b: Uint8Array | readonly number[]): string =>
-  Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 const utf8 = (s: string): number[] => [...Buffer.from(s, "utf8")];
 
 const ROOTS = [
@@ -130,7 +86,7 @@ describe.skipIf(!hasClang)("SQLite's record helpers, shaved from the amalgamatio
   it("every root, and every function it calls, shaves with no refusal", () => {
     expect([...unit.refused, ...libc.flatMap((u) => [...u.refused])]).toEqual([]);
     expect([...unit.atoms.keys()]).toEqual(
-      expect.arrayContaining([...ROOTS, "putVarint64", "serialGet"]),
+      expect.arrayContaining([...ROOTS, "putVarint64__sqlite3", "serialGet__sqlite3"]),
     );
     // What SQLite calls and does not define is the C library's: linked to musl's atoms.
     const externals = new Set([...unit.atoms.values()].flatMap((a) => a.externals));
@@ -139,10 +95,14 @@ describe.skipIf(!hasClang)("SQLite's record helpers, shaved from the amalgamatio
 
   // Mem's layout, as clang lays it out for this build.
   const mem = recordLayouts(
-    execFileSync("clang", [...ARGS, "-fsyntax-only", "-Xclang", "-fdump-record-layouts", file], {
-      encoding: "utf8",
-      maxBuffer: 1 << 30,
-    }),
+    execFileSync(
+      "clang",
+      [...ARGS, "-fsyntax-only", "-Xclang", "-fdump-record-layouts-complete", file],
+      {
+        encoding: "utf8",
+        maxBuffer: 1 << 30,
+      },
+    ),
   ).get("struct sqlite3_value");
 
   const exe = join(work, "sqlite-helpers");
@@ -183,7 +143,7 @@ int main(void) {
     );
   };
 
-  type Case = [string, (env: Record<string, Fn>, m: ReturnType<typeof createCMemory>) => string];
+  type Case = [string, (env: Record<string, Fn>, m: Mem) => string];
   const cases = (seed: number): Case[] => {
     const out: Case[] = [];
     const u64s = [
