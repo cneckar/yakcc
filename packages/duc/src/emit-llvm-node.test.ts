@@ -5,7 +5,7 @@
  * vendored v22.23.5 lib), built and run; its output is Node's.
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,6 +47,28 @@ describe.skipIf(!canRun("x86_64-linux"))("Node's library, natively (#1331)", () 
     const want = spawnSync(process.execPath, ["-e", PATH_PROGRAM], { encoding: "utf8" });
     expect(r.stdout).toBe(want.stdout);
     expect(r.status).toBe(0);
+  }, 600_000);
+
+  it("a module's own binding of a platform name, and a top-level return ending the module (#1331)", () => {
+    const source = [
+      "let queueMicrotask = (f) => f();",
+      "const out = [];",
+      "queueMicrotask(() => out.push('own'));",
+      "queueMicrotask = (f) => { out.push('reassigned'); f(); };",
+      "queueMicrotask(() => out.push('ran'));",
+      "if (out.length === 3) { console.log(out.join(',') + '|returned'); return; }",
+      "console.log('not reached');",
+    ].join("\n");
+    const record = nodeLibraryProgram(lib, { id: "main", source }, [env]);
+    const exe = join(work, "top-return");
+    buildRecord(record, exe);
+    const r = spawnSync(exe, [], { encoding: "utf8" });
+    expect([r.status, r.stderr]).toEqual([0, ""]);
+    const file = join(work, "top-return.cjs");
+    writeFileSync(file, source);
+    const want = spawnSync(process.execPath, [file], { encoding: "utf8" });
+    expect(r.stdout).toBe(want.stdout);
+    expect(r.stdout).toBe("own,reassigned,ran|returned\n");
   }, 600_000);
 
   // Node booted as Node boots: the per-context scripts, realm, then main through realm's require.
