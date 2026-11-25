@@ -18,7 +18,18 @@
  * always raises to the same graphs.
  */
 import { execFileSync } from "node:child_process";
-import { closeSync, mkdtempSync, openSync, readSync, rmSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -94,16 +105,36 @@ const FUNCTION_KINDS = new Set([
 
 /** Dump a unit's AST to a file and index its declarations. */
 function indexUnit(clang: string, args: readonly string[], file: string): UnitIndex {
-  const dir = mkdtempSync(join(tmpdir(), "yakcc-ast-"));
-  const path = join(dir, "ast.json");
-  const out = openSync(path, "w");
-  try {
-    execFileSync(clang, [...args, "-fsyntax-only", "-Xclang", "-ast-dump=json", file], {
-      stdio: ["ignore", out, "ignore"],
-      maxBuffer: 1 << 30,
-    });
-  } finally {
-    closeSync(out);
+  // One dump per unit (its command and its file, as last changed), kept in a shared cache and
+  // reused: SQLite's is 725 MB, and a process that ends without its exit handlers (a test
+  // worker) would leave one behind each run. Dumps unused for a day are removed.
+  const dir = join(tmpdir(), "yakcc-ast");
+  mkdirSync(dir, { recursive: true });
+  const st = statSync(file);
+  const key = createHash("sha256")
+    .update(JSON.stringify([clang, args, file, st.size, st.mtimeMs]))
+    .digest("hex")
+    .slice(0, 32);
+  const path = join(dir, `${key}.json`);
+  for (const old of readdirSync(dir))
+    try {
+      if (Date.now() - statSync(join(dir, old)).atimeMs > 86_400_000)
+        rmSync(join(dir, old), { force: true });
+    } catch {
+      // another process's, gone
+    }
+  if (!existsSync(path)) {
+    const part = `${path}.${process.pid}.part`;
+    const out = openSync(part, "w");
+    try {
+      execFileSync(clang, [...args, "-fsyntax-only", "-Xclang", "-ast-dump=json", file], {
+        stdio: ["ignore", out, "ignore"],
+        maxBuffer: 1 << 30,
+      });
+    } finally {
+      closeSync(out);
+    }
+    renameSync(part, path);
   }
   const decls: IndexedDecl[] = [];
   const byName = new Map<string, IndexedDecl[]>();
@@ -256,7 +287,7 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
   } finally {
     closeSync(fd);
   }
-  process.once("exit", () => rmSync(dir, { recursive: true, force: true }));
+
   return { path, decls, byName, byId, byMangled, next, previous };
 }
 
@@ -1020,6 +1051,8 @@ export interface CxxUnit {
   ) => { readonly id: string; readonly body: boolean } | undefined;
   /** Whether a member function is virtual. */
   readonly isVirtual: (methodId: string) => boolean;
+  /** A function's parameter's default argument (its expression), by the function's id. */
+  readonly defaultArgOf: (fnId: string, index: number) => ClangNode | undefined;
   /**
    * A lambda's call operator, by its id: the closure's type, and its captures (each captured
    * variable's id, in the closure's field order, by reference or by copy).
@@ -2179,7 +2212,15 @@ function raiseBody(
         const callee = stripCasts(k0);
         const name = callee.referencedDecl?.name ?? "";
         // (A record argument is passed by address: see argOf.)
-        const args = kids.slice(1).map((x) => (typeOf(x).k === "rec" ? argOf(x) : expr(x)));
+        const args = kids
+          .slice(1)
+          .map((x) =>
+            x.kind === "CXXDefaultArgExpr"
+              ? "undefined"
+              : typeOf(x).k === "rec"
+                ? argOf(x)
+                : expr(x),
+          );
         if (name === "bit_cast") {
           const to = typeOf(e);
           const from = typeOf(kids[1] as ClangNode);
@@ -2256,8 +2297,9 @@ function raiseBody(
         });
         const target = key ?? ident(name);
         if (key === undefined) externals.add(name);
-        // C++: an argument bound to a reference parameter is its object's address.
-        if (fixed === undefined) callArgs = kids.slice(1).map(argOf);
+        // C++: an argument bound to a reference parameter is its object's address; a default
+        // argument, the callee's.
+        if (fixed === undefined) callArgs = withDefaults(kids.slice(1), d.id).map(argOf);
         const call = `${target}(${callArgs.join(", ")})`;
         if (fixed === undefined) return call;
         const r = temp(typeOf(e).k === "void" ? { k: "i32" } : typeOf(e));
@@ -2415,7 +2457,7 @@ function raiseBody(
     });
     if (key === undefined)
       throw new RaiseCError(`the constructor ${t.name}(${ctorType}) is not in the unit`);
-    return `${key}(${[addr, ...args.map(argOf)].join(", ")})`;
+    return `${key}(${[addr, ...withDefaults(args, ctor.id).map(argOf)].join(", ")})`;
   };
   /**
    * The destruction of the object at `addr` (C++): its destructor's body, then its members' and
@@ -2480,6 +2522,14 @@ function raiseBody(
     if (p.k !== "mem") throw new RaiseCError("a reference to an object not in memory");
     return p.addr;
   };
+  /** Arguments with a callee's default ones in place of clang's CXXDefaultArgExpr (C++). */
+  const withDefaults = (args: readonly ClangNode[], fnId: string | undefined): ClangNode[] =>
+    args.map((a, i) => {
+      if (a.kind !== "CXXDefaultArgExpr") return a;
+      const d = fnId === undefined ? undefined : unitCxx?.defaultArgOf(fnId, i);
+      if (d === undefined) throw new RaiseCError("a default argument not found");
+      return d;
+    });
   /** A member function called on the object at `self` (C++). */
   const methodCall = (self: string, member: ClangNode, args: readonly ClangNode[]): string => {
     const id =
@@ -2498,7 +2548,7 @@ function raiseBody(
     }
     const key = resolve({ name, kind: "CXXMethodDecl", type: "", id });
     if (key === undefined) throw new RaiseCError(`the method ${name} is not in the unit`);
-    return `${key}(${[self, ...args.map(argOf)].join(", ")})`;
+    return `${key}(${[self, ...withDefaults(args, id).map(argOf)].join(", ")})`;
   };
   /** Stores that initialize an object in memory at `addr` from an initializer (zero-filled). */
   const initialize = (addr: string, t: CType, given: ClangNode | undefined): string[] => {
@@ -3906,7 +3956,13 @@ export function shaveCUnit(
       const args = (node.inner ?? [])
         .filter((a) => a.kind === "TemplateArgument")
         .map((a) => canon(a.type?.qualType ?? String((a as { value?: unknown }).value ?? "")));
-      if (args.join(",") === want.join(",")) return node;
+      // (A type spelled without its default arguments, `basic_string_view<char>`: the ones it spells.)
+      if (
+        args.length >= want.length &&
+        args.slice(0, want.length).join(",") === want.join(",") &&
+        (want.length > 0 || args.length === 0)
+      )
+        return node;
     }
     return undefined;
   };
@@ -3980,6 +4036,28 @@ export function shaveCUnit(
               };
             });
             return { record: lambda.type?.qualType ?? "", captures };
+          },
+          defaultArgOf: (fnId, index) => {
+            const d = indexed.byId.get(fnId);
+            if (d === undefined) return undefined;
+            // The declaration that gives the defaults: any of the function's (they are written once).
+            const decls = [d, ...[definitionIn(indexed, fnId)].filter((x) => x !== undefined)];
+            const count = (readDecl(indexed, d).inner ?? []).filter(
+              (c) => c.kind === "ParmVarDecl",
+            ).length;
+            // (A template's instance has none: its template's declaration of that name gives them.)
+            const others = (indexed.byName.get(d.name) ?? []).filter((x) =>
+              FUNCTION_KINDS.has(x.kind),
+            );
+            for (const x of [...decls, ...others]) {
+              const parms = (readDecl(indexed, x as IndexedDecl).inner ?? []).filter(
+                (c) => c.kind === "ParmVarDecl",
+              );
+              if (parms.length !== count) continue;
+              const init = (parms[index]?.inner ?? []).find((c) => !c.kind.endsWith("Attr"));
+              if (init !== undefined) return init;
+            }
+            return undefined;
           },
           isVirtual: (methodId) => {
             const d = indexed.byId.get(methodId);
@@ -4206,6 +4284,27 @@ export function shaveCUnit(
     for (const n of dumpOf(name)) walk(n);
     if (hit !== undefined) return hit;
     if (anonymous !== undefined) return unnamedRecord(anonymous);
+    // An alias template's instance (`ada::result<url_aggregator>`, `template <class T> using
+    // result = tl::expected<T, errors>`): its type with the arguments for its parameters.
+    const lt = name.indexOf("<");
+    if (lt > 0 && name.endsWith(">")) {
+      const bareAlias = name.slice(0, lt).split("::").pop() ?? "";
+      const args = splitTemplateArgs(name.slice(lt + 1, -1));
+      for (const n of dumpOf(bareAlias)) {
+        if (n.kind !== "TypeAliasTemplateDecl" || n.name !== bareAlias) continue;
+        const params = (n.inner ?? [])
+          .filter((c) => c.kind === "TemplateTypeParmDecl" || c.kind === "NonTypeTemplateParmDecl")
+          .map((c) => c.name ?? "");
+        const alias = (n.inner ?? []).find((c) => c.kind === "TypeAliasDecl");
+        let t = alias?.type?.qualType;
+        if (t === undefined) continue;
+        params.forEach((pn, i) => {
+          if (pn !== "" && args[i] !== undefined)
+            t = (t as string).replace(new RegExp(`\\b${pn}\\b`, "g"), args[i] as string);
+        });
+        return t;
+      }
+    }
     // An enumeration (`enum e`, `ns::e`): its underlying type, fixed (`enum class e : uint8_t`,
     // and int for a scoped one) or chosen by the compiler (int, or unsigned int when no
     // enumerator is negative).
@@ -4279,7 +4378,18 @@ export function shaveCUnit(
       }
       layouts = recordLayouts(dump);
     }
-    return layouts.get(recordKey(name));
+    // (A class template's instance spelled with its default arguments, which the dump omits.)
+    let key = recordKey(name);
+    for (let tries = 0; tries < 8; tries++) {
+      const l = layouts.get(key);
+      if (l !== undefined) return l;
+      const m = /^(.*?<)(.*)>$/.exec(key);
+      if (m === null) return undefined;
+      const args = splitTemplateArgs(m[2] as string);
+      if (args.length < 2) return undefined;
+      key = `${m[1]}${args.slice(0, -1).join(", ")}>`;
+    }
+    return undefined;
   };
   // Module state: each static the atoms use, keyed and defined (when this unit defines it).
   const statics = new Map<string, StaticDef>();
@@ -4622,8 +4732,10 @@ const recordKey = (name: string): string =>
   normType(
     name
       .replace(/\b[A-Za-z_]\w*::/g, "")
+      // A template argument's tag (`<struct ada::url, enum ada::errors>` is `<url, errors>`).
+      .replace(/([<,]\s*)(?:struct|class|union|enum) /g, "$1")
       .replace(
-        /\(unnamed(?: struct| union| class)? at (?:[^)]*\/)?([^/)]+:\d+:\d+)\)/g,
+        /\((?:unnamed|anonymous)(?: struct| union| class)? at (?:[^)]*\/)?([^/)]+:\d+:\d+)\)/g,
         "(unnamed at $1)",
       )
       .replace(
