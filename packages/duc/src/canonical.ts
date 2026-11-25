@@ -653,10 +653,21 @@ export function canonicalizeGraph(
       const used = (uses.get(node) ?? [])
         .map(({ by, tag }) => `${typeof by === "string" ? by : key.get(by)}:${tag}`)
         .sort();
+      // An invariant source stands for its outer value, so it is told apart as that value is: two
+      // cells equal in themselves, told apart by what is written into them, are two invariants
+      // (#1292). Its label holds the outer value's signature before refinement only.
+      const outer = invariantOuterOf.get(node);
+      const outerProducer = outer === undefined ? undefined : producer.get(outer);
+      const stands =
+        outerProducer === undefined
+          ? null
+          : `${key.get(outerProducer.node)}#${outerProducer.index}`;
       refined.set(
         node,
         createHash("sha256")
-          .update(canonicalJson([key.get(node), used]))
+          .update(
+            canonicalJson(stands === null ? [key.get(node), used] : [key.get(node), used, stands]),
+          )
           .digest("hex"),
       );
     }
