@@ -250,7 +250,7 @@ int main(void) {
           const n = Number((env.yk_dns as Fn)(p, BigInt(m.length), out, BigInt(cap)));
           return Buffer.from(memory.get(out, n)).toString("latin1").replaceAll("\n", "~");
         } catch (e) {
-          return `trap: ${(e as Error).message}`;
+          return `trap: ${(e as Error).stack?.split("\n").slice(0, 8).join(" | ")}`;
         }
       });
       const bad = got.flatMap((g, i) =>
