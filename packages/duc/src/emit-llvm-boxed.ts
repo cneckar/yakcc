@@ -648,6 +648,8 @@ function lowerFunction(
   // operation throws first) needs no tag check. Carries, joins and loop results are assumed numbers
   // until one of their inputs is not (an optimistic fixpoint).
   const NUMBER_LEAVES = new Set([
+    "__ykAlloc",
+    "__ykData",
     "__ykBigToI32",
     "__ykBigToU32",
     "__ykBigToF64",
@@ -949,8 +951,8 @@ function lowerFunction(
     const fastLabel = freshLabel("fast");
     const slowLabel = freshLabel("slow");
     const join = freshLabel("joined");
-    let all = "";
-    for (const a of args) {
+    let all = proven ? "true" : "";
+    for (const a of proven ? [] : args) {
       const n = fresh();
       emit(`${n} = icmp ult i64 ${a}, ${NUMBER_LIMIT}`);
       if (all === "") all = n;
@@ -1018,6 +1020,8 @@ function lowerFunction(
     mem: { size: number; ty: string; kind: "u" | "f64" | "f32"; store: boolean },
     args: readonly string[],
     slow: () => string,
+    /** Which operands (the address, a store's value) the number proof holds. */
+    proven: readonly boolean[] = [],
   ): string => {
     for (const d of MEM_CACHE_DECLS) m.intrinsics.add(d);
     m.intrinsics.add("declare double @llvm.fabs.f64(double)");
@@ -1028,9 +1032,12 @@ function lowerFunction(
     const join = freshLabel("mjoin");
     const addr = args[0] as string;
     const value = args[1];
-    let numbers = fresh();
-    emit(`${numbers} = icmp ult i64 ${addr}, ${NUMBER_LIMIT}`);
-    if (mem.store) {
+    let numbers = "true";
+    if (proven[0] !== true) {
+      numbers = fresh();
+      emit(`${numbers} = icmp ult i64 ${addr}, ${NUMBER_LIMIT}`);
+    }
+    if (mem.store && proven[1] !== true) {
       const v = fresh();
       emit(`${v} = icmp ult i64 ${value}, ${NUMBER_LIMIT}`);
       const both = fresh();
@@ -1799,9 +1806,11 @@ function lowerFunction(
               emit(`${below} = fcmp olt double ${d}, ${table.n}.0`);
               const inRange = fresh();
               emit(`${inRange} = and i1 ${nonneg}, ${below}`);
+              // In range, so fptosi is defined: an integer when converting back gives it again.
+              const w = fresh();
+              emit(`${w} = fptosi double ${d} to i64`);
               const t = fresh();
-              emit(`${t} = call double @llvm.trunc.f64(double ${d})`);
-              m.intrinsics.add("declare double @llvm.trunc.f64(double)");
+              emit(`${t} = sitofp i64 ${w} to double`);
               const integral = fresh();
               emit(`${integral} = fcmp oeq double ${t}, ${d}`);
               const ok = fresh();
@@ -1883,7 +1892,12 @@ function lowerFunction(
       if (mem !== undefined) {
         set(
           out,
-          memoryAccess(mem, args, () => call(fn, args.map((a) => `i64 ${a}`).join(", "))),
+          memoryAccess(
+            mem,
+            args,
+            () => call(fn, args.map((a) => `i64 ${a}`).join(", ")),
+            ins.slice(1).map((v) => allNumbers([v as ValueId])),
+          ),
         );
         return;
       }
@@ -2082,6 +2096,8 @@ function lowerFunction(
         return;
       }
       if (bitwise !== undefined) {
+        const unrangedA = !numRange.has(resolve(ins[0] as ValueId));
+        const unrangedB = !numRange.has(resolve(ins[1] as ValueId));
         set(
           out,
           numberFast(
@@ -2102,11 +2118,19 @@ function lowerFunction(
               return bits;
             },
             slow,
-            ([x, y]) => {
-              const both = fresh();
-              emit(`${both} = and i1 ${smallDouble(x as string)}, ${smallDouble(y as string)}`);
-              return both;
-            },
+            // ToInt32 inline needs |x| < 2^63: known for a value the range inference holds.
+            unrangedA && unrangedB
+              ? ([x, y]) => {
+                  const both = fresh();
+                  emit(`${both} = and i1 ${smallDouble(x as string)}, ${smallDouble(y as string)}`);
+                  return both;
+                }
+              : unrangedA
+                ? ([x]) => smallDouble(x as string)
+                : unrangedB
+                  ? ([, y]) => smallDouble(y as string)
+                  : undefined,
+            allNumbers(ins as readonly ValueId[]),
           ),
         );
         return;
@@ -2168,7 +2192,10 @@ function lowerFunction(
               return bits;
             },
             slow,
-            ([d]) => smallDouble(d as string),
+            numRange.has(resolve(ins[0] as ValueId))
+              ? undefined
+              : ([d]) => smallDouble(d as string),
+            allNumbers([ins[0] as ValueId]),
           ),
         );
         return;
