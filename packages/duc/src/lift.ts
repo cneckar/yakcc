@@ -1058,9 +1058,18 @@ class Lifter {
     // A closure made before a later `var` it reads (`o.f = function () { return K }; … var K = 10`),
     // or in the `var`'s own initializer (`var m = function () { return m.cache }`), reads the binding
     // when it runs, not the value when it is made: the name is a cell from here.
+    // (Each statement's closures, found once: a scope of many declarations asks of each earlier one.)
+    const fnsOf: (Node[] | undefined)[] = [];
+    const closures = (k: number): Node[] => {
+      let f = fnsOf[k];
+      if (f === undefined) fnsOf[k] = f = functionsWithin(stmts[k] as Node);
+      return f;
+    };
+    let lastWithClosure = -1;
     for (const [j, stmt] of stmts.entries()) {
       if (!Node.isVariableStatement(stmt)) continue;
       const isVar = stmt.getDeclarationKind() === VariableDeclarationKind.Var;
+      for (let k = lastWithClosure + 1; k <= j; k++) if (closures(k).length > 0) lastWithClosure = k;
       for (const decl of stmt.getDeclarations())
         for (const name of patternNames(decl.getNameNode())) {
           // A closure reads this binding only where no scope between it and this one declares
@@ -1069,19 +1078,19 @@ class Lifter {
             this.readNamesOf(fn).includes(name) && !declaredBetween(fn, name, stmt.getParent());
           const readEarlier =
             stmts
-              .slice(0, isVar ? j + 1 : j)
-              .some((earlier) => functionsWithin(earlier).some(readsThis)) ||
+              .slice(0, Math.min(isVar ? j + 1 : j, lastWithClosure + 1))
+              .some((_, k) => closures(k).some(readsThis)) ||
             // A closure in a let's or const's own initializer that reads it when it runs, after
             // the initializer (#1330): `const c = eos(s, () => c())`. One that is the initializer
             // itself is `function-self`.
             (!isVar &&
-              functionsWithin(stmt).some((fn) => readsThis(fn) && constInitializedBy(fn) !== name));
+              closures(j).some((fn) => readsThis(fn) && constInitializedBy(fn) !== name));
           // A `let` or `const` too, read by a closure made before it, which runs after it is
           // initialized (#1297); or assigned by a closure in its own initializer (`let id =
           // setTimeout(() => { id = null })`). A const arrow calling itself is `function-self`.
           const writtenByOwn =
             !isVar &&
-            functionsWithin(stmt).some((fn) =>
+            closures(j).some((fn) =>
               assignmentTargets(fn).some((t) => Node.isIdentifier(t) && t.getText() === name),
             );
           if (readEarlier || writtenByOwn) this.hoistCell(name, cellsHere);
