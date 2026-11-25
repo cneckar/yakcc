@@ -1,0 +1,42 @@
+{
+  "name": "@yakcc/verify-l2",
+  "version": "0.6.0-alpha.0",
+  "description": "L2 verification: SMT proofs of an atom's pre- and postconditions over its DUC graph, with IEEE binary64 semantics and counterexamples confirmed by execution.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "private": true,
+  "files": ["dist", "README.md", "LICENSE"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cneckar/yakcc.git",
+    "directory": "packages/verify-l2"
+  },
+  "homepage": "https://github.com/cneckar/yakcc/tree/main/packages/verify-l2#readme",
+  "bugs": {
+    "url": "https://github.com/cneckar/yakcc/issues"
+  },
+  "keywords": ["yakcc", "verification", "smt", "z3", "contracts", "ieee-754"],
+  "scripts": {
+    "build": "rm -f tsconfig.tsbuildinfo && tsc -p .",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run",
+    "lint": "biome check src/"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.2.0",
+    "@yakcc/duc": "workspace:*",
+    "z3-solver": "5.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "vitest": "^4.1.5"
+  }
+}
