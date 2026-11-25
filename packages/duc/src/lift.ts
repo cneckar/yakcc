@@ -642,6 +642,11 @@ function wrapForms(source: string): string[] {
 
 class Lifter {
   private readonly nodes: MutableNode[] = [];
+  /** The node each value is an output of (a graph of many nodes asks it of each call and write). */
+  private readonly producers = new Map<ValueId, MutableNode>();
+  private producer(v: ValueId): MutableNode | undefined {
+    return this.producers.get(v);
+  }
   private valueCounter = 0;
   private nodeCounter = 0;
   /** Flat current-value environment: name -> its current SSA value. */
@@ -783,6 +788,7 @@ class Lifter {
       ...(ordered ? { order: 1 as const } : {}),
     };
     this.nodes.push(node);
+    for (const v of outputs) this.producers.set(v, node);
     if (heap && outputs[0] !== undefined) this.env.set(HEAP, outputs[0]);
     return outputs;
   }
@@ -1779,11 +1785,10 @@ class Lifter {
     const flag = this.env.get(RETURN_DONE) as ValueId;
     // No path has returned yet (an exit so far was a throw), or an enclosing guard already tests
     // this flag (no return since): the rest runs unguarded.
+    const made = this.producer(flag);
     if (
       this.guardFlags.includes(flag) ||
-      this.nodes.some(
-        (n) => n.kind === "literal-source" && n.outputs[0] === flag && n.label === "false",
-      )
+      (made?.kind === "literal-source" && made.label === "false")
     ) {
       this.liftStatements(rest);
       return;
@@ -2536,9 +2541,7 @@ class Lifter {
       // when it is visible after the if (made before it, or a constant); otherwise a select keeps it.
       if (thenDead !== elseDead) {
         const live = thenDead ? elseValue : thenValue;
-        const constant = this.nodes.some(
-          (n) => n.kind === "literal-source" && n.outputs[0] === live,
-        );
+        const constant = this.producer(live)?.kind === "literal-source";
         if (valueIndex(live) < sidesStart || constant) {
           this.reportReturn(live);
           return;
@@ -2575,9 +2578,7 @@ class Lifter {
       // The heap token keeps the throwing side's: what follows waits for the branch (#1285).
       if (thenDead !== elseDead && name !== HEAP) {
         const live = thenDead ? elseValue : thenValue;
-        const constant = this.nodes.some(
-          (n) => n.kind === "literal-source" && n.outputs[0] === live,
-        );
+        const constant = this.producer(live)?.kind === "literal-source";
         if (valueIndex(live) < sidesStart || constant) {
           this.env.set(name, live);
           continue;
@@ -4197,9 +4198,8 @@ class Lifter {
    */
   private targetOfRead(lhs: Node, read: ValueId): ValueId[] | undefined {
     const n = Node.isParenthesizedExpression(lhs) ? lhs.getExpression() : lhs;
-    let node: MutableNode | undefined;
-    for (let i = this.nodes.length - 1; i >= 0 && node === undefined; i--)
-      if (this.nodes[i]?.outputs[0] === read) node = this.nodes[i];
+    const made = this.producer(read);
+    const node = made?.outputs[0] === read ? made : undefined;
     if (node === undefined || node.kind !== "op") return undefined;
     // A heap operation's last input is the token it is ordered after, which `emit` adds.
     const given = node.order === 1 ? node.inputs.slice(0, -1) : [...node.inputs];
@@ -4467,9 +4467,8 @@ class Lifter {
 
   /** Whether a value is a member read's result (`.m`, `?.m`, `[k]`, `super.m`): a method if called. */
   private isMemberRead(v: ValueId): boolean {
-    for (let i = this.nodes.length - 1; i >= 0; i--) {
-      const n = this.nodes[i] as DucNode;
-      if (!n.outputs.includes(v)) continue;
+    const n = this.producer(v);
+    if (n !== undefined) {
       const label = n.kind === "op" ? (n.label ?? "") : "";
       return (
         ((label.startsWith(".") || label.startsWith("?.")) &&
@@ -5799,6 +5798,16 @@ function trailingIterateGuard(loop: Node): Node | undefined {
 
 /** The jumps of a loop that leave it or end its iteration: its own breaks and continues, and its returns. */
 function loopJumpsOf(loop: Node): Node[] {
+  // (Asked of one loop for each statement in it: found once per loop.)
+  const cached = LOOP_JUMPS.get(loop.compilerNode);
+  if (cached !== undefined) return cached;
+  const found = findLoopJumps(loop);
+  LOOP_JUMPS.set(loop.compilerNode, found);
+  return found;
+}
+const LOOP_JUMPS = new WeakMap<object, Node[]>();
+
+function findLoopJumps(loop: Node): Node[] {
   const own = (
     j: import("ts-morph").BreakStatement | import("ts-morph").ContinueStatement,
   ): boolean => {
