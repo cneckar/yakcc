@@ -437,7 +437,10 @@ class ModuleBuilder {
   /** Each property name a site reads, writes or calls by: the global its string is kept in. */
   readonly keys = new Map<string, string>();
   /** The number clones calls name, each its function's and its raw arguments' parameter list. */
-  readonly numCalled = new Map<string, { of: string; rawBlocks: number; regs: number }>();
+  readonly numCalled = new Map<
+    string,
+    { of: string; rawBlocks: number; regs: number; rec?: boolean }
+  >();
   private closures = 0;
 
   constant(text: string, nul = false): { ptr: string; length: number } {
@@ -482,6 +485,8 @@ interface ModuleScope {
   readonly rawArgs?: (name: string) => ReadonlySet<number> | undefined;
   /** For a direct callee: how many parameters it has. */
   readonly arity?: (name: string) => number | undefined;
+  /** For a direct callee with a `.rec` variant: its record result's keys (#1369). */
+  readonly record?: (name: string) => readonly string[] | undefined;
   /** For a statement: the globals its results (its graph's observations) are stored in, in order. */
   readonly outs?: readonly string[];
 }
@@ -601,6 +606,32 @@ function rawArgUses(source: DucGraph): Map<number, { deps: [string, number][] }>
   return out;
 }
 
+/**
+ * A record result (#1369): a function whose result is an object literal of distinct named keys made
+ * only to be returned. Its `.rec` variant writes the values to the caller's slots instead (the
+ * object is never made); a caller that only reads the result's keys calls it so. The keys, or
+ * undefined.
+ */
+export function recordKeys(source: DucGraph): readonly string[] | undefined {
+  if (source.mode !== undefined) return undefined;
+  const { graph: g } = loweringView(ecmaScriptView(source));
+  const r = g.obs[0];
+  if (r === undefined || g.obs.slice(1).includes(r)) return undefined;
+  const p = g.nodes.find((n) => n.outputs.includes(r));
+  if (p === undefined || p.kind !== "op" || !(p.label ?? "").startsWith("object:"))
+    return undefined;
+  const slots = slotsOf(p.label as string);
+  const names = slots.map((x) =>
+    x.kind === "named" && x.name !== "__proto__" ? x.name : undefined,
+  );
+  if (names.length === 0 || names.length > 8 || names.some((x) => x === undefined))
+    return undefined;
+  if (new Set(names).size !== names.length || p.inputs.length !== names.length) return undefined;
+  if (g.nodes.some((n) => n.inputs.includes(r))) return undefined;
+  if ((g.branches ?? []).some((b) => b.cond === r)) return undefined;
+  return names as string[];
+}
+
 /** A number clone this small (its graph's nodes) is a hint to inline into its callers (#1369). */
 const SMALL_CLONE = 200;
 
@@ -620,9 +651,12 @@ function lowerFunction(
   numberParams?: ReadonlySet<ValueId>,
   /** The arguments this lowering takes as a block's bytes and length: a `.raw` variant's (#1369). */
   rawParams?: ReadonlySet<number>,
+  /** A `.rec` variant's (#1369): its record result's values written to %recout, not made. */
+  recOut?: boolean,
 ): void {
   const rawList = [...(rawParams ?? [])].sort((a, b) => a - b);
-  const rawHead = rawList.map((k) => `, ptr %rawb${k}, i64 %rawl${k}`).join("");
+  const rawHead =
+    rawList.map((k) => `, ptr %rawb${k}, i64 %rawl${k}`).join("") + (recOut ? ", ptr %recout" : "");
   // A number clone's arguments, in registers too (#1369): each but a raw block's, when there is no
   // rest parameter (a caller with them at hand passes them; the entry its loaded ones).
   const argCount =
@@ -724,6 +758,10 @@ function lowerFunction(
   // Member reads whose value only a call takes as its callee: not made where they stand (a method
   // call reads its member by key itself; another call's operand makes the read where it is used).
   const calleeReads = new Map<ValueId, DucNode>();
+  // Calls of a direct function with a record result whose value only its keys' reads take (#1369):
+  // each call's slots, and each read's slot.
+  const recordCalls = new Map<ValueId, { slot: string; keys: readonly string[] }>();
+  const recordReads = new Map<ValueId, { slot: string; idx: number }>();
   {
     const observed = new Set<ValueId>([
       ...g.obs.map((v) => resolve(v)),
@@ -2686,6 +2724,16 @@ function lowerFunction(
     // A member read: of Math, nothing (the call names it); otherwise the property's value.
     const member = /^\.[\w$]+$/.test(lbl) && ins.length === 1;
     if (member && isMath(ins[0] as ValueId)) return;
+    const fromRecord = member ? recordReads.get(out) : undefined;
+    if (fromRecord !== undefined) {
+      // A record result's key: its slot, which the call filled.
+      const p = fresh();
+      emit(`${p} = getelementptr i64, ptr ${fromRecord.slot}, i64 ${fromRecord.idx}`);
+      const r = fresh();
+      emit(`${r} = load i64, ptr ${p}`);
+      set(out, r);
+      return;
+    }
     // Read only to be called: the call reads it (a method call by its key; else operand, there).
     if (member && calleeReads.has(out)) return;
     if (member) {
@@ -3275,14 +3323,30 @@ function lowerFunction(
               .map((k) => `, i64 ${args[k]}`)
               .join("")
           : "";
+        const rec = recordCalls.get(out);
+        if (rec !== undefined && numbers) {
+          m.numCalled.set(`${target}.rec.num`, {
+            of: `${target}.rec`,
+            rawBlocks: 0,
+            regs: arity as number,
+            rec: true,
+          });
+        }
         const r1 = fresh();
         emit(
-          `${r1} = call i64 @${target}${numbers ? ".num" : ""}(ptr ${ptr}, i64 ${superRecv}, i64 ${args.length}, ptr ${argv}${rawPass}${regPass})`,
+          `${r1} = call i64 @${target}${rec !== undefined ? ".rec" : ""}${numbers ? ".num" : ""}(ptr ${ptr}, i64 ${superRecv}, i64 ${args.length}, ptr ${argv}${rawPass}${rec !== undefined ? `, ptr ${rec.slot}` : ""}${regPass})`,
         );
         const yesEnd = currentLabel();
         emit(`br label %${join}`);
         block(no);
         const r2 = call("yk_call", `i64 ${fn}, i64 ${superRecv}, i64 ${args.length}, ptr ${argv}`);
+        if (rec !== undefined)
+          // Not the function's own code: its result is an object, its keys' values the slots'.
+          rec.keys.forEach((k, j) => {
+            const p = fresh();
+            emit(`${p} = getelementptr i64, ptr ${rec.slot}, i64 ${j}`);
+            emit(`store i64 ${call("yk_get", `i64 ${r2}, i64 ${keyOf(k)}`)}, ptr ${p}`);
+          });
         const noEnd = currentLabel();
         emit(`br label %${join}`);
         block(join);
@@ -3583,6 +3647,16 @@ function lowerFunction(
         const made = producer.get(resolve(v))?.closure !== undefined;
         values.push(made ? call("yk_name_method", `i64 ${operand(v)}, i64 ${key}`) : operand(v));
       }
+      if (recOut && out === resolve(g.obs[0] as ValueId)) {
+        // A `.rec` variant's result: its values in the caller's slots, in the keys' order.
+        values.forEach((v, k) => {
+          const p = fresh();
+          emit(`${p} = getelementptr i64, ptr %recout, i64 ${k}`);
+          emit(`store i64 ${v}, ptr ${p}`);
+        });
+        set(out, UNDEFINED);
+        return;
+      }
       // Every key a name, none twice: the runtime fills the object at once (no key looked for).
       const names = slots.map((x) =>
         x.kind === "computed" ? undefined : (x as { name: string }).name,
@@ -3874,6 +3948,7 @@ function lowerFunction(
         scope,
         new Set(speculated.map((p) => p.outputs[0] as ValueId)),
         rawParams,
+        recOut,
       );
       let ok = "true";
       for (const p of speculated) {
@@ -3896,7 +3971,7 @@ function lowerFunction(
       // The general lowering, a function of its own: this entry, only the checks, stays small
       // (no frame of its own to set up before the clone's tail call).
       const gen = `${name.replace(/"/g, "")}.gen`;
-      lowerFunction(m, source, gen, closure, scope, new Set(), rawParams);
+      lowerFunction(m, source, gen, closure, scope, new Set(), rawParams, recOut);
       const r2 = fresh();
       emit(
         `${r2} = tail call i64 @${gen}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead})`,
@@ -4026,6 +4101,63 @@ function lowerFunction(
       emit(`${at} = phi ptr [ ${atHit}, %${hit} ], [ ${atMiss}, %${missEnd} ]`);
       emit(`store ptr ${at}, ptr ${bytesSlot}`);
       frames.set(pv, { bytes: bytesSlot, hdr: hdrSlot, base: baseSlot, len: sp.len });
+    }
+  }
+  if (scope?.record !== undefined) {
+    const held = new Set<ValueId>([
+      ...g.obs.map((v) => resolve(v)),
+      ...(g.branches ?? []).map((b) => resolve(b.cond as ValueId)),
+    ]);
+    for (const n of g.nodes) {
+      if (n.loop === undefined) continue;
+      for (const v of n.loop.next) held.add(resolve(v));
+      if (n.loop.cond !== undefined) held.add(resolve(n.loop.cond));
+    }
+    const users = new Map<ValueId, DucNode[]>();
+    for (const n of g.nodes)
+      for (const v of n.inputs) {
+        const r = resolve(v as ValueId);
+        users.set(r, [...(users.get(r) ?? []), n]);
+      }
+    for (const n of g.nodes) {
+      if (n.kind !== "op" || n.label !== "CallExpression" || n.outputs.length !== 1) continue;
+      const out = n.outputs[0] as ValueId;
+      if (resolve(out) !== out || held.has(out) || n.inputs.slice(1).some(isSpread)) continue;
+      const name = freeValue.get(resolve(n.inputs[0] as ValueId));
+      if (
+        name === undefined ||
+        scope.direct?.(name) === undefined ||
+        scope.rawArgs?.(name) !== undefined
+      )
+        continue;
+      const keys = scope.record(name);
+      if (keys === undefined) continue;
+      const us = users.get(out) ?? [];
+      const ok =
+        us.length > 0 &&
+        us.every(
+          (u) =>
+            u.kind === "op" &&
+            /^\.[\w$]+$/.test(u.label ?? "") &&
+            u.inputs.length === 1 &&
+            keys.includes((u.label as string).slice(1)) &&
+            // Not a method call's callee: that call's receiver is the object itself.
+            !(users.get(u.outputs[0] as ValueId) ?? []).some(
+              (c) =>
+                c.kind === "op" &&
+                c.label === "CallExpression" &&
+                resolve(c.inputs[0] as ValueId) === (u.outputs[0] as ValueId),
+            ),
+        );
+      if (!ok) continue;
+      const slot = fresh();
+      entryAllocas.push(`  ${slot} = alloca [${keys.length} x i64]`);
+      recordCalls.set(out, { slot, keys });
+      for (const u of us) {
+        const r = u.outputs[0] as ValueId;
+        recordReads.set(r, { slot, idx: keys.indexOf((u.label as string).slice(1)) });
+        calleeReads.delete(r);
+      }
     }
   }
   emitScope(undefined);
@@ -4307,6 +4439,21 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         arities.set(`m${i}_s${k}`, ps.length);
     }),
   );
+  const records = new Map<string, readonly string[]>();
+  modules.forEach((mod, i) =>
+    mod.statements.forEach((st, k) => {
+      const fn = `m${i}_s${k}`;
+      const name = st.declares[0];
+      if (
+        st.kind !== "function" ||
+        name === undefined ||
+        directBySlot.get(g(i, `b.${name}`)) !== fn
+      )
+        return;
+      const keys = recordKeys(st.graph);
+      if (keys !== undefined) records.set(fn, keys);
+    }),
+  );
   const rawSets = new Map<string, Set<number>>();
   for (const [fn, r] of rawUses) rawSets.set(fn, new Set(r.uses.keys()));
   for (let changed = true; changed; ) {
@@ -4376,6 +4523,10 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         const fn = directOf(i, name);
         return fn === undefined ? undefined : arities.get(fn);
       },
+      record: (name) => {
+        const fn = directOf(i, name);
+        return fn === undefined ? undefined : records.get(fn);
+      },
       rawArgs: (name) => {
         const fn = directOf(i, name);
         const set = fn === undefined ? undefined : rawSets.get(fn);
@@ -4402,8 +4553,25 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
             undefined,
             raw,
           );
+        if (records.has(fn) && (raw === undefined || raw.size === 0))
+          lowerFunction(
+            m,
+            ecmaScriptView(st.graph),
+            `${fn}.rec`,
+            { captures: 0 },
+            scope(),
+            undefined,
+            undefined,
+            true,
+          );
         m.used.add("yk_closure_new");
+        m.intrinsics.add("declare i64 @yk_class_name(i64, ptr, i64)");
         init.push(`  %f${k} = call i64 @yk_closure_new(ptr @${fn}, i32 1, i64 0, ptr null)`);
+        // Its name, the declaration's (`f.name`).
+        const nm = m.constant(name);
+        init.push(
+          `  %fn${k} = call i64 @yk_class_name(i64 %f${k}, ptr ${nm.ptr}, i64 ${nm.length})`,
+        );
         init.push(`  store i64 %f${k}, ptr ${g(i, `b.${name}`)}`);
       }
     });
@@ -4519,9 +4687,10 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     );
   });
   // A number clone a call names that its function has none of: the function itself.
-  for (const [clone, { of, rawBlocks, regs }] of m.numCalled) {
+  for (const [clone, { of, rawBlocks, regs, rec }] of m.numCalled) {
     if (m.numClones.has(clone)) continue;
     const ps = Array.from({ length: rawBlocks }, (_, j) => [`ptr %rb${j}`, `i64 %rl${j}`]).flat();
+    if (rec === true) ps.push("ptr %recout");
     const ns = Array.from({ length: regs }, (_, j) => `, i64 %n${j}`).join("");
     m.functions.push(
       [
