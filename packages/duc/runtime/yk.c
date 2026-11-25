@@ -4839,7 +4839,12 @@ uint64_t yk_frame_alloc(uint64_t size, uint64_t align) {
     uint8_t *p = c_free_bytes[len / 16];
     c_free_bytes[len / 16] = *(uint8_t **)p;
     uint64_t *w = (uint64_t *)p;
-    for (uint32_t k = 0; k < len / 8; k++) w[k] = 0;
+    switch (len) { /* 16, 32, 48 or 64 bytes: stores, not a call */
+    case 64: w[6] = 0; w[7] = 0; /* fall through */
+    case 48: w[4] = 0; w[5] = 0; /* fall through */
+    case 32: w[2] = 0; w[3] = 0; /* fall through */
+    default: w[0] = 0; w[1] = 0;
+    }
     ((uint64_t *)p)[-2] = base;
     c_regions[c_nregions++] = (c_region){base, len, 0, 1, p};
     c_next = base + len + 16;
