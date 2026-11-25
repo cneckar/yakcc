@@ -340,6 +340,11 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "Math.imul inline on any values; loop carries kept to an integer range, and ones that leave it (#1369)",
+    "export function f(a, b) { const xs = [0, 1, -1, 2 ** 31, 2 ** 32 + 5, -(2 ** 33), 1.9, -1.9, NaN, Infinity, 1e300, '7', null, undefined, true, a, b]; const prods = []; for (const x of xs) for (const y of [3, -7, 2 ** 31 - 1, 1e20, 'q']) prods.push(Math.imul(x, y)); let h = 2166136261; for (let i = 0; i < 1000; i = (i + 1) >>> 0) { h = (h ^ i) >>> 0; h = Math.imul(h, 16777619) >>> 0; h = ((h << 13) | (h >>> 19)) >>> 0; } let s = 0; for (let i = 0; i < 50; i++) s = (s + 0x7fffffff) | 0; let w = 1; for (let i = 0; i < 40; i++) w = w * 3; let m = 5; for (let i = 0; i < 4; i++) m = i % 2 ? m >>> 1 : 'x' + m; let k = -1; for (let i = 0; i < 3; i++) k = k >>> 0; let big = 0n; try { for (let i = 0; i < 2; i++) big = big | 1n; } catch (e) { big = e.name; } return [prods, h, s, w, m, k, String(big)]; }",
+    2,
+  ],
+  [
     "Math.random, with arguments it ignores (undici's random(max)): a number in [0, 1) (#1331)",
     "export function f(a, b) { const r = Math.random(a); const q = Math.random(); return [typeof r, r >= 0 && r < 1, q >= 0 && q < 1, r !== q || r === q]; }",
     2,
