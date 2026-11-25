@@ -733,4 +733,50 @@ describe("the round trip on yakcc's own sources (#1292)", () => {
       [[[]]],
     );
   });
+
+  it("a binding outside the atom keeps being the binding after one of its members is written", () => {
+    const code = `export function f(idx: number) {
+  if (idx < 0) {
+    stack.length = 0;
+  } else {
+    domain.emit("error", idx);
+  }
+  stack = orig;
+}`;
+    const g = liftAtom(code);
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+    expect(liftFidelity(code, g).holds).toBe(true);
+  });
+
+  it("a named class expression's name inside it is the class, not a name read outside", () => {
+    const code = `export const make = (exports2: unknown) => {
+  const FileLike = class _FileLike {
+    get size() {
+      return check(this, _FileLike);
+    }
+  };
+  return FileLike;
+};`;
+    const g = liftAtom(code);
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+    expect(liftFidelity(code, g).holds).toBe(true);
+  });
+
+  it("an arrow reading `this` through a name and through `super` captures the receiver once", () => {
+    agrees(
+      `export function f(n: number) {
+  class P { start() { return "started"; } }
+  class C extends P {
+    effective = n;
+    onRemove = () => {
+      const self = this;
+      if (self.effective > 0) return [super.start(), self.effective];
+      return null;
+    };
+  }
+  return new C().onRemove();
+}`,
+      [[1], [0]],
+    );
+  });
 });

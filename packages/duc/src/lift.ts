@@ -1953,6 +1953,29 @@ class Lifter {
     if (outside.filter(withinScope).some(changesCapture)) return undefined;
 
     let graph: DucGraph;
+    // Two captures of one outer value are one capture (#1292): `const self = this` read in an arrow
+    // that also uses `this` (or `super`) is the receiver twice. Found without making a node: a name's
+    // current value, or the receiver.
+    const pureValue = (name: string): ValueId | undefined =>
+      name === THIS
+        ? this.env.has(THIS)
+          ? this.cells.has(THIS)
+            ? undefined
+            : this.env.get(THIS)
+          : this.receiver
+        : name === ARGUMENTS || this.bindings.has(name) || this.cells.has(name)
+          ? undefined
+          : this.env.get(name);
+    const aliasOf = new Map<string, string>();
+    const firstOf = new Map<ValueId, string>();
+    for (const name of captures) {
+      const v = pureValue(name);
+      if (v === undefined) continue;
+      const first = firstOf.get(v);
+      if (first !== undefined) aliasOf.set(name, first);
+      else firstOf.set(v, name);
+    }
+    const unique = captures.filter((name) => !aliasOf.has(name));
     try {
       const inner = new Lifter(this.ambient);
       for (const [name, binding] of this.imports) inner.imports.set(name, binding);
@@ -1970,13 +1993,14 @@ class Lifter {
           if (this.bindings.has(name) && !closureLocals(fn).has(name)) inner.bindings.add(name);
       graph = inner.liftClosureBody(
         fn,
-        captures,
-        captures.filter((name) => this.cells.has(name)),
+        unique,
+        unique.filter((name) => this.cells.has(name)),
+        aliasOf,
       );
     } catch {
       return undefined;
     }
-    const inputs = captures.map((name) =>
+    const inputs = unique.map((name) =>
       name === THIS
         ? this.cells.has(THIS) && this.env.has(THIS)
           ? (this.env.get(THIS) as ValueId)
@@ -2020,6 +2044,7 @@ class Lifter {
     fn: FunctionLike,
     captures: readonly string[],
     cellCaptures: readonly string[] = [],
+    aliasOf: ReadonlyMap<string, string> = new Map(),
   ): DucGraph {
     // A captured cell is the same cell inside: reads and writes go through it.
     for (const name of cellCaptures) this.cells.add(name);
@@ -2030,6 +2055,8 @@ class Lifter {
       });
       this.env.set(name, value as ValueId);
     });
+    // A name whose outer value another capture holds is that capture inside.
+    for (const [name, target] of aliasOf) this.env.set(name, this.env.get(target) as ValueId);
     this.liftFunction(fn, captures.length);
     return this.finish();
   }
@@ -3919,11 +3946,14 @@ class Lifter {
       inputs.push(value);
       const label = Node.isPropertyAccessExpression(lhs) ? `.${lhs.getName()}=` : "[]=";
       const [mutated] = this.emit("op", inputs, 1, { origin: { kind: "Write" }, label });
-      // The base name is the written object after the write, unless it is a cell, which holds it.
+      // The base name is the written object after the write, unless it is a cell, which holds it,
+      // or a binding outside the atom, whose value is the binding itself (#1292): a later
+      // `name = v` writes that binding.
       if (
         Node.isIdentifier(base) &&
         this.env.has(base.getText()) &&
-        !this.cells.has(base.getText())
+        !this.cells.has(base.getText()) &&
+        !this.isBinding(base.getText())
       ) {
         this.env.set(base.getText(), mutated as ValueId);
       }
@@ -4356,10 +4386,16 @@ function scopeNames(scope: Node): Set<string> {
     const v = scope.getVariableDeclaration();
     if (v !== undefined) add(v.getNameNode());
   }
+  // A named class expression's name is bound inside it, as a named function expression's is
+  // (#1292): it was checked only among function-like nodes, which a class is not.
+  if (Node.isClassExpression(scope)) {
+    const own = scope.getName();
+    if (own !== undefined) names.add(own);
+  }
   if (isFunctionLikeNode(scope)) {
     const f = scope as FunctionLike;
     for (const p of f.getParameters()) add(p.getNameNode());
-    if (Node.isFunctionExpression(scope) || Node.isClassExpression(scope)) {
+    if (Node.isFunctionExpression(scope)) {
       const own = scope.getName();
       if (own !== undefined) names.add(own);
     }
