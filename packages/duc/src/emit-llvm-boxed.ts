@@ -150,6 +150,7 @@ const GLOBALS = new Set([
   "unescape",
   // The runtime's own internalBinding layer (#1331): Node's bindings V8's role gives.
   "__yakccRuntimeBinding",
+  "__yakccDefineGlobal",
   "eval",
   "EvalError",
   "ReferenceError",
@@ -307,6 +308,8 @@ const RUNTIME_DECLS: Readonly<Record<string, string>> = {
   yk_private_set: "declare i64 @yk_private_set(i64, i64, i64)",
   yk_private_has: "declare i64 @yk_private_has(i64, i64)",
   yk_super_construct: "declare i64 @yk_super_construct(ptr, i64, i64, ptr)",
+  yk_array_hole: "declare i64 @yk_array_hole(i64, i64)",
+  yk_name_method: "declare i64 @yk_name_method(i64, i64)",
   yk_await: "declare i64 @yk_await(i64)",
   yk_yield: "declare i64 @yk_yield(i64)",
   yk_yield_star: "declare i64 @yk_yield_star(i64)",
@@ -530,10 +533,14 @@ function lowerFunction(
   const globalValue = new Map<ValueId, string>();
   const freeValue = new Map<ValueId, string>();
   const leafValue = new Map<ValueId, string>();
+  // A function's own `arguments` (#1330): its arguments as an array, made on entry (strict code:
+  // no parameter aliases them).
+  const argumentsValues: ValueId[] = [];
   for (const n of g.nodes) {
     if (n.kind !== "diamond-source") continue;
     const sym = n.diamond?.symbol ?? "";
-    if (LEAVES[sym] !== undefined) leafValue.set(n.outputs[0] as ValueId, sym);
+    if (sym === "arguments" && closure !== undefined) argumentsValues.push(n.outputs[0] as ValueId);
+    else if (LEAVES[sym] !== undefined) leafValue.set(n.outputs[0] as ValueId, sym);
     else if (n.diamond?.reason === "platform-primitive" && sym === "Math")
       mathValue.add(n.outputs[0] as ValueId);
     else if (
@@ -1054,7 +1061,7 @@ function lowerFunction(
         throw new LlvmEmitError(`the literal ${text} is not in the subset yet`);
       return boxedNumber(n);
     }
-    if (p?.kind === "diamond-source" || freeValue.has(v)) {
+    if ((p?.kind === "diamond-source" || freeValue.has(v)) && !argumentsValues.includes(v)) {
       const leaf = leafValue.get(v);
       if (leaf !== undefined) {
         // A leaf as a value: the runtime's function value for it.
@@ -1068,7 +1075,8 @@ function lowerFunction(
         // probed (DEC-DUC-FEATURE-DETECTION-001).
         return scope?.read(free, emit, fresh) ?? UNDEFINED;
       }
-      const sym = globalValue.get(v);
+      // Math read as a value (`const { abs } = Math`): the runtime's global, as a program makes it.
+      const sym = globalValue.get(v) ?? (mathValue.has(v) ? "Math" : undefined);
       if (sym === undefined) throw new LlvmEmitError("Math is not a value here");
       const key = m.constant(sym);
       return call("yk_global", `ptr ${key.ptr}, i64 ${key.length}`);
@@ -1253,6 +1261,134 @@ function lowerFunction(
     if (f === undefined || f.len > 4096 || off < 0 || off + size > f.len) return undefined;
     return { bytes: f.bytes, hdr: f.hdr, base: f.base, off };
   };
+  // Blocks whose address never escapes (#1369): an __ykAlloc of a constant size whose value is
+  // only the address of inline loads and stores (at constant offsets inside it, a store's value a
+  // proven number), its __ykFree, or a loop's invariant. Such a block is an alloca: no region, no
+  // trap is possible (every access is inside it), and its free is nothing. A C front end spills an
+  // address-taken local (a bit cast through memory) this way.
+  const usersOf = new Map<ValueId, DucNode[]>();
+  for (const n of g.nodes)
+    for (const v of n.inputs) {
+      const r = resolve(v as ValueId);
+      const list = usersOf.get(r) ?? [];
+      list.push(n);
+      usersOf.set(r, list);
+    }
+  const leafOfCall = (n: DucNode): string | undefined =>
+    n.kind === "op" && n.label === "CallExpression"
+      ? leafValue.get(resolve(n.inputs[0] as ValueId))
+      : undefined;
+  const localBlocks = new Map<ValueId, { slot: string; size: number }>();
+  /**
+   * Whether some node reads a value, not only orders after it (a heap token's use). A comma reads
+   * only its last input, and only when its own value is read.
+   */
+  const valueRead = (v: ValueId, depth = 0): boolean =>
+    depth > 16 ||
+    (usersOf.get(v) ?? []).some((u) =>
+      u.inputs.some((x, i) => {
+        if (resolve(x as ValueId) !== v) return false;
+        if (
+          (u.order === 1 && i === u.inputs.length - 1) ||
+          (u.kind === "sel" && u.label === "heap") ||
+          (u.label ?? "").endsWith(":heap")
+        )
+          return false;
+        if (u.kind === "op" && u.label === ",")
+          return i === u.inputs.length - 1 && valueRead(u.outputs[0] as ValueId, depth + 1);
+        return true;
+      }),
+    ) ||
+    g.obs.some((o) => resolve(o) === v);
+  const localAccess = (v0: ValueId, size: number): { slot: string; off: number } | undefined => {
+    const v = resolve(v0);
+    const direct = localBlocks.get(v);
+    if (direct !== undefined)
+      return size <= direct.size ? { slot: direct.slot, off: 0 } : undefined;
+    const p = producer.get(v);
+    if (p?.kind !== "op" || p.label !== "+" || p.inputs.length !== 2) return undefined;
+    for (const [x, y] of [
+      [p.inputs[0], p.inputs[1]],
+      [p.inputs[1], p.inputs[0]],
+    ] as [ValueId, ValueId][]) {
+      const b = localBlocks.get(resolve(x));
+      const k = constantInt(y);
+      if (b !== undefined && k !== undefined && Number.isInteger(k) && k >= 0 && k + size <= b.size)
+        return { slot: b.slot, off: k };
+    }
+    return undefined;
+  };
+  {
+    // An address use: a load's or store's address operand (never a store's value), in bounds.
+    const addressUse = (u: DucNode, v: ValueId, blockSize: number, off: number): boolean => {
+      const leaf = leafOfCall(u) ?? "";
+      // 64-bit accesses: a load whose result is a typed BigInt, a store of any value.
+      if (leaf === "__ykLoad64" || leaf === "__ykStore64") {
+        if (resolve(u.inputs[1] as ValueId) !== v) return false;
+        if (leaf === "__ykStore64" && resolve(u.inputs[2] as ValueId) === v) return false;
+        if (leaf === "__ykLoad64" && !isTypedBig(u.outputs[0] as ValueId)) return false;
+        return off >= 0 && off + 8 <= blockSize;
+      }
+      const mem = MEM_INLINE[leaf];
+      if (mem === undefined) return false;
+      if (resolve(u.inputs[1] as ValueId) !== v) return false;
+      if (mem.store && resolve(u.inputs[2] as ValueId) === v) return false;
+      if (mem.store && !allNumbers([u.inputs[2] as ValueId])) return false;
+      return off >= 0 && off + mem.size <= blockSize;
+    };
+    // Each use of a value, by input position: a heap token (an ordered node's last input, a heap
+    // select or carry) orders and reads nothing.
+    const heapOnly = (u: DucNode, i: number): boolean =>
+      (u.order === 1 && i === u.inputs.length - 1) ||
+      (u.kind === "sel" && u.label === "heap") ||
+      (u.label ?? "").endsWith(":heap");
+    // As localAccess reads them: the block itself, or the block plus a constant (one step).
+    const blockUsesOk = (v: ValueId, size: number, off: number, depth = 0): boolean => {
+      if (depth > 1) return false;
+      return (usersOf.get(v) ?? []).every((u) =>
+        u.inputs.every((x, i) => {
+          if (resolve(x as ValueId) !== v || heapOnly(u, i)) return true;
+          const leaf = leafOfCall(u);
+          if (i === 1 && leaf !== undefined && addressUse(u, v, size, off)) return true;
+          if (i === 1 && leaf === "__ykFree" && off === 0) return true;
+          if (u.kind === "loop" && u.loop !== undefined) {
+            // Only as an invariant (its uses inside are the body's, checked as these are).
+            return i >= u.loop.carry.length + (u.loop.iterate !== undefined ? 1 : 0);
+          }
+          // (a, b): b is its value; a is computed and dropped.
+          if (u.kind === "op" && u.label === ",") return i < u.inputs.length - 1;
+          if (depth === 0 && u.kind === "op" && u.label === "+" && u.inputs.length === 2) {
+            const other = u.inputs[1 - i] as ValueId;
+            const k = constantInt(other);
+            if (k === undefined || !Number.isInteger(k) || resolve(other) === v) return false;
+            return blockUsesOk(u.outputs[0] as ValueId, size, off + k, depth + 1);
+          }
+          return false;
+        }),
+      );
+    };
+    for (const n of g.nodes) {
+      if (leafOfCall(n) !== "__ykAlloc") continue;
+      const size = literalNumber(n.inputs[1] as ValueId);
+      const align = literalNumber(n.inputs[2] as ValueId);
+      if (
+        size === undefined ||
+        align === undefined ||
+        !Number.isInteger(size) ||
+        size <= 0 ||
+        size > 4096
+      )
+        continue;
+      if (!Number.isInteger(align) || align < 1 || align > 16 || (align & (align - 1)) !== 0)
+        continue;
+      const v = n.outputs[0] as ValueId;
+      const ok = blockUsesOk(v, size, 0);
+      if (!ok) continue;
+      const slot = `%lb${localBlocks.size}`;
+      entryAllocas.push(`  ${slot} = alloca [${size} x i8], align 16`);
+      localBlocks.set(v, { slot, size });
+    }
+  }
   const memoryAccess = (
     mem: { size: number; ty: string; kind: "u" | "f64" | "f32"; store: boolean },
     args: readonly string[],
@@ -1603,6 +1739,23 @@ function lowerFunction(
     emit(
       `${r} = call i64 @yk_closure_new(ptr @${fn}, i32 ${hasThis}, i64 ${caps.length}, ptr ${list(caps)})`,
     );
+    // Its name (the lifter's: a declaration's, or the binding an anonymous function is assigned to)
+    // and its length (the parameters before a rest one).
+    // A named function expression's own name; else the name the lifter gave it (its binding).
+    const text = n.origin?.text ?? "";
+    const ownName =
+      /^(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(/.exec(text)?.[1] ?? text;
+    const params = graph.nodes.filter(
+      (p) => p.kind === "param-source" && Number(p.label ?? "0") >= n.inputs.length,
+    );
+    const rest = params.findIndex((p) => (p.label ?? "").endsWith("..."));
+    const length = rest < 0 ? params.length : rest;
+    m.intrinsics.add("declare i64 @yk_closure_meta(i64, ptr, i64, i64)");
+    if (ownName !== undefined && /^[A-Za-z_$][\w$]*$/.test(ownName)) {
+      const k = m.constant(ownName);
+      emit(`call i64 @yk_closure_meta(i64 ${r}, ptr ${k.ptr}, i64 ${k.length}, i64 ${length})`);
+    } else if (length > 0)
+      emit(`call i64 @yk_closure_meta(i64 ${r}, ptr null, i64 0, i64 ${length})`);
     const made = mode === 0 ? r : call("yk_closure_mode", `i64 ${r}, i32 ${mode}`);
     // Made inside a class's member, it knows the class (`class-self`) as the member does.
     return closure === undefined ? made : call("yk_closure_inherit", `i64 ${made}, ptr %closure`);
@@ -1656,6 +1809,18 @@ function lowerFunction(
         block(join);
         emit(`${r} = phi i128 [ ${w}, %${fastEnd} ], [ ${u}, %${slowEnd} ]`);
         return r;
+      }
+      if (leaf === "__ykLoad64") {
+        // From a block whose address never escapes: its bytes, unsigned.
+        const local = localAccess(ins[1] as ValueId, 8);
+        if (local !== undefined) {
+          const q = fresh();
+          emit(`${q} = getelementptr i8, ptr ${local.slot}, i64 ${local.off}`);
+          const v = fresh();
+          emit(`${v} = load i64, ptr ${q}, align 1`);
+          emit(`${r} = zext i64 ${v} to i128`);
+          return r;
+        }
       }
       // __ykU64/__ykI64 of a boxed value, __ykLoad64: the runtime's leaf, its result unboxed.
       const args = ins.slice(1).map(operand);
@@ -1810,10 +1975,22 @@ function lowerFunction(
       block(end);
       return;
     }
-    if (lbl.startsWith("array-with-holes:"))
-      throw new LlvmEmitError(
-        "an array with holes is not in the native subset yet: the runtime's arrays have no holes (#1330)",
-      );
+    if (lbl.startsWith("array-with-holes:")) {
+      // [, a, , b]: the elements at their positions, each hole an index the array does not have.
+      const holes = JSON.parse(lbl.slice("array-with-holes:".length)) as number[];
+      if (ins.some(isSpread))
+        throw new LlvmEmitError(
+          "an array with both holes and spread elements is not in the subset yet",
+        );
+      const elems: string[] = [];
+      let k = 0;
+      for (let i = 0; i < ins.length + holes.length; i++)
+        elems.push(holes.includes(i) ? UNDEFINED : operand(ins[k++] as ValueId));
+      const made = call("yk_array_of", `i64 ${elems.length}, ptr ${list(elems)}`);
+      for (const h of holes) call("yk_array_hole", `i64 ${made}, i64 ${h}`);
+      set(out, made);
+      return;
+    }
     // A private name (#1330): its key is the nearest class around this function that declares it,
     // and the member is in the object's private table.
     const privateKey = (name: string): string => {
@@ -1965,13 +2142,18 @@ function lowerFunction(
         ),
       );
       const statics = members.map(([, , isStatic]) => (isStatic === true ? TRUE : FALSE));
-      set(
-        out,
-        call(
-          "yk_class_new",
-          `ptr ${closure === undefined ? "null" : "%closure"}, i64 ${parent}, i64 ${members.length}, ptr ${list(kinds)}, ptr ${list(names)}, ptr ${list(statics)}, ptr ${list(fns)}`,
-        ),
+      const made = call(
+        "yk_class_new",
+        `ptr ${closure === undefined ? "null" : "%closure"}, i64 ${parent}, i64 ${members.length}, ptr ${list(kinds)}, ptr ${list(names)}, ptr ${list(statics)}, ptr ${list(fns)}`,
       );
+      // The class's name (its declaration's, or its binding's), as the lifter records it.
+      const className = n.origin?.text ?? "";
+      if (/^[A-Za-z_$][\w$]*$/.test(className)) {
+        m.intrinsics.add("declare i64 @yk_class_name(i64, ptr, i64)");
+        const k = m.constant(className);
+        emit(`call i64 @yk_class_name(i64 ${made}, ptr ${k.ptr}, i64 ${k.length})`);
+      }
+      set(out, made);
       return;
     }
     if (lbl.startsWith("delete.") && ins.length === 1) {
@@ -2170,6 +2352,24 @@ function lowerFunction(
       return;
     }
     if (lbl === "NewExpression") {
+      // new RegExp(pattern, flags) of constant strings: compiled as its literal would be.
+      if (
+        globalValue.get(resolve(ins[0] as ValueId)) === "RegExp" &&
+        (ins.length === 2 || ins.length === 3) &&
+        !ins.some(isSpread)
+      ) {
+        const pattern = constantString(ins[1] as ValueId);
+        const flags = ins.length === 3 ? constantString(ins[2] as ValueId) : "";
+        if (
+          pattern !== undefined &&
+          flags !== undefined &&
+          /^[dgimsuy]*$/.test(flags) &&
+          pattern !== ""
+        ) {
+          set(out, regexObject(`/${pattern}/${flags}`));
+          return;
+        }
+      }
       const callee = operand(ins[0] as ValueId);
       if (ins.slice(1).some(isSpread)) {
         set(out, call("yk_new_spread", `i64 ${callee}, i64 ${spreadList(ins.slice(1))}`));
@@ -2185,6 +2385,18 @@ function lowerFunction(
       const [fn, arity] = LEAVES[leafName] as [string, number];
       if (ins.length - 1 !== arity)
         throw new LlvmEmitError(`the leaf ${fn} takes ${arity} arguments`);
+      if (leafName === "__ykAlloc" && localBlocks.has(out as ValueId)) {
+        // A block whose address never escapes: zeroed, as an allocation's bytes are.
+        const b = localBlocks.get(out as ValueId) as { slot: string; size: number };
+        m.intrinsics.add("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)");
+        emit(`call void @llvm.memset.p0.i64(ptr ${b.slot}, i8 0, i64 ${b.size}, i1 false)`);
+        set(out, boxedNumber(0));
+        return;
+      }
+      if (leafName === "__ykFree" && localBlocks.has(resolve(ins[1] as ValueId))) {
+        set(out, UNDEFINED);
+        return;
+      }
       if (leafName === "__ykAlloc") {
         // A frame's block: a constant integral size and power-of-two alignment, with no boxing.
         const size = literalNumber(ins[1] as ValueId);
@@ -2267,8 +2479,75 @@ function lowerFunction(
         set(out, r);
         return;
       }
+      if (leafName === "__ykStore64") {
+        const local64 = localAccess(ins[1] as ValueId, 8);
+        if (local64 !== undefined) {
+          // Into a block whose address never escapes: the value's low 64 bits.
+          const q = fresh();
+          emit(`${q} = getelementptr i8, ptr ${local64.slot}, i64 ${local64.off}`);
+          let bits: string;
+          if (isTypedBig(ins[2] as ValueId)) {
+            bits = fresh();
+            emit(`${bits} = trunc i128 ${bigOperand(ins[2] as ValueId)} to i64`);
+          } else {
+            m.intrinsics.add("declare i64 @yk_big_low64(i64)");
+            bits = fresh();
+            emit(`${bits} = call i64 @yk_big_low64(i64 ${operand(ins[2] as ValueId)})`);
+          }
+          emit(`store i64 ${bits}, ptr ${q}, align 1`);
+          // Its value (the stored BigInt), boxed only when something reads it rather than ordering
+          // after it.
+          set(out, valueRead(out as ValueId) ? operand(ins[2] as ValueId) : UNDEFINED);
+          return;
+        }
+      }
       const args = ins.slice(1).map(operand);
       const mem = MEM_INLINE[leafName];
+      const local = mem === undefined ? undefined : localAccess(ins[1] as ValueId, mem.size);
+      if (mem !== undefined && local !== undefined) {
+        // Inside a block whose address never escapes: the bytes themselves.
+        const q = fresh();
+        emit(`${q} = getelementptr i8, ptr ${local.slot}, i64 ${local.off}`);
+        if (mem.store) {
+          const xd = fresh();
+          emit(`${xd} = bitcast i64 ${args[1]} to double`);
+          if (mem.kind === "u") {
+            m.intrinsics.add("declare i32 @yk_double_to_uint32(double)");
+            const w = fresh();
+            emit(`${w} = call i32 @yk_double_to_uint32(double ${xd})`);
+            let t = w;
+            if (mem.ty !== "i32") {
+              t = fresh();
+              emit(`${t} = trunc i32 ${w} to ${mem.ty}`);
+            }
+            emit(`store ${mem.ty} ${t}, ptr ${q}, align 1`);
+          } else if (mem.kind === "f64") emit(`store double ${xd}, ptr ${q}, align 1`);
+          else {
+            const f = fresh();
+            emit(`${f} = fptrunc double ${xd} to float`);
+            emit(`store float ${f}, ptr ${q}, align 1`);
+          }
+          set(out, args[1] as string);
+        } else {
+          const v = fresh();
+          emit(`${v} = load ${mem.ty}, ptr ${q}, align 1`);
+          if (mem.kind === "u") {
+            const z = fresh();
+            emit(`${z} = zext ${mem.ty} ${v} to i64`);
+            const f = fresh();
+            emit(`${f} = uitofp i64 ${z} to double`);
+            const r = fresh();
+            emit(`${r} = bitcast double ${f} to i64`);
+            set(out, r);
+          } else if (mem.kind === "f64") set(out, boxDouble(v));
+          else {
+            const f = fresh();
+            emit(`${f} = fpext float ${v} to double`);
+            set(out, boxDouble(f));
+          }
+        }
+        return;
+      }
       if (mem !== undefined) {
         set(
           out,
@@ -2721,12 +3000,15 @@ function lowerFunction(
           slot.kind === "set"
         )
           throw new LlvmEmitError("an object literal slot that is not a plain one");
-        keys.push(
+        const key =
           slot.kind === "computed"
             ? operand(ins[at++] as ValueId)
-            : str((slot as { name: string }).name),
-        );
-        values.push(operand(ins[at++] as ValueId));
+            : str((slot as { name: string }).name);
+        keys.push(key);
+        const v = ins[at++] as ValueId;
+        // A function made here is named by its key (NamedEvaluation), unless its code named it.
+        const made = producer.get(resolve(v))?.closure !== undefined;
+        values.push(made ? call("yk_name_method", `i64 ${operand(v)}, i64 ${key}`) : operand(v));
       }
       set(out, call("yk_object_of", `i64 ${keys.length}, ptr ${list(keys)}, ptr ${list(values)}`));
       return;
@@ -2848,11 +3130,8 @@ function lowerFunction(
     loop.outputs.forEach((v, i) => set(v, operand(rec.carry[i] as ValueId)));
   };
 
-  // Each regex literal: its matcher compiled from the pattern and lowered (once per module), and
-  // its object made here (DEC-DUC-REGEX-GRAPH-001).
-  for (const n of g.nodes) {
-    const text = n.label ?? "";
-    if (n.kind !== "literal-source" || !text.startsWith("/")) continue;
+  /** A regex object of `/pattern/flags`: its matcher compiled and lowered once per module. */
+  function regexObject(text: string): string {
     let compiled: ReturnType<typeof regexMatcherGraph>;
     try {
       compiled = regexMatcherGraph(text);
@@ -2872,14 +3151,32 @@ function lowerFunction(
     emit(`${matcher} = call i64 @yk_closure_new(ptr @${fn}, i32 0, i64 0, ptr null)`);
     const names = compiled.parsed.names.map((nm) => (nm === undefined ? UNDEFINED : str(nm)));
     const namesArray = call("yk_array_of", `i64 ${names.length}, ptr ${list(names)}`);
-    set(
-      n.outputs[0] as ValueId,
-      call(
-        "yk_regexp_new",
-        `i64 ${str(compiled.pattern)}, i64 ${str(compiled.flags)}, i64 ${matcher}, i64 ${namesArray}`,
-      ),
+    return call(
+      "yk_regexp_new",
+      `i64 ${str(compiled.pattern)}, i64 ${str(compiled.flags)}, i64 ${matcher}, i64 ${namesArray}`,
     );
   }
+  /** A string the graph computes from literals alone (`"a" + "b"`), or undefined. */
+  const constantString = (v0: ValueId, depth = 0): string | undefined => {
+    const p = producer.get(resolve(v0));
+    if (p === undefined || depth > 256) return undefined;
+    const text = p.label ?? "";
+    if (p.kind === "literal-source" && text.startsWith('"')) return JSON.parse(text) as string;
+    if (p.kind === "op" && text === "+" && p.inputs.length === 2) {
+      const a = constantString(p.inputs[0] as ValueId, depth + 1);
+      const b = a === undefined ? undefined : constantString(p.inputs[1] as ValueId, depth + 1);
+      return a === undefined || b === undefined ? undefined : a + b;
+    }
+    return undefined;
+  };
+  // Each regex literal: its matcher compiled from the pattern and lowered (once per module), and
+  // its object made here (DEC-DUC-REGEX-GRAPH-001).
+  for (const n of g.nodes) {
+    const text = n.label ?? "";
+    if (n.kind !== "literal-source" || !text.startsWith("/")) continue;
+    set(n.outputs[0] as ValueId, regexObject(text));
+  }
+  for (const v of argumentsValues) set(v, call("yk_rest", "i64 %argc, ptr %argv, i64 0"));
   // Parameters: the entry function's own; a closure's captures, then its arguments.
   params.forEach((p, i) => {
     const v = p.outputs[0] as ValueId;

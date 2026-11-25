@@ -341,6 +341,15 @@ function declaredBetween(node: Node, name: string, scope: Node | undefined): boo
   return false;
 }
 
+/** A constructor's parameter properties: parameters with an accessibility or `readonly`. */
+function parameterProperties(
+  ctor: import("ts-morph").ConstructorDeclaration,
+): import("ts-morph").ParameterDeclaration[] {
+  return ctor
+    .getParameters()
+    .filter((p) => p.getScope() !== undefined || p.isReadonly() || p.hasOverrideKeyword());
+}
+
 /** The innermost loop around a node, inside its own function. */
 function ownLoop(n: Node): Node | undefined {
   for (let p: Node | undefined = n.getParent(); p !== undefined; p = p.getParent()) {
@@ -1109,11 +1118,8 @@ class Lifter {
     if (node.getDecorators().length > 0) return undefined;
     const members = node.getMembers().filter((m) => !isTypeOnlyMember(m));
     for (const m of members) {
-      if (Node.isConstructorDeclaration(m)) {
-        if (m.getParameters().some((p) => p.getScope() !== undefined || p.isReadonly()))
-          return undefined;
-        continue;
-      }
+      // A parameter property is rewritten as what it means (rewriteClass, #1292).
+      if (Node.isConstructorDeclaration(m)) continue;
       if (Node.isClassStaticBlockDeclaration(m)) continue;
       if (
         !(
@@ -1211,7 +1217,7 @@ class Lifter {
     members: readonly Node[],
   ): (FunctionLike | undefined)[] | undefined {
     const plain = (m: Node): boolean =>
-      Node.isConstructorDeclaration(m) ||
+      (Node.isConstructorDeclaration(m) && parameterProperties(m).length === 0) ||
       ((Node.isMethodDeclaration(m) ||
         Node.isGetAccessorDeclaration(m) ||
         Node.isSetAccessorDeclaration(m)) &&
@@ -1222,6 +1228,34 @@ class Lifter {
     const edits: [number, number, string][] = [];
     for (const [i, m] of members.entries()) {
       if (plain(m)) continue;
+      // A parameter property (`constructor(public readonly x: T)`) is a parameter and an assignment
+      // to the receiver, at the start of the body, or after its `super(..)` in a derived class
+      // (#1292): TypeScript's meaning, and its lowering.
+      if (Node.isConstructorDeclaration(m)) {
+        const body = m.getBody();
+        if (body === undefined || !Node.isBlock(body)) return undefined;
+        const props = parameterProperties(m);
+        for (const param of props)
+          for (const mod of param.getModifiers()) edits.push([mod.getStart(), mod.getEnd(), ""]);
+        const assigns = props
+          .map((param) => `this.${param.getName()} = ${param.getName()};`)
+          .join(" ");
+        if (node.getHeritageClauses().some((h) => h.getToken() === SyntaxKind.ExtendsKeyword)) {
+          const call = body
+            .getStatements()
+            .find(
+              (st) =>
+                Node.isExpressionStatement(st) &&
+                Node.isCallExpression(st.getExpression()) &&
+                (st.getExpression() as import("ts-morph").CallExpression)
+                  .getExpression()
+                  .getKind() === SyntaxKind.SuperKeyword,
+            );
+          if (call === undefined) return undefined;
+          edits.push([call.getEnd(), call.getEnd(), ` ${assigns}`]);
+        } else edits.push([body.getStart() + 1, body.getStart() + 1, ` ${assigns}`]);
+        continue;
+      }
       if (Node.isClassStaticBlockDeclaration(m)) {
         edits.push([m.getStart(), m.getEnd(), `static __yk_member${i}() ${staticBody(m)}`]);
         continue;
@@ -1423,6 +1457,22 @@ class Lifter {
 
   /** The returns of lowered statements (see noteExits). */
   private readonly loweredExits = new Set<import("ts-morph").ts.Node>();
+
+  /**
+   * Lifts a guarded loop's body (a condition written as `if (!(c)) break;`) whose only other exits
+   * are throws as a body with exits, with no flags (#1292): a branch that throws takes the rest of
+   * the body onto its other side, as in a loop with exits, not the rest of the function.
+   */
+  private withThrowExits<T>(loop: Node, guarded: boolean, body: () => T): T {
+    if (!guarded || this.bodyExits !== undefined || !loopJumpsOf(loop).some(Node.isThrowStatement))
+      return body();
+    this.bodyExits = { node: loop };
+    try {
+      return body();
+    } finally {
+      this.bodyExits = undefined;
+    }
+  }
 
   /** Whether a statement holds an exit of the loop whose body is being lifted. */
   private holdsLoopExit(stmt: Node, loop: Node): boolean {
@@ -2783,7 +2833,7 @@ class Lifter {
         const tail = update !== undefined ? [update] : [];
         const tookUpdate =
           guard !== undefined
-            ? this.liftStatements(guard.rest, tail)
+            ? this.withThrowExits(node, true, () => this.liftStatements(guard.rest, tail))
             : Node.isBlock(body)
               ? this.liftStatements(body.getStatements(), tail)
               : this.liftStatement(body, tail);
@@ -2941,9 +2991,11 @@ class Lifter {
           const statements = Node.isBlock(body) ? body.getStatements() : [body];
           // The written guard, first, and again last when a lowering tests it after each pass too.
           const trailing = guard !== undefined && trailingIterateGuard(node) !== undefined ? 1 : 0;
-          this.liftStatements(
-            guard !== undefined ? statements.slice(1, statements.length - trailing) : statements,
-            [],
+          this.withThrowExits(node, guard !== undefined, () =>
+            this.liftStatements(
+              guard !== undefined ? statements.slice(1, statements.length - trailing) : statements,
+              [],
+            ),
           );
         } finally {
           this.dead = false;
@@ -3423,6 +3475,14 @@ class Lifter {
         origin: { kind: "Conditional" },
       })[0] as ValueId;
     }
+    // `import(specifier)`: loading a module at run time, a heap operation on its arguments whose value
+    // is the promise of the module's namespace (#1292).
+    if (Node.isCallExpression(node) && node.getExpression().getKind() === SyntaxKind.ImportKeyword)
+      return this.emit("op", this.liftElements(node.getArguments() as Node[]), 1, {
+        origin: { kind: "ImportCall", text: truncate(node.getText()) },
+        label: "import()",
+        heap: true,
+      })[0] as ValueId;
     if (Node.isCallExpression(node) && Node.isSuperExpression(node.getExpression())) {
       // `super(args)` in a derived constructor (#1276): it makes the receiver, so it is `this` after.
       const [made] = this.emit("op", this.liftElements(node.getArguments() as Node[]), 1, {
@@ -5339,7 +5399,8 @@ function whileGuard(loop: Node): WhileGuard | undefined {
   const body = loop.getStatement();
   if (!Node.isBlock(body)) return undefined;
   const statements = body.getStatements();
-  const jumps = loopJumpsOf(loop);
+  // A throw is no jump of the guard's: the body is lifted with its exits, so it ends its path (#1292).
+  const jumps = loopJumpsOf(loop).filter((j) => !Node.isThrowStatement(j));
   if (jumps.length !== 1) return undefined;
   const at = statements.findIndex((st) => {
     if (!Node.isIfStatement(st) || st.getElseStatement() !== undefined) return false;
@@ -5399,7 +5460,8 @@ function iterateGuard(loop: Node): Node | undefined {
   // The guard, and the same guard again after the pass (emit-ts writes both, so a break leaves
   // before the next element is pulled, #1330).
   const last = trailingIterateGuard(loop);
-  const jumps = loopJumpsOf(loop);
+  // A throw is no jump of the guard's: the body is lifted with its exits, so it ends its path (#1292).
+  const jumps = loopJumpsOf(loop).filter((j) => !Node.isThrowStatement(j));
   const expected = last !== undefined ? [inner, last] : [inner];
   if (
     jumps.length !== expected.length ||
@@ -5860,9 +5922,9 @@ function insideOpaque(ret: Node, root: Node): boolean {
     p = p.getParent()
   ) {
     if (
-      Node.isFunctionDeclaration(p) ||
-      Node.isFunctionExpression(p) ||
-      Node.isArrowFunction(p) ||
+      // Any function: a method's or an accessor's return is its own (#1292), as a function's is.
+      isFunctionLikeNode(p) ||
+      Node.isClassStaticBlockDeclaration(p) ||
       Node.isForStatement(p) ||
       Node.isForOfStatement(p) ||
       Node.isForInStatement(p) ||
