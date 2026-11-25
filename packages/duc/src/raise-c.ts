@@ -480,7 +480,7 @@ let unitLayout: LayoutResolver = () => undefined;
 // Whether the unit is parsed with -mlong-double-64 (long double is IEEE double).
 let unitLongDouble64 = false;
 /** The unit's enumeration constants, by name (UnitTypes.enumValue). */
-let unitEnumValue: (name: string) => bigint | undefined = () => undefined;
+let unitEnumValue: (name: string, id?: string) => bigint | undefined = () => undefined;
 /** The unit's classes (UnitTypes.cxx). */
 let unitCxx: CxxUnit | undefined;
 /** The unit's offsetof values (UnitTypes.offsetOf). */
@@ -518,6 +518,8 @@ function offsetOfDesignator(type: string, path: string): number | undefined {
   return offset;
 }
 const localTypedefs = new Map<string, string>();
+/** The classes a member function is in, innermost first (C++: names in them need no scope). */
+let localScopes: readonly string[] = [];
 
 /** The C library's fixed typedefs on LP64, for a unit whose headers clang did not show. */
 const LP64_TYPEDEFS: Readonly<Record<string, string>> = {
@@ -573,13 +575,26 @@ const BUILTIN: Readonly<Record<string, CType>> = {
 
 function ctype(t: { qualType: string; desugaredQualType?: string } | undefined): CType {
   if (t === undefined) throw new RaiseCError("a node with no type");
-  return parseType(t.desugaredQualType ?? t.qualType);
+  // (C++: a member alias desugared one step, `const value_type *`: its names in the class that
+  // declares it, `basic_string_view<char>`.)
+  const alias = (t as { typeAliasDeclId?: string }).typeAliasDeclId;
+  const scope = alias === undefined ? undefined : unitCxx?.typedefsOf(alias);
+  if (scope === undefined || scope.size === 0) return parseType(t.desugaredQualType ?? t.qualType);
+  const saved = new Map(localTypedefs);
+  for (const [k, v] of scope) localTypedefs.set(k, v);
+  try {
+    return parseType(t.desugaredQualType ?? t.qualType);
+  } finally {
+    localTypedefs.clear();
+    for (const [k, v] of saved) localTypedefs.set(k, v);
+  }
 }
 
 /** A C type as clang spells it, typedefs resolved through the unit. */
 function parseType(spelled: string, depth = 0): CType {
   if (depth > 32) throw new RaiseCError(`the type "${spelled}" does not resolve`);
   const raw = spelled
+    .replace(/\s*\[\[[^\]]*\]\]/g, "")
     // A vector (`__m128i`: `__attribute__((__vector_size__(2 * sizeof(long long)))) long long`):
     // an object of its bytes.
     .replace(
@@ -629,10 +644,14 @@ function parseType(spelled: string, depth = 0): CType {
   const toArr = /^(.*?)\s*\((&&?|\*)\)\s*((?:\[\d*\])+)$/.exec(raw);
   if (toArr !== null)
     return { k: "ptr", to: parseType(`${toArr[1] as string} ${toArr[3] as string}`, depth + 1) };
-  const arr = /^(.*?)\s*\[(\d*)\]$/.exec(raw);
+  // An array, of arrays: `T [8000][2]` is 8000 arrays of 2 (the first dimension outermost).
+  const arr = /^(.*?)\s*((?:\[\d*\])+)$/.exec(raw);
   if (arr !== null) {
-    const of = parseType(arr[1] as string, depth + 1);
-    return arr[2] === "" ? { k: "arr", of } : { k: "arr", of, size: Number(arr[2]) };
+    let t = parseType(arr[1] as string, depth + 1);
+    const dims = [...(arr[2] as string).matchAll(/\[(\d*)\]/g)].map((m) => m[1] as string);
+    for (const d of dims.reverse())
+      t = d === "" ? { k: "arr", of: t } : { k: "arr", of: t, size: Number(d) };
+    return t;
   }
   const ptr = /^(.*?)\s*\*$/.exec(raw);
   if (ptr !== null) return { k: "ptr", to: parseType(ptr[1] as string, depth + 1) };
@@ -657,6 +676,11 @@ function parseType(spelled: string, depth = 0): CType {
   for (const tag of ["struct", "class", "union"])
     if (unitLayout(recordKey(`${tag} ${raw}`)) !== undefined)
       return { k: "rec", name: `${tag} ${raw}` };
+  // A class named in the scope of the member function's class (`_Storage<int>`).
+  for (const scope of localScopes)
+    for (const tag of ["struct", "class", "union"])
+      if (unitLayout(recordKey(`${tag} ${scope}::${raw}`)) !== undefined)
+        return { k: "rec", name: `${tag} ${scope}::${raw}` };
   // (Its template's arguments spelled with typedefs, `optional<std::string_view>`: the types.)
   const parts = templateParts(raw);
   if (parts !== undefined && depth < 16) {
@@ -894,7 +918,27 @@ function arith(op: string, a: string, b: string, t: CType, rhs: CType): string {
  * Calls that are leaves (DEC-DUC-OPERATIONS-AS-ATOMS-001): the C library functions clang knows as
  * builtins and that are exact IEEE 754 operations, and the compiler's own builtins.
  */
+const clz64 = (x: string): string =>
+  `(__ykBigToU32(${x} >> 32n) !== 0 ? Math.clz32(__ykBigToU32(${x} >> 32n)) : 32 + Math.clz32(__ykBigToU32(${x})))`;
+const ctz32 = (x: string): string => `(31 - Math.clz32((${x}) & -(${x})))`;
+const ctz64 = (x: string): string =>
+  `(__ykBigToU32(${x}) !== 0 ? ${ctz32(`__ykBigToU32(${x})`)} : 32 + ${ctz32(`__ykBigToU32(${x} >> 32n)`)})`;
+
 const LEAF_CALLS: Readonly<Record<string, (args: readonly string[]) => string>> = {
+  // Bit counts (undefined for 0 in C; as x86's tzcnt/lzcnt would give otherwise).
+  __builtin_clz: (a) => `Math.clz32(${a[0]})`,
+  __builtin_ctz: (a) => ctz32(a[0] as string),
+  __builtin_clzl: (a) => clz64(a[0] as string),
+  __builtin_clzll: (a) => clz64(a[0] as string),
+  __builtin_ctzl: (a) => ctz64(a[0] as string),
+  __builtin_ctzll: (a) => ctz64(a[0] as string),
+  // (C++: no constant evaluation at run time; nothing reaches an unreachable point.)
+  __builtin_is_constant_evaluated: () => "false",
+  __builtin_constant_p: () => "0",
+  __builtin_unreachable: () => "undefined",
+  // (Its size is a size_t: a bigint.)
+  __builtin_operator_new: (a) => `__ykAlloc(__ykBigToF64(${a[0]}), 16)`,
+  __builtin_operator_delete: (a) => `__ykFree(${a[0]})`,
   fabs: (a) => `Math.abs(${a[0]})`,
   fabsl: (a) => `Math.abs(${a[0]})`,
   __builtin_fabsl: (a) => `Math.abs(${a[0]})`,
@@ -1072,11 +1116,17 @@ export interface UnitTypes {
    * state): its key for `__ykStatic`, its definition recorded by the unit. `fn` names the function
    * for a static local. Undefined when the unit cannot define it (then it is refused).
    */
-  readonly static?: (decl: ClangNode, fn?: string) => string | undefined;
+  /**
+   * A static's key, defined; `dynamic`, a function's static initialized when its declaration is
+   * first reached (C++): its memory zero, and a guard byte beside it (its key, `#guard`).
+   */
+  readonly static?: (decl: ClangNode, fn?: string, dynamic?: boolean) => string | undefined;
   /** The unit is parsed with clang's -mlong-double-64: long double is double. */
   readonly longDouble64?: boolean;
   /** An enumeration constant's value, by its name (one scope in C; ids differ between dumps). */
-  readonly enumValue?: (name: string) => bigint | undefined;
+  /** An enumeration constant's value, by its declaration's id when known (C++'s scoped
+   * enumerations reuse names: `state::FILE`, `scheme::FILE`), else by its name. */
+  readonly enumValue?: (name: string, id?: string) => bigint | undefined;
   /** An offsetof expression's value (clang's JSON does not say which member). */
   readonly offsetOf?: (e: ClangNode) => number | undefined;
   /** C++: a unit's classes (an indexed unit's). */
@@ -1117,6 +1167,18 @@ export interface CxxUnit {
   readonly typedefsOf: (fnId: string) => ReadonlyMap<string, string>;
   /** A member's default initializer (`bool has = false;`), by the member's id. */
   readonly fieldInitOf: (fieldId: string) => ClangNode | undefined;
+  /**
+   * A class's move constructor (`move`) or copy constructor, when not trivial: an object moved or
+   * copied to another place runs it (std::string's points into itself).
+   */
+  readonly copyCtorOf: (
+    record: string,
+    move: boolean,
+  ) => { readonly id: string; readonly body: boolean } | undefined;
+  /** Whether a function of the unit has this name (a local of the name would hide it). */
+  readonly isFunctionName: (name: string) => boolean;
+  /** Whether a class's copy and move assignments are trivial (an assignment is its bytes). */
+  readonly trivialAssign: (record: string) => boolean;
   /** Whether a class's copy and move constructors are trivial (a copy is its bytes). */
   readonly trivialCopy: (record: string) => boolean;
   /** A member's default initializer, by its class's name and its own. */
@@ -1343,12 +1405,16 @@ const memberKey = (name: string, signature: string): string =>
 function splitTemplateArgs(text: string): string[] {
   const out: string[] = [];
   let depth = 0;
+  // (Inside parentheses, `decltype(a() > b())`, an angle bracket can be an operator.)
+  let parens = 0;
   let start = 0;
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
-    if (c === "<" || c === "(" || c === "[") depth++;
-    else if (c === ">" || c === ")" || c === "]") depth--;
-    else if (c === "," && depth === 0) {
+    if (c === "(" || c === "[") parens++;
+    else if (c === ")" || c === "]") parens--;
+    else if (parens === 0 && c === "<") depth++;
+    else if (parens === 0 && c === ">") depth--;
+    else if (c === "," && depth === 0 && parens === 0) {
       out.push(text.slice(start, i).trim());
       start = i + 1;
     }
@@ -1358,7 +1424,11 @@ function splitTemplateArgs(text: string): string[] {
 }
 
 /** A function type's return type: what is before its parameter list (the last parenthesis). */
-export function returnTypeOf(fnType: string): string {
+export function returnTypeOf(spelled: string): string {
+  // (Attributes after the parameters, `[[clang::lifetimebound]]`, are not the type.)
+  const fnType = spelled
+    .replace(/\s*\[\[[^\]]*\]\]/g, "")
+    .replace(/\s*__attribute__\(\((?:[^()]|\([^()]*\))*\)\)/g, "");
   // A trailing return type (C++: `auto (uint32_t) -> std::string`): the one it trails.
   if (/^auto\s*\(/.test(fnType)) {
     const open = fnType.indexOf("(");
@@ -1371,7 +1441,12 @@ export function returnTypeOf(fnType: string): string {
       }
     }
   }
-  const t = fnType.replace(/\s*(const|volatile|noexcept(\([^)]*\))?|&&?)\s*$/g, "").trim();
+  // (Every qualifier after the parameters: `() const noexcept`.)
+  let t = fnType.trim();
+  for (let prev = ""; prev !== t; ) {
+    prev = t;
+    t = t.replace(/\s*(const|volatile|noexcept(\([^)]*\))?|&&?)\s*$/, "").trim();
+  }
   if (!t.endsWith(")")) return t;
   let depth = 0;
   for (let i = t.length - 1; i >= 0; i--) {
@@ -1501,6 +1576,7 @@ export function raiseCFunction(
     [unitTypedef, unitLayout, unitLongDouble64] = saved;
     [unitEnumValue, unitOffsetOf, unitCxx] = savedEnum;
     localTypedefs.clear();
+    localScopes = [];
   }
 }
 
@@ -1523,8 +1599,9 @@ function raiseBody(
   const params = (fn.inner ?? []).filter((c) => c.kind === "ParmVarDecl");
   // A member function (not a static one) takes its object's address first, `__this`.
   const method =
-    ["CXXMethodDecl", "CXXConstructorDecl", "CXXDestructorDecl"].includes(fn.kind) &&
-    fn.storageClass !== "static";
+    ["CXXMethodDecl", "CXXConstructorDecl", "CXXDestructorDecl", "CXXConversionDecl"].includes(
+      fn.kind,
+    ) && fn.storageClass !== "static";
   const lambda = method ? unitCxx?.lambdaOf(fn.id ?? "") : undefined;
   const thisRecord = method
     ? lambda !== undefined
@@ -1540,19 +1617,44 @@ function raiseBody(
   if (method && thisRecord === undefined) throw new RaiseCError(`the class of ${fn.name}`);
   // A member function's class's typedefs (`char_type`): the instance's, before the unit's.
   for (const [n, t] of unitCxx?.typedefsOf(fn.id ?? "") ?? []) localTypedefs.set(n, t);
+  {
+    const cls = thisRecord ?? unitCxx?.classOf(fn.id ?? "");
+    const scopes: string[] = [];
+    if (cls !== undefined) {
+      let at = cls.replace(/^(struct|class|union) /, "");
+      for (let guard = 0; at !== "" && guard < 8; guard++) {
+        scopes.push(at);
+        // (Up one class: its scope's last `::` outside a template's arguments.)
+        let depth = 0;
+        let last = -1;
+        for (let i = 0; i < at.length; i++) {
+          if (at[i] === "<") depth++;
+          else if (at[i] === ">") depth--;
+          else if (depth === 0 && at[i] === ":" && at[i + 1] === ":") last = i;
+        }
+        at = last < 0 ? "" : at.slice(0, last);
+      }
+    }
+    localScopes = scopes;
+  }
   // A variadic function takes its variable arguments' address as a last parameter, `__va`.
   const variadic = variadicParams(fn.type?.qualType ?? "") !== undefined;
   // (A template instance's type spelled as written can be `typename enable_if<..>::type (T)`: its
   // desugared form is the type.)
   const fnType = fn.type?.desugaredQualType ?? fn.type?.qualType ?? "";
   const result = ctype({ qualType: returnTypeOf(fnType) });
+  // C++: a record returned is made in the caller's slot, `__ret` (copy elision); a variable that
+  // is the named return value lives there.
+  const sret = unitCxx !== undefined && result.k === "rec";
   const vars = new Map<string, CType>();
   const names = new Map<string, string>();
   const declName = (n: ClangNode): string => {
     const id = n.id ?? "";
     let nm = names.get(id);
     if (nm === undefined) {
-      const base = ident(n.name ?? "v");
+      // (C++: not a function's name, which a call in the same body would then name.)
+      let base = ident(n.name ?? "v");
+      if (unitCxx?.isFunctionName(n.name ?? "") === true) base = `${base}_v`;
       nm = [...names.values()].includes(base) ? `${base}_${names.size}` : base;
       names.set(id, nm);
     }
@@ -1570,9 +1672,14 @@ function raiseBody(
   {
     const bind = (x: ClangNode | undefined): void => {
       let n = x;
+      // (C++: `++x` is x.)
       while (
         n !== undefined &&
-        ((n.kind === "ImplicitCastExpr" && n.castKind === "NoOp") || n.kind === "ParenExpr")
+        ((n.kind === "ImplicitCastExpr" && n.castKind === "NoOp") ||
+          n.kind === "ParenExpr" ||
+          (n.kind === "UnaryOperator" &&
+            (n.opcode === "++" || n.opcode === "--") &&
+            n.isPostfix !== true))
       )
         n = (n.inner ?? [])[0];
       // (A reference is already an address: what it names is in memory, not it.)
@@ -1587,7 +1694,12 @@ function raiseBody(
       const kids = n.inner ?? [];
       if (n.kind === "CallExpr" || n.kind === "CXXOperatorCallExpr")
         for (const a of kids.slice(1)) bind(a);
-      if (n.kind === "CXXMemberCallExpr" || n.kind === "CXXConstructExpr")
+
+      if (
+        n.kind === "CXXMemberCallExpr" ||
+        n.kind === "CXXConstructExpr" ||
+        n.kind === "CXXTemporaryObjectExpr"
+      )
         for (const a of kids.slice(n.kind === "CXXMemberCallExpr" ? 1 : 0)) bind(a);
       if (n.kind === "LambdaExpr") for (const a of kids.slice(1, -1)) bind(a);
       if (n.kind === "VarDecl" && isReferenceType(n.type?.qualType ?? ""))
@@ -1632,7 +1744,12 @@ function raiseBody(
           target = stripParens(base);
         else break;
       }
-      if (target.kind === "DeclRefExpr") inMemory.add(target.referencedDecl?.id ?? "");
+      // (A reference's address is what it binds to: the reference itself stays an address.)
+      if (
+        target.kind === "DeclRefExpr" &&
+        !isReferenceType(target.referencedDecl?.type?.qualType ?? "")
+      )
+        inMemory.add(target.referencedDecl?.id ?? "");
     }
     const writes =
       (n.kind === "BinaryOperator" && n.opcode === "=") ||
@@ -1645,7 +1762,12 @@ function raiseBody(
     if (n.kind === "ImplicitCastExpr" && n.castKind === "ArrayToPointerDecay") {
       const target = stripParens((n.inner ?? [])[0] as ClangNode);
       const indexed = parent?.kind === "ArraySubscriptExpr" && (parent.inner ?? [])[0] === n;
-      if (target.kind === "DeclRefExpr" && !indexed) inMemory.add(target.referencedDecl?.id ?? "");
+      if (
+        target.kind === "DeclRefExpr" &&
+        !indexed &&
+        !isReferenceType(target.referencedDecl?.type?.qualType ?? "")
+      )
+        inMemory.add(target.referencedDecl?.id ?? "");
     }
     const passThrough =
       derefOfAddr ||
@@ -1659,6 +1781,43 @@ function raiseBody(
   const frame: string[] = [];
   const top: string[] = [];
   const mems = new Map<string, Place & { k: "mem" }>(); // decl id -> its place
+  // (C++: the named return value, made in the caller's slot.)
+  if (sret) {
+    const walk = (n: ClangNode): void => {
+      if (n.kind === "VarDecl" && (n as { nrvo?: boolean }).nrvo === true && n.id !== undefined)
+        mems.set(n.id, { k: "mem", addr: "__ret", t: ctype(n.type) });
+      for (const k of n.inner ?? []) walk(k);
+    };
+    walk(fn);
+  }
+  // C++'s return slot: a call of a function returning a record passes, first, where the record is
+  // made (copy elision): a destination copyFrom names (`pendingRet`), else a slot of this frame.
+  let pendingRet: string | undefined;
+  const claimRet = (e: ClangNode): Ret => {
+    const mine = pendingRet;
+    pendingRet = undefined;
+    const t = e.type === undefined ? undefined : typeOf(e);
+    const applies =
+      unitCxx !== undefined && t?.k === "rec" && (e.valueCategory ?? "prvalue") === "prvalue";
+    let slot: string | undefined;
+    return {
+      applies,
+      slot: () => {
+        if (!applies || t === undefined) return [];
+        if (slot === undefined) {
+          slot = mine;
+          if (slot === undefined) {
+            slot = `__ret${temps++}`;
+            top.push(
+              `const ${slot} = __ykAlloc(${Math.max(8, sizeOf(t))}, ${Math.max(8, alignOf(t))});`,
+            );
+            frame.push(slot);
+          }
+        }
+        return [slot];
+      },
+    };
+  };
   const memOf = (d: ClangNode, t: CType): Place & { k: "mem" } => {
     const id = d.id ?? "";
     let p = mems.get(id);
@@ -1712,7 +1871,11 @@ function raiseBody(
     // A constant with external linkage is also defined as a static: another unit that declares it
     // without its initializer reads it from static memory.
     if (decl.storageClass !== "static") unitStatic?.(d);
-    const name = `${ident(d.name ?? "g")}_g`;
+    // (Two constants of one name, `value` of two class instances: the second numbered.)
+    const base = `${ident(d.name ?? "g")}_g`;
+    const taken = new Set(globalNames.values());
+    let name = base;
+    for (let n = 2; taken.has(name); n++) name = `${base}${n}`;
     globalNames.set(id, name);
     vars.set(id, ctype(decl.type));
     globals.set(id, `const ${name} = ${expr(initOf(decl) as ClangNode)};`);
@@ -1836,8 +1999,15 @@ function raiseBody(
         return { k: "reg", e: declName(d), t };
       }
       case "UnaryOperator": {
-        if ((e.opcode === "++" || e.opcode === "--") && e.isPostfix !== true)
+        // (C++: `++x` is x itself, after the increment; an object in memory, its address.)
+        if ((e.opcode === "++" || e.opcode === "--") && e.isPostfix !== true) {
+          const p = place(k0);
+          if (p.k === "mem") {
+            const a = temp({ k: "f64" });
+            return { k: "mem", addr: `((${a} = ${p.addr}), ${expr(e)}, ${a})`, t: typeOf(e) };
+          }
           return { k: "reg", e: expr(e), t: typeOf(e) };
+        }
         if (e.opcode !== "*") break;
         // *&x is x (fdlibm writes `*(volatile double *)&a[3]` to stop a compiler folding).
         // (Only as the same type: `*(u16 *)&c[2]` reads two chars as one u16, in memory.)
@@ -1898,6 +2068,10 @@ function raiseBody(
           };
         const arrow = (e as { isArrow?: boolean }).isArrow === true;
         const baseT = arrow ? (typeOf(k0) as CType & { k: "ptr" }).to : typeOf(k0);
+        if (baseT.k !== "rec")
+          throw new RaiseCError(
+            `the member ${e.name} of a ${baseT.k} (${JSON.stringify(k0.type)})`,
+          );
         const field = layoutOf(baseT).fields.get(memberName(e));
         if (field === undefined) throw new RaiseCError(`the field "${e.name}"`);
         let addr: string;
@@ -2090,7 +2264,7 @@ function raiseBody(
           return `__ykFnAddr(${ident(d.name ?? "")})`;
         }
         if (d.kind === "EnumConstantDecl") {
-          const v = unitEnumValue(d.name ?? "");
+          const v = unitEnumValue(d.name ?? "", d.id);
           if (v === undefined)
             throw new RaiseCError(`the enumeration constant ${d.name} has no value`);
           return wide(typeOf(e)) ? `${v}n` : String(v);
@@ -2113,6 +2287,11 @@ function raiseBody(
             const d = target.referencedDecl as ClangNode;
             const mem = mems.get(d.id ?? "");
             if (mem !== undefined) return mem.addr;
+            // (A reference to an array, C++'s `T (&a)[N]`: the address it holds.)
+            if (isReferenceType(d.type?.qualType ?? "")) {
+              const p = place(target);
+              if (p.k === "mem") return p.addr;
+            }
             const global = isGlobal(d);
             // A global that is state, or a constant whose initializer this unit lacks (an extern
             // declaration): static memory.
@@ -2373,6 +2552,7 @@ function raiseBody(
         return "abort()";
       // A method call (C++): the object's address, then the arguments.
       case "CXXMemberCallExpr": {
+        const ret = claimRet(e);
         const m = stripCasts(k0);
         if (m.kind !== "MemberExpr") throw new RaiseCError(`a method call through ${m.kind}`);
         const base = (m.inner ?? [])[0] as ClangNode;
@@ -2383,16 +2563,17 @@ function raiseBody(
           if (p.k !== "mem") throw new RaiseCError("a method called on an object not in memory");
           self = p.addr;
         }
-        return methodCall(self, m, kids.slice(1));
+        return methodCall(self, m, kids.slice(1), ret);
       }
       // An operator (C++): a member one is a method of its first operand; a free one, a call.
       case "CXXOperatorCallExpr": {
+        const ret = claimRet(e);
         const callee = stripCasts(k0);
         const d = callee.referencedDecl;
         if (d?.kind === "CXXMethodDecl") {
           const p = place(kids[1] as ClangNode);
           if (p.k !== "mem") throw new RaiseCError("an operator of an object not in memory");
-          return methodCall(p.addr, callee, kids.slice(2));
+          return methodCall(p.addr, callee, kids.slice(2), ret);
         }
         const key = resolve({
           name: d?.name ?? "",
@@ -2403,20 +2584,43 @@ function raiseBody(
         if (key === undefined) {
           throw new RaiseCError(`the operator ${d?.name ?? callee.kind} is not in the unit`);
         }
-        return `${key}(${kids.slice(1).map(argOf).join(", ")})`;
+        return `${key}(${[...ret.slot(), ...kids.slice(1).map(argOf)].join(", ")})`;
       }
       case "ConditionalOperator":
         return `(${cond(k0)} ? ${expr(kids[1] as ClangNode)} : ${expr(kids[2] as ClangNode)})`;
       case "CallExpr": {
+        const ret = claimRet(e);
         const callee = stripCasts(k0);
-        const name = callee.referencedDecl?.name ?? "";
+        // (The C library's builtins are its functions: `__builtin_memcpy` is memcpy.)
+        const name = (callee.referencedDecl?.name ?? "").replace(
+          /^__builtin_((?:mem|str)\w+)$/,
+          "$1",
+        );
+        // std::move, forward, addressof, as_const (clang's builtins, C++): the object's address.
+        // (Those the unit has no definition of: clang folds them.)
+        if (
+          /^(move|forward|addressof|__addressof|as_const)$/.test(name) &&
+          kids.length === 2 &&
+          resolve({
+            name,
+            kind: callee.referencedDecl?.kind ?? "",
+            type: normType(callee.referencedDecl?.type?.qualType ?? ""),
+            id: callee.referencedDecl?.id,
+          }) === undefined
+        )
+          return argOf(kids[1] as ClangNode);
+        // libstdc++'s throws and failed assertions: the program ends (no handler is raised).
+        if (/^(__throw_\w+|__glibcxx_assert_fail)$/.test(name)) {
+          externals.add("abort");
+          return "abort()";
+        }
         // (A record argument is passed by address: see argOf.)
         const args = kids
           .slice(1)
           .map((x) =>
             x.kind === "CXXDefaultArgExpr"
               ? "undefined"
-              : typeOf(x).k === "rec"
+              : typeOf(x).k === "rec" || typeOf(x).k === "arr"
                 ? argOf(x)
                 : expr(x),
           );
@@ -2427,7 +2631,9 @@ function raiseBody(
         ) {
           const xs = kids.slice(1);
           const r = temp({ k: "f64" });
-          const alloc = `(${r} = __ykAlloc(16, 16))`;
+          // (Into the return slot the caller gives, C++, or a fresh object.)
+          const into = ret.applies ? ret.slot()[0] : undefined;
+          const alloc = `(${r} = ${into ?? "__ykAlloc(16, 16)"})`;
           const at = (b: string, i: number): string => (i === 0 ? b : `(${b} + ${i})`);
           const lanes = Array.from({ length: 16 }, (_, i) => i);
           const operand = (x: ClangNode): string => {
@@ -2587,6 +2793,14 @@ function raiseBody(
         // C++: an argument bound to a reference parameter is its object's address; a default
         // argument, the callee's.
         if (fixed === undefined) callArgs = withDefaults(kids.slice(1), d.id).map(argOf);
+        // (C++: a record returned is made in the caller's slot; the C library's, returned as C
+        // does, is copied there.)
+        if (fixed === undefined && ret.applies) {
+          if (key !== undefined) return `${target}(${[...ret.slot(), ...callArgs].join(", ")})`;
+          const into = ret.slot()[0] as string;
+          const r = temp({ k: "f64" });
+          return `((${r} = ${target}(${callArgs.join(", ")})), ${copyBytes(into, r, sizeOf(typeOf(e))).join(", ")}, __ykFree(${r}), ${into})`;
+        }
         const call = `${target}(${callArgs.join(", ")})`;
         if (fixed === undefined) return call;
         const r = temp(typeOf(e).k === "void" ? { k: "i32" } : typeOf(e));
@@ -2666,6 +2880,40 @@ function raiseBody(
    * A record value (an lvalue, or a call that returns one: the address of a fresh copy, freed once
    * copied) copied to `to`: expression steps.
    */
+  const relocate = (to: string, from: string, t: CType, move: boolean): string[] => {
+    // An object of a class that is not trivially copyable (C++), moved or copied to `to` from
+    // `from`: its move (or copy) constructor; any other, its bytes.
+    if (t.k === "rec" && unitCxx !== undefined && !unitCxx.trivialCopy(t.name)) {
+      const ctor = unitCxx.copyCtorOf(t.name, move) ?? unitCxx.copyCtorOf(t.name, !move);
+      if (ctor?.body === true) {
+        const key = resolve({
+          name: className(t.name),
+          kind: "CXXConstructorDecl",
+          type: "",
+          id: ctor.id,
+        });
+        if (key !== undefined) return [`${key}(${to}, ${from})`];
+      }
+      // (One defined by default, with no body in the unit: its bytes, then each base and member
+      // that is not trivially copyable moved or copied in turn; a union's bytes alone.)
+      if (!/^union /.test(t.name)) {
+        const l = layoutOf(t);
+        const out = copyBytes(to, from, copiedSize(t));
+        const at = (b: string, o: number): string => (o === 0 ? b : `(${b} + ${o})`);
+        for (const [b, o] of l.bases ?? [])
+          out.push(...relocate(at(to, o), at(from, o), { k: "rec", name: b }, move));
+        for (const [, f] of l.fields) {
+          const ft = isReferenceType(f.type) || f.bit !== undefined ? undefined : parseType(f.type);
+          if (ft?.k === "rec")
+            out.push(...relocate(at(to, f.offset), at(from, f.offset), ft, move));
+        }
+        return out.length > 0 ? out : ["undefined"];
+      }
+    }
+    // (Nothing to copy, an empty class: one step that does nothing.)
+    const bytes = copyBytes(to, from, copiedSize(t));
+    return bytes.length > 0 ? bytes : ["undefined"];
+  };
   const copyFrom = (to: string, t: CType, src: ClangNode): string[] => {
     const made = constructed(src);
     if (made !== undefined) return [construct(to, made)];
@@ -2697,14 +2945,26 @@ function raiseBody(
       s0.kind === "CallExpr" ||
       s0.kind === "CXXMemberCallExpr" ||
       s0.kind === "CXXOperatorCallExpr"
-    )
+    ) {
+      // A call returning a reference (`std::move(x)`): the object it names, moved or copied.
+      const cat = s0.valueCategory ?? "prvalue";
+      if (cat !== "prvalue")
+        return [`(${from} = ${expr(s0)})`, ...relocate(to, from, t, cat === "xvalue")];
+      // C++: made where it goes (the call's return slot).
+      if (unitCxx !== undefined) {
+        pendingRet = to;
+        const call = expr(s0);
+        pendingRet = undefined;
+        return [call];
+      }
       return [`(${from} = ${expr(s0)})`, ...copyBytes(to, from, sizeOf(t)), `__ykFree(${from})`];
+    }
     const sp = place(s0);
     if (sp.k !== "mem")
       throw new RaiseCError(
         `a record copied from one not in memory (${`${stripCasts(s0).kind} ${stripCasts(s0).referencedDecl?.name ?? stripCasts(s0).name ?? ""}`})`,
       );
-    return [`(${from} = ${sp.addr})`, ...copyBytes(to, from, sizeOf(t))];
+    return [`(${from} = ${sp.addr})`, ...relocate(to, from, t, false)];
   };
   /** A C++ temporary's wrappers (cleanups, materialization, binding, casts) stripped. */
   const unwrapTemporary = (e: ClangNode): ClangNode => {
@@ -2785,16 +3045,47 @@ function raiseBody(
     ) {
       const to = temp({ k: "f64" });
       const from = temp({ k: "f64" });
-      return `((${to} = ${addr}), (${from} = ${argOf(args[0] as ClangNode)}), ${copyBytes(to, from, sizeOf(t)).join(", ")}, undefined)`;
+      return `(${[`(${to} = ${addr})`, `(${from} = ${argOf(args[0] as ClangNode)})`, ...copyBytes(to, from, copiedSize(t)), "undefined"].join(", ")})`;
     }
     if (ctor === undefined) throw new RaiseCError(`the constructor ${t.name}(${ctorType})`);
     const to = temp({ k: "f64" });
     if (!ctor.body) {
-      // The implicit constructors: the default one does nothing; a copy or move copies bytes.
-      if (args.length === 0) return "undefined";
+      // The implicit (or defaulted) constructors: the default one constructs each base and
+      // member (its default initializer, or its class's default constructor); a copy or move,
+      // each in turn (see relocate).
+      if (args.length === 0) {
+        if (unitCxx === undefined || /^union /.test(t.name)) return "undefined";
+        const l = layoutOf(t);
+        const at = (o: number): string => (o === 0 ? to : `(${to} + ${o})`);
+        const steps: string[] = [];
+        const dflt = (name: string): ClangNode =>
+          ({
+            kind: "CXXConstructExpr",
+            type: { qualType: name },
+            ctorType: { qualType: "void ()" },
+            inner: [],
+          }) as ClangNode;
+        for (const [b, o] of l.bases ?? []) steps.push(construct(at(o), dflt(b)));
+        for (const [name, f] of l.fields) {
+          if (f.bit !== undefined || isReferenceType(f.type)) continue;
+          const ft = parseType(f.type);
+          const given = unitCxx.memberInitOf(t.name, name);
+          if (given !== undefined)
+            steps.push(
+              ...initialize(at(f.offset), ft, given).map((x) => `(${x.replace(/;$/, "")})`),
+            );
+          else if (ft.k === "rec" && !/^union /.test(ft.name))
+            steps.push(construct(at(f.offset), dflt(ft.name)));
+        }
+        return steps.length === 0
+          ? "undefined"
+          : `((${to} = ${addr}), ${steps.join(", ")}, undefined)`;
+      }
       if (args.length === 1) {
         const from = temp({ k: "f64" });
-        return `((${to} = ${addr}), (${from} = ${argOf(args[0] as ClangNode)}), ${copyBytes(to, from, sizeOf(t)).join(", ")}, undefined)`;
+        const a0 = args[0] as ClangNode;
+        const move = /&&\s*\)/.test(ctorType) || (a0.valueCategory ?? "prvalue") !== "lvalue";
+        return `(${[`(${to} = ${addr})`, `(${from} = ${argOf(a0)})`, ...relocate(to, from, t, move), "undefined"].join(", ")})`;
       }
       throw new RaiseCError(`the implicit constructor ${t.name}(${ctorType})`);
     }
@@ -2824,7 +3115,7 @@ function raiseBody(
     const dtor = unitCxx.destructorOf(t.name);
     if (dtor?.body) {
       const key = resolve({
-        name: `~${t.name.split(" ").pop()}`,
+        name: `~${className(t.name)}`,
         kind: "CXXDestructorDecl",
         type: "",
         id: dtor.id,
@@ -2833,6 +3124,8 @@ function raiseBody(
       out.push(`${key}(${addr})`);
     }
     const at = (o: number): string => (o === 0 ? addr : `(${addr} + ${o})`);
+    // (A union's members are not destroyed with it: its owner knows which one lives.)
+    if (/^union /.test(t.name)) return out;
     for (const [, f] of [...l.fields].reverse()) {
       const ft = isReferenceType(f.type) ? undefined : parseType(f.type);
       if (ft?.k === "rec") out.push(...destroy(at(f.offset), ft));
@@ -2872,7 +3165,10 @@ function raiseBody(
       return `(${storeAt(slot, t, expr(inner))}, ${slot})`;
     }
     const p = place(n);
-    if (p.k !== "mem") throw new RaiseCError("a reference to an object not in memory");
+    if (p.k !== "mem")
+      throw new RaiseCError(
+        `a reference to an object not in memory (${n.kind} ${stripCasts(n).referencedDecl?.name ?? ""} ${stripCasts(n).referencedDecl?.kind ?? ""})`,
+      );
     return p.addr;
   };
   /** Arguments with a callee's default ones in place of clang's CXXDefaultArgExpr (C++). */
@@ -2884,11 +3180,46 @@ function raiseBody(
       return d;
     });
   /** A member function called on the object at `self` (C++). */
-  const methodCall = (self: string, member: ClangNode, args: readonly ClangNode[]): string => {
+  const methodCall = (
+    self: string,
+    member: ClangNode,
+    args: readonly ClangNode[],
+    ret: Ret = noRet,
+  ): string => {
     const id =
       (member as { referencedMemberDecl?: string }).referencedMemberDecl ??
       member.referencedDecl?.id;
     const name = member.name ?? member.referencedDecl?.name ?? "";
+    // An explicit destructor call (`m_val.~T()`): the object's destruction (nothing, trivially).
+    if (name.startsWith("~") && member.kind === "MemberExpr") {
+      const base = (member.inner ?? [])[0] as ClangNode;
+      const bt = typeOf(base);
+      const t = (member as { isArrow?: boolean }).isArrow === true && bt.k === "ptr" ? bt.to : bt;
+      const o = temp({ k: "f64" });
+      const steps = destroy(o, t);
+      return steps.length === 0
+        ? `(${self}, undefined)`
+        : `((${o} = ${self}), ${steps.join(", ")}, undefined)`;
+    }
+    // A trivial assignment (C++: a union's, std::optional<int>'s): the object's bytes, as code
+    // generation copies them (the body clang writes for it copies nothing).
+    if (name === "operator=" && args.length === 1 && id !== undefined) {
+      const cls = unitCxx?.classOf(id);
+      const at = typeOf(args[0] as ClangNode);
+      // (A copy or move: the argument of the class; `optional = 2` converts, it is not one.)
+      if (
+        cls !== undefined &&
+        at.k === "rec" &&
+        recordKey(at.name) === recordKey(cls) &&
+        unitCxx?.trivialAssign(cls) === true
+      ) {
+        const t: CType = { k: "rec", name: cls };
+        const o = temp({ k: "f64" });
+        const f = temp({ k: "f64" });
+        const steps = copyBytes(o, f, copiedSize(t));
+        return `((${o} = ${self}), (${f} = ${argOf(args[0] as ClangNode)}), ${steps.length > 0 ? `${steps.join(", ")}, ` : ""}${o})`;
+      }
+    }
     // A virtual call (not one a qualifier names): the function in the object's vtable.
     const qualified = (member.inner ?? []).some((k) => k.kind === "NestedNameSpecifier");
     if (id !== undefined && !qualified && unitCxx?.isVirtual(id) === true) {
@@ -2897,11 +3228,11 @@ function raiseBody(
       const o = temp({ k: "f64" });
       const vt = `__ykBigToF64(__ykI64(__ykLoad64(${o})))`;
       const fnAt = `__ykBigToF64(__ykI64(__ykLoad64(${vt} + ${8 * slot})))`;
-      return `((${o} = ${self}), __ykFnAt(${fnAt})(${[o, ...args.map(argOf)].join(", ")}))`;
+      return `((${o} = ${self}), __ykFnAt(${fnAt})(${[...ret.slot(), o, ...args.map(argOf)].join(", ")}))`;
     }
     const key = resolve({ name, kind: "CXXMethodDecl", type: "", id });
     if (key === undefined) throw new RaiseCError(`the method ${name} is not in the unit`);
-    return `${key}(${[self, ...withDefaults(args, id).map(argOf)].join(", ")})`;
+    return `${key}(${[...ret.slot(), self, ...withDefaults(args, id).map(argOf)].join(", ")})`;
   };
   /** Stores that initialize an object in memory at `addr` from an initializer (zero-filled). */
   const initialize = (addr: string, t: CType, given: ClangNode | undefined): string[] => {
@@ -3526,10 +3857,29 @@ function raiseBody(
           }
           if (d.kind !== "VarDecl") throw new RaiseCError(`the declaration ${d.kind}`);
           const t = ctype(d.type);
+          // A static whose initializer runs code (C++: `static std::u32string s = U"";`):
+          // initialized the first time its declaration is reached, then a guard says so.
+          if (d.storageClass === "static" && initializerRuns(d) !== undefined) {
+            const key = unitStatic?.(d, fn.name, true);
+            if (key === undefined) throw new RaiseCError(`the static variable "${d.name}"`);
+            const addr = `__ykStatic(${JSON.stringify(key)})`;
+            const guard = `__ykStatic(${JSON.stringify(`${key}#guard`)})`;
+            vars.set(d.id ?? "", t);
+            mems.set(d.id ?? "", { k: "mem", addr, t });
+            push(`if (__ykLoad8(${guard}) === 0) {`);
+            for (const line of initialize(addr, t, initOf(d))) push(line);
+            push(`__ykStore8(${guard}, 1);`);
+            push("}");
+            continue;
+          }
+          // (A constant one of records whose address is taken, zlib's `static const code
+          // lenfix[512]` kept in a state, is static memory too: it outlives the call, and constant
+          // memory holds scalars only.)
+          const records = t.k === "rec" || (t.k === "arr" && t.of.k === "rec");
           if (
             d.storageClass === "static" &&
-            !/\bconst\b/.test(d.type?.qualType ?? "") &&
-            (written.has(d.id ?? "") || inMemory.has(d.id ?? ""))
+            (written.has(d.id ?? "") || inMemory.has(d.id ?? "")) &&
+            (!/\bconst\b/.test(d.type?.qualType ?? "") || records)
           ) {
             // A static local that is written: module state, in static memory (its initializer is
             // its definition's, applied once).
@@ -3585,7 +3935,8 @@ function raiseBody(
             // block, zeroed when allocated, is not filled again.
             if (init !== undefined) for (const line of initialize(p.addr, t, init)) push(line);
             // C++: an object with a destructor is destroyed when its block is left.
-            const dtor = t.k === "rec" ? destroy(p.addr, t) : [];
+            // (Not the named return value: it is the caller's.)
+            const dtor = t.k === "rec" && p.addr !== "__ret" ? destroy(p.addr, t) : [];
             const scope = scopes[scopes.length - 1];
             if (dtor.length > 0 && scope !== undefined && scope !== "loop")
               scope.push(dtor.join(", "));
@@ -3606,21 +3957,64 @@ function raiseBody(
       case "ReturnStmt": {
         const v = kids[0];
         if (v !== undefined && result.k === "rec") {
+          if (sret) {
+            const s1 = stripCasts(v);
+            // (The named return value, through the move clang writes around it.)
+            let named = unwrapTemporary(s1);
+            if (
+              (named.kind === "CXXConstructExpr" || named.kind === "CXXFunctionalCastExpr") &&
+              (named.inner ?? []).length === 1
+            )
+              named = stripCasts(unwrapTemporary((named.inner ?? [])[0] as ClangNode));
+            const nrvo =
+              named.kind === "DeclRefExpr" &&
+              mems.get(named.referencedDecl?.id ?? "")?.addr === "__ret";
+            const made = nrvo
+              ? []
+              : s1.kind === "InitListExpr"
+                ? initialize("__ret", result, s1).map((x) => `(${x.replace(/;$/, "")})`)
+                : copyFrom("__ret", result, v);
+            returnLine(`(${[...made, "__ret"].join(", ")})`);
+            return;
+          }
           // A record returned: a fresh copy's address (the caller copies it and frees it).
           const out = temp({ k: "f64" });
           const s0 = stripCasts(v);
           const lit = s0.kind === "CompoundLiteralExpr" ? (s0.inner ?? [])[0] : s0;
+          // (A local returned, named return value: moved out, as it dies with the function.)
+          const local =
+            s0.kind === "DeclRefExpr" &&
+            s0.referencedDecl?.kind === "VarDecl" &&
+            !isGlobal(s0.referencedDecl as ClangNode)
+              ? place(s0)
+              : undefined;
           const fill =
             s0.kind === "InitListExpr" || s0.kind === "CompoundLiteralExpr"
               ? initialize(out, result, lit).map((x) => `(${x.replace(/;$/, "")})`)
-              : copyFrom(out, result, s0);
+              : local?.k === "mem"
+                ? relocate(out, local.addr, result, true)
+                : copyFrom(out, result, s0);
           returnLine(
             `((${out} = __ykAlloc(${sizeOf(result)}, ${alignOf(result)})), ${fill.join(", ")}, ${out})`,
           );
           return;
         }
         // A function returning a reference (C++) returns the address of what it names.
-        if (v !== undefined && /&\s*\(/.test(fn.type?.qualType ?? "")) {
+        // (Or one spelled through an alias, `_If_sv<T, basic_string &>`: an object for an
+        // address.)
+        const vt = v === undefined ? undefined : typeOf(v);
+        if (
+          v !== undefined &&
+          (/&\s*\(/.test(fn.type?.qualType ?? "") ||
+            isReferenceType(returnTypeOf(fn.type?.qualType ?? "")) ||
+            // (An lvalue that is not a pointer, returned as one: a reference, its type a
+            // typedef's, `const_reference`.)
+            (result.k === "ptr" &&
+              vt !== undefined &&
+              vt.k !== "ptr" &&
+              vt.k !== "fn" &&
+              v.valueCategory === "lvalue"))
+        ) {
           returnLine(argOf(v));
           return;
         }
@@ -3679,7 +4073,10 @@ function raiseBody(
         // `do { .. } while (false)`, as a macro writes a statement, is its body once.
         const lit = stripCasts(c);
         const once =
-          (lit.kind === "CXXBoolLiteralExpr" ||
+          // (C++'s `false`, not its `true`: `do { .. } while (true)` loops.)
+          ((lit.kind === "CXXBoolLiteralExpr" &&
+            lit.value !== "true" &&
+            (lit as { value?: unknown }).value !== true) ||
             (lit.kind === "IntegerLiteral" && Number(lit.value) === 0)) &&
           !hasJump(b);
         if (once) {
@@ -3780,6 +4177,14 @@ function raiseBody(
           s.kind.endsWith("Expr") ||
           s.kind === "ExprWithCleanups"
         ) {
+          // (An object named and not used, C++'s `*this;` after an assignment: its address,
+          // evaluated for what computing it does.)
+          const st = typeOf(s);
+          if ((st.k === "rec" || st.k === "arr") && s.valueCategory === "lvalue") {
+            const p = place(s);
+            push(`${p.k === "mem" ? p.addr : p.k === "reg" ? p.e : "undefined"};`);
+            return;
+          }
           push(`${expr(s)};`);
           return;
         }
@@ -3805,6 +4210,7 @@ function raiseBody(
   };
 
   const sig = [
+    ...(sret ? ["__ret: number"] : []),
     ...(method ? ["__this: number"] : []),
     ...params.map((p) => `${declName(p)}: ${tsType(ctype(p.type))}`),
     ...(variadic ? ["__va: number"] : []),
@@ -3888,7 +4294,10 @@ function raiseBody(
         (named?.k === "rec" ? baseAt(named.name) : undefined) ??
         (made?.k === "rec" ? baseAt(made.name) : undefined) ??
         (emptyBase ? 0 : undefined);
-      if (off === undefined) throw new RaiseCError(`the base ${base.qualType}`);
+      if (off === undefined)
+        throw new RaiseCError(
+          `the base ${base.qualType} (of ${thisRecord}: ${[...(l.bases?.keys() ?? [])].join("; ")})`,
+        );
       entry.push(`${construct(off === 0 ? "__this" : `(__this + ${off})`, value as ClangNode)};`);
     } else if ((init as { delegatingInit?: unknown }).delegatingInit !== undefined) {
       // A delegating constructor (C++): the other constructor, on this object.
@@ -4437,6 +4846,7 @@ export function shaveCUnit(
     }
     return pick(candidates(), bare);
   };
+  const typedefScopes = new Map<string, Map<string, string>>();
   // C++: classes, from the index.
   const cxx: CxxUnit | undefined =
     indexed === undefined
@@ -4453,9 +4863,12 @@ export function shaveCUnit(
                 c.kind === "ClassTemplateSpecializationDecl"
                   ? (readDecl(indexed, c).inner ?? [])
                       .filter((a) => a.kind === "TemplateArgument")
-                      .map(
-                        (a) => a.type?.qualType ?? String((a as { value?: unknown }).value ?? ""),
-                      )
+                      .map((a) => {
+                        if (a.type?.qualType !== undefined) return a.type.qualType;
+                        // (A bool's true is dumped as -1.)
+                        const v = String((a as { value?: unknown }).value ?? "");
+                        return v === "-1" ? "1" : v;
+                      })
                   : [];
               const own = `${c.name}${args.length > 0 ? `<${args.join(", ")}>` : ""}`;
               // (A local class, inside a function, is named alone, as the dump names it.)
@@ -4548,7 +4961,10 @@ export function shaveCUnit(
             return { record: lambda.type?.qualType ?? "", captures };
           },
           typedefsOf: (fnId) => {
+            const memo = typedefScopes.get(fnId);
+            if (memo !== undefined) return memo;
             const out = new Map<string, string>();
+            typedefScopes.set(fnId, out);
             let at = indexed.byId.get(fnId)?.parent;
             for (let depth = 0; at !== undefined && depth < 8; depth++) {
               const cls = indexed.byId.get(at);
@@ -4572,6 +4988,34 @@ export function shaveCUnit(
               }
             }
             return out;
+          },
+          copyCtorOf: (record, move) => {
+            const node = findRecord(record);
+            const self = className(record);
+            for (const c of node?.inner ?? []) {
+              if (c.kind !== "CXXConstructorDecl") continue;
+              const ps = (c.inner ?? []).filter((x) => x.kind === "ParmVarDecl");
+              if (ps.length !== 1) continue;
+              const pt = (ps[0]?.type?.qualType ?? "").trim();
+              if (!pt.includes(self) || !(move ? /&&$/.test(pt) : /[^&]&$/.test(pt))) continue;
+              return { id: c.id ?? "", body: definitionIn(indexed, c.id ?? "") !== undefined };
+            }
+            return undefined;
+          },
+          isFunctionName: (name) =>
+            (indexed.byName.get(name) ?? []).some((d) => FUNCTION_KINDS.has(d.kind)),
+          trivialAssign: (record) => {
+            const dd = (
+              findRecord(record) as
+                | {
+                    definitionData?: {
+                      copyAssign?: { trivial?: boolean };
+                      moveAssign?: { trivial?: boolean };
+                    };
+                  }
+                | undefined
+            )?.definitionData;
+            return dd?.copyAssign?.trivial === true && dd.moveAssign?.trivial !== false;
           },
           trivialCopy: (record) => {
             const dd = (
@@ -4815,7 +5259,26 @@ export function shaveCUnit(
   };
   // Enumeration constants, from the whole unit's declarations.
   let enums: Map<string, bigint> | undefined;
-  const enumValue = (name: string): bigint | undefined => {
+  const enumValue = (name: string, id?: string): bigint | undefined => {
+    // (By id: the constant's own enumeration, in an indexed unit.)
+    if (id !== undefined && indexed !== undefined) {
+      const known = enumsById.get(id);
+      if (known !== undefined) return known;
+      const c = indexed.byId.get(id);
+      const owner = c === undefined ? undefined : enumOf(c);
+      if (owner !== undefined) {
+        let next = 0n;
+        for (const k of readDecl(indexed, owner).inner ?? []) {
+          if (k.kind !== "EnumConstantDecl") continue;
+          const v = enumInitValue(k);
+          if (v !== undefined) next = BigInt(v);
+          enumsById.set(k.id ?? "", next);
+          next += 1n;
+        }
+        const v = enumsById.get(id);
+        if (v !== undefined) return v;
+      }
+    }
     if (enums === undefined) {
       const values = new Map<string, bigint>();
       const walk = (n: ClangNode): void => {
@@ -4823,7 +5286,7 @@ export function shaveCUnit(
           let next = 0n;
           for (const c of n.inner ?? []) {
             if (c.kind !== "EnumConstantDecl") continue;
-            const v = (c.inner ?? []).find((k) => k.kind === "ConstantExpr")?.value;
+            const v = enumInitValue(c);
             if (v !== undefined) next = BigInt(v);
             values.set(c.name ?? "", next);
             next += 1n;
@@ -4838,6 +5301,19 @@ export function shaveCUnit(
       enums = values;
     }
     return enums.get(name);
+  };
+  const enumsById = new Map<string, bigint>();
+  // An enumeration constant's enumeration: the EnumDecl whose extent holds it.
+  const enumOf = (c: IndexedDecl): IndexedDecl | undefined => {
+    if (indexed === undefined) return undefined;
+    let best: IndexedDecl | undefined;
+    for (const e of enumDecls()) if (e.start < c.start && c.end <= e.end) best = e;
+    return best;
+  };
+  let enumList: IndexedDecl[] | undefined;
+  const enumDecls = (): IndexedDecl[] => {
+    enumList ??= [...(indexed as UnitIndex).byId.values()].filter((d) => d.kind === "EnumDecl");
+    return enumList;
   };
   const typedef: TypedefResolver = (name) => {
     let hit: string | undefined;
@@ -4883,7 +5359,8 @@ export function shaveCUnit(
         }
         return undefined;
       };
-      const hit = inClass(findRecord(`struct ${member[1]}`), 0);
+      const fr = findRecord(`struct ${member[1]}`);
+      const hit = inClass(fr, 0);
       if (hit !== undefined) return hit;
     }
     // A namespace's typedef or alias by its qualified name (`std::string`), in an indexed unit:
@@ -4940,6 +5417,9 @@ export function shaveCUnit(
         return t;
       }
     }
+    // (A name in a class template's instance that is none of these is a class: not an
+    // enumeration of its bare name elsewhere.)
+    if (/>::/.test(name)) return undefined;
     // An enumeration (`enum e`, `ns::e`): its underlying type, fixed (`enum class e : uint8_t`,
     // and int for a scoped one) or chosen by the compiler (int, or unsigned int when no
     // enumerator is negative).
@@ -4983,9 +5463,36 @@ export function shaveCUnit(
       for (const k of n.inner ?? []) find(k);
     };
     find(typedef);
-    const rec = id === undefined || indexed === undefined ? undefined : indexed.byId.get(id);
-    if (rec === undefined) return undefined;
-    const fields = (readDecl(indexed as UnitIndex, rec).inner ?? [])
+    if (id === undefined) return undefined;
+    // The record (or enumeration) by id: the index's, else the whole unit's top level.
+    let node: ClangNode | undefined;
+    if (indexed !== undefined) {
+      const rec = indexed.byId.get(id);
+      node = rec === undefined ? undefined : readDecl(indexed, rec);
+    }
+    // (Ids are addresses in one dump: the filtered dump that gave the typedef has its tag too.)
+    else
+      node =
+        dumpOf(typedef.name ?? "").find((d) => d.id === id) ??
+        (wholeUnit().inner ?? []).find((d) => d.id === id);
+    if (node === undefined) return undefined;
+    // `typedef enum { A, B } e;`: its underlying type, as clang chooses it (unsigned int when no
+    // enumerator is negative, else int).
+    if (node.kind === "EnumDecl") {
+      const fixed = (node as { fixedUnderlyingType?: { qualType?: string } }).fixedUnderlyingType;
+      if (fixed?.qualType !== undefined) return fixed.qualType;
+      let next = 0n;
+      let negative = false;
+      for (const c of node.inner ?? []) {
+        if (c.kind !== "EnumConstantDecl") continue;
+        const v = enumInitValue(c);
+        if (v !== undefined) next = BigInt(v);
+        if (next < 0n) negative = true;
+        next += 1n;
+      }
+      return negative ? "int" : "unsigned int";
+    }
+    const fields = (node.inner ?? [])
       .filter((f) => f.kind === "FieldDecl")
       .map((f) => f.name ?? "");
     layout(""); // the layouts, read
@@ -5070,9 +5577,17 @@ export function shaveCUnit(
     for (const n of dumpOf(name)) walk(n, false);
     return decl ?? tentative;
   };
-  const staticHook = (d: ClangNode, fnName?: string): string | undefined => {
+  const staticHook = (d: ClangNode, fnName?: string, dynamic = false): string | undefined => {
     const id = fnName === undefined ? `g:${d.name}` : (d.id ?? "");
     if (staticKeys.has(id)) return staticKeys.get(id);
+    if (dynamic && fnName !== undefined) {
+      const key = `${unit}:${fnName}.${d.name}`;
+      const t = ctype(d.type);
+      statics.set(key, { size: Math.max(1, sizeOf(t)), align: Math.max(1, alignOf(t)), init: [] });
+      statics.set(`${key}#guard`, { size: 1, align: 1, init: [] });
+      staticKeys.set(id, key);
+      return key;
+    }
     staticKeys.set(id, undefined); // a cycle through initializers resolves to the key set below
     let key: string;
     let decl: ClangNode | undefined;
@@ -5108,7 +5623,50 @@ export function shaveCUnit(
       } catch (e) {
         // (C++: a constant whose initializer the evaluator does not fold, a constexpr call's:
         // its bytes as code generation emits them.)
-        const mangled = (decl as { mangledName?: string }).mangledName;
+        // (A class template's static member declared in its class: the mangled name is its
+        // definition's, a redeclaration.)
+        let mangled = (decl as { mangledName?: string }).mangledName;
+        if (mangled === undefined && indexed !== undefined && decl.id !== undefined) {
+          let first = decl.id;
+          for (let g = 0; indexed.previous.has(first) && g < 100; g++)
+            first = indexed.previous.get(first) as string;
+          for (let at: string | undefined = first, g = 0; at !== undefined && g < 100; g++) {
+            const r = indexed.byId.get(at);
+            if (r?.mangled !== undefined) {
+              mangled = r.mangled;
+              break;
+            }
+            at = indexed.next.get(at);
+          }
+        }
+        // (An inline static member, C++17, has no definition to name it: its class's mangled
+        // prefix, from a member function's, and its own name.)
+        const owner = decl.id === undefined ? undefined : indexed?.byId.get(decl.id)?.parent;
+        if (mangled === undefined && owner !== undefined && indexed !== undefined) {
+          const rec = indexed.byId.get(owner);
+          for (const m of rec === undefined ? [] : (readDecl(indexed, rec).inner ?? [])) {
+            const mm =
+              (m as { mangledName?: string }).mangledName ??
+              (m.id === undefined ? undefined : indexed.byId.get(m.id)?.mangled);
+            const mn = m.name ?? "";
+            if (mm === undefined || !mm.startsWith("_ZN") || !/^[A-Za-z_]\w*$/.test(mn)) continue;
+            const k = mm.indexOf(`${mn.length}${mn}E`);
+            if (k < 0) continue;
+            const n = d.name ?? "";
+            mangled = `_ZN${mm.slice(3, k)}${n.length}${n}E`;
+            break;
+          }
+        }
+        // (Else the one global of the unit's IR named for its class and itself.)
+        if (mangled === undefined && owner !== undefined && indexed !== undefined) {
+          const cls = indexed.byId.get(owner)?.name ?? "";
+          const n = d.name ?? "";
+          const want = `${cls.length}${cls}`;
+          const hits = [...unitIR().matchAll(/^@(_Z\w+) = /gm)]
+            .map((m) => m[1] as string)
+            .filter((g) => g.includes(want) && g.endsWith(`${n.length}${n}E`));
+          if (hits.length === 1) mangled = hits[0];
+        }
         let fromIR: StaticDef | undefined;
         try {
           fromIR =
@@ -5361,7 +5919,7 @@ export function irConstantStatic(ir: string, symbol: string): StaticDef | undefi
   if (line === undefined) return undefined;
   const bytes: number[] = [];
   const ptrs: [number, string][] = [];
-  const text = line.replace(/, align \d+.*$/, "");
+  const text = line.replace(/, (?:comdat\b|align \d+|section ).*$/, "");
   const t = parse(text, bytes, ptrs, 0);
   const [size, align] = sizeAlign(t);
   const init: StaticItem[] = [];
@@ -5373,7 +5931,7 @@ export function irConstantStatic(ir: string, symbol: string): StaticDef | undefi
     if (gl === undefined) throw new RaiseCError(`IR: the global ${g}`);
     const gb: number[] = [];
     const gp: [number, string][] = [];
-    const gt = parse(gl.replace(/, align \d+.*$/, ""), gb, gp, 1);
+    const gt = parse(gl.replace(/, (?:comdat\b|align \d+|section ).*$/, ""), gb, gp, 1);
     if (gp.length > 0) throw new RaiseCError(`IR: the global ${g} holds addresses`);
     const n = sizeAlign(gt)[0];
     init.push({
@@ -5382,6 +5940,26 @@ export function irConstantStatic(ir: string, symbol: string): StaticDef | undefi
     });
   }
   return { size, align, init };
+}
+
+/** The call or construction a variable's initializer runs (C++), outside unevaluated operands. */
+function initializerRuns(decl: ClangNode): ClangNode | undefined {
+  const runs = (n: ClangNode): ClangNode | undefined => {
+    if (
+      /^(CallExpr|CXXMemberCallExpr|CXXOperatorCallExpr|CXXConstructExpr|CXXTemporaryObjectExpr|LambdaExpr)$/.test(
+        n.kind,
+      )
+    )
+      return n;
+    if (n.kind === "UnaryExprOrTypeTraitExpr") return undefined;
+    for (const k of n.inner ?? []) {
+      const r = runs(k);
+      if (r !== undefined) return r;
+    }
+    return undefined;
+  };
+  const e = initOf(decl);
+  return e === undefined ? undefined : runs(e);
 }
 
 /**
@@ -5404,25 +5982,8 @@ function staticDefinition(
   // (C++: an initializer that runs code, a call or a constructor, is not C's constant one: the
   // unit's code generation has its value.)
   {
-    let e = initOf(decl);
-    while (
-      e !== undefined &&
-      ([
-        "ExprWithCleanups",
-        "ConstantExpr",
-        "CXXFunctionalCastExpr",
-        "MaterializeTemporaryExpr",
-      ].includes(e.kind) ||
-        (e.kind === "ImplicitCastExpr" && e.castKind === "NoOp"))
-    )
-      e = (e.inner ?? [])[0];
-    if (
-      e !== undefined &&
-      /^(CallExpr|CXXMemberCallExpr|CXXOperatorCallExpr|CXXConstructExpr|CXXTemporaryObjectExpr|LambdaExpr)$/.test(
-        e.kind,
-      )
-    )
-      throw new RaiseCError(`the initializer ${e.kind}`);
+    const code = initializerRuns(decl);
+    if (code !== undefined) throw new RaiseCError(`the initializer ${code.kind}`);
   }
   /** A constant scalar: a number or bigint, or an address (a static, a function, a string). */
   type Const =
@@ -5443,7 +6004,7 @@ function staticDefinition(
         return { k: "v", v: BigInt(e.value ?? "0") };
       case "DeclRefExpr": {
         const d = e.referencedDecl as ClangNode;
-        const v = d.kind === "EnumConstantDecl" ? unitEnumValue(d.name ?? "") : undefined;
+        const v = d.kind === "EnumConstantDecl" ? unitEnumValue(d.name ?? "", d.id) : undefined;
         if (v !== undefined) return { k: "v", v };
         // Another constant's value (its initializer, folded the same way).
         if (d.kind === "VarDecl" && /\bconst\b/.test(d.type?.qualType ?? "")) {
@@ -5722,9 +6283,55 @@ function lowerRangeFor(n: ClangNode, bindings = new Map<string, ClangNode>()): C
   return changed ? { ...n, inner: next } : n;
 }
 
+/** A call's return slot (C++, see claimRet): whether it has one, and its address argument. */
+type Ret = { readonly applies: boolean; readonly slot: () => string[] };
+const noRet: Ret = { applies: false, slot: () => [] };
+
+/** A record's class name alone: no tag, scope or arguments (`basic_string<char>::_Alloc_hider`
+ * is `_Alloc_hider`). */
+function className(record: string): string {
+  const bare = record.replace(/^(struct|class|union) /, "");
+  let depth = 0;
+  let last = 0;
+  for (let i = 0; i < bare.length; i++) {
+    if (bare[i] === "<") depth++;
+    else if (bare[i] === ">") depth--;
+    else if (depth === 0 && bare[i] === ":" && bare[i + 1] === ":") last = i + 2;
+  }
+  return bare.slice(last).replace(/<.*$/, "");
+}
+
+/**
+ * The bytes a copy of an object of this type copies: none for an empty class (C++: it shares
+ * its address with what follows it, as a base, `std::string`'s allocator and its pointer).
+ */
+function copiedSize(t: CType): number {
+  if (t.k !== "rec") return sizeOf(t);
+  const l = layoutOf(t);
+  const empty =
+    l.fields.size === 0 &&
+    l.vptr === undefined &&
+    l.size <= 1 &&
+    [...(l.bases ?? [])].every(([b]) => copiedSize({ k: "rec", name: b }) === 0);
+  return empty ? 0 : l.size;
+}
+
 /** Whether a C++ type is a reference (`T &`, `T &&`, `int (&)[5]`). */
 const isReferenceType = (qualType: string): boolean =>
   /&$|\(&&?\)\s*(\[\d*\])+$/.test(qualType.trim());
+
+/** An enumerator's value as clang computed it: its initializer's ConstantExpr, under its casts. */
+function enumInitValue(c: ClangNode): string | undefined {
+  let n = (c.inner ?? [])[0];
+  for (let guard = 0; n !== undefined && guard < 8; guard++) {
+    // (A bool's value is spelled `true` or `false`.)
+    if (n.kind === "ConstantExpr" && n.value !== undefined)
+      return n.value === "true" ? "1" : n.value === "false" ? "0" : n.value;
+    if (n.kind !== "ImplicitCastExpr" && n.kind !== "ParenExpr") return undefined;
+    n = (n.inner ?? [])[0];
+  }
+  return undefined;
+}
 
 /** A spelling split at its first template argument list: before, the arguments, after. */
 function templateParts(t: string): { head: string; args: string[]; tail: string } | undefined {
@@ -5817,7 +6424,10 @@ const recordKey = (name: string): string =>
         /\b(u?int(?:8|16|32|64)_t|size_t|uintptr_t|intptr_t|ptrdiff_t)\b/g,
         (t) => FIXED_WIDTH[t] ?? t,
       )
-      // (The dump's spellings: `_Bool`, `noexcept` in a function type, `> >`.)
+      // (The dump's spellings: `_Bool`, `noexcept` in a function type, `> >`; a bool template
+      // argument as its number.)
+      .replace(/([<,]\s*)true(?=\s*[,>])/g, "$11")
+      .replace(/([<,]\s*)false(?=\s*[,>])/g, "$10")
       .replace(/\b_Bool\b/g, "bool")
       .replace(/\s*\bnoexcept\b/g, "")
       .replace(/\s+>/g, ">")
@@ -5957,6 +6567,8 @@ export function createCMemory() {
   let fnByName: (name: string) => unknown = () => undefined;
   let next = 0x10000;
   const data = new Map<string, number>();
+  // (YK_MEMORY_TRACE: where each region was freed, for a trap's message.)
+  const freedAt = process.env.YK_MEMORY_TRACE ? new Map<number, string>() : undefined;
   const regionOf = (a: number, n: number, write: boolean): Region => {
     let lo = 0;
     let hi = regions.length - 1;
@@ -5975,7 +6587,7 @@ export function createCMemory() {
     for (let i = regions.length - 1; i >= 0; i--) {
       const r = regions[i] as Region;
       if (r.base <= a) {
-        near = ` (nearest region 0x${r.base.toString(16)}+${r.bytes.length}${r.live ? "" : ", freed"}${r.constant ? ", constant" : ""})`;
+        near = ` (nearest region 0x${r.base.toString(16)}+${r.bytes.length}${r.live ? "" : ", freed"}${r.constant ? ", constant" : ""})${freedAt?.has(r.base) ? ` freed at ${freedAt.get(r.base)} ALLOCATED at ${freedAt.get(-r.base)}` : ""}`;
         break;
       }
     }
@@ -6045,7 +6657,11 @@ export function createCMemory() {
     return a;
   };
   const leaves = {
-    __ykAlloc: (size: number, align: number): number => alloc(size, align),
+    __ykAlloc: (size: number, align: number): number => {
+      const a = alloc(size, align);
+      if (freedAt !== undefined) freedAt.set(-a, new Error().stack ?? "");
+      return a;
+    },
     /** A function's address (a function pointer's value). */
     __ykFnAddr: fnAddr,
     /** The function at an address (a call through a function pointer). */
@@ -6063,6 +6679,7 @@ export function createCMemory() {
       if (r.base !== a || r.constant)
         throw new CMemoryTrap(`memory trap: free of 0x${a.toString(16)}`);
       r.live = false;
+      if (freedAt !== undefined) freedAt.set(r.base, new Error().stack ?? "");
     },
     __ykData: (kind: string, values: readonly (number | bigint)[]): number => {
       const key = `${kind}:${values.map(String).join(",")}`;
