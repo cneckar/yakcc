@@ -1637,3 +1637,37 @@ export class Node {
     expect(tree.leafCount).toBeGreaterThan(1);
   });
 });
+
+describe("decompose — a unary operation descends into its operand (#1368)", () => {
+  /** TypeScript's checker has `!!findAncestor(node, (n) => ..)` with a branching callback. */
+  it("!!f((n) => ..) with a branching callback decomposes (was DidNotReachAtomError)", async () => {
+    const src = `
+declare function findAncestor(node: unknown, f: (n: { kind: number }) => boolean | "quit"): unknown;
+declare const node: unknown;
+
+export function isInTypeQuery(): boolean {
+  return !!findAncestor(node, (n) => {
+    if (n.kind === 187) return true;
+    for (let k = n.kind; k > 0; k--) if (k === 80) return false;
+    return "quit";
+  });
+}
+`.trim();
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+
+  it("typeof, void, await and spread descend too", async () => {
+    const src = `
+declare function g(f: (n: number) => number): number[];
+export async function h(): Promise<unknown> {
+  const t = typeof g((n) => { if (n > 1) return n; for (let i = 0; i < n; i++) if (i) return i; return 0; });
+  void g((n) => { if (n > 2) return n; while (n > 0) { if (n === 3) return n; n--; } return 1; });
+  const a = await Promise.resolve(g((n) => { if (n) return 1; for (;;) { if (n > 4) return n; n++; } }));
+  return [t, ...g((n) => { if (n > 5) return n; do { if (n === 7) return 7; n++; } while (n < 9); return n; }), a];
+}
+`.trim();
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+});
