@@ -1168,6 +1168,16 @@ static inline __attribute__((always_inline)) int key_is(yk key, const char *name
 }
 
 yk yk_get(yk obj, yk key) {
+  /* A plain object's own property by the very key (names are made once, so a read by name finds the
+     key the object was made with): its value, before anything else is asked. */
+  if (is_object(obj)) {
+    yk_object *o = (yk_object *)PTR(obj);
+    if (o->kind == 0) {
+      uint32_t n = o->len < 8 ? o->len : 8;
+      for (uint32_t i = 0; i < n; i++)
+        if (o->keys[i] == key) return resolve_slot(o->values[i], obj);
+    }
+  }
   if (is_nullish(obj)) {
     /* V8's message: the property read, by its key. */
     yk k = is_symbol(key) ? symbol_descriptive(key) : to_string(key);
