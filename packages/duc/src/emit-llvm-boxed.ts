@@ -2831,10 +2831,76 @@ function lowerFunction(
         `  ${hdrSlot} = alloca ptr`,
         `  ${baseSlot} = alloca i64`,
       );
-      const at = fresh();
+      // The runtime's cached region first (a caller's frame, most often), inline; else yk_span.
+      for (const d0 of MEM_CACHE_DECLS) m.intrinsics.add(d0);
+      const pbits = operand(pv);
+      const isNum = fresh();
+      emit(`${isNum} = icmp ult i64 ${pbits}, ${NUMBER_LIMIT}`);
+      const pd = fresh();
+      emit(`${pd} = bitcast i64 ${pbits} to double`);
+      const inRange = fresh();
+      emit(`${inRange} = fcmp olt double ${pd}, 9.0e15`);
+      const nonneg = fresh();
+      emit(`${nonneg} = fcmp oge double ${pd}, 0.0`);
+      const u = fresh();
+      emit(`${u} = fptoui double ${pd} to i64`);
+      const back = fresh();
+      emit(`${back} = uitofp i64 ${u} to double`);
+      const integral = fresh();
+      emit(`${integral} = fcmp oeq double ${back}, ${pd}`);
+      const cBase = fresh();
+      emit(`${cBase} = load i64, ptr @yk_mcache_base`);
+      const cLen = fresh();
+      emit(`${cLen} = load i64, ptr @yk_mcache_len`);
+      const off = fresh();
+      emit(`${off} = sub i64 ${u}, ${cBase}`);
+      const end = fresh();
+      emit(`${end} = add i64 ${off}, ${sp.len}`);
+      const fits = fresh();
+      emit(`${fits} = icmp ule i64 ${end}, ${cLen}`);
+      const after = fresh();
+      emit(`${after} = icmp ule i64 ${cBase}, ${u}`);
+      const small = fresh();
+      emit(`${small} = icmp ule i64 ${cLen}, 4096`);
+      let ok = "true";
+      for (const c of [isNum, inRange, nonneg, integral, fits, after, small]) {
+        const both = fresh();
+        emit(`${both} = and i1 ${ok}, ${c}`);
+        ok = both;
+      }
+      if (sp.write) {
+        const w = fresh();
+        emit(`${w} = load i64, ptr @yk_mcache_writable`);
+        const wr = fresh();
+        emit(`${wr} = icmp ne i64 ${w}, 0`);
+        const both = fresh();
+        emit(`${both} = and i1 ${ok}, ${wr}`);
+        ok = both;
+      }
+      const hit = freshLabel("spanhit");
+      const miss = freshLabel("spanmiss");
+      const joined = freshLabel("spanjoin");
+      emit(`br i1 ${ok}, label %${hit}, label %${miss}`);
+      block(hit);
+      const cBytes = fresh();
+      emit(`${cBytes} = load ptr, ptr @yk_mcache_bytes`);
+      const atHit = fresh();
+      emit(`${atHit} = getelementptr i8, ptr ${cBytes}, i64 ${off}`);
+      const hdrHit = fresh();
+      emit(`${hdrHit} = getelementptr i8, ptr ${cBytes}, i64 -16`);
+      emit(`store ptr ${hdrHit}, ptr ${hdrSlot}`);
+      emit(`store i64 ${cBase}, ptr ${baseSlot}`);
+      emit(`br label %${joined}`);
+      block(miss);
+      const atMiss = fresh();
       emit(
-        `${at} = call ptr @yk_span(i64 ${operand(pv)}, i64 ${sp.len}, i32 ${sp.write ? 1 : 0}, ptr ${hdrSlot}, ptr ${baseSlot})`,
+        `${atMiss} = call ptr @yk_span(i64 ${pbits}, i64 ${sp.len}, i32 ${sp.write ? 1 : 0}, ptr ${hdrSlot}, ptr ${baseSlot})`,
       );
+      const missEnd = currentLabel();
+      emit(`br label %${joined}`);
+      block(joined);
+      const at = fresh();
+      emit(`${at} = phi ptr [ ${atHit}, %${hit} ], [ ${atMiss}, %${missEnd} ]`);
       emit(`store ptr ${at}, ptr ${bytesSlot}`);
       frames.set(pv, { bytes: bytesSlot, hdr: hdrSlot, base: baseSlot, len: sp.len });
     }
