@@ -657,6 +657,8 @@ function lowerFunction(
   const rawList = [...(rawParams ?? [])].sort((a, b) => a - b);
   const rawHead =
     rawList.map((k) => `, ptr %rawb${k}, i64 %rawl${k}`).join("") + (recOut ? ", ptr %recout" : "");
+  /** The entry is only the speculation's checks and tail calls (set when it is). */
+  let dispatchOnly = false;
   // A number clone's arguments, in registers too (#1369): each but a raw block's, when there is no
   // rest parameter (a caller with them at hand passes them; the entry its loaded ones).
   const argCount =
@@ -3551,10 +3553,77 @@ function lowerFunction(
         const recv = operand(callee.node.inputs[0] as ValueId);
         const key = keyOf(callee.name);
         if (callee.name === "charCodeAt" && args.length === 1) {
-          // A string's unit, without the method's lookup (#1369).
+          // A string's unit, without the method's lookup (#1369); in hot code, at an integer
+          // index in range, read here.
           m.intrinsics.add("declare i64 @yk_char_code_at(i64, i64, i64)");
+          const slow = (): string => {
+            const r = fresh();
+            emit(`${r} = call i64 @yk_char_code_at(i64 ${recv}, i64 ${key}, i64 ${args[0]})`);
+            return r;
+          };
+          if (compact && !inLoop(n)) {
+            set(out, slow());
+            return;
+          }
+          const idx = args[0] as string;
+          const slowL = freshLabel("ccslow");
+          const join = freshLabel("cc");
+          const tag = fresh();
+          emit(`${tag} = lshr i64 ${recv}, 48`);
+          const isS = fresh();
+          emit(`${isS} = icmp eq i64 ${tag}, 65530`);
+          const isN = fresh();
+          emit(`${isN} = icmp ult i64 ${idx}, ${NUMBER_LIMIT}`);
+          const both = fresh();
+          emit(`${both} = and i1 ${isS}, ${isN}`);
+          const l1 = freshLabel("ccstr");
+          emit(`br i1 ${both}, label %${l1}, label %${slowL}`);
+          block(l1);
+          const d = fresh();
+          emit(`${d} = bitcast i64 ${idx} to double`);
+          const lo = fresh();
+          emit(`${lo} = fcmp oge double ${d}, 0.0`);
+          const hi = fresh();
+          emit(`${hi} = fcmp olt double ${d}, 4294967296.0`);
+          const inR = fresh();
+          emit(`${inR} = and i1 ${lo}, ${hi}`);
+          const l2 = freshLabel("ccrange");
+          emit(`br i1 ${inR}, label %${l2}, label %${slowL}`);
+          block(l2);
+          const i = fresh();
+          emit(`${i} = fptoui double ${d} to i32`);
+          const back = fresh();
+          emit(`${back} = uitofp i32 ${i} to double`);
+          const whole = fresh();
+          emit(`${whole} = fcmp oeq double ${back}, ${d}`);
+          const sp = unboxPtr(recv);
+          const len = fresh();
+          emit(`${len} = load i32, ptr ${sp}`);
+          const inL = fresh();
+          emit(`${inL} = icmp ult i32 ${i}, ${len}`);
+          const ok = fresh();
+          emit(`${ok} = and i1 ${whole}, ${inL}`);
+          const l3 = freshLabel("cchit");
+          emit(`br i1 ${ok}, label %${l3}, label %${slowL}`);
+          block(l3);
+          const units = fresh();
+          emit(`${units} = getelementptr i8, ptr ${sp}, i32 4`);
+          const up = fresh();
+          emit(`${up} = getelementptr i16, ptr ${units}, i32 ${i}`);
+          const u = fresh();
+          emit(`${u} = load i16, ptr ${up}`);
+          const f = fresh();
+          emit(`${f} = uitofp i16 ${u} to double`);
+          const b = fresh();
+          emit(`${b} = bitcast double ${f} to i64`);
+          emit(`br label %${join}`);
+          block(slowL);
+          const sv = slow();
+          const slowEnd = currentLabel();
+          emit(`br label %${join}`);
+          block(join);
           const r = fresh();
-          emit(`${r} = call i64 @yk_char_code_at(i64 ${recv}, i64 ${key}, i64 ${args[0]})`);
+          emit(`${r} = phi i64 [ ${b}, %${l3} ], [ ${sv}, %${slowEnd} ]`);
           set(out, r);
           return;
         }
@@ -4335,6 +4404,9 @@ function lowerFunction(
         `${r2} = tail call i64 @${gen}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead})`,
       );
       emit(`ret i64 ${r2}`);
+      // Only checks and two tail calls: a small function's is inlined where it is called directly,
+      // so its clone's work meets its caller's (#1369).
+      dispatchOnly = g.nodes.length <= SMALL_CLONE;
       finish();
       return;
     }
@@ -4616,7 +4688,7 @@ function lowerFunction(
     const head =
       closure === undefined
         ? `define i64 @${name}(${params.map((_, i) => `i64 %p${i}`).join(", ")}) {`
-        : `define internal i64 @${name}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead}${numberParams !== undefined && numberParams.size > 0 ? (regList ?? []).map((k) => `, i64 %n${k}`).join("") : ""})${numberParams?.size === 0 ? " noinline" : numberParams !== undefined && g.nodes.length <= SMALL_CLONE ? " alwaysinline" : ""} {`;
+        : `define internal i64 @${name}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead}${numberParams !== undefined && numberParams.size > 0 ? (regList ?? []).map((k) => `, i64 %n${k}`).join("") : ""})${numberParams?.size === 0 ? " noinline" : (numberParams !== undefined && g.nodes.length <= SMALL_CLONE) || dispatchOnly ? " alwaysinline" : ""} {`;
     m.functions.push(
       [
         head,
