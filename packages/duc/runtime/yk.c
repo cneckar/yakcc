@@ -8294,6 +8294,16 @@ yk yk_spread_into(yk obj, yk src) {
   return obj;
 }
 
+/* {a, b, ...rest} = src: rest is src's own enumerable properties but the keys taken (CopyDataProperties
+   with excluded names); src null or undefined is a TypeError, as destructuring it is. */
+yk yk_object_rest(yk src, uint64_t n, const yk *taken) {
+  if (is_nullish(src)) type_error("Cannot destructure 'undefined' or 'null'.");
+  yk obj = yk_object_of(0, NULL, NULL);
+  yk_spread_into(obj, src);
+  for (uint64_t i = 0; i < n; i++) yk_delete(obj, taken[i]);
+  return obj;
+}
+
 /* key in obj: an object's own property, an array's index or length. */
 yk yk_in(yk key, yk obj) {
   if (is_object(obj)) {

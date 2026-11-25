@@ -25,7 +25,7 @@
  * iteration, async and generator functions, the approximated `Math` and `**`.
  */
 import { LlvmEmitError, type LlvmModule } from "./emit-llvm.js";
-import { DECLARES } from "./lift.js";
+import { COMPLETES, DECLARES } from "./lift.js";
 import { bodyPathOf, joinOwners, sidePath } from "./line-form.js";
 import { atomGraph, atomNames, mathOperation, operationReference } from "./operations.js";
 import { ecmaScriptView } from "./ops.js";
@@ -474,6 +474,8 @@ interface ModuleScope {
    * function its closure's code is, which a call may call directly (#1369). Undefined otherwise.
    */
   readonly direct?: (name: string) => string | undefined;
+  /** Whether the module binds a name (it shadows a platform global of that name). */
+  readonly binds?: (name: string) => boolean;
   /** For a direct callee: the arguments its `.raw` variant takes as a block's bytes and length. */
   readonly rawArgs?: (name: string) => ReadonlySet<number> | undefined;
   /** For a direct callee: how many parameters it has. */
@@ -597,6 +599,9 @@ function rawArgUses(source: DucGraph): Map<number, { deps: [string, number][] }>
   return out;
 }
 
+/** A number clone this small (its graph's nodes) is a hint to inline into its callers (#1369). */
+const SMALL_CLONE = 200;
+
 function lowerFunction(
   m: ModuleBuilder,
   source: DucGraph,
@@ -634,13 +639,19 @@ function lowerFunction(
   if (scope?.outs === undefined && source.obs.length > 1)
     throw new LlvmEmitError("a native function has at most one result");
   // A statement's one result names its declared values (#1292): they go to the module's bindings.
-  const declaredValues =
+  // A statement that can return (a CommonJS module's top-level return, #1297) completes instead:
+  // whether it returned, its value, then its declared values.
+  const resultNode =
     scope?.outs === undefined
       ? undefined
-      : source.nodes.find(
-          (n) =>
-            n.outputs.includes(source.obs[0] as ValueId) && (n.label ?? "").startsWith(DECLARES),
-        )?.inputs;
+      : source.nodes.find((n) => n.outputs.includes(source.obs[0] as ValueId));
+  const completes = (resultNode?.label ?? "").startsWith(COMPLETES) ? resultNode : undefined;
+  const declaredValues =
+    completes !== undefined
+      ? completes.inputs.slice(2)
+      : (resultNode?.label ?? "").startsWith(DECLARES)
+        ? resultNode?.inputs
+        : undefined;
   if (scope?.outs !== undefined && declaredValues?.length !== scope.outs.length)
     throw new LlvmEmitError("a statement's declared values and the names it declares differ");
   const { graph: g, after } = loweringView(source);
@@ -681,6 +692,12 @@ function lowerFunction(
     else if (LEAVES[sym] !== undefined) leafValue.set(n.outputs[0] as ValueId, sym);
     else if (n.diamond?.reason === "platform-primitive" && sym === "Math")
       mathValue.add(n.outputs[0] as ValueId);
+    else if (
+      scope?.binds?.(sym) === true &&
+      (n.diamond?.reason === "platform-primitive" || n.diamond?.reason === "free-identifier")
+    )
+      // The module's own binding of the name: it shadows the platform's global.
+      freeValue.set(n.outputs[0] as ValueId, sym);
     else if (
       GLOBALS.has(sym) &&
       (n.diamond?.reason === "platform-primitive" || sym.startsWith("__yakcc"))
@@ -2522,7 +2539,8 @@ function lowerFunction(
       );
       return;
     }
-    if (lbl.startsWith(DECLARES)) return; // a statement's result: stored by the statement's end
+    // A statement's result: stored by the statement's end.
+    if (lbl.startsWith(DECLARES) || lbl.startsWith(COMPLETES)) return;
     if (lbl === "VoidExpression") {
       set(out, UNDEFINED);
       return;
@@ -2697,6 +2715,60 @@ function lowerFunction(
       if (scope?.write(sym, value, emit) !== true)
         throw new LlvmEmitError(`"${sym}" is not a binding of the module`);
       set(out, value);
+      return;
+    }
+    if (lbl.startsWith("ObjectRest:") && ins.length === 1) {
+      // {a, b, ...rest} = o: o's own enumerable properties but those taken (#1330).
+      const taken = JSON.parse(lbl.slice("ObjectRest:".length)) as string[];
+      m.intrinsics.add("declare i64 @yk_object_rest(i64, i64, ptr)");
+      const r = fresh();
+      emit(
+        `${r} = call i64 @yk_object_rest(i64 ${operand(ins[0] as ValueId)}, i64 ${taken.length}, ptr ${list(taken.map(str))})`,
+      );
+      set(out, r);
+      return;
+    }
+    if (lbl.startsWith("tagged:") && ins.length >= 1) {
+      // A tagged template (ECMA-262 13.2.8.4): the site's template object, made once (its cooked
+      // strings, undefined where an escape is invalid, and their raw text as `raw`); then the tag
+      // called with it and the substitutions, a member's object its receiver.
+      const parts = JSON.parse(lbl.slice("tagged:".length)) as [string | null, string][];
+      const memo = `@ytmpl${m.globals.length}`;
+      m.globals.push(`${memo} = internal global i64 0`);
+      const known = fresh();
+      emit(`${known} = load i64, ptr ${memo}`);
+      const has = fresh();
+      emit(`${has} = icmp ne i64 ${known}, 0`);
+      const first = freshLabel("tfirst");
+      const join = freshLabel("tjoin");
+      const before = currentLabel();
+      emit(`br i1 ${has}, label %${join}, label %${first}`);
+      block(first);
+      const cooked = call(
+        "yk_array_of",
+        `i64 ${parts.length}, ptr ${list(parts.map(([c]) => (c === null ? UNDEFINED : str(c))))}`,
+      );
+      const raw = call(
+        "yk_array_of",
+        `i64 ${parts.length}, ptr ${list(parts.map(([, r]) => str(r)))}`,
+      );
+      call("yk_set", `i64 ${cooked}, i64 ${str("raw")}, i64 ${raw}`);
+      emit(`store i64 ${cooked}, ptr ${memo}`);
+      const firstEnd = currentLabel();
+      emit(`br label %${join}`);
+      block(join);
+      const tmpl = fresh();
+      emit(`${tmpl} = phi i64 [ ${known}, %${before} ], [ ${cooked}, %${firstEnd} ]`);
+      const member = memberOf(ins[0] as ValueId);
+      const recv = member !== undefined ? operand(member.node.inputs[0] as ValueId) : UNDEFINED;
+      const args = [tmpl, ...ins.slice(1).map((v) => operand(v as ValueId))];
+      set(
+        out,
+        call(
+          "yk_call",
+          `i64 ${operand(ins[0] as ValueId)}, i64 ${recv}, i64 ${args.length}, ptr ${list(args)}`,
+        ),
+      );
       return;
     }
     if (lbl === "NewExpression") {
@@ -3881,7 +3953,14 @@ function lowerFunction(
         `store i64 ${operand((declaredValues as readonly ValueId[])[k] as ValueId)}, ptr ${global}`,
       ),
     );
-    emit(`ret i64 ${UNDEFINED}`);
+    if (completes !== undefined) {
+      // Returned: true, and the module's evaluation ends here.
+      const r = fresh();
+      emit(
+        `${r} = select i1 ${truthy(completes.inputs[0] as ValueId)}, i64 ${TRUE}, i64 ${UNDEFINED}`,
+      );
+      emit(`ret i64 ${r}`);
+    } else emit(`ret i64 ${UNDEFINED}`);
   } else if (g.obs.length === 0) emit(`ret i64 ${UNDEFINED}`);
   else emit(`ret i64 ${operand(g.obs[0] as ValueId)}`);
 
@@ -3890,7 +3969,7 @@ function lowerFunction(
     const head =
       closure === undefined
         ? `define i64 @${name}(${params.map((_, i) => `i64 %p${i}`).join(", ")}) {`
-        : `define internal i64 @${name}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead}${numberParams !== undefined && numberParams.size > 0 ? (regList ?? []).map((k) => `, i64 %n${k}`).join("") : ""})${numberParams?.size === 0 ? " noinline" : ""} {`;
+        : `define internal i64 @${name}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead}${numberParams !== undefined && numberParams.size > 0 ? (regList ?? []).map((k) => `, i64 %n${k}`).join("") : ""})${numberParams?.size === 0 ? " noinline" : numberParams !== undefined && g.nodes.length <= SMALL_CLONE ? " alwaysinline" : ""} {`;
     m.functions.push(
       [
         head,
@@ -4209,6 +4288,7 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         return true;
       },
       direct: (name) => directOf(i, name),
+      binds: (name) => names.has(name) || mod.esm?.imports[name] !== undefined,
       arity: (name) => {
         const fn = directOf(i, name);
         return fn === undefined ? undefined : arities.get(fn);
@@ -4254,7 +4334,14 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         undefined,
         scope(st.declares.map((d) => g(i, `b.${d}`))),
       );
-      init.push(`  call i64 @${fn}()`);
+      const result = st.graph.nodes.find((n) => n.outputs.includes(st.graph.obs[0] as ValueId));
+      if ((result?.label ?? "").startsWith(COMPLETES)) {
+        // A top-level return: the module's evaluation ends with it.
+        init.push(`  %ret${k} = call i64 @${fn}()`);
+        init.push(`  %returned${k} = icmp eq i64 %ret${k}, ${TRUE}`);
+        init.push(`  br i1 %returned${k}, label %done, label %after${k}`);
+        init.push(`after${k}:`);
+      } else init.push(`  call i64 @${fn}()`);
     });
     // require: each specifier the record names, to its module's initializer.
     const req = [
