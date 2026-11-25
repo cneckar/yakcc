@@ -1125,6 +1125,32 @@ function lowerFunction(
       if (us.length > 0 && us.every((u) => numericUse(u) || rawStoreUse(u, o))) rawNumbers.add(o);
     }
   }
+  /**
+   * A bound on a number's magnitude the graph proves (#1369): an int32 or uint32 range, a finite
+   * literal, and + - * and negation of bounded numbers (each of which is a number when its inputs
+   * are). Undefined when there is none.
+   */
+  const magnitude = (v0: ValueId, depth = 0): number | undefined => {
+    const v = resolve(v0);
+    const r = numRange.get(v);
+    if (r !== undefined) return r === "i32" ? 2 ** 31 : 2 ** 32;
+    const lit = literalNumber(v);
+    if (lit !== undefined) return Number.isFinite(lit) ? Math.abs(lit) : undefined;
+    const p = producer.get(v);
+    if (depth > 12 || p?.kind !== "op") return undefined;
+    if (p.inputs.length === 1 && p.label === "-")
+      return magnitude(p.inputs[0] as ValueId, depth + 1);
+    if (p.inputs.length !== 2 || !["+", "-", "*"].includes(p.label ?? "")) return undefined;
+    const a = magnitude(p.inputs[0] as ValueId, depth + 1);
+    const b = a === undefined ? undefined : magnitude(p.inputs[1] as ValueId, depth + 1);
+    if (a === undefined || b === undefined) return undefined;
+    return p.label === "*" ? a * b : a + b;
+  };
+  /** Whether a number is proven below 2^63 in magnitude: its int64 conversion is ToInt32's modulo. */
+  const boundedInt64 = (v: ValueId): boolean => {
+    const b = magnitude(v);
+    return b !== undefined && b < 9.2e18;
+  };
   /** A raw double's bits made canonical (a NaN as the one NaN boxed values use). */
   const canonicalBits = (bits: string): string => {
     const d = fresh();
@@ -1721,6 +1747,8 @@ function lowerFunction(
     },
     /** A load whose every use reads the double's bits (rawNumbers): a NaN needs no canonical form. */
     raw = false,
+    /** A store's value is proven below 2^63 in magnitude: its ToInt32 needs no check. */
+    bounded = false,
   ): string => {
     for (const d of MEM_CACHE_DECLS) m.intrinsics.add(d);
     m.intrinsics.add("declare double @llvm.fabs.f64(double)");
@@ -1745,7 +1773,7 @@ function lowerFunction(
       if (mem.store) {
         xd = fresh();
         emit(`${xd} = bitcast i64 ${value} to double`);
-        if (mem.kind === "u") {
+        if (mem.kind === "u" && !bounded) {
           const small = fresh();
           emit(`${small} = and i1 ${ok}, ${smallDouble(xd)}`);
           ok = small;
@@ -1793,7 +1821,7 @@ function lowerFunction(
       if (mem.store) {
         xd = fresh();
         emit(`${xd} = bitcast i64 ${value} to double`);
-        if (mem.kind === "u") {
+        if (mem.kind === "u" && !bounded) {
           // ToInt32 of the value inline needs it below 2^63 in magnitude.
           const small = fresh();
           emit(`${small} = and i1 ${ok}, ${smallDouble(xd)}`);
@@ -2858,9 +2886,16 @@ function lowerFunction(
           const xd = fresh();
           emit(`${xd} = bitcast i64 ${num} to double`);
           if (mem.kind === "u") {
-            m.intrinsics.add("declare i32 @yk_double_to_uint32(double)");
             const w = fresh();
-            emit(`${w} = call i32 @yk_double_to_uint32(double ${xd})`);
+            if (boundedInt64(ins[2] as ValueId)) {
+              // Below 2^63 in magnitude: its int64's low bits.
+              const w64 = fresh();
+              emit(`${w64} = fptosi double ${xd} to i64`);
+              emit(`${w} = trunc i64 ${w64} to i32`);
+            } else {
+              m.intrinsics.add("declare i32 @yk_double_to_uint32(double)");
+              emit(`${w} = call i32 @yk_double_to_uint32(double ${xd})`);
+            }
             let t = w;
             if (mem.ty !== "i32") {
               t = fresh();
@@ -2909,6 +2944,7 @@ function lowerFunction(
             ins.slice(1).map((v) => allNumbers([v as ValueId])),
             frameAccess(ins[1] as ValueId, mem.size),
             !mem.store && rawNumbers.has(resolve(out as ValueId)),
+            mem.store && mem.kind === "u" && boundedInt64(ins[2] as ValueId),
           ),
         );
         return;
@@ -3167,8 +3203,8 @@ function lowerFunction(
         return;
       }
       if (bitwise !== undefined) {
-        const unrangedA = !numRange.has(resolve(ins[0] as ValueId));
-        const unrangedB = !numRange.has(resolve(ins[1] as ValueId));
+        const unrangedA = !boundedInt64(ins[0] as ValueId);
+        const unrangedB = !boundedInt64(ins[1] as ValueId);
         // A raw operand (rawNumbers) reaches the runtime's operation canonical.
         const canon = (v: ValueId, x: string): string =>
           rawNumbers.has(resolve(v)) ? canonicalBits(x) : x;
@@ -3316,9 +3352,7 @@ function lowerFunction(
                 UNARY[lbl] as string,
                 `i64 ${rawNumbers.has(resolve(ins[0] as ValueId)) ? canonicalBits(x) : x}`,
               ),
-            numRange.has(resolve(ins[0] as ValueId))
-              ? undefined
-              : ([d]) => smallDouble(d as string),
+            boundedInt64(ins[0] as ValueId) ? undefined : ([d]) => smallDouble(d as string),
             allNumbers([ins[0] as ValueId]),
           ),
         );
