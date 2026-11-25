@@ -28,7 +28,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <ucontext.h>
+#include <unistd.h>
+#if defined(__linux__)
+#include <link.h>
+#include <pthread.h>
+#include <sys/mman.h>
+#define YK_GC 1
+#else
+#define YK_GC 0
+#endif
 
 typedef uint64_t yk;
 
@@ -133,7 +143,17 @@ yk yk_bool(int b) { return b ? YK_TRUE : YK_FALSE; }
 
 /* Memory the runtime never frees (there is no collector yet): bumped out of zeroed chunks, 16-byte
    aligned. A large request has a chunk of its own. */
-static void *alloc(size_t n) {
+/* --- The heap and its collector (#1361 P1) ---------------------------------------------------
+ *
+ * Every value the runtime makes is allocated here, zeroed. On Linux it is a conservative mark-sweep
+ * collector: blocks of size classes in 64 KiB pages of one reserved range (a block of more than
+ * half a page takes whole pages); the roots are the native stack (and a suspended main stack while
+ * a coroutine runs), the registers, and the writable segments of the program; each marked block is
+ * scanned whole. A word is a pointer when it is an address in the heap, or a boxed value (a tag
+ * at or above T_STRING) whose payload is one; any address inside a block keeps it (one past its end
+ * too: a block is a byte longer than asked). Nothing moves. Elsewhere, memory is never freed.
+ */
+static void *bump(size_t n) {
   static uint8_t *chunk = NULL;
   static size_t left = 0;
   n = (n + 15) & ~(size_t)15;
@@ -152,11 +172,317 @@ static void *alloc(size_t n) {
   left -= n;
   return p;
 }
-/* Memory that is freed (scratch buffers, coroutine stacks): the C library's. */
+#if YK_GC
+#define GC_PAGE_SHIFT 16
+#define GC_PAGE ((size_t)1 << GC_PAGE_SHIFT)
+#define GC_LARGE (GC_PAGE / 2)
+static const uint32_t gc_sizes[] = {16,   32,   48,   64,   80,   96,    112,   128,   160,  192,
+                                    224,  256,  320,  384,  448,  512,   640,   768,   896,  1024,
+                                    1280, 1536, 1792, 2048, 2560, 3072,  3584,  4096,  5120, 6144,
+                                    7168, 8192, 10240, 12288, 16384, 20480, 24576, 32768};
+#define GC_NCLASS (sizeof gc_sizes / sizeof gc_sizes[0])
+typedef struct {
+  uint8_t kind; /* 0 free, 1 a page of small blocks, 2 a large block's first page, 3 its others */
+  uint8_t cls;
+  uint32_t n;   /* small: its blocks; large, first: its pages; large, other: back to the first */
+  uint64_t used[64], mark[64];
+} gc_page;
+typedef struct {
+  size_t start, len;
+} gc_run;
+static uint8_t *gc_heap = NULL;
+static gc_page *gc_pages = NULL;
+static size_t gc_npages = 0, gc_top = 0;
+static gc_run *gc_runs = NULL;
+static size_t gc_nruns = 0, gc_capruns = 0;
+static void *gc_free[GC_NCLASS];
+static size_t gc_since = 0, gc_threshold = (size_t)16 << 20, gc_floor = (size_t)16 << 20;
+static int gc_state = 0; /* 0 not yet set up, 1 collecting, 2 allocating only, 3 never (no heap) */
+static uintptr_t gc_stack_top = 0;
+/* While a coroutine runs, where the main stack was left (its frames above are live). */
+static uintptr_t gc_main_sp = 0;
+static int gc_in_coroutine(void);
+static void gc_report(void);
+static uint8_t gc_class_of[GC_LARGE / 16 + 1];
+
+static void gc_setup(void) {
+  gc_state = 3;
+  size_t sizes[] = {sizeof(void *) == 8 ? (size_t)1 << 36 : (size_t)1 << 30, (size_t)1 << 32,
+                    (size_t)1 << 30, (size_t)1 << 28};
+  for (int i = 0; i < 4; i++) {
+    size_t sz = sizes[i];
+    if (sizeof(void *) == 4 && sz > ((size_t)1 << 30)) continue;
+    void *h = mmap(NULL, sz, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (h == MAP_FAILED) continue;
+    size_t np = sz >> GC_PAGE_SHIFT;
+    void *d = mmap(NULL, np * sizeof(gc_page), PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (d == MAP_FAILED) {
+      munmap(h, sz);
+      continue;
+    }
+    gc_heap = h;
+    gc_pages = d;
+    gc_npages = np;
+    gc_state = 2;
+    break;
+  }
+  for (uint32_t c = 0, sz = 16; sz <= GC_LARGE; sz += 16) {
+    while (gc_sizes[c] < sz) c++;
+    gc_class_of[sz / 16] = (uint8_t)c;
+  }
+  /* YK_GC_STRESS: collect every 64 KiB, so a value the roots miss is found by the tests. */
+  const char *stress = getenv("YK_GC_STRESS");
+  if (stress != NULL && stress[0] == '1') gc_threshold = gc_floor = (size_t)1 << 16;
+  if (getenv("YK_GC_STATS") != NULL) atexit(gc_report);
+  pthread_attr_t at;
+  void *addr;
+  size_t size;
+  if (gc_state == 2 && pthread_getattr_np(pthread_self(), &at) == 0) {
+    if (pthread_attr_getstack(&at, &addr, &size) == 0) {
+      gc_stack_top = (uintptr_t)addr + size;
+      gc_state = 1;
+    }
+    pthread_attr_destroy(&at);
+  }
+}
+
+/* k contiguous pages: a freed run that fits, else new ones. *fresh: never used (zero). */
+static size_t gc_get_pages(size_t k, int *fresh) {
+  for (size_t i = 0; i < gc_nruns; i++)
+    if (gc_runs[i].len >= k) {
+      size_t at = gc_runs[i].start;
+      gc_runs[i].start += k;
+      gc_runs[i].len -= k;
+      if (gc_runs[i].len == 0) gc_runs[i] = gc_runs[--gc_nruns];
+      *fresh = 0;
+      return at;
+    }
+  if (gc_top + k > gc_npages) {
+    fputs("out of memory\n", stderr);
+    exit(71);
+  }
+  size_t at = gc_top;
+  gc_top += k;
+  *fresh = 1;
+  return at;
+}
+static void gc_put_pages(size_t start, size_t k) {
+  for (size_t i = 0; i < k; i++) gc_pages[start + i].kind = 0;
+  if (gc_nruns == gc_capruns) {
+    gc_capruns = gc_capruns == 0 ? 64 : gc_capruns * 2;
+    gc_runs = realloc(gc_runs, gc_capruns * sizeof(gc_run));
+    if (gc_runs == NULL) abort();
+  }
+  gc_runs[gc_nruns++] = (gc_run){start, k};
+}
+static void gc_collect(void);
+static void gc_report(void);
+
+static void *alloc(size_t n) {
+  if (gc_state == 0) gc_setup();
+  if (gc_state == 3) return bump(n);
+  if (gc_state == 1 && gc_since >= gc_threshold) gc_collect();
+  n += 1; /* one past the end is inside */
+  if (n > GC_LARGE) {
+    size_t k = (n + GC_PAGE - 1) >> GC_PAGE_SHIFT;
+    int fresh;
+    size_t at = gc_get_pages(k, &fresh);
+    gc_page *g = &gc_pages[at];
+    g->kind = 2;
+    g->n = (uint32_t)k;
+    g->used[0] = 1;
+    for (size_t i = 1; i < k; i++) {
+      gc_pages[at + i].kind = 3;
+      gc_pages[at + i].n = (uint32_t)i;
+    }
+    uint8_t *p = gc_heap + (at << GC_PAGE_SHIFT);
+    if (!fresh) memset(p, 0, k << GC_PAGE_SHIFT);
+    gc_since += k << GC_PAGE_SHIFT;
+    return p;
+  }
+  uint32_t c = gc_class_of[(n + 15) / 16];
+  uint32_t size = gc_sizes[c];
+  void *p = gc_free[c];
+  if (p == NULL) {
+    int fresh;
+    size_t at = gc_get_pages(1, &fresh);
+    gc_page *g = &gc_pages[at];
+    g->kind = 1;
+    g->cls = (uint8_t)c;
+    g->n = (uint32_t)(GC_PAGE / size);
+    memset(g->used, 0, sizeof g->used);
+    uint8_t *base = gc_heap + (at << GC_PAGE_SHIFT);
+    for (uint32_t b = g->n; b-- > 0;) {
+      *(void **)(base + (size_t)b * size) = gc_free[c];
+      gc_free[c] = base + (size_t)b * size;
+    }
+    p = gc_free[c];
+  }
+  gc_free[c] = *(void **)p;
+  size_t off = (uint8_t *)p - gc_heap;
+  gc_page *g = &gc_pages[off >> GC_PAGE_SHIFT];
+  uint32_t b = (uint32_t)((off & (GC_PAGE - 1)) / size);
+  g->used[b >> 6] |= (uint64_t)1 << (b & 63);
+  memset(p, 0, size);
+  gc_since += size;
+  return p;
+}
+
+/* Marking: an explicit stack of blocks to scan. */
+static struct {
+  uint8_t *p;
+  size_t n;
+} *gc_work = NULL;
+static size_t gc_nwork = 0, gc_capwork = 0;
+static void gc_consider(uintptr_t x) {
+  if (x < (uintptr_t)gc_heap || x >= (uintptr_t)gc_heap + (gc_top << GC_PAGE_SHIFT)) return;
+  size_t off = x - (uintptr_t)gc_heap;
+  size_t pi = off >> GC_PAGE_SHIFT;
+  gc_page *g = &gc_pages[pi];
+  uint8_t *p;
+  size_t n;
+  if (g->kind == 3) {
+    pi -= g->n;
+    g = &gc_pages[pi];
+  }
+  if (g->kind == 2) {
+    if (g->mark[0] & 1) return;
+    g->mark[0] |= 1;
+    p = gc_heap + (pi << GC_PAGE_SHIFT);
+    n = (size_t)g->n << GC_PAGE_SHIFT;
+  } else if (g->kind == 1) {
+    uint32_t size = gc_sizes[g->cls];
+    uint32_t b = (uint32_t)((off & (GC_PAGE - 1)) / size);
+    if (b >= g->n) return;
+    uint64_t bit = (uint64_t)1 << (b & 63);
+    if (!(g->used[b >> 6] & bit) || (g->mark[b >> 6] & bit)) return;
+    g->mark[b >> 6] |= bit;
+    p = gc_heap + (pi << GC_PAGE_SHIFT) + (size_t)b * size;
+    n = size;
+  } else
+    return;
+  if (gc_nwork == gc_capwork) {
+    gc_capwork = gc_capwork == 0 ? 4096 : gc_capwork * 2;
+    gc_work = realloc(gc_work, gc_capwork * sizeof *gc_work);
+    if (gc_work == NULL) abort();
+  }
+  gc_work[gc_nwork].p = p;
+  gc_work[gc_nwork++].n = n;
+}
+static void gc_scan(const void *lo, const void *hi) {
+  uintptr_t a = ((uintptr_t)lo + sizeof(uintptr_t) - 1) & ~(uintptr_t)(sizeof(uintptr_t) - 1);
+  for (const uintptr_t *w = (const uintptr_t *)a; (const void *)(w + 1) <= hi; w++) {
+    uintptr_t x = *w;
+#if UINTPTR_MAX > 0xFFFFFFFFu
+    uint64_t top = (uint64_t)x >> 48;
+    if (top >= 0xFFFA) x &= 0x0000FFFFFFFFFFFFull;
+    else if (top != 0) continue;
+#endif
+    gc_consider(x);
+  }
+}
+static void gc_drain(void) {
+  while (gc_nwork > 0) {
+    gc_nwork--;
+    uint8_t *p = gc_work[gc_nwork].p;
+    gc_scan(p, p + gc_work[gc_nwork].n);
+  }
+}
+static int gc_segment(struct dl_phdr_info *info, size_t size, void *data) {
+  (void)size;
+  (void)data;
+  for (int i = 0; i < info->dlpi_phnum; i++) {
+    const ElfW(Phdr) *ph = &info->dlpi_phdr[i];
+    if (ph->p_type != PT_LOAD || !(ph->p_flags & PF_W)) continue;
+    uint8_t *lo = (uint8_t *)(info->dlpi_addr + ph->p_vaddr);
+    gc_scan(lo, lo + ph->p_memsz);
+    gc_drain();
+  }
+  return 0;
+}
+static __attribute__((noinline)) void gc_mark_roots(void) {
+  jmp_buf regs; /* the callee-saved registers, on this frame */
+  setjmp(regs);
+  gc_scan(&regs, (uint8_t *)&regs + sizeof regs);
+  uintptr_t sp = (uintptr_t)__builtin_frame_address(0);
+  uintptr_t from = gc_in_coroutine() ? gc_main_sp : sp;
+  if (from != 0 && from < gc_stack_top) gc_scan((void *)from, (void *)gc_stack_top);
+  gc_drain();
+  /* On a coroutine's stack: its block is reached through current_coro (a writable global), but
+     this frame's part of it is scanned here too, so registers spilled below it are seen. */
+  if (gc_in_coroutine()) {
+    uint8_t probe;
+    gc_consider((uintptr_t)&probe);
+    gc_drain();
+  }
+  dl_iterate_phdr(gc_segment, NULL);
+  gc_drain();
+}
+static size_t gc_count = 0, gc_live_last = 0;
+static void gc_report(void) {
+  fprintf(stderr, "yk gc: %zu collections, %zu bytes live after the last, %zu pages in use\n",
+          gc_count, gc_live_last, gc_top);
+}
+static void gc_collect(void) {
+  gc_count++;
+  gc_mark_roots();
+  for (size_t c = 0; c < GC_NCLASS; c++) gc_free[c] = NULL;
+  size_t live = 0;
+  for (size_t pi = 0; pi < gc_top; pi++) {
+    gc_page *g = &gc_pages[pi];
+    if (g->kind == 2) {
+      size_t k = g->n;
+      if (g->mark[0] & 1) {
+        g->mark[0] = 0;
+        live += k << GC_PAGE_SHIFT;
+      } else {
+        g->used[0] = 0;
+        gc_put_pages(pi, k);
+      }
+      pi += k - 1;
+    } else if (g->kind == 1) {
+      uint32_t size = gc_sizes[g->cls];
+      int any = 0;
+      for (int w = 0; w < 64; w++) {
+        g->used[w] &= g->mark[w];
+        g->mark[w] = 0;
+        if (g->used[w]) any = 1;
+      }
+      if (!any) {
+        gc_put_pages(pi, 1);
+        continue;
+      }
+      uint8_t *base = gc_heap + (pi << GC_PAGE_SHIFT);
+      for (uint32_t b = g->n; b-- > 0;) {
+        if (g->used[b >> 6] & ((uint64_t)1 << (b & 63))) {
+          live += size;
+          continue;
+        }
+        *(void **)(base + (size_t)b * size) = gc_free[g->cls];
+        gc_free[g->cls] = base + (size_t)b * size;
+      }
+    }
+  }
+  gc_since = 0;
+  gc_live_last = live;
+  gc_threshold = live > gc_floor ? live : gc_floor;
+}
+#else
+static void *alloc(size_t n) { return bump(n); }
+static uintptr_t gc_main_sp = 0;
+#endif
+/* Memory that is freed and holds no values (scratch buffers): the C library's. */
 static void *scratch(size_t n) {
   void *p = calloc(1, n);
   if (p == NULL) abort();
   return p;
+}
+/* A heap block grown from `old` bytes to `n`: a new block with the old one's bytes. */
+static void *grow(void *p, size_t old, size_t n) {
+  void *q = alloc(n);
+  if (p != NULL && old > 0) memcpy(q, p, old < n ? old : n);
+  return q;
 }
 
 static yk_string *new_string(uint32_t len) {
@@ -227,6 +553,7 @@ static yk call_value(yk f, yk self, uint64_t argc, const yk *argv);
 static yk async_member(void *o, yk key);
 static yk async_call(void *c, yk self, uint64_t argc, const yk *argv);
 static yk generator_new(void *c, yk self, uint64_t argc, const yk *argv);
+static yk agen_new(void *c, yk self, uint64_t argc, const yk *argv);
 static int generator_step(yk gen, yk *out);
 static void type_error(const char *what);
 yk yk_object_of(uint64_t n, const yk *keys, const yk *values);
@@ -722,7 +1049,7 @@ yk yk_get(yk obj, yk key) {
       if (buffer_get(obj, key, &got)) return got;
     }
     if ((o->kind == 1 || o->kind == 2) && key_is(key, "size")) return yk_number(o->entries->len);
-    if (o->kind == 4 || o->kind == 5) {
+    if (o->kind == 4 || o->kind == 5 || o->kind == 9) {
       yk m = async_member(o, key);
       if (m != 0) return m;
     }
@@ -765,7 +1092,7 @@ yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk
   if (is_object(recv)) {
     yk_object *o = (yk_object *)PTR(recv);
     yk f;
-    if (o->kind == 4 || o->kind == 5) {
+    if (o->kind == 4 || o->kind == 5 || o->kind == 9) {
       yk m = async_member(o, key);
       if (m != 0) return call_value(m, recv, argc, argv);
     }
@@ -1075,6 +1402,12 @@ yk yk_define(yk obj, yk key, yk value) {
   own_set((yk_object *)PTR(obj), to_string(key), value);
   return obj;
 }
+/* An object literal's `__proto__: v` (B.3.1): an object becomes the prototype; anything else
+   (null among them) leaves the object as it is; no property is defined. */
+yk yk_object_set_proto(yk obj, yk proto) {
+  if (is_object(proto)) ((yk_object *)PTR(obj))->proto = proto;
+  return obj;
+}
 yk yk_define_accessor(yk obj, yk key, yk getter, yk setter) {
   define_accessor((yk_object *)PTR(obj), to_string(key), getter == YK_UNDEFINED ? 0 : getter,
                   setter == YK_UNDEFINED ? 0 : setter);
@@ -1251,10 +1584,9 @@ yk yk_super_get(void *closure, yk self, const char *name, uint64_t n) {
   return resolve_slot(slot, self);
 }
 static void add_field(yk_closure *c, uint8_t kind, yk key, yk member) {
-  c->field_keys = realloc(c->field_keys, (c->nfields + 1) * sizeof(yk));
-  c->field_inits = realloc(c->field_inits, (c->nfields + 1) * sizeof(yk));
-  c->field_kind = realloc(c->field_kind, (c->nfields + 1) * sizeof(uint8_t));
-  if (c->field_keys == NULL || c->field_inits == NULL || c->field_kind == NULL) abort();
+  c->field_keys = grow(c->field_keys, c->nfields * sizeof(yk), (c->nfields + 1) * sizeof(yk));
+  c->field_inits = grow(c->field_inits, c->nfields * sizeof(yk), (c->nfields + 1) * sizeof(yk));
+  c->field_kind = grow(c->field_kind, c->nfields, c->nfields + 1u);
   c->field_keys[c->nfields] = key;
   c->field_inits[c->nfields] = member;
   c->field_kind[c->nfields++] = kind;
@@ -1268,9 +1600,8 @@ static yk private_key_of(yk_closure *c, yk cls, yk name) {
   yk_string *nm = str(name), *k = new_string(nm->len + (uint32_t)len);
   memcpy(k->units, nm->units, (size_t)nm->len * 2);
   for (int j = 0; j < len; j++) k->units[nm->len + (uint32_t)j] = (uint16_t)suffix[j];
-  c->priv_names = realloc(c->priv_names, (c->npriv + 1) * sizeof(yk));
-  c->priv_keys = realloc(c->priv_keys, (c->npriv + 1) * sizeof(yk));
-  if (c->priv_names == NULL || c->priv_keys == NULL) abort();
+  c->priv_names = grow(c->priv_names, c->npriv * sizeof(yk), (c->npriv + 1) * sizeof(yk));
+  c->priv_keys = grow(c->priv_keys, c->npriv * sizeof(yk), (c->npriv + 1) * sizeof(yk));
   c->priv_names[c->npriv] = name;
   c->priv_keys[c->npriv] = string_of(k);
   return c->priv_keys[c->npriv++];
@@ -1493,7 +1824,7 @@ static int canonical_index(yk_string *s, uint32_t *out) {
 static yk_array *ordered_keys(yk_object *o) {
   yk_array *r = new_array(o->len);
   uint32_t *idx = scratch((size_t)o->len * sizeof(uint32_t) + 4);
-  yk *ik = scratch((size_t)o->len * sizeof(yk) + 8);
+  yk *ik = alloc((size_t)o->len * sizeof(yk) + 8);
   uint32_t n = 0;
   for (uint32_t i = 0; i < o->len; i++) {
     uint32_t k;
@@ -1510,7 +1841,6 @@ static yk_array *ordered_keys(yk_object *o) {
     if (!canonical_index(str(o->keys[i]), &k)) push(r, o->keys[i]);
   }
   free(idx);
-  free(ik);
   return r;
 }
 
@@ -1522,7 +1852,11 @@ typedef struct {
   uint32_t i;
   yk_array *keys; /* for…in: the keys, taken when the loop starts */
   yk gen;         /* for…of over a generator: the generator, or 0 */
+  int32_t awaits; /* for await…of: each next() result (an async generator's) or element awaited */
+  yk agen;        /* for await…of over an async generator: it, or 0 */
 } yk_iter;
+static yk agen_request(yk self, int mode, yk value);
+yk yk_await(yk v);
 
 yk yk_iter_new(yk v, int32_t keys) {
   yk_iter *it = alloc(sizeof(yk_iter));
@@ -1530,6 +1864,16 @@ yk yk_iter_new(yk v, int32_t keys) {
   it->src = v;
   it->i = 0;
   it->keys = NULL;
+  if (keys == 2) {
+    /* for await…of: an async generator is drawn one awaited next() at a time; anything else is
+       iterated as for…of, each element awaited (CreateAsyncFromSyncIterator). */
+    it->awaits = 1;
+    if (is_object(v) && ((yk_object *)PTR(v))->kind == 9) {
+      it->agen = v;
+      return BOX(T_INTERNAL, it);
+    }
+    keys = 0;
+  }
   if (keys) {
     if (is_object(v))
       it->keys = ordered_keys((yk_object *)PTR(v));
@@ -1547,8 +1891,20 @@ yk yk_iter_new(yk v, int32_t keys) {
   return BOX(T_INTERNAL, it);
 }
 
+static int iter_step(yk_iter *it, yk *out);
 int yk_iter_next(yk itv, yk *out) {
   yk_iter *it = (yk_iter *)PTR(itv);
+  if (it->agen != 0) {
+    yk r = yk_await(agen_request(it->agen, 0, YK_UNDEFINED));
+    if (yk_truthy(yk_get(r, ascii("done")))) return 0;
+    *out = yk_get(r, ascii("value"));
+    return 1;
+  }
+  if (!iter_step(it, out)) return 0;
+  if (it->awaits) *out = yk_await(*out);
+  return 1;
+}
+static int iter_step(yk_iter *it, yk *out) {
   if (it->gen != 0) return generator_step(it->gen, out);
   if (it->keys != NULL) {
     if (it->i >= it->keys->len) return 0;
@@ -1592,6 +1948,11 @@ yk yk_closure_new(yk_code code, int32_t has_this, uint64_t n, const yk *captures
   return BOX(T_CLOSURE, c);
 }
 yk yk_closure_self(void *closure) { return BOX(T_CLOSURE, closure); }
+/* A function's closure with no captures, made once into *slot (an atom's, #1362). */
+yk yk_closure_once(yk *slot, yk_code code) {
+  if (*slot == 0) *slot = yk_closure_new(code, 0, 0, NULL);
+  return *slot;
+}
 yk yk_capture(void *closure, uint64_t i) { return ((yk_closure *)closure)->captures[i]; }
 yk yk_arg(uint64_t argc, const yk *argv, uint64_t i) { return i < argc ? argv[i] : YK_UNDEFINED; }
 /* A rest parameter (...xs): the arguments from i on, as an array. */
@@ -1603,6 +1964,7 @@ static yk call_value(yk f, yk self, uint64_t argc, const yk *argv) {
   if (c->is_class) type_error("Class constructor cannot be invoked without 'new'");
   if (c->mode == 1) return async_call(c, self, argc, argv);
   if (c->mode == 2) return generator_new(c, self, argc, argv);
+  if (c->mode == 3) return agen_new(c, self, argc, argv);
   return c->code(c, c->has_this ? self : YK_UNDEFINED, argc, argv);
 }
 yk yk_call(yk f, yk self, uint64_t argc, const yk *argv) { return call_value(f, self, argc, argv); }
@@ -1656,9 +2018,8 @@ static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv,
   }
   if (key_is(key, "sort")) {
     if (f != YK_UNDEFINED && !is_closure(f)) type_error("the comparator is not a function");
-    yk *tmp = scratch((size_t)(a->len + 1) * sizeof(yk));
+    yk *tmp = alloc((size_t)(a->len + 1) * sizeof(yk)); /* values: the collector's, not freed */
     merge_sort(a->items, tmp, a->len, f);
-    free(tmp);
     return *out = recv, 1;
   }
   int map = key_is(key, "map"), each = key_is(key, "forEach"), filter = key_is(key, "filter"),
@@ -2193,6 +2554,36 @@ static int numeric_pair(yk *a, yk *b) {
   int x = is_bigint(*a), y = is_bigint(*b);
   if (x && y) return 1;
   if (x || y) mix_error();
+  return 0;
+}
+
+/* a ** b's first steps (ECMA-262 13.6): ToNumeric of each, once. Two BigInts: the exact power, in
+   out[0], and 1. A BigInt and a Number: a TypeError. Two Numbers: out[0] and out[1], and 0; the
+   lowering then calls pow's atom (Number::exponentiate is Math.pow). */
+int32_t yk_exponent(yk a, yk b, yk *out) {
+  if (numeric_pair(&a, &b)) {
+    const yk_bigint *e = big(b);
+    if (e->neg) range_error("Exponent must be non-negative");
+    const yk_bigint *x = big(a);
+    yk one = big_from_u64(1, 0);
+    if (e->len == 0) return out[0] = one, 1;
+    if (x->len == 0) return out[0] = a, 1;
+    if (x->len == 1 && x->d[0] == 1) {
+      int odd = e->d[0] & 1;
+      return out[0] = x->neg && odd ? a : one, 1;
+    }
+    if (e->len > 1 || e->d[0] > (1u << 30)) range_error("Maximum BigInt size exceeded");
+    uint32_t k = e->d[0];
+    yk r = one, base = a;
+    while (k > 0) {
+      if (k & 1) r = big_binary(r, base, '*');
+      k >>= 1;
+      if (k > 0) base = big_binary(base, base, '*');
+    }
+    return out[0] = r, 1;
+  }
+  out[0] = yk_number(to_number(a));
+  out[1] = yk_number(to_number(b));
   return 0;
 }
 
@@ -3049,10 +3440,15 @@ typedef struct coro {
   int threw;
   yk returning;        /* a generator's return(v): the v */
   void *stack;
+  int awaiting;           /* an async generator's: suspended at an await (a job resumes it) */
+  yk_array *requests;     /* an async generator's queue: [mode, value, promise] for each request */
 } coro;
 
 #define CORO_STACK (256 * 1024)
 static coro *current_coro, *starting_coro;
+#if YK_GC
+static int gc_in_coroutine(void) { return current_coro != NULL; }
+#endif
 /* A generator's return() unwinds its body as a throw no catch sees, and finally blocks do. */
 static yk generator_return_token;
 static int is_generator_return(yk v) { return generator_return_token != 0 && v == generator_return_token; }
@@ -3083,9 +3479,9 @@ static void enqueue(job j) {
       jobs_tail -= jobs_head;
       jobs_head = 0;
     } else {
+      size_t old = jobs_cap;
       jobs_cap = jobs_cap == 0 ? 64 : jobs_cap * 2;
-      jobs = realloc(jobs, jobs_cap * sizeof(job));
-      if (jobs == NULL) abort();
+      jobs = grow(jobs, old * sizeof(job), jobs_cap * sizeof(job));
     }
   }
   jobs[jobs_tail++] = j;
@@ -3168,9 +3564,10 @@ static void perform_then(yk p, yk on_fulfil, yk on_reject, yk derived, coro *res
   promise_state *s = pstate(p);
   if (s->state == 0) {
     if (s->n == s->cap) {
+      uint32_t old = s->cap;
       s->cap = s->cap == 0 ? 2 : s->cap * 2;
-      s->on_fulfil = realloc(s->on_fulfil, s->cap * sizeof(reaction *));
-      s->on_reject = realloc(s->on_reject, s->cap * sizeof(reaction *));
+      s->on_fulfil = grow(s->on_fulfil, old * sizeof(reaction *), s->cap * sizeof(reaction *));
+      s->on_reject = grow(s->on_reject, old * sizeof(reaction *), s->cap * sizeof(reaction *));
     }
     s->on_fulfil[s->n] = f;
     s->on_reject[s->n++] = r;
@@ -3188,6 +3585,7 @@ static yk promise_resolve(yk x) {
 
 static void coro_resume(coro *co, yk value, int mode);
 static void async_finish(coro *co);
+static void agen_drive(struct coro *co, yk value, int mode);
 
 static void run_job(job j) {
   if (j.type == 1) {
@@ -3200,6 +3598,10 @@ static void run_job(job j) {
   }
   reaction *re = j.r;
   if (re->resume != NULL) {
+    if (re->resume->kind == 2) {
+      agen_drive(re->resume, j.argument, re->kind);
+      return;
+    }
     coro_resume(re->resume, j.argument, re->kind);
     if (re->resume->state == 3) async_finish(re->resume);
     return;
@@ -3256,7 +3658,7 @@ static void coro_resume(coro *co, yk value, int mode) {
   co->mode = mode;
   current_coro = co;
   if (co->state == 0) {
-    co->stack = scratch(CORO_STACK);
+    co->stack = alloc(CORO_STACK); /* on the heap: a suspended coroutine's frames are scanned */
     getcontext(&co->ctx);
     co->ctx.uc_stack.ss_sp = co->stack;
     co->ctx.uc_stack.ss_size = CORO_STACK;
@@ -3266,13 +3668,14 @@ static void coro_resume(coro *co, yk value, int mode) {
   } else
     handlers = co->handlers;
   co->state = 2;
+  /* Leaving the main stack: the collector scans it from here up while the coroutine runs. */
+  uintptr_t main_sp = gc_main_sp;
+  if (prev == NULL) gc_main_sp = (uintptr_t)__builtin_frame_address(0);
   swapcontext(&co->back, &co->ctx);
+  gc_main_sp = main_sp;
   current_coro = prev;
   handlers = saved;
-  if (co->state == 3 && co->stack != NULL) {
-    free(co->stack);
-    co->stack = NULL;
-  }
+  if (co->state == 3) co->stack = NULL; /* the collector takes it */
 }
 
 /* Suspends the running coroutine; what it is resumed with, and how (0 next, 1 throw, 2 return). */
@@ -3338,13 +3741,96 @@ static yk async_call(void *c, yk self, uint64_t argc, const yk *argv) {
 /* await v. */
 yk yk_await(yk v) {
   coro *co = current_coro;
-  if (co == NULL || co->kind != 0) type_error("await is only valid in async functions here");
+  if (co == NULL || co->kind == 1) type_error("await is only valid in async functions here");
   perform_then(promise_resolve(v), 0, 0, 0, co);
+  co->awaiting = 1;
   return coro_suspend(YK_UNDEFINED);
 }
 
+/* --- async generators (ECMA-262 27.6) ---
+ *
+ * An object (kind 9) over a coroutine and a queue of requests: next, throw and return each queue one
+ * with a new promise, and the body runs while there are requests. It runs until it awaits (a job
+ * resumes it), yields (the front request is fulfilled with { value, done: false }, and the next
+ * request, if any, resumes it), or completes (each request left is settled as done).
+ */
+static yk iter_result(yk value, int done);
+static void agen_settle(coro *co, int rejected, yk value, int done) {
+  yk_array *q = co->requests;
+  yk p = q->items[2];
+  memmove(q->items, q->items + 3, (size_t)(q->len - 3) * sizeof(yk));
+  q->len -= 3;
+  if (rejected) reject_promise(p, value);
+  else resolve_promise(p, iter_result(value, done));
+}
+static void agen_drive(coro *co, yk value, int mode) {
+  for (;;) {
+    if (co->requests->len == 0 && co->state != 2) return;
+    if (co->state == 3 || (co->state == 0 && mode != 0)) {
+      /* Done, or asked to throw or return before it started: each request is settled as done. */
+      co->state = 3;
+      while (co->requests->len > 0) {
+        int m = (int)to_number(co->requests->items[0]);
+        yk v = co->requests->items[1];
+        if (m == 1) agen_settle(co, 1, v, 1);
+        else agen_settle(co, 0, m == 2 ? v : YK_UNDEFINED, 1);
+      }
+      return;
+    }
+    co->awaiting = 0;
+    coro_resume(co, value, mode);
+    if (co->state == 3) {
+      if (co->requests->len > 0) agen_settle(co, co->threw, co->result, 1);
+      value = YK_UNDEFINED;
+      mode = 0;
+      continue;
+    }
+    if (co->awaiting) return;
+    /* It yielded: the front request has its value; the next one, if any, resumes it. */
+    if (co->requests->len > 0) agen_settle(co, 0, co->transfer, 0);
+    if (co->requests->len == 0) return;
+    mode = (int)to_number(co->requests->items[0]);
+    value = co->requests->items[1];
+  }
+}
+static yk agen_request(yk self, int mode, yk value) {
+  yk p = promise_new();
+  if (!is_object(self) || ((yk_object *)PTR(self))->kind != 9) {
+    reject_promise(p, make_error("TypeError", ascii("not an async generator")));
+    return p;
+  }
+  coro *co = (coro *)((yk_object *)PTR(self))->ext;
+  push(co->requests, yk_number(mode));
+  push(co->requests, value);
+  push(co->requests, p);
+  /* Idle (not started, at a yield, or done) with this the only request: it runs now. */
+  if (co->requests->len == 3 && co->state != 2 && !co->awaiting) agen_drive(co, value, mode);
+  return p;
+}
+static yk agen_next(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c;
+  return agen_request(self, 0, argc > 0 ? argv[0] : YK_UNDEFINED);
+}
+static yk agen_throw(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c;
+  return agen_request(self, 1, argc > 0 ? argv[0] : YK_UNDEFINED);
+}
+static yk agen_return(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c;
+  return agen_request(self, 2, argc > 0 ? argv[0] : YK_UNDEFINED);
+}
+static yk agen_new(void *c, yk self, uint64_t argc, const yk *argv);
+
 /* --- generators --- */
 
+static yk agen_new(void *c, yk self, uint64_t argc, const yk *argv) {
+  yk g = yk_object_of(0, NULL, NULL);
+  ((yk_object *)PTR(g))->kind = 9;
+  coro *co = coro_new(2, (yk_closure *)c, self, argc, argv);
+  co->requests = new_array(6);
+  ((yk_object *)PTR(g))->ext = co;
+  return g;
+}
 static yk generator_new(void *c, yk self, uint64_t argc, const yk *argv) {
   yk g = yk_object_of(0, NULL, NULL);
   ((yk_object *)PTR(g))->kind = 5;
@@ -3382,7 +3868,12 @@ static int generator_step(yk g, yk *out) { return generator_resume(g, YK_UNDEFIN
 /* yield v. */
 yk yk_yield(yk v) {
   coro *co = current_coro;
-  if (co == NULL || co->kind != 1) type_error("yield is only valid in generators here");
+  if (co == NULL || co->kind == 0) type_error("yield is only valid in generators here");
+  if (co->kind == 2) {
+    /* An async generator awaits what it yields; what it is resumed with, it takes as a generator. */
+    v = yk_await(v);
+    co->awaiting = 0;
+  }
   return coro_suspend(v);
 }
 
@@ -3390,6 +3881,23 @@ yk yk_yield(yk v) {
    the consumer sends, throws or returns is passed on to a generator delegated to, so its catch and
    finally blocks see it, as ECMAScript's yield* does (#1330). */
 yk yk_yield_star(yk v) {
+  if (current_coro != NULL && current_coro->kind == 2 && is_object(v) && ((yk_object *)PTR(v))->kind == 9) {
+    /* yield* in an async generator, to another: each request passed on and its result awaited; its
+       values yielded as they are. */
+    coro *co = current_coro;
+    yk sent = YK_UNDEFINED;
+    int mode = 0;
+    for (;;) {
+      yk r = yk_await(agen_request(v, mode, sent));
+      yk value = yk_get(r, ascii("value"));
+      if (yk_truthy(yk_get(r, ascii("done")))) {
+        if (mode == 2) generator_return_through(value);
+        return value;
+      }
+      co->awaiting = 0;
+      sent = coro_suspend_mode(value, &mode);
+    }
+  }
   if (is_object(v) && ((yk_object *)PTR(v))->kind == 5) {
     coro *co = current_coro;
     if (co == NULL || co->kind != 1) type_error("yield is only valid in generators here");
@@ -3433,10 +3941,20 @@ static yk try_gen_code(void *c, yk self, uint64_t argc, const yk *argv) {
   return r;
 }
 
+/* __yakccTryAsyncGen: __yakccTryGen in an async generator; its blocks are async generators. */
+static yk try_async_gen_code(void *c, yk self, uint64_t argc, const yk *argv) {
+  return try_gen_code(c, self, argc, argv);
+}
+
 /* Leaving a for…of early (a break, or a return from the loop's function) closes its iterator: a
    generator's return() runs, so its finally blocks do (IteratorClose). Done iterators are left. */
 void yk_iter_close(yk itv) {
   yk_iter *it = (yk_iter *)PTR(itv);
+  if (it->agen != 0) {
+    coro *ac = (coro *)((yk_object *)PTR(it->agen))->ext;
+    if (ac->state != 3) yk_await(agen_request(it->agen, 2, YK_UNDEFINED));
+    return;
+  }
   if (it->gen == 0) return;
   coro *co = (coro *)((yk_object *)PTR(it->gen))->ext;
   if (co->state == 3) return;
@@ -3506,11 +4024,13 @@ static yk generator_return(void *c, yk self, uint64_t argc, const yk *argv) {
 /* A promise's or a generator's method by name, or 0. */
 static yk async_member(void *obj, yk key) {
   yk_object *o = (yk_object *)obj;
-  static yk fns[6];
-  static const char *const names[6] = {"then", "catch", "finally", "next", "throw", "return"};
-  static const yk_code codes[6] = {promise_then, promise_catch, promise_finally,
-                                   generator_next, generator_throw, generator_return};
-  for (int i = o->kind == 4 ? 0 : 3; i < (o->kind == 4 ? 3 : 6); i++)
+  static yk fns[9];
+  static const char *const names[9] = {"then", "catch", "finally", "next", "throw", "return", "next", "throw", "return"};
+  static const yk_code codes[9] = {promise_then,   promise_catch, promise_finally,
+                                   generator_next, generator_throw, generator_return,
+                                   agen_next,      agen_throw,      agen_return};
+  int from = o->kind == 4 ? 0 : o->kind == 5 ? 3 : 6;
+  for (int i = from; i < from + 3; i++)
     if (key_is(key, names[i])) {
       if (fns[i] == 0) fns[i] = yk_closure_new(codes[i], 1, 0, NULL);
       return fns[i];
@@ -4925,6 +5445,94 @@ static uint64_t c_le64(const uint8_t *p) {
   return x;
 }
 yk yk_leaf_load64(yk a) { return big_from_u64(c_le64(c_at(a, 8, 0)), 0); }
+
+/* --- The system-call leaf and the thread pointer (#1365, layer 0) ---
+ *
+ * As raise-c's createCSystem defines them over C's memory: Linux x86-64's call numbers, for the
+ * calls musl makes on behalf of malloc, stdio, time and exit. Arguments and the result are BigInts
+ * (64-bit, signed). write and writev write the bytes of C's memory to the host's descriptor; an
+ * anonymous mmap is a new region of whole pages; brk fails and mremap is refused (so malloc maps
+ * and realloc copies); clock_gettime is the host's real-time clock; exit and exit_group end the
+ * process; anything else is -ENOSYS.
+ */
+static void c_put(uint8_t *p, uint64_t x, int n);
+static int64_t big_i64(yk v) { return (int64_t)big_low64(want_big(v)); }
+static yk big_of_i64(int64_t x) { return x < 0 ? big_from_u64(-(uint64_t)x, 1) : big_from_u64((uint64_t)x, 0); }
+static int64_t c_write(int64_t fd, double a, int64_t n) {
+  if (n <= 0) return 0;
+  c_region *r = c_region_of(a, (uint32_t)n, 0);
+  uint8_t *p = r->bytes + (uint64_t)(a - (double)r->base);
+  if (fd == 1) fflush(stdout);
+  if (fd == 2) fflush(stderr);
+  for (int64_t done = 0; done < n;) {
+    ssize_t w = write((int)fd, p + done, (size_t)(n - done));
+    if (w <= 0) break;
+    done += w;
+  }
+  return n;
+}
+yk yk_leaf_syscall(yk nr, yk a, yk b, yk c, yk d, yk e, yk f) {
+  (void)d;
+  (void)f;
+  switch (big_i64(nr)) {
+  case 1: /* write(fd, buf, count) */
+    return big_of_i64(c_write(big_i64(a), (double)big_i64(b), big_i64(c)));
+  case 20: { /* writev(fd, iov, iovcnt): each iovec { base, len } */
+    int64_t total = 0, iov = big_i64(b);
+    for (int64_t i = 0; i < big_i64(c); i++) {
+      uint64_t base = c_le64(c_at(yk_number((double)(iov + 16 * i)), 8, 0));
+      uint64_t len = c_le64(c_at(yk_number((double)(iov + 16 * i + 8)), 8, 0));
+      total += c_write(big_i64(a), (double)base, (int64_t)len);
+    }
+    return big_of_i64(total);
+  }
+  case 9: { /* mmap(addr, length, prot, flags, fd, offset): anonymous only, whole pages */
+    if (big_i64(e) != -1) return big_of_i64(-38);
+    double pages = ceil((double)big_i64(b) / 4096) * 4096;
+    return big_of_i64((int64_t)c_alloc(pages, 4096, 0));
+  }
+  case 11: /* munmap */
+  case 12: /* brk: no break */
+    return big_of_i64(0);
+  case 25: /* mremap: not offered */
+    return big_of_i64(-12);
+  case 28: /* madvise */
+  case 3:  /* close */
+  case 14: /* rt_sigprocmask */
+    return big_of_i64(0);
+  case 16: /* ioctl: no terminal */
+    return big_of_i64(-25);
+  case 8: /* lseek: not seekable */
+    return big_of_i64(-29);
+  case 39:  /* getpid */
+  case 186: /* gettid */
+    return big_of_i64(1);
+  case 228: { /* clock_gettime(clock, timespec) */
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    double at = (double)big_i64(b);
+    c_put(c_at(yk_number(at), 8, 1), (uint64_t)ts.tv_sec, 8);
+    c_put(c_at(yk_number(at + 8), 8, 1), (uint64_t)ts.tv_nsec, 8);
+    return big_of_i64(0);
+  }
+  case 60:  /* exit */
+  case 231: /* exit_group */
+    fflush(stdout);
+    fflush(stderr);
+    exit((int)big_i64(a));
+  default:
+    return big_of_i64(-38);
+  }
+}
+/* The thread's control block: zeroed, its first word its own address. */
+yk yk_leaf_tp(void) {
+  static uint64_t tp = 0;
+  if (tp == 0) {
+    tp = c_alloc(4096, 64, 0);
+    c_put(c_at(yk_number((double)tp), 8, 1), tp, 8);
+  }
+  return big_from_u64(tp, 0);
+}
 yk yk_leaf_load_f64(yk a) {
   uint64_t x = c_le64(c_at(a, 8, 0));
   double d;
@@ -5169,7 +5777,7 @@ static yk leaf_value(const char *name, uint64_t n) {
   return 0;
 }
 
-#define N_GLOBALS 23
+#define N_GLOBALS 24
 yk yk_global(const char *name, uint64_t n) {
   if (n > 4 && memcmp(name, "__yk", 4) == 0) {
     yk leaf = leaf_value(name, n);
@@ -5188,14 +5796,15 @@ yk yk_global(const char *name, uint64_t n) {
                                          "isNaN", "isFinite", "Array", "globalThis", "__yakccTry",
                                          "Error", "TypeError", "RangeError", "SyntaxError",
                                          "Map", "Set", "Object", "JSON", "Symbol", "Promise",
-                                         "__yakccTryAsync", "queueMicrotask", "__yakccTryGen"};
+                                         "__yakccTryAsync", "queueMicrotask", "__yakccTryGen",
+                                         "__yakccTryAsyncGen"};
   static yk_code codes[N_GLOBALS] = {builtin_string, builtin_number, builtin_boolean,
                                      builtin_parse_float, builtin_parse_int, builtin_is_nan,
                                      builtin_is_finite, builtin_array, NULL, builtin_try,
                                      builtin_error, builtin_type_error, builtin_range_error,
                                      builtin_syntax_error, builtin_map, builtin_set, builtin_object,
                                      NULL, NULL, builtin_promise, try_async_body,
-                                     builtin_queue_microtask, try_gen_code};
+                                     builtin_queue_microtask, try_gen_code, try_async_gen_code};
   for (int i = 0; i < N_GLOBALS; i++)
     if (strlen(names[i]) == n && memcmp(names[i], name, n) == 0) {
       if (fns[i] != 0) return fns[i];
@@ -5213,6 +5822,8 @@ yk yk_global(const char *name, uint64_t n) {
       }
       if (codes[i] == try_async_body) return fns[i] = yk_closure_mode(yk_closure_new(try_async_body, 0, 0, NULL), 1);
       if (codes[i] == try_gen_code) return fns[i] = yk_closure_mode(yk_closure_new(try_gen_code, 0, 0, NULL), 2);
+      if (codes[i] == try_async_gen_code)
+        return fns[i] = yk_closure_mode(yk_closure_new(try_async_gen_code, 0, 0, NULL), 3);
       if (codes[i] == builtin_array) {
         static const char *const m[2] = {"from", "isArray"};
         static const yk_code k[2] = {builtin_array_from, builtin_array_is_array};
@@ -5314,7 +5925,28 @@ yk yk_call_spread(yk f, yk self, yk args) { return call_value(f, self, arr(args)
 yk yk_call_method_spread(yk recv, const char *name, uint64_t n, yk args) {
   return yk_call_method(recv, name, n, arr(args)->len, arr(args)->items);
 }
+/* Math.random: xorshift128+ (as V8's), seeded from the clock and the process, 53 bits in [0, 1). */
+yk yk_math_random(void) {
+  static uint64_t s0 = 0, s1 = 0;
+  if (s0 == 0 && s1 == 0) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    s0 = ((uint64_t)ts.tv_sec * 1000000007u) ^ (uint64_t)ts.tv_nsec ^ ((uint64_t)getpid() << 32);
+    s1 = s0 * 0x9E3779B97F4A7C15ull + 1;
+    if (s0 == 0) s0 = 1;
+  }
+  uint64_t x = s0, y = s1;
+  s0 = y;
+  x ^= x << 23;
+  x ^= x >> 17;
+  x ^= y ^ (y >> 26);
+  s1 = x;
+  return yk_number((double)((s0 + s1) >> 11) / 9007199254740992.0);
+}
 yk yk_new_spread(yk f, yk args) { return yk_new(f, arr(args)->len, arr(args)->items); }
+yk yk_super_construct_spread(void *closure, yk self, yk args) {
+  return yk_super_construct(closure, self, arr(args)->len, arr(args)->items);
+}
 
 /* {…src}: src's own enumerable properties, copied in order (a getter's value, not the getter). */
 yk yk_spread_into(yk obj, yk src) {
@@ -5340,8 +5972,11 @@ yk yk_spread_into(yk obj, yk src) {
 /* key in obj: an object's own property, an array's index or length. */
 yk yk_in(yk key, yk obj) {
   if (is_object(obj)) {
-    yk v;
-    return yk_bool(own_get((yk_object *)PTR(obj), to_string(key), &v));
+    /* Its own properties, then its prototype's (HasProperty follows the chain). */
+    yk v, k = to_string(key);
+    for (yk o = obj; is_object(o); o = ((yk_object *)PTR(o))->proto)
+      if (own_get((yk_object *)PTR(o), k, &v)) return YK_TRUE;
+    return YK_FALSE;
   }
   if (is_array(obj)) {
     if (key_is(to_string(key), "length")) return YK_TRUE;
