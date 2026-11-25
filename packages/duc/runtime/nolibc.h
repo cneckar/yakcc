@@ -11,14 +11,15 @@
  * runtime and the lowered code call, on the bits of the doubles; setjmp and longjmp; the context
  * switch a coroutine runs on; and the process's entry, _start.
  *
- * Only x86_64 for now: the system calls' numbers, the registers a switch saves, and _start are
- * that architecture's.
+ * For x86_64, AArch64, ARMv7 (EABI, hard float) and RISC-V 64 Linux: each its system calls' numbers
+ * and calling convention, the registers a switch saves, and its _start.
  */
 #ifndef YK_NOLIBC_H
 #define YK_NOLIBC_H
 
-#if !defined(__x86_64__)
-#error "nolibc.h: only x86_64 Linux for now"
+#if !defined(__x86_64__) && !defined(__aarch64__) && !defined(__arm__) && \
+    !(defined(__riscv) && __riscv_xlen == 64)
+#error "nolibc.h: x86_64, aarch64, arm and riscv64 Linux only"
 #endif
 
 #include <float.h>
@@ -32,6 +33,7 @@
 /* ---------------------------------------------------------------- system calls */
 
 static inline long yk_sys(long n, long a, long b, long c, long d, long e, long f) {
+#if defined(__x86_64__)
   long r;
   register long r10 __asm__("r10") = d;
   register long r8 __asm__("r8") = e;
@@ -41,7 +43,58 @@ static inline long yk_sys(long n, long a, long b, long c, long d, long e, long f
                    : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8), "r"(r9)
                    : "rcx", "r11", "memory");
   return r;
+#elif defined(__aarch64__)
+  register long x8 __asm__("x8") = n;
+  register long x0 __asm__("x0") = a;
+  register long x1 __asm__("x1") = b;
+  register long x2 __asm__("x2") = c;
+  register long x3 __asm__("x3") = d;
+  register long x4 __asm__("x4") = e;
+  register long x5 __asm__("x5") = f;
+  __asm__ volatile("svc 0"
+                   : "+r"(x0)
+                   : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5)
+                   : "memory", "cc");
+  return x0;
+#elif defined(__arm__)
+  register long r7 __asm__("r7") = n;
+  register long r0 __asm__("r0") = a;
+  register long r1 __asm__("r1") = b;
+  register long r2 __asm__("r2") = c;
+  register long r3 __asm__("r3") = d;
+  register long r4 __asm__("r4") = e;
+  register long r5 __asm__("r5") = f;
+  __asm__ volatile("svc 0"
+                   : "+r"(r0)
+                   : "r"(r7), "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r5)
+                   : "memory", "cc");
+  return r0;
+#else
+  register long a7 __asm__("a7") = n;
+  register long a0 __asm__("a0") = a;
+  register long a1 __asm__("a1") = b;
+  register long a2 __asm__("a2") = c;
+  register long a3 __asm__("a3") = d;
+  register long a4 __asm__("a4") = e;
+  register long a5 __asm__("a5") = f;
+  __asm__ volatile("ecall"
+                   : "+r"(a0)
+                   : "r"(a7), "r"(a1), "r"(a2), "r"(a3), "r"(a4), "r"(a5)
+                   : "memory");
+  return a0;
+#endif
 }
+/* Each architecture's numbers: x86_64's; the generic table's (AArch64, RISC-V); ARM EABI's. */
+#if defined(__x86_64__)
+enum { SYS_read = 0, SYS_write = 1, SYS_mmap = 9, SYS_munmap = 11, SYS_getpid = 39,
+       SYS_clock_gettime = 228, SYS_exit_group = 231 };
+#elif defined(__arm__)
+enum { SYS_read = 3, SYS_write = 4, SYS_mmap = 192 /* mmap2 */, SYS_munmap = 91, SYS_getpid = 20,
+       SYS_clock_gettime = 403 /* clock_gettime64 */, SYS_exit_group = 248 };
+#else
+enum { SYS_read = 63, SYS_write = 64, SYS_mmap = 222, SYS_munmap = 215, SYS_getpid = 172,
+       SYS_clock_gettime = 113, SYS_exit_group = 94 };
+#endif
 
 typedef long ssize_t;
 typedef long off_t;
@@ -60,22 +113,36 @@ struct timespec {
 #define MAP_FAILED ((void *)-1)
 
 YK_NOLIBC_API ssize_t write(int fd, const void *buf, size_t n) {
-  return yk_sys(1, fd, (long)buf, (long)n, 0, 0, 0);
+  return yk_sys(SYS_write, fd, (long)buf, (long)n, 0, 0, 0);
 }
 YK_NOLIBC_API ssize_t read(int fd, void *buf, size_t n) {
-  return yk_sys(0, fd, (long)buf, (long)n, 0, 0, 0);
+  return yk_sys(SYS_read, fd, (long)buf, (long)n, 0, 0, 0);
 }
 YK_NOLIBC_API void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off) {
-  long r = yk_sys(9, (long)addr, (long)len, prot, flags, fd, off);
+#if defined(__arm__)
+  off /= 4096; /* mmap2: the offset in pages */
+#endif
+  long r = yk_sys(SYS_mmap, (long)addr, (long)len, prot, flags, fd, off);
   return (unsigned long)r > -4096UL ? MAP_FAILED : (void *)r;
 }
-YK_NOLIBC_API int munmap(void *addr, size_t len) { return (int)yk_sys(11, (long)addr, (long)len, 0, 0, 0, 0); }
-YK_NOLIBC_API int clock_gettime(clockid_t clock, struct timespec *ts) {
-  return (int)yk_sys(228, clock, (long)ts, 0, 0, 0, 0);
+YK_NOLIBC_API int munmap(void *addr, size_t len) {
+  return (int)yk_sys(SYS_munmap, (long)addr, (long)len, 0, 0, 0, 0);
 }
-YK_NOLIBC_API int getpid(void) { return (int)yk_sys(39, 0, 0, 0, 0, 0, 0); }
+YK_NOLIBC_API int clock_gettime(clockid_t clock, struct timespec *ts) {
+#if defined(__arm__)
+  /* clock_gettime64: 64-bit seconds and nanoseconds. */
+  int64_t t[2];
+  int r = (int)yk_sys(SYS_clock_gettime, clock, (long)t, 0, 0, 0, 0);
+  ts->tv_sec = (time_t)t[0];
+  ts->tv_nsec = (long)t[1];
+  return r;
+#else
+  return (int)yk_sys(SYS_clock_gettime, clock, (long)ts, 0, 0, 0, 0);
+#endif
+}
+YK_NOLIBC_API int getpid(void) { return (int)yk_sys(SYS_getpid, 0, 0, 0, 0, 0, 0); }
 static _Noreturn void yk_exit_group(int code) {
-  for (;;) yk_sys(231, code, 0, 0, 0, 0, 0);
+  for (;;) yk_sys(SYS_exit_group, code, 0, 0, 0, 0, 0);
 }
 
 /* ---------------------------------------------------------------- memory and strings */
@@ -175,6 +242,11 @@ YK_NOLIBC_API _Noreturn void exit(int code) {
   while (yk_atexit_n > 0) yk_atexit_fns[--yk_atexit_n]();
   yk_stdio_flush_all();
   yk_exit_group(code);
+}
+/* A signal raised (ARM's libgcc, for a division by zero): the process ends as the signal's. */
+YK_NOLIBC_API int raise(int sig) {
+  yk_stdio_flush_all();
+  yk_exit_group(128 + sig);
 }
 YK_NOLIBC_API _Noreturn void abort(void) {
   yk_stdio_flush_all();
@@ -377,11 +449,7 @@ static inline double yk_double(uint64_t b) {
 #define fabs(x) __builtin_fabs(x)
 #define copysign(x, y) __builtin_copysign(x, y)
 
-YK_NOLIBC_API double sqrt(double x) {
-  double r;
-  __asm__("sqrtsd %1, %0" : "=x"(r) : "x"(x));
-  return r;
-}
+YK_NOLIBC_API double sqrt(double x) { return __builtin_sqrt(x); /* the instruction (no errno) */ }
 YK_NOLIBC_API double trunc(double x) {
   uint64_t b = yk_bits(x);
   int e = (int)((b >> 52) & 0x7ff) - 1023;
@@ -1074,50 +1142,119 @@ YK_NOLIBC_API int ungetc(int c, FILE *f) {
  * A jmp_buf and a context hold the same: the stack pointer, where to go on, and the callee-saved
  * registers (rbx, rbp, r12-r15), with the SSE control word. A context also has its stack. */
 
-typedef uint64_t jmp_buf[9];
+typedef uint64_t jmp_buf[32];
 int setjmp(jmp_buf env) __attribute__((returns_twice));
 _Noreturn void longjmp(jmp_buf env, int value);
+/* yk_switch(from, to): this one's registers into from (it goes on when switched back to), to's in.
+   yk_resume(to): to's in. A jmp_buf's layout, each architecture's: where to go on, the stack pointer
+   and the callee-saved registers (with x86_64's SSE control word). */
+void yk_switch(void *from, const void *to);
+_Noreturn void yk_resume(const void *to);
+#if defined(__x86_64__)
+#define YK_SAVE                                                                                    \
+  "  lea 8(%rsp), %rax\n"                                                                          \
+  "  mov %rax, 0(%rdi)\n"                                                                          \
+  "  mov (%rsp), %rax\n"                                                                           \
+  "  mov %rax, 8(%rdi)\n"                                                                          \
+  "  mov %rbx, 16(%rdi)\n"                                                                         \
+  "  mov %rbp, 24(%rdi)\n"                                                                         \
+  "  mov %r12, 32(%rdi)\n"                                                                         \
+  "  mov %r13, 40(%rdi)\n"                                                                         \
+  "  mov %r14, 48(%rdi)\n"                                                                         \
+  "  mov %r15, 56(%rdi)\n"                                                                         \
+  "  stmxcsr 64(%rdi)\n"
+#define YK_LOAD                                                                                    \
+  "  mov 16(%rdi), %rbx\n"                                                                         \
+  "  mov 24(%rdi), %rbp\n"                                                                         \
+  "  mov 32(%rdi), %r12\n"                                                                         \
+  "  mov 40(%rdi), %r13\n"                                                                         \
+  "  mov 48(%rdi), %r14\n"                                                                         \
+  "  mov 56(%rdi), %r15\n"                                                                         \
+  "  ldmxcsr 64(%rdi)\n"                                                                           \
+  "  mov 0(%rdi), %rsp\n"                                                                          \
+  "  jmp *8(%rdi)\n"
 __asm__(".text\n"
-        ".globl setjmp\n"
-        ".type setjmp,@function\n"
-        "setjmp:\n"
-        "  lea 8(%rsp), %rax\n"
-        "  mov %rax, 0(%rdi)\n"
-        "  mov (%rsp), %rax\n"
-        "  mov %rax, 8(%rdi)\n"
-        "  mov %rbx, 16(%rdi)\n"
-        "  mov %rbp, 24(%rdi)\n"
-        "  mov %r12, 32(%rdi)\n"
-        "  mov %r13, 40(%rdi)\n"
-        "  mov %r14, 48(%rdi)\n"
-        "  mov %r15, 56(%rdi)\n"
-        "  stmxcsr 64(%rdi)\n"
-        "  xor %eax, %eax\n"
-        "  ret\n"
-        ".globl longjmp\n"
-        ".type longjmp,@function\n"
-        "longjmp:\n"
-        "  mov %esi, %eax\n"
-        "  test %eax, %eax\n"
-        "  jnz 1f\n"
-        "  mov $1, %eax\n"
-        "1:\n"
-        "  mov 16(%rdi), %rbx\n"
-        "  mov 24(%rdi), %rbp\n"
-        "  mov 32(%rdi), %r12\n"
-        "  mov 40(%rdi), %r13\n"
-        "  mov 48(%rdi), %r14\n"
-        "  mov 56(%rdi), %r15\n"
-        "  ldmxcsr 64(%rdi)\n"
-        "  mov 0(%rdi), %rsp\n"
-        "  jmp *8(%rdi)\n");
+        ".globl setjmp\n.type setjmp,@function\nsetjmp:\n" YK_SAVE "  xor %eax, %eax\n  ret\n"
+        ".globl longjmp\n.type longjmp,@function\nlongjmp:\n"
+        "  mov %esi, %eax\n  test %eax, %eax\n  jnz 1f\n  mov $1, %eax\n1:\n" YK_LOAD
+        ".globl yk_switch\n.type yk_switch,@function\nyk_switch:\n" YK_SAVE "  mov %rsi, %rdi\n"
+        ".globl yk_resume\n.type yk_resume,@function\nyk_resume:\n" YK_LOAD);
+#elif defined(__aarch64__)
+#define YK_SAVE                                                                                    \
+  "  mov x16, sp\n"                                                                                \
+  "  stp x19, x20, [x0, #0]\n"                                                                     \
+  "  stp x21, x22, [x0, #16]\n"                                                                    \
+  "  stp x23, x24, [x0, #32]\n"                                                                    \
+  "  stp x25, x26, [x0, #48]\n"                                                                    \
+  "  stp x27, x28, [x0, #64]\n"                                                                    \
+  "  stp x29, x30, [x0, #80]\n"                                                                    \
+  "  str x16, [x0, #96]\n"                                                                         \
+  "  stp d8, d9, [x0, #104]\n"                                                                     \
+  "  stp d10, d11, [x0, #120]\n"                                                                   \
+  "  stp d12, d13, [x0, #136]\n"                                                                   \
+  "  stp d14, d15, [x0, #152]\n"
+#define YK_LOAD                                                                                    \
+  "  ldp x19, x20, [x0, #0]\n"                                                                     \
+  "  ldp x21, x22, [x0, #16]\n"                                                                    \
+  "  ldp x23, x24, [x0, #32]\n"                                                                    \
+  "  ldp x25, x26, [x0, #48]\n"                                                                    \
+  "  ldp x27, x28, [x0, #64]\n"                                                                    \
+  "  ldp x29, x30, [x0, #80]\n"                                                                    \
+  "  ldr x16, [x0, #96]\n"                                                                         \
+  "  ldp d8, d9, [x0, #104]\n"                                                                     \
+  "  ldp d10, d11, [x0, #120]\n"                                                                   \
+  "  ldp d12, d13, [x0, #136]\n"                                                                   \
+  "  ldp d14, d15, [x0, #152]\n"                                                                   \
+  "  mov sp, x16\n"
+__asm__(".text\n"
+        ".globl setjmp\n.type setjmp,%function\nsetjmp:\n" YK_SAVE "  mov w0, #0\n  ret\n"
+        ".globl longjmp\n.type longjmp,%function\nlongjmp:\n" YK_LOAD
+        "  cmp w1, #0\n  csinc w0, w1, wzr, ne\n  br x30\n"
+        ".globl yk_switch\n.type yk_switch,%function\nyk_switch:\n" YK_SAVE "  mov x0, x1\n"
+        ".globl yk_resume\n.type yk_resume,%function\nyk_resume:\n" YK_LOAD "  br x30\n");
+#elif defined(__arm__)
+/* r4-r11, the stack pointer, lr; then d8-d15. */
+__asm__(".text\n.syntax unified\n.arm\n"
+        ".globl setjmp\n.type setjmp,%function\nsetjmp:\n"
+        "  mov ip, sp\n  stmia r0!, {r4-r11, ip, lr}\n  vstmia r0, {d8-d15}\n  mov r0, #0\n  bx lr\n"
+        ".globl longjmp\n.type longjmp,%function\nlongjmp:\n"
+        "  ldmia r0!, {r4-r11, ip, lr}\n  vldmia r0, {d8-d15}\n  mov sp, ip\n"
+        "  movs r0, r1\n  moveq r0, #1\n  bx lr\n"
+        ".globl yk_switch\n.type yk_switch,%function\nyk_switch:\n"
+        "  mov ip, sp\n  stmia r0!, {r4-r11, ip, lr}\n  vstmia r0, {d8-d15}\n  mov r0, r1\n"
+        ".globl yk_resume\n.type yk_resume,%function\nyk_resume:\n"
+        "  ldmia r0!, {r4-r11, ip, lr}\n  vldmia r0, {d8-d15}\n  mov sp, ip\n  bx lr\n");
+#else /* riscv64: ra, sp, s0-s11, fs0-fs11 */
+#define YK_SAVE                                                                                    \
+  "  sd ra, 0(a0)\n  sd sp, 8(a0)\n"                                                               \
+  "  sd s0, 16(a0)\n  sd s1, 24(a0)\n  sd s2, 32(a0)\n  sd s3, 40(a0)\n"                           \
+  "  sd s4, 48(a0)\n  sd s5, 56(a0)\n  sd s6, 64(a0)\n  sd s7, 72(a0)\n"                           \
+  "  sd s8, 80(a0)\n  sd s9, 88(a0)\n  sd s10, 96(a0)\n  sd s11, 104(a0)\n"                        \
+  "  fsd fs0, 112(a0)\n  fsd fs1, 120(a0)\n  fsd fs2, 128(a0)\n  fsd fs3, 136(a0)\n"               \
+  "  fsd fs4, 144(a0)\n  fsd fs5, 152(a0)\n  fsd fs6, 160(a0)\n  fsd fs7, 168(a0)\n"               \
+  "  fsd fs8, 176(a0)\n  fsd fs9, 184(a0)\n  fsd fs10, 192(a0)\n  fsd fs11, 200(a0)\n"
+#define YK_LOAD                                                                                    \
+  "  ld ra, 0(a0)\n  ld sp, 8(a0)\n"                                                               \
+  "  ld s0, 16(a0)\n  ld s1, 24(a0)\n  ld s2, 32(a0)\n  ld s3, 40(a0)\n"                           \
+  "  ld s4, 48(a0)\n  ld s5, 56(a0)\n  ld s6, 64(a0)\n  ld s7, 72(a0)\n"                           \
+  "  ld s8, 80(a0)\n  ld s9, 88(a0)\n  ld s10, 96(a0)\n  ld s11, 104(a0)\n"                        \
+  "  fld fs0, 112(a0)\n  fld fs1, 120(a0)\n  fld fs2, 128(a0)\n  fld fs3, 136(a0)\n"               \
+  "  fld fs4, 144(a0)\n  fld fs5, 152(a0)\n  fld fs6, 160(a0)\n  fld fs7, 168(a0)\n"               \
+  "  fld fs8, 176(a0)\n  fld fs9, 184(a0)\n  fld fs10, 192(a0)\n  fld fs11, 200(a0)\n"
+__asm__(".text\n"
+        ".globl setjmp\n.type setjmp,@function\nsetjmp:\n" YK_SAVE "  li a0, 0\n  ret\n"
+        ".globl longjmp\n.type longjmp,@function\nlongjmp:\n" YK_LOAD
+        "  mv a0, a1\n  bnez a0, 1f\n  li a0, 1\n1:\n  ret\n"
+        ".globl yk_switch\n.type yk_switch,@function\nyk_switch:\n" YK_SAVE "  mv a0, a1\n"
+        ".globl yk_resume\n.type yk_resume,@function\nyk_resume:\n" YK_LOAD "  ret\n");
+#endif
 
 typedef struct {
   void *ss_sp;
   size_t ss_size;
 } stack_t;
 typedef struct ucontext_t {
-  uint64_t regs[9]; /* as a jmp_buf */
+  jmp_buf regs;
   stack_t uc_stack;
   struct ucontext_t *uc_link;
 } ucontext_t;
@@ -1125,72 +1262,62 @@ static int getcontext(ucontext_t *c) {
   (void)c;
   return 0;
 }
-/* Entering a context made for f: f is called on its stack (a return address of 0 above it). */
+/* Entering a context made for f: f is called on its stack, as a call would (x86_64: a return
+   address of 0 above it; the others: f in the link register's slot). */
 static void makecontext(ucontext_t *c, void (*f)(void), int argc, ...) {
   (void)argc;
   uintptr_t top = ((uintptr_t)c->uc_stack.ss_sp + c->uc_stack.ss_size) & ~(uintptr_t)15;
+  memset(c->regs, 0, sizeof c->regs);
+#if defined(__x86_64__)
   top -= 8;
   *(uint64_t *)top = 0;
-  for (int i = 0; i < 9; i++) c->regs[i] = 0;
   c->regs[0] = top;
   c->regs[1] = (uint64_t)(uintptr_t)f;
   uint32_t mxcsr;
   __asm__ volatile("stmxcsr %0" : "=m"(mxcsr));
   c->regs[8] = mxcsr;
+#elif defined(__aarch64__)
+  c->regs[11] = (uint64_t)(uintptr_t)f; /* x30 */
+  c->regs[12] = top;                    /* sp */
+#elif defined(__arm__)
+  uint32_t *w = (uint32_t *)c->regs;
+  w[8] = (uint32_t)top;          /* sp */
+  w[9] = (uint32_t)(uintptr_t)f; /* lr */
+#else
+  c->regs[0] = (uint64_t)(uintptr_t)f; /* ra */
+  c->regs[1] = top;                    /* sp */
+#endif
 }
-/* yk_switch(from, to): this one's registers into from (it goes on when switched back to), to's in. */
-void yk_switch(ucontext_t *from, const ucontext_t *to);
-_Noreturn void yk_resume(const ucontext_t *to);
-__asm__(".text\n"
-        ".globl yk_switch\n"
-        ".type yk_switch,@function\n"
-        "yk_switch:\n"
-        "  lea 8(%rsp), %rax\n"
-        "  mov %rax, 0(%rdi)\n"
-        "  mov (%rsp), %rax\n"
-        "  mov %rax, 8(%rdi)\n"
-        "  mov %rbx, 16(%rdi)\n"
-        "  mov %rbp, 24(%rdi)\n"
-        "  mov %r12, 32(%rdi)\n"
-        "  mov %r13, 40(%rdi)\n"
-        "  mov %r14, 48(%rdi)\n"
-        "  mov %r15, 56(%rdi)\n"
-        "  stmxcsr 64(%rdi)\n"
-        "  mov %rsi, %rdi\n"
-        ".globl yk_resume\n"
-        ".type yk_resume,@function\n"
-        "yk_resume:\n"
-        "  mov 16(%rdi), %rbx\n"
-        "  mov 24(%rdi), %rbp\n"
-        "  mov 32(%rdi), %r12\n"
-        "  mov 40(%rdi), %r13\n"
-        "  mov 48(%rdi), %r14\n"
-        "  mov 56(%rdi), %r15\n"
-        "  ldmxcsr 64(%rdi)\n"
-        "  mov 0(%rdi), %rsp\n"
-        "  jmp *8(%rdi)\n");
 static int swapcontext(ucontext_t *from, const ucontext_t *to) {
-  yk_switch(from, to);
+  yk_switch(from->regs, to->regs);
   return 0;
 }
-static int setcontext(const ucontext_t *to) { yk_resume(to); }
+static int setcontext(const ucontext_t *to) { yk_resume(to->regs); }
 
 /* ---------------------------------------------------------------- the program's ELF segments
  * The collector scans the writable ones (the program's globals): its own program headers, from the
  * ELF header the linker places first (__ehdr_start). */
 
-typedef struct {
-  unsigned char e_ident[16];
-  uint16_t e_type, e_machine;
-  uint32_t e_version;
-  uint64_t e_entry, e_phoff, e_shoff;
-  uint32_t e_flags;
-  uint16_t e_ehsize, e_phentsize, e_phnum, e_shentsize, e_shnum, e_shstrndx;
-} yk_ehdr;
+#if defined(__LP64__)
+typedef uint64_t yk_addr;
 typedef struct {
   uint32_t p_type, p_flags;
   uint64_t p_offset, p_vaddr, p_paddr, p_filesz, p_memsz, p_align;
 } yk_phdr;
+#else
+typedef uint32_t yk_addr;
+typedef struct {
+  uint32_t p_type, p_offset, p_vaddr, p_paddr, p_filesz, p_memsz, p_flags, p_align;
+} yk_phdr;
+#endif
+typedef struct {
+  unsigned char e_ident[16];
+  uint16_t e_type, e_machine;
+  uint32_t e_version;
+  yk_addr e_entry, e_phoff, e_shoff;
+  uint32_t e_flags;
+  uint16_t e_ehsize, e_phentsize, e_phnum, e_shentsize, e_shnum, e_shstrndx;
+} yk_ehdr;
 extern const yk_ehdr __ehdr_start __attribute__((weak));
 /* Each writable loaded segment's bounds, to f. */
 static void yk_writable_segments(void (*f)(uint8_t *lo, uint8_t *hi)) {
@@ -1210,21 +1337,27 @@ static void yk_writable_segments(void (*f)(uint8_t *lo, uint8_t *hi)) {
 /* ---------------------------------------------------------------- the entry */
 
 int main(int argc, char **argv);
-YK_NOLIBC_API _Noreturn void yk_nolibc_start(uint64_t *sp) {
+YK_NOLIBC_API _Noreturn void yk_nolibc_start(uintptr_t *sp) {
   int argc = (int)sp[0];
   char **argv = (char **)(sp + 1);
   environ = argv + argc + 1;
   yk_nolibc_stack_top = (uintptr_t)sp;
   exit(main(argc, argv));
 }
-__asm__(".text\n"
-        ".globl _start\n"
-        ".type _start,@function\n"
-        "_start:\n"
-        "  xor %ebp, %ebp\n"
-        "  mov %rsp, %rdi\n"
-        "  and $-16, %rsp\n"
-        "  call yk_nolibc_start\n"
-        "  hlt\n");
+/* _start: the initial stack (argc, argv, envp) to yk_nolibc_start, the stack aligned, no frame. */
+#if defined(__x86_64__)
+__asm__(".text\n.globl _start\n.type _start,@function\n_start:\n"
+        "  xor %ebp, %ebp\n  mov %rsp, %rdi\n  and $-16, %rsp\n  call yk_nolibc_start\n  hlt\n");
+#elif defined(__aarch64__)
+__asm__(".text\n.globl _start\n.type _start,%function\n_start:\n"
+        "  mov x29, #0\n  mov x30, #0\n  mov x0, sp\n  and sp, x0, #-16\n  bl yk_nolibc_start\n");
+#elif defined(__arm__)
+__asm__(".text\n.syntax unified\n.arm\n.globl _start\n.type _start,%function\n_start:\n"
+        "  mov fp, #0\n  mov lr, #0\n  mov r0, sp\n  bic sp, sp, #15\n  bl yk_nolibc_start\n");
+#else
+__asm__(".text\n.globl _start\n.type _start,@function\n_start:\n"
+        "  .option push\n  .option norelax\n  lla gp, __global_pointer$\n  .option pop\n"
+        "  mv a0, sp\n  andi sp, sp, -16\n  call yk_nolibc_start\n");
+#endif
 
 #endif

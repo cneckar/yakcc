@@ -7,7 +7,7 @@
  * jobs left run, and the exit code out (`process.exitCode`, 1 for an exception nothing catches).
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { emitNativeModules } from "./emit-llvm-boxed.js";
@@ -21,7 +21,7 @@ export interface BuildOptions {
   readonly root?: string;
   /**
    * Link no C library (#1361 P1, #1370): the runtime on Linux's system calls alone (nolibc.h), the
-   * executable static with the runtime's own entry. x86_64-linux only, for now.
+   * executable static with the runtime's own entry. On each Linux target.
    */
   readonly noLibc?: boolean;
 }
@@ -36,6 +36,20 @@ const NOLIBC_CFLAGS = [
 ];
 /** The link with no C library: static, the runtime's _start; libgcc for the compiler's helpers. */
 const NOLIBC_LDFLAGS = ["-nostdlib", "-static", "-no-pie"];
+/** A cross target's libgcc: the cross compiler's own directory (the newest there is). */
+export function libgccFlags(target: string): string[] {
+  const triple: Record<string, string> = {
+    "aarch64-linux": "aarch64-linux-gnu",
+    "arm-linux": "arm-linux-gnueabihf",
+    "riscv64-linux": "riscv64-linux-gnu",
+  };
+  const t = triple[target];
+  if (t === undefined) return [];
+  const dir = `/usr/lib/gcc-cross/${t}`;
+  if (!existsSync(dir)) return [];
+  const versions = readdirSync(dir).sort((a, b) => Number.parseInt(b) - Number.parseInt(a));
+  return versions.length > 0 ? [`-L${dir}/${versions[0]}`] : [];
+}
 
 /** What a build made: the executable, and the program's modules. */
 export interface BuildResult {
@@ -107,8 +121,6 @@ export function buildRecord(
   if (entrySymbol === undefined) throw new NativeToolError("the entry module was not lowered");
   const { cc, flags } = linker(target);
   const noLibc = options.noLibc === true;
-  if (noLibc && target !== "x86_64-linux")
-    throw new NativeToolError(`building with no C library for ${target} is not supported yet`);
   const work = mkdtempSync(join(tmpdir(), "yakcc-build-"));
   try {
     const cflags = flags.filter(
@@ -131,6 +143,7 @@ export function buildRecord(
             ...flags,
             ...NOLIBC_CFLAGS,
             ...NOLIBC_LDFLAGS,
+            ...libgccFlags(target),
             "-O2",
             "main.c",
             "program.o",

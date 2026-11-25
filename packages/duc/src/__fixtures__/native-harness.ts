@@ -5,6 +5,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { libgccFlags } from "../build.js";
 import type { LlvmModule } from "../emit-llvm.js";
 import { compileObject, compileRuntime } from "../native.js";
 
@@ -183,8 +184,8 @@ export function same(a: unknown, b: unknown): boolean {
 let built = 0;
 
 /**
- * YK_NOLIBC=1: the x86_64 harnesses linked with no C library (#1361 P1), the runtime on system
- * calls alone, so every native test runs against nolibc.h too.
+ * YK_NOLIBC=1: the harnesses linked with no C library (#1361 P1), the runtime on system calls
+ * alone, so every native test runs against nolibc.h too, on each target.
  */
 const NOLIBC = process.env.YK_NOLIBC === "1";
 const NOLIBC_CFLAGS = [
@@ -208,7 +209,7 @@ export function harness(
   const dir = join(work, `h${built++}`);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "f.o"), compileObject(m, { target }));
-  const nolibc = NOLIBC && target === "x86_64-linux";
+  const nolibc = NOLIBC;
   writeFileSync(
     join(dir, "yk.o"),
     compileRuntime({ target, cflags: [...t.cflags, ...(nolibc ? NOLIBC_CFLAGS : [])] }),
@@ -236,10 +237,12 @@ export function harness(
     t.cc,
     nolibc
       ? [
+          ...t.link,
           ...NOLIBC_CFLAGS,
           "-nostdlib",
           "-static",
           "-no-pie",
+          ...libgccFlags(target),
           "-O0",
           "h.c",
           "f.o",
