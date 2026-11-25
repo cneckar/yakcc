@@ -779,4 +779,94 @@ describe("the round trip on yakcc's own sources (#1292)", () => {
       [[1], [0]],
     );
   });
+
+  it("a getter's return inside a branch is the getter's, not an exit of the branch", () => {
+    agrees(
+      `export function f(e: number | null) {
+  let extra: object = {};
+  if (e != null) {
+    extra = {
+      get x() {
+        return [e, "got"];
+      },
+    };
+  }
+  const out = { y: 1, ...extra };
+  return Object.keys(out);
+}`,
+      [[1], [null]],
+    );
+  });
+
+  it("a closure reading a platform name through a local is its own source of the name", () => {
+    agrees(
+      `export function f(v: number) {
+  const object = Math;
+  const read = () => object.abs(v);
+  return read();
+}`,
+      [[-3], [2]],
+    );
+  });
+
+  it("an iterating loop that throws and returns, emitted with its written condition, lifts back", () => {
+    agrees(
+      `export function f(xs: number[], n: number, stop: boolean) {
+  for (const v of xs) {
+    if (stop) {
+      throw new RangeError("stopped");
+    }
+    if (n <= v) {
+      return ["at", v];
+    }
+  }
+  return "none";
+}`,
+      [
+        [[1, 5, 9], 4, false],
+        [[1], 0, true],
+        [[], 0, false],
+      ],
+    );
+  });
+
+  it("a constructor's parameter properties are parameters assigned to the receiver", () => {
+    agrees(
+      `export function f(message: string, code: number) {
+  class Failure extends Error {
+    constructor(
+      message: string,
+      public readonly code: number,
+      private readonly hint = "none",
+    ) {
+      super(message);
+      this.name = "Failure";
+    }
+    get detail() {
+      return [this.name, this.message, this.code, this.hint];
+    }
+  }
+  class Plain {
+    constructor(public x: number) {}
+  }
+  return [new Failure(message, code).detail, new Plain(code).x];
+}`,
+      [
+        ["bad", 2],
+        ["", 0],
+      ],
+    );
+  });
+
+  it("a dynamic import is the operation that loads the module", () => {
+    const code = `export async function f(spec: unknown) {
+  const { contractId } = await import("./contract-id.js");
+  return { status: "accepted", id: contractId(spec) };
+}`;
+    const g = liftAtom(code);
+    expect(opaque(g)).toEqual([]);
+    expect(g.nodes.some((n) => n.label === "import()")).toBe(true);
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+    expect(liftFidelity(code, g).holds).toBe(true);
+  });
 });

@@ -124,11 +124,12 @@ describe("class fields, static blocks and computed names (#1330)", () => {
     expect(graphIdentity(decodeGraph(encodeGraph(g)))).toBe(graphIdentity(g));
   });
 
-  it("a parameter property is not lifted yet: it stays a summary", () => {
+  it("a parameter property is a parameter assigned to the receiver (#1292)", () => {
     const g = liftAtom(
       "export function f() { class A { constructor(public x: number) {} } return new A(1).x; }",
     );
-    expect(opaque(g).length).toBeGreaterThan(0);
+    expect(opaque(g)).toEqual([]);
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
   });
 
   it("o.x++ and o[k]-- write the member, as += does (#1330)", () => {

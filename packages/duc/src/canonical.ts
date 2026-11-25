@@ -39,8 +39,15 @@ const COMMUTATIVE = {
  * constant where it is used, so this is the graph that lowering lifts back to.
  */
 function inlineLiteralCaptures(nodes: DucNode[]): DucNode[] {
+  // A captured platform primitive (`const object = globalThis`, read in a closure) is the closure's
+  // own source of it, as a lowering writes the name where it is used (#1292).
   const literal = new Map<ValueId, DucNode>();
-  for (const n of nodes) if (n.kind === "literal-source") literal.set(n.outputs[0] as ValueId, n);
+  for (const n of nodes)
+    if (
+      n.kind === "literal-source" ||
+      (n.kind === "diamond-source" && n.diamond?.reason === "platform-primitive")
+    )
+      literal.set(n.outputs[0] as ValueId, n);
   return nodes.map((node) => {
     if (node.closure === undefined) return node;
     const captures = node.inputs.length;
@@ -81,8 +88,9 @@ function inlineLiteralCaptures(nodes: DucNode[]): DucNode[] {
           id: n.id,
           inputs: [],
           outputs: n.outputs,
-          kind: "literal-source",
+          kind: l.kind,
           ...(l.label !== undefined ? { label: l.label } : {}),
+          ...(l.diamond !== undefined ? { diamond: l.diamond } : {}),
           ...(l.origin !== undefined ? { origin: l.origin } : {}),
         };
       }
