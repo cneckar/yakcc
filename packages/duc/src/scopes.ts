@@ -36,18 +36,50 @@ export function scopePlanner(
 ): ScopePlanner {
   const branches = g.branches ?? [];
   const indexOf = new Map(g.nodes.map((n, i) => [n.id, i]));
-  const madeWithin = (path: string): Set<ValueId> =>
-    new Set(g.nodes.filter((n) => isPrefix(path, n.region)).flatMap((n) => n.outputs));
-  // The nodes an item holds: itself, or every node inside a branch's sides or a loop's body.
-  const nodesOf = (item: ScopeItem): DucNode[] => {
-    if (item.kind === "node") return [item.node];
-    const paths =
-      item.kind === "branch"
-        ? [sidePath(item.branch, "t"), sidePath(item.branch, "e")]
-        : [bodyPathOf(item.node)];
-    const inside = g.nodes.filter((n) => paths.some((p) => isPrefix(p, n.region)));
-    return item.kind === "loop" ? [item.node, ...inside] : inside;
+  // The nodes by region, so a path's nodes are those of the few regions under it, not every node.
+  const byRegion = new Map<string, DucNode[]>();
+  for (const n of g.nodes) {
+    if (n.region === undefined) continue;
+    const list = byRegion.get(n.region);
+    if (list === undefined) byRegion.set(n.region, [n]);
+    else list.push(n);
+  }
+  const regions = [...byRegion.keys()];
+  const withinCache = new Map<string, DucNode[]>();
+  const nodesWithin = (path: string): DucNode[] => {
+    let hit = withinCache.get(path);
+    if (hit === undefined) {
+      const rs = new Set(regions.filter((r) => isPrefix(path, r)));
+      hit = g.nodes.filter((n) => n.region !== undefined && rs.has(n.region));
+      withinCache.set(path, hit);
+    }
+    return hit;
   };
+  // Each item's facts, made once (an item is its node's or its branch's: itemsOf makes new objects).
+  const keyOf = (item: ScopeItem): string =>
+    item.kind === "branch" ? `b:${item.branch.id}` : `n:${item.node.id}`;
+  const memo = <T>(cache: Map<string, T>, item: ScopeItem, make: () => T): T => {
+    const k = keyOf(item);
+    let v = cache.get(k);
+    if (v === undefined) {
+      v = make();
+      cache.set(k, v);
+    }
+    return v;
+  };
+  // The nodes an item holds: itself, or every node inside a branch's sides or a loop's body.
+  const nodesCache = new Map<string, DucNode[]>();
+  const nodesOf = (item: ScopeItem): DucNode[] =>
+    memo(nodesCache, item, () => {
+      if (item.kind === "node") return [item.node];
+      const paths =
+        item.kind === "branch"
+          ? [sidePath(item.branch, "t"), sidePath(item.branch, "e")]
+          : [bodyPathOf(item.node)];
+      const held = new Set(paths.flatMap((p) => nodesWithin(p)));
+      const inside = g.nodes.filter((n) => held.has(n));
+      return item.kind === "loop" ? [item.node, ...inside] : inside;
+    });
   // A heap operation comes after the operations its token names (loweringView's `after`), inside or
   // outside the item that holds it.
   const heapNeeds = (item: ScopeItem): ValueId[] => {
@@ -55,19 +87,26 @@ export function scopePlanner(
     const madeHere = new Set(held.flatMap((n) => n.outputs));
     return held.flatMap((n) => (after.get(n.id) ?? []).filter((v) => !madeHere.has(v)));
   };
-  const needsOf = (item: ScopeItem): ValueId[] => [...dataNeeds(item), ...heapNeeds(item)];
+  const needsCache = new Map<string, ValueId[]>();
+  const needsOf = (item: ScopeItem): ValueId[] =>
+    memo(needsCache, item, () => [...dataNeeds(item), ...heapNeeds(item)]);
+  // The joins of each branch.
+  const joinsOf = new Map<string, DucNode[]>();
+  for (const n of g.nodes) {
+    const b = owners.get(n.id);
+    if (b === undefined) continue;
+    const list = joinsOf.get(b.id);
+    if (list === undefined) joinsOf.set(b.id, [n]);
+    else list.push(n);
+  }
   const dataNeeds = (item: ScopeItem): ValueId[] => {
     if (item.kind === "node" || item.kind === "loop") return item.node.inputs.map(resolve);
     const b = item.branch;
     const paths = [sidePath(b, "t"), sidePath(b, "e")];
-    const inside = new Set(paths.flatMap((p) => [...madeWithin(p)]));
-    const inner = g.nodes
-      .filter((n) => paths.some((p) => isPrefix(p, n.region)))
-      .flatMap((n) => n.inputs.map(resolve))
-      .filter((v) => !inside.has(v));
-    const joins = g.nodes
-      .filter((n) => owners.get(n.id)?.id === b.id)
-      .flatMap((n) => n.inputs.slice(1).map(resolve));
+    const held = nodesOf(item);
+    const inside = new Set(held.flatMap((n) => n.outputs));
+    const inner = held.flatMap((n) => n.inputs.map(resolve)).filter((v) => !inside.has(v));
+    const joins = (joinsOf.get(b.id) ?? []).flatMap((n) => n.inputs.slice(1).map(resolve));
     // A branch nested in a side tests its condition there: a value the item reads, like a node's
     // input (an if whose only exits are throws leaves its condition outside, #1292).
     const nestedConds = branches
@@ -78,7 +117,7 @@ export function scopePlanner(
   };
   const producesOf = (item: ScopeItem): readonly ValueId[] =>
     item.kind === "branch"
-      ? g.nodes.filter((n) => owners.get(n.id)?.id === item.branch.id).flatMap((n) => n.outputs)
+      ? (joinsOf.get(item.branch.id) ?? []).flatMap((n) => n.outputs)
       : item.node.outputs;
   const itemsOf = (scope: string | undefined): ScopeItem[] => {
     const items: ScopeItem[] = [];
@@ -111,12 +150,19 @@ export function scopePlanner(
     const done = new Set<ScopeItem>();
     const out: ScopeItem[] = [];
     const pending = [...items].sort((a, b) => a.at - b.at);
+    // Each item's needs made here by another item of the scope: it waits for those.
+    const waits = new Map<ScopeItem, ScopeItem[]>();
+    for (const it of pending) {
+      const ws = new Set<ScopeItem>();
+      for (const v of needsOf(it)) {
+        const p = producedHere.get(v);
+        if (p !== undefined && p !== it) ws.add(p);
+      }
+      waits.set(it, [...ws]);
+    }
     while (pending.length > 0) {
       const at = pending.findIndex((it) =>
-        needsOf(it).every((v) => {
-          const p = producedHere.get(v);
-          return p === undefined || p === it || done.has(p);
-        }),
+        (waits.get(it) as ScopeItem[]).every((p) => done.has(p)),
       );
       if (at === -1) throw fail("a scope's statements depend on each other");
       const [it] = pending.splice(at, 1) as [ScopeItem];
