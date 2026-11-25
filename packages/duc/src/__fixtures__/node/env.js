@@ -36,7 +36,8 @@ const standIns = {
   },
 };
 function internalBinding(name) {
-  const b = __yakccRuntimeBinding(name) ?? standIns[name];
+  const own = __yakccRuntimeBinding(name);
+  const b = own === undefined ? standIns[name] : { ...standIns[name], ...own };
   if (b === undefined) throw new Error(`no binding ${name}`);
   return b;
 }

@@ -150,6 +150,7 @@ const GLOBALS = new Set([
   "unescape",
   // The runtime's own internalBinding layer (#1331): Node's bindings V8's role gives.
   "__yakccRuntimeBinding",
+  "__yakccDefineGlobal",
   "eval",
   "EvalError",
   "ReferenceError",
@@ -307,6 +308,8 @@ const RUNTIME_DECLS: Readonly<Record<string, string>> = {
   yk_private_set: "declare i64 @yk_private_set(i64, i64, i64)",
   yk_private_has: "declare i64 @yk_private_has(i64, i64)",
   yk_super_construct: "declare i64 @yk_super_construct(ptr, i64, i64, ptr)",
+  yk_array_hole: "declare i64 @yk_array_hole(i64, i64)",
+  yk_name_method: "declare i64 @yk_name_method(i64, i64)",
   yk_await: "declare i64 @yk_await(i64)",
   yk_yield: "declare i64 @yk_yield(i64)",
   yk_yield_star: "declare i64 @yk_yield_star(i64)",
@@ -530,10 +533,14 @@ function lowerFunction(
   const globalValue = new Map<ValueId, string>();
   const freeValue = new Map<ValueId, string>();
   const leafValue = new Map<ValueId, string>();
+  // A function's own `arguments` (#1330): its arguments as an array, made on entry (strict code:
+  // no parameter aliases them).
+  const argumentsValues: ValueId[] = [];
   for (const n of g.nodes) {
     if (n.kind !== "diamond-source") continue;
     const sym = n.diamond?.symbol ?? "";
-    if (LEAVES[sym] !== undefined) leafValue.set(n.outputs[0] as ValueId, sym);
+    if (sym === "arguments" && closure !== undefined) argumentsValues.push(n.outputs[0] as ValueId);
+    else if (LEAVES[sym] !== undefined) leafValue.set(n.outputs[0] as ValueId, sym);
     else if (n.diamond?.reason === "platform-primitive" && sym === "Math")
       mathValue.add(n.outputs[0] as ValueId);
     else if (
@@ -1054,7 +1061,7 @@ function lowerFunction(
         throw new LlvmEmitError(`the literal ${text} is not in the subset yet`);
       return boxedNumber(n);
     }
-    if (p?.kind === "diamond-source" || freeValue.has(v)) {
+    if ((p?.kind === "diamond-source" || freeValue.has(v)) && !argumentsValues.includes(v)) {
       const leaf = leafValue.get(v);
       if (leaf !== undefined) {
         // A leaf as a value: the runtime's function value for it.
@@ -1068,7 +1075,8 @@ function lowerFunction(
         // probed (DEC-DUC-FEATURE-DETECTION-001).
         return scope?.read(free, emit, fresh) ?? UNDEFINED;
       }
-      const sym = globalValue.get(v);
+      // Math read as a value (`const { abs } = Math`): the runtime's global, as a program makes it.
+      const sym = globalValue.get(v) ?? (mathValue.has(v) ? "Math" : undefined);
       if (sym === undefined) throw new LlvmEmitError("Math is not a value here");
       const key = m.constant(sym);
       return call("yk_global", `ptr ${key.ptr}, i64 ${key.length}`);
@@ -1603,6 +1611,23 @@ function lowerFunction(
     emit(
       `${r} = call i64 @yk_closure_new(ptr @${fn}, i32 ${hasThis}, i64 ${caps.length}, ptr ${list(caps)})`,
     );
+    // Its name (the lifter's: a declaration's, or the binding an anonymous function is assigned to)
+    // and its length (the parameters before a rest one).
+    // A named function expression's own name; else the name the lifter gave it (its binding).
+    const text = n.origin?.text ?? "";
+    const ownName =
+      /^(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(/.exec(text)?.[1] ?? text;
+    const params = graph.nodes.filter(
+      (p) => p.kind === "param-source" && Number(p.label ?? "0") >= n.inputs.length,
+    );
+    const rest = params.findIndex((p) => (p.label ?? "").endsWith("..."));
+    const length = rest < 0 ? params.length : rest;
+    m.intrinsics.add("declare i64 @yk_closure_meta(i64, ptr, i64, i64)");
+    if (ownName !== undefined && /^[A-Za-z_$][\w$]*$/.test(ownName)) {
+      const k = m.constant(ownName);
+      emit(`call i64 @yk_closure_meta(i64 ${r}, ptr ${k.ptr}, i64 ${k.length}, i64 ${length})`);
+    } else if (length > 0)
+      emit(`call i64 @yk_closure_meta(i64 ${r}, ptr null, i64 0, i64 ${length})`);
     const made = mode === 0 ? r : call("yk_closure_mode", `i64 ${r}, i32 ${mode}`);
     // Made inside a class's member, it knows the class (`class-self`) as the member does.
     return closure === undefined ? made : call("yk_closure_inherit", `i64 ${made}, ptr %closure`);
@@ -1810,10 +1835,22 @@ function lowerFunction(
       block(end);
       return;
     }
-    if (lbl.startsWith("array-with-holes:"))
-      throw new LlvmEmitError(
-        "an array with holes is not in the native subset yet: the runtime's arrays have no holes (#1330)",
-      );
+    if (lbl.startsWith("array-with-holes:")) {
+      // [, a, , b]: the elements at their positions, each hole an index the array does not have.
+      const holes = JSON.parse(lbl.slice("array-with-holes:".length)) as number[];
+      if (ins.some(isSpread))
+        throw new LlvmEmitError(
+          "an array with both holes and spread elements is not in the subset yet",
+        );
+      const elems: string[] = [];
+      let k = 0;
+      for (let i = 0; i < ins.length + holes.length; i++)
+        elems.push(holes.includes(i) ? UNDEFINED : operand(ins[k++] as ValueId));
+      const made = call("yk_array_of", `i64 ${elems.length}, ptr ${list(elems)}`);
+      for (const h of holes) call("yk_array_hole", `i64 ${made}, i64 ${h}`);
+      set(out, made);
+      return;
+    }
     // A private name (#1330): its key is the nearest class around this function that declares it,
     // and the member is in the object's private table.
     const privateKey = (name: string): string => {
@@ -1965,13 +2002,18 @@ function lowerFunction(
         ),
       );
       const statics = members.map(([, , isStatic]) => (isStatic === true ? TRUE : FALSE));
-      set(
-        out,
-        call(
-          "yk_class_new",
-          `ptr ${closure === undefined ? "null" : "%closure"}, i64 ${parent}, i64 ${members.length}, ptr ${list(kinds)}, ptr ${list(names)}, ptr ${list(statics)}, ptr ${list(fns)}`,
-        ),
+      const made = call(
+        "yk_class_new",
+        `ptr ${closure === undefined ? "null" : "%closure"}, i64 ${parent}, i64 ${members.length}, ptr ${list(kinds)}, ptr ${list(names)}, ptr ${list(statics)}, ptr ${list(fns)}`,
       );
+      // The class's name (its declaration's, or its binding's), as the lifter records it.
+      const className = n.origin?.text ?? "";
+      if (/^[A-Za-z_$][\w$]*$/.test(className)) {
+        m.intrinsics.add("declare i64 @yk_class_name(i64, ptr, i64)");
+        const k = m.constant(className);
+        emit(`call i64 @yk_class_name(i64 ${made}, ptr ${k.ptr}, i64 ${k.length})`);
+      }
+      set(out, made);
       return;
     }
     if (lbl.startsWith("delete.") && ins.length === 1) {
@@ -2170,6 +2212,24 @@ function lowerFunction(
       return;
     }
     if (lbl === "NewExpression") {
+      // new RegExp(pattern, flags) of constant strings: compiled as its literal would be.
+      if (
+        globalValue.get(resolve(ins[0] as ValueId)) === "RegExp" &&
+        (ins.length === 2 || ins.length === 3) &&
+        !ins.some(isSpread)
+      ) {
+        const pattern = constantString(ins[1] as ValueId);
+        const flags = ins.length === 3 ? constantString(ins[2] as ValueId) : "";
+        if (
+          pattern !== undefined &&
+          flags !== undefined &&
+          /^[dgimsuy]*$/.test(flags) &&
+          pattern !== ""
+        ) {
+          set(out, regexObject(`/${pattern}/${flags}`));
+          return;
+        }
+      }
       const callee = operand(ins[0] as ValueId);
       if (ins.slice(1).some(isSpread)) {
         set(out, call("yk_new_spread", `i64 ${callee}, i64 ${spreadList(ins.slice(1))}`));
@@ -2721,12 +2781,15 @@ function lowerFunction(
           slot.kind === "set"
         )
           throw new LlvmEmitError("an object literal slot that is not a plain one");
-        keys.push(
+        const key =
           slot.kind === "computed"
             ? operand(ins[at++] as ValueId)
-            : str((slot as { name: string }).name),
-        );
-        values.push(operand(ins[at++] as ValueId));
+            : str((slot as { name: string }).name);
+        keys.push(key);
+        const v = ins[at++] as ValueId;
+        // A function made here is named by its key (NamedEvaluation), unless its code named it.
+        const made = producer.get(resolve(v))?.closure !== undefined;
+        values.push(made ? call("yk_name_method", `i64 ${operand(v)}, i64 ${key}`) : operand(v));
       }
       set(out, call("yk_object_of", `i64 ${keys.length}, ptr ${list(keys)}, ptr ${list(values)}`));
       return;
@@ -2848,11 +2911,8 @@ function lowerFunction(
     loop.outputs.forEach((v, i) => set(v, operand(rec.carry[i] as ValueId)));
   };
 
-  // Each regex literal: its matcher compiled from the pattern and lowered (once per module), and
-  // its object made here (DEC-DUC-REGEX-GRAPH-001).
-  for (const n of g.nodes) {
-    const text = n.label ?? "";
-    if (n.kind !== "literal-source" || !text.startsWith("/")) continue;
+  /** A regex object of `/pattern/flags`: its matcher compiled and lowered once per module. */
+  function regexObject(text: string): string {
     let compiled: ReturnType<typeof regexMatcherGraph>;
     try {
       compiled = regexMatcherGraph(text);
@@ -2872,14 +2932,32 @@ function lowerFunction(
     emit(`${matcher} = call i64 @yk_closure_new(ptr @${fn}, i32 0, i64 0, ptr null)`);
     const names = compiled.parsed.names.map((nm) => (nm === undefined ? UNDEFINED : str(nm)));
     const namesArray = call("yk_array_of", `i64 ${names.length}, ptr ${list(names)}`);
-    set(
-      n.outputs[0] as ValueId,
-      call(
-        "yk_regexp_new",
-        `i64 ${str(compiled.pattern)}, i64 ${str(compiled.flags)}, i64 ${matcher}, i64 ${namesArray}`,
-      ),
+    return call(
+      "yk_regexp_new",
+      `i64 ${str(compiled.pattern)}, i64 ${str(compiled.flags)}, i64 ${matcher}, i64 ${namesArray}`,
     );
   }
+  /** A string the graph computes from literals alone (`"a" + "b"`), or undefined. */
+  const constantString = (v0: ValueId, depth = 0): string | undefined => {
+    const p = producer.get(resolve(v0));
+    if (p === undefined || depth > 256) return undefined;
+    const text = p.label ?? "";
+    if (p.kind === "literal-source" && text.startsWith('"')) return JSON.parse(text) as string;
+    if (p.kind === "op" && text === "+" && p.inputs.length === 2) {
+      const a = constantString(p.inputs[0] as ValueId, depth + 1);
+      const b = a === undefined ? undefined : constantString(p.inputs[1] as ValueId, depth + 1);
+      return a === undefined || b === undefined ? undefined : a + b;
+    }
+    return undefined;
+  };
+  // Each regex literal: its matcher compiled from the pattern and lowered (once per module), and
+  // its object made here (DEC-DUC-REGEX-GRAPH-001).
+  for (const n of g.nodes) {
+    const text = n.label ?? "";
+    if (n.kind !== "literal-source" || !text.startsWith("/")) continue;
+    set(n.outputs[0] as ValueId, regexObject(text));
+  }
+  for (const v of argumentsValues) set(v, call("yk_rest", "i64 %argc, ptr %argv, i64 0"));
   // Parameters: the entry function's own; a closure's captures, then its arguments.
   params.forEach((p, i) => {
     const v = p.outputs[0] as ValueId;
