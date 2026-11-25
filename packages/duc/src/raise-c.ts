@@ -300,7 +300,14 @@ function readDecl(ix: UnitIndex, d: IndexedDecl): ClangNode {
   try {
     const b = Buffer.alloc(d.end - d.start);
     readSync(fd, b, 0, b.length, d.start);
-    return JSON.parse(b.toString("utf8")) as ClangNode;
+    // (Documentation comments clang attaches to declarations are not code: left out.)
+    const text = b.toString("utf8");
+    if (!text.includes('"FullComment"')) return JSON.parse(text) as ClangNode;
+    return JSON.parse(text, (_k, v: unknown) =>
+      Array.isArray(v) && v.some((x) => (x as { kind?: string } | null)?.kind === "FullComment")
+        ? v.filter((x) => (x as { kind?: string } | null)?.kind !== "FullComment")
+        : v,
+    ) as ClangNode;
   } finally {
     closeSync(fd);
   }
@@ -573,6 +580,13 @@ function ctype(t: { qualType: string; desugaredQualType?: string } | undefined):
 function parseType(spelled: string, depth = 0): CType {
   if (depth > 32) throw new RaiseCError(`the type "${spelled}" does not resolve`);
   const raw = spelled
+    // A vector (`__m128i`: `__attribute__((__vector_size__(2 * sizeof(long long)))) long long`):
+    // an object of its bytes.
+    .replace(
+      /__attribute__\(\(__vector_size__\((\d+)(?:\s*\*\s*sizeof\(([^()]*)\))?\)(?:,\s*__aligned__\(\d+\))?\)\)\s*((?:(?:unsigned|signed|long|short|int|char|float|double)\b\s*)+)/g,
+      (_m, n: string, of: string | undefined) =>
+        `struct __yk_vector<${Number(n) * (of === undefined ? 1 : (VECTOR_LANE[of.trim()] ?? 0))}> `,
+    )
     .replace(/__attribute__\(\(.*?\)\)\s*/g, "")
     // (Qualifiers inside a template's arguments are part of its name: `<const char *>`.)
     .replace(/<[\s\S]*>|\b(?:const|volatile|restrict|__restrict)\b/g, (m) =>
@@ -663,9 +677,28 @@ const VA_LIST_TAG: RecordLayout = {
   fields: new Map([["cursor", { offset: 0, type: "unsigned long" }]]),
 };
 
+/** A vector's lane sizes, by the type its size is counted in. */
+const VECTOR_LANE: Readonly<Record<string, number>> = {
+  char: 1,
+  "signed char": 1,
+  "unsigned char": 1,
+  short: 2,
+  "unsigned short": 2,
+  int: 4,
+  "unsigned int": 4,
+  long: 8,
+  "long long": 8,
+  "unsigned long long": 8,
+  float: 4,
+  double: 8,
+};
+
 const layoutOf = (t: CType): RecordLayout => {
   if (t.k !== "rec") throw new RaiseCError(`${t.k} is not a record`);
   if (t.name === "struct __va_list_tag") return VA_LIST_TAG;
+  const vector = /^struct __yk_vector<(\d+)>$/.exec(t.name);
+  if (vector !== null)
+    return { size: Number(vector[1]), align: Number(vector[1]), fields: new Map() };
   const l = unitLayout(recordKey(t.name));
   if (l === undefined) throw new RaiseCError(`no layout from clang for "${t.name}"`);
   return l;
@@ -1750,6 +1783,7 @@ function raiseBody(
       case "CStyleCastExpr":
       case "CXXConstCastExpr":
       case "CXXStaticCastExpr":
+      case "CXXFunctionalCastExpr":
         // A cast that keeps an lvalue (a qualification): the same object; a record read as a
         // value (to be copied), the record itself.
         if (e.castKind === "NoOp") return place(k0);
@@ -1898,6 +1932,18 @@ function raiseBody(
       case "ExprWithCleanups":
       case "CXXBindTemporaryExpr":
         return place(k0);
+      // A temporary object (C++: `std::string_view(p, n).size()`): constructed in a frame slot.
+      case "CXXConstructExpr":
+      case "CXXTemporaryObjectExpr": {
+        const t = typeOf(e);
+        if (t.k !== "rec") break;
+        const slot = `__tmp${temps++}`;
+        top.push(
+          `const ${slot} = __ykAlloc(${Math.max(8, sizeOf(t))}, ${Math.max(8, alignOf(t))});`,
+        );
+        frame.push(slot);
+        return { k: "mem", addr: `(${construct(slot, e)}, ${slot})`, t };
+      }
       // A temporary bound to a reference (C++): an object of its own, in a frame slot,
       // initialized where it is evaluated.
       case "MaterializeTemporaryExpr": {
@@ -2082,9 +2128,31 @@ function raiseBody(
             if (!records && (global || /\bconst\b/.test(d.type?.qualType ?? "")))
               return constData(d, global);
           }
+          // (One of two arrays: the one chosen, as a pointer; a row of an array of arrays: the
+          // array's address, the row's offset on.)
+          const decayOf = (x: ClangNode): ClangNode =>
+            ({
+              kind: "ImplicitCastExpr",
+              castKind: "ArrayToPointerDecay",
+              type: e.type,
+              valueCategory: "prvalue",
+              inner: [x],
+            }) as ClangNode;
+          if (target.kind === "ConditionalOperator") {
+            const [c, x, y] = target.inner as [ClangNode, ClangNode, ClangNode];
+            return `(${cond(c)} ? ${expr(decayOf(x))} : ${expr(decayOf(y))})`;
+          }
+          if (target.kind === "ArraySubscriptExpr") {
+            const [b, i] = target.inner as [ClangNode, ClangNode];
+            const bt = typeOf(b);
+            if (bt.k === "ptr" && bt.to.k === "arr")
+              return `(${expr(b)} + ${scaled(indexNum(expr(i), typeOf(i)), sizeOf(bt.to))})`;
+          }
           const p = place(k0);
           if (p.k !== "mem")
-            throw new RaiseCError("an array used as a pointer that is not in memory");
+            throw new RaiseCError(
+              `an array used as a pointer that is not in memory (${target.kind} ${target.referencedDecl?.name ?? target.name ?? ""} ${target.referencedDecl?.kind ?? ""})`,
+            );
           return p.addr;
         }
         if (["NoOp", "FunctionToPointerDecay", "BitCast"].includes(ck)) return expr(k0);
@@ -2239,6 +2307,33 @@ function raiseBody(
         return "__this";
       // new (C++): memory for the object, constructed there; its address.
       case "CXXNewExpr": {
+        // A placement new (`::new (p) T(..)`, the standard placement operator): constructed at p.
+        const placement = e as {
+          isPlacement?: boolean;
+          initStyle?: string;
+          operatorNewDecl?: { type?: { qualType?: string } };
+        };
+        if (
+          placement.isPlacement === true &&
+          (e as { isArray?: boolean }).isArray !== true &&
+          /^void \*\((std::)?size_t, void \*\)/.test(
+            placement.operatorNewDecl?.type?.qualType ?? "",
+          )
+        ) {
+          const t = typeOf(e);
+          if (t.k !== "ptr") throw new RaiseCError("a new of a non-pointer");
+          const hasInit = placement.initStyle !== undefined;
+          const where = kids[hasInit ? 1 : 0] as ClangNode;
+          const a = temp({ k: "f64" });
+          const init = hasInit ? kids[0] : undefined;
+          const made =
+            init === undefined
+              ? "undefined"
+              : t.to.k === "rec"
+                ? construct(a, init)
+                : storeAt(a, t.to, expr(init));
+          return `((${a} = ${expr(where)}), ${made}, ${a})`;
+        }
         if (
           (e as { isArray?: boolean }).isArray === true ||
           (e as { isPlacement?: boolean }).isPlacement === true
@@ -2272,6 +2367,10 @@ function raiseBody(
       }
       case "CXXNullPtrLiteralExpr":
         return "0";
+      // A throw (C++; no handler is raised): the program ends, as an uncaught exception does.
+      case "CXXThrowExpr":
+        externals.add("abort");
+        return "abort()";
       // A method call (C++): the object's address, then the arguments.
       case "CXXMemberCallExpr": {
         const m = stripCasts(k0);
@@ -2321,6 +2420,50 @@ function raiseBody(
                 ? argOf(x)
                 : expr(x),
           );
+        // SSE2's integer intrinsics (x86-64's baseline; ada's and simdutf's fast paths): a vector
+        // is its 16 bytes, and a vector made is a fresh object's address, as a record returned.
+        if (
+          /^_mm_(loadu_si128|set1_epi8|cmpeq_epi8|or_si128|and_si128|movemask_epi8)$/.test(name)
+        ) {
+          const xs = kids.slice(1);
+          const r = temp({ k: "f64" });
+          const alloc = `(${r} = __ykAlloc(16, 16))`;
+          const at = (b: string, i: number): string => (i === 0 ? b : `(${b} + ${i})`);
+          const lanes = Array.from({ length: 16 }, (_, i) => i);
+          const operand = (x: ClangNode): string => {
+            const v = temp({ k: "f64" });
+            return `(${v} = ${argOf(x)})`;
+          };
+          switch (name) {
+            case "_mm_loadu_si128": {
+              const p = temp({ k: "f64" });
+              return `(${alloc}, (${p} = ${expr(xs[0] as ClangNode)}), __ykStore64(${r}, __ykLoad64(${p})), __ykStore64(${at(r, 8)}, __ykLoad64(${at(p, 8)})), ${r})`;
+            }
+            case "_mm_set1_epi8": {
+              const v = temp({ k: "i32" });
+              return `(${alloc}, (${v} = ${expr(xs[0] as ClangNode)} & 255), ${lanes.map((i) => `__ykStore8(${at(r, i)}, ${v})`).join(", ")}, ${r})`;
+            }
+            case "_mm_cmpeq_epi8": {
+              const a = operand(xs[0] as ClangNode);
+              const b = operand(xs[1] as ClangNode);
+              const [va, vb] = [a.slice(1, a.indexOf(" =")), b.slice(1, b.indexOf(" ="))];
+              return `(${alloc}, ${a}, ${b}, ${lanes.map((i) => `__ykStore8(${at(r, i)}, __ykLoad8(${at(va, i)}) === __ykLoad8(${at(vb, i)}) ? 255 : 0)`).join(", ")}, ${r})`;
+            }
+            case "_mm_or_si128":
+            case "_mm_and_si128": {
+              const op = name === "_mm_or_si128" ? "|" : "&";
+              const a = operand(xs[0] as ClangNode);
+              const b = operand(xs[1] as ClangNode);
+              const [va, vb] = [a.slice(1, a.indexOf(" =")), b.slice(1, b.indexOf(" ="))];
+              return `(${alloc}, ${a}, ${b}, ${[0, 8].map((i) => `__ykStore64(${at(r, i)}, __ykLoad64(${at(va, i)}) ${op} __ykLoad64(${at(vb, i)}))`).join(", ")}, ${r})`;
+            }
+            default: {
+              const a = operand(xs[0] as ClangNode);
+              const va = a.slice(1, a.indexOf(" ="));
+              return `(${a}, ${lanes.map((i) => `((__ykLoad8(${at(va, i)}) >>> 7) << ${i})`).join(" | ")})`;
+            }
+          }
+        }
         if (name === "bit_cast") {
           const to = typeOf(e);
           const from = typeOf(kids[1] as ClangNode);
@@ -4327,13 +4470,25 @@ export function shaveCUnit(
             return `${cls.tag ?? "struct"} ${named(cls, 0)}`;
           },
           constructorOf: (record, type) => {
-            const node = findRecord(record);
+            // (Local classes of one name, libstdc++'s `_Guard` in each instance: each, until one
+            // has a constructor of this type.)
+            const plainName = record.replace(/^(struct|class|union) /, "");
+            const nodes = [
+              findRecord(record),
+              ...(/^[A-Za-z_]\w*$/.test(plainName)
+                ? (indexed.byName.get(plainName) ?? [])
+                    .filter((d) => RECORD_KINDS.has(d.kind) && d.owner !== undefined)
+                    .map((d) => readDecl(indexed, d))
+                : []),
+            ];
             // Its constructors, and its constructor templates' instances; by type (scopes
             // aside: a type can be spelled with or without them).
             const bare = (t: string): string =>
               normType(t.replace(/\b[A-Za-z_]\w*::/g, "").replace(/\s*\bnoexcept\b(\(.*\))?$/, ""));
-            const all = (node?.inner ?? []).flatMap((c) =>
-              c.kind === "FunctionTemplateDecl" ? (c.inner ?? []) : [c],
+            const all = nodes.flatMap((node) =>
+              (node?.inner ?? []).flatMap((c) =>
+                c.kind === "FunctionTemplateDecl" ? (c.inner ?? []) : [c],
+              ),
             );
             // (A constructor template's own declaration in the instance has the type of its
             // instance: the one defined.)
@@ -4935,6 +5090,10 @@ export function shaveCUnit(
           key,
           staticDefinition(decl, {
             staticKey: (g) => staticHook(g),
+            constInit: (g) => {
+              const c = resolveGlobal(g.name ?? "", normType(g.type?.qualType ?? ""), g.id);
+              return c === undefined ? undefined : initOf(c);
+            },
             fnKey: (f) =>
               resolve({
                 name: f.name ?? "",
@@ -5235,6 +5394,8 @@ function staticDefinition(
   hooks: {
     readonly staticKey: (d: ClangNode) => string | undefined;
     readonly fnKey: (d: ClangNode) => string;
+    /** A constant variable's initializer (C++: `constexpr int n = a * b;`). */
+    readonly constInit?: (d: ClangNode) => ClangNode | undefined;
   },
 ): StaticDef {
   const t = ctype(decl.type);
@@ -5283,8 +5444,13 @@ function staticDefinition(
       case "DeclRefExpr": {
         const d = e.referencedDecl as ClangNode;
         const v = d.kind === "EnumConstantDecl" ? unitEnumValue(d.name ?? "") : undefined;
-        if (v === undefined) break;
-        return { k: "v", v };
+        if (v !== undefined) return { k: "v", v };
+        // Another constant's value (its initializer, folded the same way).
+        if (d.kind === "VarDecl" && /\bconst\b/.test(d.type?.qualType ?? "")) {
+          const i = hooks.constInit?.(d);
+          if (i !== undefined) return scalar(i);
+        }
+        break;
       }
       case "CharacterLiteral":
         return { k: "v", v: BigInt(Number(e.value)) };
@@ -5469,8 +5635,12 @@ function lowerRangeFor(n: ClangNode, bindings = new Map<string, ClangNode>()): C
       return { ...n, referencedDecl: { ...d, kind: "VarDecl", name: "__decomposed" } };
     return n;
   }
-  const kids = n.inner;
-  if (kids === undefined) return n;
+  const all = n.inner;
+  if (all === undefined) return n;
+  // (A documentation comment clang attaches to a declaration is not code.)
+  const kids = all.some((k) => k.kind === "FullComment")
+    ? all.filter((k) => k.kind !== "FullComment")
+    : all;
   if (n.kind === "DeclStmt" && kids.some((k) => k.kind === "DecompositionDecl")) {
     const decls: ClangNode[] = [];
     for (const k of kids) {
@@ -5498,7 +5668,7 @@ function lowerRangeFor(n: ClangNode, bindings = new Map<string, ClangNode>()): C
     }
     return { ...n, inner: decls };
   }
-  let changed = false;
+  let changed = kids !== all;
   const next = kids.map((k) => {
     const l = lowerRangeFor(k, bindings);
     if (l !== k) changed = true;
