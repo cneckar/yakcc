@@ -150,85 +150,88 @@ describe.skipIf(!hasClang).each(CONFIGS)(
     const wbits = (c: Case): number =>
       c.framing === "raw" ? -c.windowBits : c.framing === "gzip" ? c.windowBits + 16 : c.windowBits;
 
-    it("each stream equals Node's; inflating Node's streams, whole or corrupted, gives Node's data or failure; crc32 is zlib.crc32's (as raised)", () => {
-      const memory = createCMemory();
-      const system = createCSystem(memory);
-      let cpuids = 0;
-      const leaves = system.leaves as unknown as Record<string, Fn>;
-      const cpuid = leaves.__yk_cpuid as Fn;
-      leaves.__yk_cpuid = (...a: unknown[]) => {
-        cpuids++;
-        return cpuid(...a);
-      };
-      const env = link(
-        new Map([...musl.atoms, ...z.atoms, ...fixture.atoms]),
-        false,
-        memory,
-        [...musl.units, ...z.units, fixture],
-        system.leaves as unknown as Record<string, Fn>,
-      );
-      env.yk_musl_init?.();
-      const L = memory.leaves;
-      const cap = 1 << 18;
-      const out = L.__ykAlloc(cap, 16);
-      const W = (n: number): bigint => BigInt(n);
-      const call = (f: string, ...a: unknown[]): number => Number((env[f] as Fn)(...a));
-      const bad: string[] = [];
-      all.forEach((c, i) => {
-        const label = `${i} ${JSON.stringify({ ...c, bytes: `${c.bytes.length} ${hex(c.bytes.slice(0, 8))}` })}`;
-        try {
-          const p = memory.put(c.bytes.length > 0 ? c.bytes : [0]);
-          const want = nodeDeflate(c);
-          const n = call(
-            "yk_node_deflate",
-            p,
-            W(c.bytes.length),
-            out,
-            W(cap),
-            c.level,
-            wbits(c),
-            c.memLevel,
-            c.strategy,
-            CHUNK,
-          );
-          const got = n > 0 ? Buffer.from(memory.get(out, n)) : Buffer.alloc(0);
-          if (!got.equals(want))
-            bad.push(
-              `${label}\n  deflate: shaved ${n} ${hex(got.subarray(0, 24))}, Node ${want.length} ${hex(want.subarray(0, 24))}`,
+    for (const lowered of [false, true])
+      it(`each stream equals Node's; inflating Node's streams, whole or corrupted, gives Node's data or failure; crc32 is zlib.crc32's (${lowered ? "lifted to a graph and lowered" : "as raised"})`, () => {
+        const memory = createCMemory();
+        const system = createCSystem(memory);
+        let cpuids = 0;
+        const leaves = system.leaves as unknown as Record<string, Fn>;
+        const cpuid = leaves.__yk_cpuid as Fn;
+        leaves.__yk_cpuid = (...a: unknown[]) => {
+          cpuids++;
+          return cpuid(...a);
+        };
+        const env = link(
+          new Map([...musl.atoms, ...z.atoms, ...fixture.atoms]),
+          lowered,
+          memory,
+          [...musl.units, ...z.units, fixture],
+          system.leaves as unknown as Record<string, Fn>,
+        );
+        env.yk_musl_init?.();
+        const L = memory.leaves;
+        const cap = 1 << 18;
+        const out = L.__ykAlloc(cap, 16);
+        const W = (n: number): bigint => BigInt(n);
+        const call = (f: string, ...a: unknown[]): number => Number((env[f] as Fn)(...a));
+        const bad: string[] = [];
+        all.forEach((c, i) => {
+          const label = `${i} ${JSON.stringify({ ...c, bytes: `${c.bytes.length} ${hex(c.bytes.slice(0, 8))}` })}`;
+          try {
+            const p = memory.put(c.bytes.length > 0 ? c.bytes : [0]);
+            const want = nodeDeflate(c);
+            const n = call(
+              "yk_node_deflate",
+              p,
+              W(c.bytes.length),
+              out,
+              W(cap),
+              c.level,
+              wbits(c),
+              c.memLevel,
+              c.strategy,
+              CHUNK,
             );
-          // Node's stream inflated, and corrupted.
-          const streams = [want];
-          if (want.length > 4) {
-            const broken = Buffer.from(want);
-            broken[broken.length >> 1] ^= 0x5a;
-            streams.push(broken);
-          }
-          for (const s of streams) {
-            const ps = memory.put([...s]);
-            const m = call("yk_node_inflate", ps, W(s.length), out, W(cap), wbits(c), CHUNK);
-            const shaved = m >= 0 ? hex(memory.get(out, Math.max(0, m))) : "failed";
-            const node = nodeInflate(c, s);
-            if (shaved !== node)
+            const got = n > 0 ? Buffer.from(memory.get(out, n)) : Buffer.alloc(0);
+            if (!got.equals(want))
               bad.push(
-                `${label}\n  inflate${s === want ? "" : " (corrupt)"}: shaved ${m} ${shaved.slice(0, 40)}, Node ${node.slice(0, 40)}`,
+                `${label}\n  deflate: shaved ${n} ${hex(got.subarray(0, 24))}, Node ${want.length} ${hex(want.subarray(0, 24))}`,
               );
+            // Node's stream inflated, and corrupted.
+            const streams = [want];
+            if (want.length > 4) {
+              const broken = Buffer.from(want);
+              broken[broken.length >> 1] ^= 0x5a;
+              streams.push(broken);
+            }
+            for (const s of streams) {
+              const ps = memory.put([...s]);
+              const m = call("yk_node_inflate", ps, W(s.length), out, W(cap), wbits(c), CHUNK);
+              const shaved = m >= 0 ? hex(memory.get(out, Math.max(0, m))) : "failed";
+              const node = nodeInflate(c, s);
+              if (shaved !== node)
+                bad.push(
+                  `${label}\n  inflate${s === want ? "" : " (corrupt)"}: shaved ${m} ${shaved.slice(0, 40)}, Node ${node.slice(0, 40)}`,
+                );
+            }
+            const crc = BigInt.asUintN(
+              64,
+              BigInt((env.yk_node_crc32 as Fn)(p, W(c.bytes.length), 0n) as bigint),
+            );
+            if (Number(crc) !== zlib.crc32(Buffer.from(c.bytes)))
+              bad.push(
+                `${label}\n  crc32: shaved ${crc}, Node ${zlib.crc32(Buffer.from(c.bytes))}`,
+              );
+          } catch (e) {
+            bad.push(`${label}\n  trap: ${(e as Error).message}`);
           }
-          const crc = BigInt.asUintN(
-            64,
-            BigInt((env.yk_node_crc32 as Fn)(p, W(c.bytes.length), 0n) as bigint),
-          );
-          if (Number(crc) !== zlib.crc32(Buffer.from(c.bytes)))
-            bad.push(`${label}\n  crc32: shaved ${crc}, Node ${zlib.crc32(Buffer.from(c.bytes))}`);
-        } catch (e) {
-          bad.push(`${label}\n  trap: ${(e as Error).message}`);
+        });
+        expect(bad.slice(0, 5)).toEqual([]);
+        // (Node's x64 build asks the CPU, as it runs, for the SIMD paths it then takes.)
+        if (config.files.some((f) => f.endsWith("adler32_simd.c"))) {
+          expect(z.atoms.has("adler32_simd_")).toBe(true);
+          expect(cpuids).toBeGreaterThan(0);
         }
-      });
-      expect(bad.slice(0, 5)).toEqual([]);
-      // (Node's x64 build asks the CPU, as it runs, for the SIMD paths it then takes.)
-      if (config.files.some((f) => f.endsWith("adler32_simd.c"))) {
-        expect(z.atoms.has("adler32_simd_")).toBe(true);
-        expect(cpuids).toBeGreaterThan(0);
-      }
-    }, 1_800_000);
+      }, 1_800_000);
   },
 );

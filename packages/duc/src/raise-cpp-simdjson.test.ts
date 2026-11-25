@@ -119,44 +119,45 @@ int main(void) {
       .slice(0, docs.length);
   };
 
-  it("each document's fields (or its error) equal native (as raised)", () => {
-    const want = native();
-    const memory = createCMemory();
-    const system = createCSystem(memory);
-    const env = link(
-      new Map([...musl.atoms, ...unit.atoms]),
-      false,
-      memory,
-      [...musl.units, unit],
-      system.leaves as unknown as Record<string, Fn>,
-    );
-    env.yk_musl_init?.();
-    const cap = 1 << 16;
-    const out = memory.leaves.__ykAlloc(cap, 16);
-    const bad: string[] = [];
-    docs.forEach((d, i) => {
-      const b = [...Buffer.from(d, "utf8")];
-      let got: string;
-      try {
-        const n = Number(
-          (env.yk_package_json as Fn)(
-            memory.put(b.length > 0 ? b : [0]),
-            BigInt(b.length),
-            out,
-            BigInt(cap),
-          ),
-        );
-        got = n > 0 ? hex(memory.get(out, n)) : "";
-      } catch (e) {
-        got = `trap: ${(e as Error).message}`;
-      }
-      const text = (h: string | undefined): string =>
-        h?.startsWith("trap") ? h : Buffer.from(h ?? "", "hex").toString("utf8");
-      if (got !== want[i])
-        bad.push(
-          `${d.slice(0, 80)}\n  shaved ${text(got).slice(0, 200)}\n  C++    ${text(want[i]).slice(0, 200)}`,
-        );
-    });
-    expect(bad.slice(0, 5)).toEqual([]);
-  }, 1_800_000);
+  for (const lowered of [false, true])
+    it(`each document's fields (or its error) equal native (${lowered ? "lifted to a graph and lowered" : "as raised"})`, () => {
+      const want = native();
+      const memory = createCMemory();
+      const system = createCSystem(memory);
+      const env = link(
+        new Map([...musl.atoms, ...unit.atoms]),
+        lowered,
+        memory,
+        [...musl.units, unit],
+        system.leaves as unknown as Record<string, Fn>,
+      );
+      env.yk_musl_init?.();
+      const cap = 1 << 16;
+      const out = memory.leaves.__ykAlloc(cap, 16);
+      const bad: string[] = [];
+      docs.forEach((d, i) => {
+        const b = [...Buffer.from(d, "utf8")];
+        let got: string;
+        try {
+          const n = Number(
+            (env.yk_package_json as Fn)(
+              memory.put(b.length > 0 ? b : [0]),
+              BigInt(b.length),
+              out,
+              BigInt(cap),
+            ),
+          );
+          got = n > 0 ? hex(memory.get(out, n)) : "";
+        } catch (e) {
+          got = `trap: ${(e as Error).message}`;
+        }
+        const text = (h: string | undefined): string =>
+          h?.startsWith("trap") ? h : Buffer.from(h ?? "", "hex").toString("utf8");
+        if (got !== want[i])
+          bad.push(
+            `${d.slice(0, 80)}\n  shaved ${text(got).slice(0, 200)}\n  C++    ${text(want[i]).slice(0, 200)}`,
+          );
+      });
+      expect(bad.slice(0, 5)).toEqual([]);
+    }, 1_800_000);
 });

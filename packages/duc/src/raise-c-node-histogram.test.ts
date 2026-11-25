@@ -139,53 +139,54 @@ int main(void) {
       .slice(0, all.length);
   };
 
-  it("each histogram's results equal Node's createHistogram, and native (as raised)", () => {
-    const want = native();
-    const memory = createCMemory();
-    const system = createCSystem(memory);
-    const env = link(
-      new Map([...musl.atoms, ...hist.atoms, ...fixture.atoms]),
-      false,
-      memory,
-      [...musl.units, ...hist.units, fixture],
-      system.leaves as unknown as Record<string, Fn>,
-    );
-    env.yk_musl_init?.();
-    const cap = 1 << 18;
-    const out = memory.leaves.__ykAlloc(cap, 16);
-    const ps = memory.leaves.__ykAlloc(8 * PS.length, 8);
-    PS.forEach((p, i) => memory.leaves.__ykStoreF64(ps + 8 * i, p));
-    const bad: string[] = [];
-    all.forEach((c, i) => {
-      let got: string;
-      try {
-        const v = memory.leaves.__ykAlloc(8 * Math.max(1, c.values.length), 8);
-        c.values.forEach((x, j) => memory.leaves.__ykStore64(v + 8 * j, x));
-        const n = Number(
-          (env.yk_histogram as Fn)(
-            v,
-            BigInt(c.values.length),
-            c.lowest,
-            c.highest,
-            c.figures,
-            ps,
-            BigInt(PS.length),
-            out,
-            BigInt(cap),
-          ),
-        );
-        got = Buffer.from(memory.get(out, Math.max(0, n))).toString("utf8");
-      } catch (e) {
-        got = `trap: ${(e as Error).message}`;
-      }
-      const label = `${c.lowest}..${c.highest} figures ${c.figures}, ${c.values.length} values`;
-      if (got !== want[i])
-        bad.push(`${label}\n  shaved ${got.slice(0, 300)}\n  C      ${want[i]?.slice(0, 300)}`);
-      const n = node(c);
-      const mine = nan(got.replace(/ size \d+$/, ""));
-      if (mine !== nan(n))
-        bad.push(`${label}\n  shaved ${mine.slice(0, 300)}\n  Node   ${n.slice(0, 300)}`);
-    });
-    expect(bad.slice(0, 5)).toEqual([]);
-  }, 1_800_000);
+  for (const lowered of [false, true])
+    it(`each histogram's results equal Node's createHistogram, and native (${lowered ? "lifted to a graph and lowered" : "as raised"})`, () => {
+      const want = native();
+      const memory = createCMemory();
+      const system = createCSystem(memory);
+      const env = link(
+        new Map([...musl.atoms, ...hist.atoms, ...fixture.atoms]),
+        lowered,
+        memory,
+        [...musl.units, ...hist.units, fixture],
+        system.leaves as unknown as Record<string, Fn>,
+      );
+      env.yk_musl_init?.();
+      const cap = 1 << 18;
+      const out = memory.leaves.__ykAlloc(cap, 16);
+      const ps = memory.leaves.__ykAlloc(8 * PS.length, 8);
+      PS.forEach((p, i) => memory.leaves.__ykStoreF64(ps + 8 * i, p));
+      const bad: string[] = [];
+      all.forEach((c, i) => {
+        let got: string;
+        try {
+          const v = memory.leaves.__ykAlloc(8 * Math.max(1, c.values.length), 8);
+          c.values.forEach((x, j) => memory.leaves.__ykStore64(v + 8 * j, x));
+          const n = Number(
+            (env.yk_histogram as Fn)(
+              v,
+              BigInt(c.values.length),
+              c.lowest,
+              c.highest,
+              c.figures,
+              ps,
+              BigInt(PS.length),
+              out,
+              BigInt(cap),
+            ),
+          );
+          got = Buffer.from(memory.get(out, Math.max(0, n))).toString("utf8");
+        } catch (e) {
+          got = `trap: ${(e as Error).message}`;
+        }
+        const label = `${c.lowest}..${c.highest} figures ${c.figures}, ${c.values.length} values`;
+        if (got !== want[i])
+          bad.push(`${label}\n  shaved ${got.slice(0, 300)}\n  C      ${want[i]?.slice(0, 300)}`);
+        const n = node(c);
+        const mine = nan(got.replace(/ size \d+$/, ""));
+        if (mine !== nan(n))
+          bad.push(`${label}\n  shaved ${mine.slice(0, 300)}\n  Node   ${n.slice(0, 300)}`);
+      });
+      expect(bad.slice(0, 5)).toEqual([]);
+    }, 1_800_000);
 });

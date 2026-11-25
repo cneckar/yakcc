@@ -229,40 +229,41 @@ int main(void) {
       .slice(0, all.length);
   };
 
-  it("every reply parser's result and the record layer's equal native (as raised)", () => {
-    const want = native();
-    const memory = createCMemory();
-    const system = createCSystem(memory);
-    const env = link(
-      new Map([...musl.atoms, ...cares.atoms, ...fixture.atoms]),
-      false,
-      memory,
-      [...musl.units, ...cares.units, fixture],
-      system.leaves as unknown as Record<string, Fn>,
-    );
-    env.yk_musl_init?.();
-    const cap = 1 << 18;
-    const out = memory.leaves.__ykAlloc(cap, 16);
-    const got = all.map((m) => {
-      try {
-        const p = memory.put(m.length > 0 ? m : [0]);
-        const n = Number((env.yk_dns as Fn)(p, BigInt(m.length), out, BigInt(cap)));
-        return Buffer.from(memory.get(out, n)).toString("latin1").replaceAll("\n", "~");
-      } catch (e) {
-        return `trap: ${(e as Error).message}`;
-      }
-    });
-    const bad = got.flatMap((g, i) =>
-      g === want[i]
-        ? []
-        : [
-            `${hex(all[i] ?? []).slice(0, 120)}\n  shaved ${g.slice(0, 400)}\n  C      ${want[i]?.slice(0, 400)}`,
-          ],
-    );
-    expect(bad.slice(0, 5)).toEqual([]);
-    // (The parsers succeed on the well-formed answers of their type, and fail on the others.)
-    expect(want.some((w) => / A 0 name=/.test(` ${w}`))).toBe(true);
-    expect(want.some((w) => /MX 0 \d/.test(w))).toBe(true);
-    expect(want.some((w) => /RECORD 0 .* write 0 .* again 0/.test(w))).toBe(true);
-  }, 1_800_000);
+  for (const lowered of [false, true])
+    it(`every reply parser's result and the record layer's equal native (${lowered ? "lifted to a graph and lowered" : "as raised"})`, () => {
+      const want = native();
+      const memory = createCMemory();
+      const system = createCSystem(memory);
+      const env = link(
+        new Map([...musl.atoms, ...cares.atoms, ...fixture.atoms]),
+        lowered,
+        memory,
+        [...musl.units, ...cares.units, fixture],
+        system.leaves as unknown as Record<string, Fn>,
+      );
+      env.yk_musl_init?.();
+      const cap = 1 << 18;
+      const out = memory.leaves.__ykAlloc(cap, 16);
+      const got = all.map((m) => {
+        try {
+          const p = memory.put(m.length > 0 ? m : [0]);
+          const n = Number((env.yk_dns as Fn)(p, BigInt(m.length), out, BigInt(cap)));
+          return Buffer.from(memory.get(out, n)).toString("latin1").replaceAll("\n", "~");
+        } catch (e) {
+          return `trap: ${(e as Error).message}`;
+        }
+      });
+      const bad = got.flatMap((g, i) =>
+        g === want[i]
+          ? []
+          : [
+              `${hex(all[i] ?? []).slice(0, 120)}\n  shaved ${g.slice(0, 400)}\n  C      ${want[i]?.slice(0, 400)}`,
+            ],
+      );
+      expect(bad.slice(0, 5)).toEqual([]);
+      // (The parsers succeed on the well-formed answers of their type, and fail on the others.)
+      expect(want.some((w) => / A 0 name=/.test(` ${w}`))).toBe(true);
+      expect(want.some((w) => /MX 0 \d/.test(w))).toBe(true);
+      expect(want.some((w) => /RECORD 0 .* write 0 .* again 0/.test(w))).toBe(true);
+    }, 1_800_000);
 });

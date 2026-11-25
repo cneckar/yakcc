@@ -126,10 +126,13 @@ describe.skipIf(!hasClang)("uvwasi's computing parts, shaved from C", () => {
       { numRuns: 60, seed: 1367 },
     ),
   ];
-  const values = fc.sample(fc.array(fc.bigInt({ min: 0n, max: (1n << 64n) - 1n }), { minLength: 17, maxLength: 17 }), {
-    numRuns: 20,
-    seed: 1368,
-  });
+  const values = fc.sample(
+    fc.array(fc.bigInt({ min: 0n, max: (1n << 64n) - 1n }), { minLength: 17, maxLength: 17 }),
+    {
+      numRuns: 20,
+      seed: 1368,
+    },
+  );
 
   const native = (): string[] => {
     const driver = join(work, "driver.c");
@@ -194,55 +197,61 @@ int main(void) {
       .slice(0, lines.length + 1);
   };
 
-  it("paths, errors and serialized structures equal native (as raised)", () => {
-    const want = native();
-    const memory = createCMemory();
-    const system = createCSystem(memory);
-    const env = link(
-      new Map([...musl.atoms, ...wasi.atoms, ...fixture.atoms]),
-      false,
-      memory,
-      [...musl.units, ...wasi.units, fixture],
-      system.leaves as unknown as Record<string, Fn>,
-    );
-    env.yk_musl_init?.();
-    const cap = 1 << 16;
-    const out = memory.leaves.__ykAlloc(cap, 16);
-    const text = (n: number): string =>
-      Buffer.from(memory.get(out, Math.max(0, n))).toString("latin1");
-    const run = (f: () => string): string => {
-      try {
-        return f();
-      } catch (e) {
-        return `trap: ${(e as Error).message}`;
-      }
-    };
-    const got = [
-      run(() => text(Number((env.yk_wasi_errors as Fn)(out, BigInt(cap)))).replaceAll("\n", "~")),
-      ...paths.map((p) =>
-        run(() => {
-          const b = [...Buffer.from(p, "latin1"), 0];
-          return text(
-            Number(
-              (env.yk_wasi_normalize as Fn)(memory.put(b), BigInt(b.length - 1), out, BigInt(cap)),
-            ),
-          );
-        }),
-      ),
-      ...values.map((v) =>
-        run(() => {
-          const vs = memory.leaves.__ykAlloc(8 * 17, 8);
-          v.forEach((x, i) => memory.leaves.__ykStore64(vs + 8 * i, x));
-          const n = Number((env.yk_wasi_serdes as Fn)(vs, out));
-          return hex(memory.get(out, n));
-        }),
-      ),
-    ];
-    const bad = got.flatMap((g, i) =>
-      g === want[i]
-        ? []
-        : [`${i}\n  shaved ${g.slice(0, 300)}\n  C      ${want[i]?.slice(0, 300)}`],
-    );
-    expect(bad.slice(0, 5)).toEqual([]);
-  }, 900_000);
+  for (const lowered of [false, true])
+    it(`paths, errors and serialized structures equal native (${lowered ? "lifted to a graph and lowered" : "as raised"})`, () => {
+      const want = native();
+      const memory = createCMemory();
+      const system = createCSystem(memory);
+      const env = link(
+        new Map([...musl.atoms, ...wasi.atoms, ...fixture.atoms]),
+        lowered,
+        memory,
+        [...musl.units, ...wasi.units, fixture],
+        system.leaves as unknown as Record<string, Fn>,
+      );
+      env.yk_musl_init?.();
+      const cap = 1 << 16;
+      const out = memory.leaves.__ykAlloc(cap, 16);
+      const text = (n: number): string =>
+        Buffer.from(memory.get(out, Math.max(0, n))).toString("latin1");
+      const run = (f: () => string): string => {
+        try {
+          return f();
+        } catch (e) {
+          return `trap: ${(e as Error).message}`;
+        }
+      };
+      const got = [
+        run(() => text(Number((env.yk_wasi_errors as Fn)(out, BigInt(cap)))).replaceAll("\n", "~")),
+        ...paths.map((p) =>
+          run(() => {
+            const b = [...Buffer.from(p, "latin1"), 0];
+            return text(
+              Number(
+                (env.yk_wasi_normalize as Fn)(
+                  memory.put(b),
+                  BigInt(b.length - 1),
+                  out,
+                  BigInt(cap),
+                ),
+              ),
+            );
+          }),
+        ),
+        ...values.map((v) =>
+          run(() => {
+            const vs = memory.leaves.__ykAlloc(8 * 17, 8);
+            v.forEach((x, i) => memory.leaves.__ykStore64(vs + 8 * i, x));
+            const n = Number((env.yk_wasi_serdes as Fn)(vs, out));
+            return hex(memory.get(out, n));
+          }),
+        ),
+      ];
+      const bad = got.flatMap((g, i) =>
+        g === want[i]
+          ? []
+          : [`${i}\n  shaved ${g.slice(0, 300)}\n  C      ${want[i]?.slice(0, 300)}`],
+      );
+      expect(bad.slice(0, 5)).toEqual([]);
+    }, 900_000);
 });
