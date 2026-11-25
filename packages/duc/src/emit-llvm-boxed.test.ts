@@ -320,6 +320,16 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "string builders: a loop's string only appended to, on some paths, with any values, nested, left by break (#1369)",
+    "export function f(a, b) { const log = []; const o = { toString() { log.push('ts'); return 'O'; }, valueOf() { log.push('vo'); return 7; } }; const items = [1, 'x', null, undefined, true, 2n, o, [1, 2], { k: 1 }, -0, 1.5]; let s = ''; for (const v of items) s += v; let t = '['; for (let i = 0; i < 6; i++) { if (i % 2 === 0) t += i; else if (i === 3) continue; t = t + ',' ; } let u = 'u'; let w = ''; for (let i = 0; i < 3; i++) { for (let j = 0; j < 3; j++) { w += j; if (j === 1) break; } u += i + ':'; } let p = 'z'; for (let i = 0; i < 3; i++) p = i + p; let q = ''; let k = 0; while (q.length < 5) q += k++; const sym = (() => { try { let e = ''; for (const x of [1, Symbol('s')]) e += x; return e; } catch (err) { return err.name; } })(); let big = ''; for (let i = 0; i < 2000; i++) big += String.fromCharCode(97 + (i % 26)); return [s, log.join(), t, u, w, p, q, sym, big.length, big.slice(0, 30), big.slice(-5), String(a) + b]; }",
+    2,
+  ],
+  [
+    "a generator's loop appending across yields; === and !== against undefined, null, true and false (#1369)",
+    "export function f(a, b) { function* g() { let acc = '>'; for (let i = 0; i < 3; i++) { acc += i; yield acc; } return acc + '!'; } const vals = [undefined, null, true, false, 0, '', NaN, 'undefined', a, b]; return [[...g()], g().next(), vals.map((v) => [v === undefined, v !== null, v === true, false === v, v !== undefined, null === v])]; }",
+    2,
+  ],
+  [
     "Math.random, with arguments it ignores (undici's random(max)): a number in [0, 1) (#1331)",
     "export function f(a, b) { const r = Math.random(a); const q = Math.random(); return [typeof r, r >= 0 && r < 1, q >= 0 && q < 1, r !== q || r === q]; }",
     2,

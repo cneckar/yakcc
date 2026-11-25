@@ -1038,6 +1038,13 @@ int yk_truthy(yk v) {
 
 yk yk_add(yk a, yk b) {
   if (is_number(a) && is_number(b)) return yk_number(num(a) + num(b));
+  if (is_string(a) && is_string(b)) {
+    /* Two strings: one of them alone when the other is empty, else their concatenation. */
+    if (str(b)->len == 0) return a;
+    if (str(a)->len == 0) return b;
+    if ((uint64_t)str(a)->len + str(b)->len > 536870888) range_error("Invalid string length");
+    return concat(str(a), str(b));
+  }
   a = to_primitive(a);
   b = to_primitive(b);
   if (is_string(a) || is_string(b)) return concat(str(to_string(a)), str(to_string(b)));
@@ -1146,6 +1153,60 @@ yk yk_le(yk a, yk b) { return yk_bool(less_than(b, a) == 0); }
 yk yk_ge(yk a, yk b) { return yk_bool(less_than(a, b) == 0); }
 
 static yk interned(const char *name, uint64_t n);
+/* A string builder (#1369): a loop's variable that the loop only appends to (`out += x`), its value
+   kept here while the loop runs. Until the value is a string, an append is +'s (a number's sum, say);
+   from then on a string's units, appended in place (each append ToPrimitive then ToString of the
+   operand, as + is). The loop's result is yk_sb_finish's. */
+typedef struct {
+  int32_t internal; /* 5: a string builder */
+  uint32_t len, cap;
+  yk value;          /* while not yet a string: the value */
+  yk_string *buffer; /* once a string: its units (cap of them) */
+} yk_sb;
+yk yk_sb_new(yk value) {
+  yk_sb *b = alloc(sizeof(yk_sb));
+  b->internal = 5;
+  b->value = value;
+  return BOX(T_INTERNAL, b);
+}
+static void sb_reserve(yk_sb *b, uint64_t need) {
+  if (need > 536870888) range_error("Invalid string length");
+  if (b->buffer != NULL && need <= b->cap) return;
+  uint64_t cap = b->cap < 16 ? 16 : b->cap;
+  while (cap < need) cap *= 2;
+  if (cap > 536870888) cap = 536870888;
+  yk_string *n = new_string((uint32_t)cap);
+  if (b->buffer != NULL) memcpy(n->units, b->buffer->units, (size_t)b->len * 2);
+  b->buffer = n;
+  b->cap = (uint32_t)cap;
+}
+yk yk_sb_append(yk h, yk x) {
+  yk_sb *b = (yk_sb *)PTR(h);
+  if (b->buffer == NULL) {
+    if (!is_string(b->value)) {
+      b->value = yk_add(b->value, x);
+      return h;
+    }
+    yk_string *v = str(b->value);
+    sb_reserve(b, (uint64_t)v->len * 2);
+    memcpy(b->buffer->units, v->units, (size_t)v->len * 2);
+    b->len = v->len;
+    b->value = YK_UNDEFINED;
+  }
+  yk_string *t = str(is_string(x) ? x : to_string(to_primitive(x)));
+  sb_reserve(b, (uint64_t)b->len + t->len);
+  memcpy(b->buffer->units + b->len, t->units, (size_t)t->len * 2);
+  b->len += t->len;
+  return h;
+}
+yk yk_sb_finish(yk h) {
+  yk_sb *b = (yk_sb *)PTR(h);
+  if (b->buffer == NULL) return b->value;
+  yk_string *r = new_string(b->len);
+  memcpy(r->units, b->buffer->units, (size_t)b->len * 2);
+  return string_of(r);
+}
+
 /* typeof's result: one string per type, made once. */
 yk yk_typeof(yk v) {
   static yk made[8]; /* each made once (the collector sees this table) */
@@ -1255,17 +1316,19 @@ static int digit_key_maybe(const yk_object *o, uint64_t i) {
    the chain is not all plain objects. */
 static int object_index_get(yk obj, uint32_t i, yk *out) {
   char t[12];
-  int at = (int)sizeof t;
-  uint32_t u = i;
-  do {
-    t[--at] = (char)('0' + u % 10);
-    u /= 10;
-  } while (u != 0);
+  int at = (int)sizeof t; /* the index's digits, made when an object may have them */
   yk v = obj;
   for (; v != 0 && is_object(v); v = ((yk_object *)PTR(v))->proto) {
     yk_object *c = (yk_object *)PTR(v);
     if (c->kind != 0) return 0;
     if (!digit_key_maybe(c, i)) continue;
+    if (at == (int)sizeof t) {
+      uint32_t u = i;
+      do {
+        t[--at] = (char)('0' + u % 10);
+        u /= 10;
+      } while (u != 0);
+    }
     int64_t k = own_find_chars(c, t + at, (uint32_t)(sizeof t - at));
     if (k >= 0) return *out = resolve_slot(c->values[k], obj), 1;
   }

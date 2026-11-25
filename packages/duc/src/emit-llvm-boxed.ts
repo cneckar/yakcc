@@ -762,6 +762,10 @@ function lowerFunction(
   // each call's slots, and each read's slot.
   const recordCalls = new Map<ValueId, { slot: string; keys: readonly string[] }>();
   const recordReads = new Map<ValueId, { slot: string; idx: number }>();
+  // String builders (#1369): a loop's carry, a string at first, that the loop only appends to
+  // (`out += x` on every path back to its next value). Each such loop's carries, and the appends.
+  const builderCarries = new Map<DucNode, Set<number>>();
+  const builderAppends = new Set<DucNode>();
   {
     const observed = new Set<ValueId>([
       ...g.obs.map((v) => resolve(v)),
@@ -1473,6 +1477,14 @@ function lowerFunction(
     return work >= 4 && work * 12 >= g.nodes.length;
   })();
   const compact = !numericWork && numberParams === undefined;
+  // A loop's body is where a function's time goes: there a compact function's operations keep their
+  // inline fast paths too (#1369).
+  const loopBodies = g.nodes.flatMap((n) => (n.loop !== undefined ? [`${n.loop.id}.b`] : []));
+  const inLoop = (n: DucNode | undefined): boolean => {
+    const r = n?.region;
+    return r !== undefined && loopBodies.some((b) => r === b || r.startsWith(`${b}/`));
+  };
+  let emitting: DucNode | undefined;
   const numberFast = (
     args: readonly string[],
     fast: (ds: readonly string[]) => string,
@@ -1482,7 +1494,7 @@ function lowerFunction(
   ): string => {
     // Code with little numeric work (a library's function): the runtime's operation, not an inline
     // fast path beside it, so the module stays small and compiles fast (#1369).
-    if (compact && !proven) return slow();
+    if (compact && !proven && !inLoop(emitting)) return slow();
     if (proven && guard === undefined) {
       // Every operand a proven number: the double operation alone.
       return fast(
@@ -2394,6 +2406,16 @@ function lowerFunction(
     if (out === undefined) throw new LlvmEmitError(`"${n.label}" has no result`);
     const lbl = n.label ?? "";
     const ins = n.inputs as readonly ValueId[];
+    emitting = n;
+    if (builderAppends.has(n)) {
+      // An append to a loop's string builder: in place; its value is the builder still.
+      const h = operand(ins[0] as ValueId);
+      m.intrinsics.add("declare i64 @yk_sb_append(i64, i64)");
+      const r = fresh();
+      emit(`${r} = call i64 @yk_sb_append(i64 ${h}, i64 ${operand(ins[1] as ValueId)})`);
+      set(out, r);
+      return;
+    }
     if (n.kind === "sel") {
       const [c, t, e] = ins as [ValueId, ValueId, ValueId];
       const cond = truthy(c);
@@ -3385,6 +3407,31 @@ function lowerFunction(
       );
       return;
     }
+    if (ins.length === 2 && (lbl === "===" || lbl === "!==")) {
+      // Against undefined, null, true or false (each one value): the bits compared.
+      const single = (v: ValueId): string | undefined => {
+        const p = producer.get(resolve(v));
+        if (p?.kind !== "literal-source") return undefined;
+        const t = p.label ?? "";
+        return t === "undefined"
+          ? UNDEFINED
+          : t === "null"
+            ? NULL
+            : t === "true"
+              ? TRUE
+              : t === "false"
+                ? FALSE
+                : undefined;
+      };
+      const k = single(ins[1] as ValueId) ?? single(ins[0] as ValueId);
+      if (k !== undefined) {
+        const other = single(ins[1] as ValueId) !== undefined ? ins[0] : ins[1];
+        const c = fresh();
+        emit(`${c} = icmp ${lbl === "===" ? "eq" : "ne"} i64 ${operand(other as ValueId)}, ${k}`);
+        set(out, boolBox(c));
+        return;
+      }
+    }
     if (ins.length === 2 && BINARY[lbl] !== undefined) {
       const a = operand(ins[0] as ValueId);
       const b = operand(ins[1] as ValueId);
@@ -3753,7 +3800,17 @@ function lowerFunction(
 
   const emitLoop = (loop: DucNode): void => {
     const rec = loop.loop as DucLoop;
-    rec.carry.forEach((c, i) => set(c, operand(loop.inputs[i] as ValueId)));
+    const builders = builderCarries.get(loop);
+    rec.carry.forEach((c, i) => {
+      const init = operand(loop.inputs[i] as ValueId);
+      if (builders?.has(i) !== true) set(c, init);
+      else {
+        m.intrinsics.add("declare i64 @yk_sb_new(i64)");
+        const h = fresh();
+        emit(`${h} = call i64 @yk_sb_new(i64 ${init})`);
+        set(c, h);
+      }
+    });
     const head = freshLabel("loop");
     const inner = freshLabel("body");
     const exit = freshLabel("exit");
@@ -3826,7 +3883,17 @@ function lowerFunction(
       m.used.add("yk_iter_close");
       emit(`call void @yk_iter_close(i64 ${iterator})`);
     }
-    loop.outputs.forEach((v, i) => set(v, operand(rec.carry[i] as ValueId)));
+    loop.outputs.forEach((v, i) => {
+      const at = operand(rec.carry[i] as ValueId);
+      if (builders?.has(i) !== true) set(v, at);
+      else {
+        // The builder's string, the variable's value after the loop.
+        m.intrinsics.add("declare i64 @yk_sb_finish(i64)");
+        const r = fresh();
+        emit(`${r} = call i64 @yk_sb_finish(i64 ${at})`);
+        set(v, r);
+      }
+    });
   };
 
   /** A regex object of `/pattern/flags`: its matcher compiled and lowered once per module. */
@@ -4193,6 +4260,80 @@ function lowerFunction(
         recordReads.set(r, { slot, idx: keys.indexOf((u.label as string).slice(1)) });
         calleeReads.delete(r);
       }
+    }
+  }
+  {
+    const users = new Map<ValueId, [DucNode, number][]>();
+    for (const n of g.nodes)
+      n.inputs.forEach((v, i) => {
+        const r = resolve(v as ValueId);
+        users.set(r, [...(users.get(r) ?? []), [n, i]]);
+      });
+    const fixed = new Set<ValueId>([
+      ...g.obs.map((v) => resolve(v)),
+      ...(g.branches ?? []).map((b) => resolve(b.cond as ValueId)),
+    ]);
+    for (const n of g.nodes) {
+      if (n.loop === undefined) continue;
+      if (n.loop.cond !== undefined) fixed.add(resolve(n.loop.cond));
+    }
+    for (const loop of g.nodes) {
+      const rec = loop.loop;
+      if (loop.kind !== "loop" || rec === undefined) continue;
+      rec.carry.forEach((c, j) => {
+        const init = loop.inputs[j] as ValueId | undefined;
+        if (init === undefined || constantString(init) === undefined) return;
+        const v = resolve(c);
+        const next = resolve(rec.next[j] as ValueId);
+        // The values the variable takes in the loop: the carry, appends' results, and selections
+        // between them; each used only as one of those.
+        const chain = new Set<ValueId>([v]);
+        const appends: DucNode[] = [];
+        const sels: DucNode[] = [];
+        const work = [v];
+        let ok = true;
+        while (ok && work.length > 0) {
+          const x = work.pop() as ValueId;
+          if (fixed.has(x)) ok = false;
+          for (const [u, i] of users.get(x) ?? []) {
+            const o = u.outputs[0] as ValueId | undefined;
+            if (
+              u.kind === "op" &&
+              (u.label === "+" || u.label === "+=") &&
+              u.inputs.length === 2 &&
+              i === 0 &&
+              !chain.has(resolve(u.inputs[1] as ValueId)) &&
+              o !== undefined &&
+              !bigWidth.has(o)
+            ) {
+              appends.push(u);
+              if (!chain.has(o)) {
+                chain.add(o);
+                work.push(o);
+              }
+            } else if (u.kind === "sel" && i > 0 && o !== undefined) {
+              sels.push(u);
+              if (!chain.has(o)) {
+                chain.add(o);
+                work.push(o);
+              }
+            } else ok = false;
+          }
+          // Its next value is the chain's end; no other loop's next.
+          for (const other of g.nodes)
+            if (other.loop !== undefined)
+              other.loop.next.forEach((nv, k) => {
+                if (resolve(nv) === x && !(other === loop && k === j)) ok = false;
+              });
+        }
+        if (!ok || appends.length === 0 || !chain.has(next)) return;
+        if (sels.some((sl) => sl.inputs.slice(1).some((x) => !chain.has(resolve(x as ValueId)))))
+          return;
+        const set0 = builderCarries.get(loop) ?? new Set<number>();
+        set0.add(j);
+        builderCarries.set(loop, set0);
+        for (const a of appends) builderAppends.add(a);
+      });
     }
   }
   emitScope(undefined);
