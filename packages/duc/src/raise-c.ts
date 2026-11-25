@@ -82,7 +82,7 @@ interface IndexedDecl {
   readonly owner?: string | undefined;
 }
 
-const RECORD_KINDS = new Set(["CXXRecordDecl", "RecordDecl"]);
+const RECORD_KINDS = new Set(["CXXRecordDecl", "RecordDecl", "ClassTemplateSpecializationDecl"]);
 
 const FUNCTION_KINDS = new Set([
   "FunctionDecl",
@@ -544,7 +544,19 @@ function parseType(spelled: string, depth = 0): CType {
     .replace(/\s*\bnoexcept\b(\([^)]*\))?/g, "")
     .replace(/\s+/g, " ")
     .trim();
-  if (/\(\*\)\s*\(.*\)$/.test(raw)) return { k: "ptr", to: { k: "fn" } };
+  // A pointer to a function, and a pointer to one (`void (**)(int)`).
+  const fnPtr = /\((\*+)\)\s*\(.*\)$/.exec(raw);
+  if (fnPtr !== null) {
+    let t: CType = { k: "fn" };
+    for (let i = 0; i < (fnPtr[1] as string).length; i++) t = { k: "ptr", to: t };
+    return t;
+  }
+  // std::enable_if<C, T>::type, and enable_if_t (an instance exists only where C holds): T.
+  const enable = /^(?:typename )?(?:std::)?enable_if(?:_t)?<(.*)>(?:::type)?$/.exec(raw);
+  if (enable !== null) {
+    const args = splitTemplateArgs(enable[1] as string);
+    return parseType(args.length > 1 ? (args[args.length - 1] as string) : "void", depth + 1);
+  }
   // A lambda's closure (C++): a class.
   if (/^(class )?\(lambda at .*\)$/.test(raw))
     return { k: "rec", name: raw.startsWith("class ") ? raw : `class ${raw}` };
@@ -1214,6 +1226,36 @@ const memberKey = (name: string, signature: string): string =>
     .replace(/\b[A-Za-z_]\w*::/g, "")
     .replace(/\s+/g, "");
 
+/** A template's arguments, split at its top-level commas. */
+function splitTemplateArgs(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "<" || c === "(" || c === "[") depth++;
+    else if (c === ">" || c === ")" || c === "]") depth--;
+    else if (c === "," && depth === 0) {
+      out.push(text.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  out.push(text.slice(start).trim());
+  return out;
+}
+
+/** A function type's return type: what is before its parameter list (the last parenthesis). */
+export function returnTypeOf(fnType: string): string {
+  const t = fnType.replace(/\s*(const|volatile|noexcept(\([^)]*\))?|&&?)\s*$/g, "").trim();
+  if (!t.endsWith(")")) return t;
+  let depth = 0;
+  for (let i = t.length - 1; i >= 0; i--) {
+    if (t[i] === ")") depth++;
+    else if (t[i] === "(" && --depth === 0) return t.slice(0, i).trim();
+  }
+  return t;
+}
+
 /** A record type's name as parseType names it (a lambda's closure: `class (lambda at ..)`). */
 const parseRecordName = (spelled: string): string => {
   const t = parseType(spelled);
@@ -1350,7 +1392,10 @@ function raiseBody(
   if (method && thisRecord === undefined) throw new RaiseCError(`the class of ${fn.name}`);
   // A variadic function takes its variable arguments' address as a last parameter, `__va`.
   const variadic = variadicParams(fn.type?.qualType ?? "") !== undefined;
-  const result = ctype({ qualType: (fn.type?.qualType ?? "").replace(/\(.*$/, "").trim() });
+  // (A template instance's type spelled as written can be `typename enable_if<..>::type (T)`: its
+  // desugared form is the type.)
+  const fnType = fn.type?.desugaredQualType ?? fn.type?.qualType ?? "";
+  const result = ctype({ qualType: returnTypeOf(fnType) });
   const vars = new Map<string, CType>();
   const names = new Map<string, string>();
   const declName = (n: ClangNode): string => {
@@ -2071,6 +2116,15 @@ function raiseBody(
           const from = typeOf(kids[1] as ClangNode);
           if (to.k === "u64" && from.k === "f64") return `__ykF64Bits(${args[0]})`;
           if (to.k === "f64" && from.k === "u64") return `__ykF64FromBits(${args[0]})`;
+          // Between integers of one width: the same bits, read as the other signedness.
+          if (
+            sizeOf(to) === sizeOf(from) &&
+            to.k !== "f64" &&
+            from.k !== "f64" &&
+            to.k !== "f32" &&
+            from.k !== "f32"
+          )
+            return convert(args[0] as string, from, to);
           throw new RaiseCError(`bit_cast from ${from.k} to ${to.k}`);
         }
         if (callee.kind === "MemberExpr" && !(typeOf(callee).k === "ptr"))
@@ -2149,6 +2203,11 @@ function raiseBody(
       }
       case "InitListExpr": {
         const t = typeOf(e);
+        // A scalar in braces (`int64_t{x}`): its value (clang has converted it), or zero.
+        if (t.k !== "arr" && t.k !== "rec") {
+          const only = initItems(e)[0];
+          return only === undefined ? zeroOf(t) : expr(only);
+        }
         const items = initItems(e).map(expr);
         if (t.k === "arr" && t.size !== undefined)
           while (items.length < t.size) items.push(zeroOf(t.of));
@@ -2521,6 +2580,8 @@ function raiseBody(
   }
 
   let switchType: CType | undefined;
+  // A dispatched switch body's declaration (see guarded): its variables declared at the top.
+  let hoisting = false;
   /**
    * The switch being dispatched (see SwitchStmt): its target variable, its jump variable, its
    * targets' numbers, and how many loops or switches of its body the statement is inside.
@@ -2592,8 +2653,19 @@ function raiseBody(
     const jumps = ["BreakStmt", "ContinueStmt", "GotoStmt", "ReturnStmt"].includes(s.kind);
     if (here.length === 0 && (jumps || !bodyJump(s))) {
       if (s.kind === "NullStmt") return;
-      if (s.kind === "DeclStmt")
-        throw new RaiseCError("a declaration in a switch body entered at a nested case");
+      if (s.kind === "DeclStmt") {
+        // A declaration at the body's level: its variables live at the function's top (later
+        // statements in other guards read them); its initialization is guarded.
+        push(`if (${d.sw} === 0) {`);
+        hoisting = true;
+        try {
+          stmt(s);
+        } finally {
+          hoisting = false;
+        }
+        push("}");
+        return;
+      }
       push(`if (${d.sw} === 0) {`);
       stmt(s);
       push("}");
@@ -2853,6 +2925,11 @@ function raiseBody(
           // A reference (C++): the address of what it binds to.
           if (init !== undefined && /&$/.test((d.type?.qualType ?? "").trim())) {
             push(`let ${declName(d)} = ${argOf(init)};`);
+            continue;
+          }
+          if (hoisting) {
+            top.push(`let ${declName(d)} = ${zeroOf(t)};`);
+            if (init !== undefined) push(`${declName(d)} = ${expr(init)};`);
             continue;
           }
           push(`let ${declName(d)} = ${init !== undefined ? expr(init) : zeroOf(t)};`);
@@ -3326,7 +3403,7 @@ export function shaveCUnit(
       encoding: "utf8",
       maxBuffer: 1 << 30,
       stdio: ["ignore", "pipe", "ignore"],
-    }).length > 3_000_000;
+    }).length > 1_000_000;
   const indexed = large ? indexUnit(clang, args, file) : undefined;
   // The roots, as the filters name them; in an indexed unit, the index's own nodes (its ids).
   const roots = clangFunctions(file, filters, args, clang);
@@ -3513,6 +3590,29 @@ export function shaveCUnit(
     for (const n of nodes) walk(n, false);
     return hit;
   };
+  /**
+   * A class's definition by its record type (`struct v8::base::Magic<uint32_t>`): the record of
+   * its name; a class template's instance, the one with its arguments.
+   */
+  const findRecord = (record: string): ClangNode | undefined => {
+    if (indexed === undefined) return undefined;
+    const bare = record.replace(/^(struct|class|union) /, "");
+    const lt = bare.indexOf("<");
+    const base = (lt < 0 ? bare : bare.slice(0, lt)).split("::").pop() ?? "";
+    const canon = (t: string): string => recordKey(t).replace(/\s+/g, "");
+    const want =
+      lt < 0 ? [] : splitTemplateArgs(bare.slice(lt + 1, bare.lastIndexOf(">"))).map(canon);
+    for (const d of indexed.byName.get(base) ?? []) {
+      if (!RECORD_KINDS.has(d.kind)) continue;
+      const node = readDecl(indexed, d);
+      if ((node as { completeDefinition?: boolean }).completeDefinition !== true) continue;
+      const args = (node.inner ?? [])
+        .filter((a) => a.kind === "TemplateArgument")
+        .map((a) => canon(a.type?.qualType ?? String((a as { value?: unknown }).value ?? "")));
+      if (args.join(",") === want.join(",")) return node;
+    }
+    return undefined;
+  };
   // C++: classes, from the index.
   const cxx: CxxUnit | undefined =
     indexed === undefined
@@ -3522,49 +3622,33 @@ export function shaveCUnit(
             const parent = indexed.byId.get(fnId)?.parent;
             const cls = parent === undefined ? undefined : indexed.byId.get(parent);
             if (cls === undefined || !RECORD_KINDS.has(cls.kind)) return undefined;
-            return `${cls.tag ?? "struct"} ${cls.name}`;
+            // A class template's instance: its name with its arguments.
+            const args =
+              cls.kind === "ClassTemplateSpecializationDecl"
+                ? (readDecl(indexed, cls).inner ?? [])
+                    .filter((a) => a.kind === "TemplateArgument")
+                    .map((a) => a.type?.qualType ?? String((a as { value?: unknown }).value ?? ""))
+                : [];
+            return `${cls.tag ?? "struct"} ${cls.name}${args.length > 0 ? `<${args.join(", ")}>` : ""}`;
           },
           constructorOf: (record, type) => {
-            const simple =
-              record
-                .replace(/^(struct|class|union) /, "")
-                .split("::")
-                .pop() ?? "";
-            for (const d of indexed.byName.get(simple) ?? []) {
-              if (!RECORD_KINDS.has(d.kind)) continue;
-              const node = readDecl(indexed, d);
-              if ((node as { completeDefinition?: boolean }).completeDefinition !== true) continue;
-              const ctor = (node.inner ?? []).find(
-                (c) =>
-                  c.kind === "CXXConstructorDecl" &&
-                  normType(c.type?.qualType ?? "") === normType(type),
-              );
-              if (ctor !== undefined)
-                return {
-                  id: ctor.id ?? "",
-                  body: definitionIn(indexed, ctor.id ?? "") !== undefined,
-                };
-            }
-            return undefined;
+            const node = findRecord(record);
+            const ctor = (node?.inner ?? []).find(
+              (c) =>
+                c.kind === "CXXConstructorDecl" &&
+                normType(c.type?.qualType ?? "") === normType(type),
+            );
+            return ctor === undefined
+              ? undefined
+              : { id: ctor.id ?? "", body: definitionIn(indexed, ctor.id ?? "") !== undefined };
           },
           destructorOf: (record) => {
-            const simple =
-              record
-                .replace(/^(struct|class|union) /, "")
-                .split("::")
-                .pop() ?? "";
-            for (const d of indexed.byName.get(simple) ?? []) {
-              if (!RECORD_KINDS.has(d.kind)) continue;
-              const node = readDecl(indexed, d);
-              if ((node as { completeDefinition?: boolean }).completeDefinition !== true) continue;
-              const dtor = (node.inner ?? []).find((c) => c.kind === "CXXDestructorDecl");
-              if (dtor === undefined) return undefined;
-              return {
-                id: dtor.id ?? "",
-                body: definitionIn(indexed, dtor.id ?? "") !== undefined,
-              };
-            }
-            return undefined;
+            const dtor = (findRecord(record)?.inner ?? []).find(
+              (c) => c.kind === "CXXDestructorDecl",
+            );
+            return dtor === undefined
+              ? undefined
+              : { id: dtor.id ?? "", body: definitionIn(indexed, dtor.id ?? "") !== undefined };
           },
           lambdaOf: (methodId) => {
             const m = indexed.byId.get(methodId);
@@ -3816,7 +3900,7 @@ export function shaveCUnit(
       if (n.kind === "TypedefDecl" && n.name === name) {
         const t = n.type?.desugaredQualType ?? n.type?.qualType;
         // `typedef struct { .. } Ctx;`: the desugared type is the typedef's own name.
-        if (t === name || t?.replace(/^(struct|union) /, "") === name) anonymous = n;
+        if (t === name) anonymous = n;
         else hit = t;
         return;
       }
@@ -3881,17 +3965,23 @@ export function shaveCUnit(
   };
   let layouts: Map<string, RecordLayout> | undefined;
   const layout: LayoutResolver = (name) => {
-    layouts ??= recordLayouts(
-      execFileSync(
-        clang,
-        [...args, "-fsyntax-only", "-Xclang", "-fdump-record-layouts-complete", file],
-        {
+    if (layouts === undefined) {
+      const run = (more: readonly string[]): string =>
+        execFileSync(clang, [...args, ...more, file], {
           encoding: "utf8",
           maxBuffer: 1 << 30,
           stdio: ["ignore", "pipe", "ignore"],
-        },
-      ),
-    );
+        });
+      let dump: string;
+      try {
+        dump = run(["-fsyntax-only", "-Xclang", "-fdump-record-layouts-complete"]);
+      } catch {
+        // clang 18 can crash dumping every record of libstdc++'s headers: the records code
+        // generation lays out, then.
+        dump = run(["-S", "-emit-llvm", "-o", "/dev/null", "-Xclang", "-fdump-record-layouts"]);
+      }
+      layouts = recordLayouts(dump);
+    }
     return layouts.get(recordKey(name));
   };
   // Module state: each static the atoms use, keyed and defined (when this unit defines it).
@@ -4206,6 +4296,20 @@ function staticDefinition(
 }
 
 /** A record's name as a key: C++ scopes dropped (`union P::(unnamed at f.c:1:40)` and the C spelling meet). */
+const FIXED_WIDTH: Readonly<Record<string, string>> = {
+  int8_t: "signed char",
+  uint8_t: "unsigned char",
+  int16_t: "short",
+  uint16_t: "unsigned short",
+  int32_t: "int",
+  uint32_t: "unsigned int",
+  int64_t: "long",
+  uint64_t: "unsigned long",
+  size_t: "unsigned long",
+  uintptr_t: "unsigned long",
+  intptr_t: "long",
+  ptrdiff_t: "long",
+};
 // An unnamed record is named by where it is: the layout dump writes `(unnamed at rel/f.h:17:2)`,
 // a type `(unnamed struct at /abs/f.h:17:2)`; both are keyed `(unnamed at f.h:17:2)`.
 const recordKey = (name: string): string =>
@@ -4219,6 +4323,11 @@ const recordKey = (name: string): string =>
       .replace(
         /^(?:class |struct )?\(lambda at (?:[^)]*\/)?([^/)]+:\d+:\d+)\)/,
         "class (lambda at $1)",
+      )
+      // A template's arguments as their types (`<uint32_t>` is `<unsigned int>`).
+      .replace(
+        /\b(u?int(?:8|16|32|64)_t|size_t|uintptr_t|intptr_t|ptrdiff_t)\b/g,
+        (t) => FIXED_WIDTH[t] ?? t,
       ),
   );
 
