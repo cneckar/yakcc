@@ -58,7 +58,7 @@ const OVERRIDES: Readonly<Record<string, string>> = {
 const LINKER_WEAK = new Set(["__fini_array_start", "__fini_array_end"]);
 
 /** The leaves a closure stops at: the system call and the thread pointer. */
-export const MUSL_LEAVES = new Set(["__yk_syscall", "__yk_tp"]);
+export const MUSL_LEAVES = new Set(["__yk_syscall", "__yk_tp", "__yk_cpuid"]);
 
 const ARCHES =
   /\/(aarch64|arm|i386|loongarch64|m68k|microblaze|mips\w*|or1k|powerpc\w*|riscv\w*|s390x|sh|x32)\//;
