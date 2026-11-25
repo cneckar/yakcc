@@ -1266,6 +1266,7 @@ const memberKey = (name: string, signature: string): string =>
   name +
   signature
     .slice(signature.indexOf("("))
+    .replace(/\s*\bnoexcept\b(\([^)]*\))?/g, "")
     .replace(/\b[A-Za-z_]\w*::/g, "")
     .replace(/\s+/g, "");
 
@@ -4287,14 +4288,32 @@ export function shaveCUnit(
     // An alias template's instance (`ada::result<url_aggregator>`, `template <class T> using
     // result = tl::expected<T, errors>`): its type with the arguments for its parameters.
     const lt = name.indexOf("<");
-    if (lt > 0 && name.endsWith(">")) {
+    // (A class template's instance of the same bare name, `std::basic_string<..>` against
+    // `std::pmr::basic_string<..>`, is the class: its layout says so.)
+    const isClass = ["struct", "class", "union"].some(
+      (tag) => layout(recordKey(`${tag} ${name}`)) !== undefined,
+    );
+    if (lt > 0 && name.endsWith(">") && !isClass) {
       const bareAlias = name.slice(0, lt).split("::").pop() ?? "";
       const args = splitTemplateArgs(name.slice(lt + 1, -1));
       for (const n of dumpOf(bareAlias)) {
         if (n.kind !== "TypeAliasTemplateDecl" || n.name !== bareAlias) continue;
-        const params = (n.inner ?? [])
-          .filter((c) => c.kind === "TemplateTypeParmDecl" || c.kind === "NonTypeTemplateParmDecl")
-          .map((c) => c.name ?? "");
+        const paramDecls = (n.inner ?? []).filter(
+          (c) => c.kind === "TemplateTypeParmDecl" || c.kind === "NonTypeTemplateParmDecl",
+        );
+        const params = paramDecls.map((c) => c.name ?? "");
+        // A parameter the instance leaves out: its default, itself in the parameters before it.
+        paramDecls.forEach((c, i) => {
+          if (args[i] !== undefined) return;
+          let dflt = (c as { defaultArg?: { type?: { qualType?: string } } }).defaultArg?.type
+            ?.qualType;
+          if (dflt === undefined) return;
+          params.slice(0, i).forEach((pn, j) => {
+            if (pn !== "" && args[j] !== undefined)
+              dflt = (dflt as string).replace(new RegExp(`\\b${pn}\\b`, "g"), args[j] as string);
+          });
+          args[i] = dflt;
+        });
         const alias = (n.inner ?? []).find((c) => c.kind === "TypeAliasDecl");
         let t = alias?.type?.qualType;
         if (t === undefined) continue;
