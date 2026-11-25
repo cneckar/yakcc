@@ -715,9 +715,57 @@ static yk array_join(yk_array *a, yk_string *sep) {
 
 static yk to_primitive(yk v);
 
+/* --- symbols (ECMA-262 20.4): an internal value (kind 4) with its description; equal only to itself.
+   The well-known ones are made once. A symbol is a property key as it is; ToString of one throws. */
+typedef struct {
+  int32_t internal; /* 4 */
+  int32_t registered;
+  yk description; /* a string, or undefined */
+} yk_symbol;
+static int is_symbol(yk v) { return TAG(v) == T_INTERNAL && *(int32_t *)PTR(v) == 4; }
+static yk symbol_new(yk description) {
+  yk_symbol *y = alloc(sizeof(yk_symbol));
+  y->internal = 4;
+  y->description = description;
+  return BOX(T_INTERNAL, y);
+}
+static const char *const well_known_names[] = {"asyncIterator", "hasInstance", "isConcatSpreadable", "iterator",
+                                               "match", "matchAll", "replace", "search", "species", "split",
+                                               "toPrimitive", "toStringTag", "unscopables", "dispose", "asyncDispose"};
+#define N_WELL_KNOWN 15
+static yk well_known[N_WELL_KNOWN];
+static yk well_known_symbol(int i) {
+  if (well_known[i] == 0) {
+    char desc[40];
+    snprintf(desc, sizeof desc, "Symbol.%s", well_known_names[i]);
+    well_known[i] = symbol_new(ascii(desc));
+  }
+  return well_known[i];
+}
+static yk symbol_iterator(void) { return well_known_symbol(3); }
+static yk symbol_async_iterator(void) { return well_known_symbol(0); }
+static int string_equal(yk_string *a, yk_string *b);
+static int symbol_member(yk sym, yk key, yk *out);
+/* Property keys equal: the same symbol, or strings of the same units. */
+static int key_equal(yk a, yk b) {
+  if (a == b) return 1;
+  return is_string(a) && is_string(b) && string_equal(str(a), str(b));
+}
+/* ToPropertyKey: a symbol as it is; anything else its string. */
+static yk to_property_key(yk v) {
+  if (is_object(v) || is_closure(v)) v = to_primitive(v);
+  return is_symbol(v) ? v : to_string(v);
+}
+/* SymbolDescriptiveString: Symbol(description). */
+static yk symbol_descriptive(yk v) {
+  yk d = ((yk_symbol *)PTR(v))->description;
+  return concat(str(concat(str(ascii("Symbol(")), str(d == YK_UNDEFINED ? ascii("") : d))), str(ascii(")")));
+}
+
 static yk to_string(yk v) {
   if (is_object(v) || is_closure(v)) return to_string(to_primitive(v));
   if (is_string(v)) return v;
+  if (is_symbol(v)) type_error("Cannot convert a Symbol value to a string");
   if (is_number(v)) return number_to_string(num(v));
   if (v == YK_UNDEFINED) return ascii("undefined");
   if (v == YK_NULL) return ascii("null");
@@ -961,6 +1009,7 @@ yk yk_typeof(yk v) {
   if (v == YK_UNDEFINED) return ascii("undefined");
   if (is_closure(v)) return ascii("function");
   if (is_bigint(v)) return ascii("bigint");
+  if (is_symbol(v)) return ascii("symbol");
   return ascii("object");
 }
 
@@ -1025,7 +1074,7 @@ yk yk_get(yk obj, yk key) {
     int64_t i = index_of_key(key);
     if (i >= 0 && i < a->len) return a->items[i];
     yk v;
-    if (i < 0 && a->props != 0 && own_get((yk_object *)PTR(a->props), to_string(key), &v)) return v;
+    if (i < 0 && a->props != 0 && own_get((yk_object *)PTR(a->props), to_property_key(key), &v)) return v;
     return YK_UNDEFINED;
   }
   if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 3) {
@@ -1054,11 +1103,15 @@ yk yk_get(yk obj, yk key) {
       if (m != 0) return m;
     }
     yk v;
-    return chain_get(obj, to_string(key), &v) ? resolve_slot(v, obj) : YK_UNDEFINED;
+    return chain_get(obj, to_property_key(key), &v) ? resolve_slot(v, obj) : YK_UNDEFINED;
   }
   if (is_closure(obj)) {
     yk v;
-    return chain_get(obj, to_string(key), &v) ? resolve_slot(v, obj) : YK_UNDEFINED;
+    return chain_get(obj, to_property_key(key), &v) ? resolve_slot(v, obj) : YK_UNDEFINED;
+  }
+  if (is_symbol(obj)) {
+    yk v;
+    return symbol_member(obj, key, &v) ? v : YK_UNDEFINED;
   }
   return YK_UNDEFINED;
 }
@@ -1080,6 +1133,10 @@ yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk
   yk arg0 = argc > 0 ? argv[0] : YK_UNDEFINED;
   yk arg1 = argc > 1 ? argv[1] : YK_UNDEFINED;
   yk key = yk_string_utf8(name, n);
+  if (is_symbol(recv)) {
+    yk m;
+    if (symbol_member(recv, key, &m) && is_closure(m)) return call_value(m, recv, argc, argv);
+  }
   if (is_regexp(recv)) {
     if (key_is(key, "exec")) return regexp_exec(recv, arg0);
     if (key_is(key, "test")) return yk_bool(regexp_exec(recv, arg0) != YK_NULL);
@@ -1305,7 +1362,7 @@ yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk
 
 static int own_get(yk_object *o, yk key, yk *out) {
   for (uint32_t i = 0; i < o->len; i++)
-    if (string_equal(str(o->keys[i]), str(key))) {
+    if (key_equal(o->keys[i], key)) {
       *out = o->values[i];
       return 1;
     }
@@ -1314,7 +1371,7 @@ static int own_get(yk_object *o, yk key, yk *out) {
 
 static void own_set(yk_object *o, yk key, yk value) {
   for (uint32_t i = 0; i < o->len; i++)
-    if (string_equal(str(o->keys[i]), str(key))) {
+    if (key_equal(o->keys[i], key)) {
       o->values[i] = value;
       return;
     }
@@ -1399,7 +1456,7 @@ static void define_accessor(yk_object *o, yk key, yk getter, yk setter) {
 
 /* An object literal built slot by slot (when it has a spread or an accessor). */
 yk yk_define(yk obj, yk key, yk value) {
-  own_set((yk_object *)PTR(obj), to_string(key), value);
+  own_set((yk_object *)PTR(obj), to_property_key(key), value);
   return obj;
 }
 /* An object literal's `__proto__: v` (B.3.1): an object becomes the prototype; anything else
@@ -1409,7 +1466,7 @@ yk yk_object_set_proto(yk obj, yk proto) {
   return obj;
 }
 yk yk_define_accessor(yk obj, yk key, yk getter, yk setter) {
-  define_accessor((yk_object *)PTR(obj), to_string(key), getter == YK_UNDEFINED ? 0 : getter,
+  define_accessor((yk_object *)PTR(obj), to_property_key(key), getter == YK_UNDEFINED ? 0 : getter,
                   setter == YK_UNDEFINED ? 0 : setter);
   return obj;
 }
@@ -1563,7 +1620,7 @@ yk yk_super_get_key(void *closure, yk self, yk key) {
   yk cls = c->class_self;
   yk parent = cls == 0 ? 0 : ((yk_closure *)PTR(cls))->parent;
   if (parent == 0 || !is_closure(parent)) return YK_UNDEFINED;
-  key = to_string(key);
+  key = to_property_key(key);
   yk slot;
   yk_closure *p = (yk_closure *)PTR(parent);
   yk base = c->home_static ? parent : (p->is_class || p->has_this) ? ensure_prototype(parent) : 0;
@@ -1642,7 +1699,7 @@ yk yk_class_new(void *creator, yk parent, uint64_t n, const yk *kinds, const yk 
     if (kind == 4) {
       if (statics[i] == YK_TRUE) continue;
       /* An instance field: kept, in order, for each instance. */
-      add_field(c, private ? 1 : 0, private ? key : to_string(names[i]), members[i]);
+      add_field(c, private ? 1 : 0, private ? key : to_property_key(names[i]), members[i]);
       continue;
     }
     if (private) {
@@ -1653,7 +1710,7 @@ yk yk_class_new(void *creator, yk parent, uint64_t n, const yk *kinds, const yk 
       continue;
     }
     yk_object *target = statics[i] == YK_TRUE ? own_props(cls) : (yk_object *)PTR(proto);
-    yk name = to_string(names[i]);
+    yk name = to_property_key(names[i]);
     if (kind == 1) own_set(target, name, members[i]);
     else define_accessor(target, name, kind == 2 ? members[i] : 0, kind == 3 ? members[i] : 0);
   }
@@ -1665,7 +1722,7 @@ yk yk_class_new(void *creator, yk parent, uint64_t n, const yk *kinds, const yk 
     yk_closure *m = (yk_closure *)PTR(members[i]);
     yk v = m->code(m, cls, 0, NULL);
     if (kind == 4 && num(kinds[i]) >= 8) define_private(cls, 1, private_key_of(c, cls, names[i]), v);
-    else if (kind == 4) own_set(own_props(cls), to_string(names[i]), v);
+    else if (kind == 4) own_set(own_props(cls), to_property_key(names[i]), v);
   }
   return cls;
 }
@@ -1686,9 +1743,9 @@ yk yk_delete(yk obj, yk key) {
   if (is_object(obj) || is_closure(obj)) {
     if (is_closure(obj) && ((yk_closure *)PTR(obj))->props == 0) return YK_TRUE;
     yk_object *o = own_props(obj);
-    yk k = to_string(key);
+    yk k = to_property_key(key);
     for (uint32_t i = 0; i < o->len; i++)
-      if (string_equal(str(o->keys[i]), str(k))) {
+      if (key_equal(o->keys[i], k)) {
         memmove(o->keys + i, o->keys + i + 1, (size_t)(o->len - i - 1) * sizeof(yk));
         memmove(o->values + i, o->values + i + 1, (size_t)(o->len - i - 1) * sizeof(yk));
         o->len--;
@@ -1712,7 +1769,7 @@ yk yk_object_of(uint64_t n, const yk *keys, const yk *values) {
   o->regex = NULL;
   o->entries = NULL;
   o->keys = o->values = NULL;
-  for (uint64_t i = 0; i < n; i++) own_set(o, to_string(keys[i]), values[i]);
+  for (uint64_t i = 0; i < n; i++) own_set(o, to_property_key(keys[i]), values[i]);
   return BOX(T_OBJECT, o);
 }
 
@@ -1769,7 +1826,7 @@ static int protected_call(yk f, uint64_t argc, const yk *argv, yk *result) {
 yk yk_set(yk obj, yk key, yk value) {
   if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 7 && buffer_set(obj, key, value)) return obj;
   if (is_object(obj) || is_closure(obj)) {
-    yk k = to_string(key), slot;
+    yk k = to_property_key(key), slot;
     /* A setter along the chain is called; otherwise the property is the object's own. */
     if (chain_get(obj, k, &slot) && is_accessor(slot)) {
       yk setter = ((yk_accessor *)PTR(slot))->set;
@@ -1792,7 +1849,7 @@ yk yk_set(yk obj, yk key, yk value) {
         return obj;
       }
       if (a->props == 0) a->props = yk_object_of(0, NULL, NULL);
-      own_set((yk_object *)PTR(a->props), to_string(key), value);
+      own_set((yk_object *)PTR(a->props), to_property_key(key), value);
       return obj;
     }
     while (a->len <= i) push(a, YK_UNDEFINED);
@@ -1821,6 +1878,15 @@ static int canonical_index(yk_string *s, uint32_t *out) {
   return 1;
 }
 
+/* An object's own symbol keys, in the order they were added. */
+static yk_array *symbol_keys(yk_object *o) {
+  yk_array *r = new_array(2);
+  for (uint32_t i = 0; i < o->len; i++)
+    if (is_symbol(o->keys[i])) push(r, o->keys[i]);
+  return r;
+}
+/* An object's own string keys, in OrdinaryOwnPropertyKeys' order: integer indexes ascending, then the
+   others as they were added. */
 static yk_array *ordered_keys(yk_object *o) {
   yk_array *r = new_array(o->len);
   uint32_t *idx = scratch((size_t)o->len * sizeof(uint32_t) + 4);
@@ -1828,6 +1894,7 @@ static yk_array *ordered_keys(yk_object *o) {
   uint32_t n = 0;
   for (uint32_t i = 0; i < o->len; i++) {
     uint32_t k;
+    if (!is_string(o->keys[i])) continue; /* a symbol: not a string key */
     if (canonical_index(str(o->keys[i]), &k)) {
       uint32_t j = n++;
       while (j > 0 && idx[j - 1] > k) idx[j] = idx[j - 1], ik[j] = ik[j - 1], j--;
@@ -1838,7 +1905,7 @@ static yk_array *ordered_keys(yk_object *o) {
   for (uint32_t i = 0; i < n; i++) push(r, ik[i]);
   for (uint32_t i = 0; i < o->len; i++) {
     uint32_t k;
-    if (!canonical_index(str(o->keys[i]), &k)) push(r, o->keys[i]);
+    if (is_string(o->keys[i]) && !canonical_index(str(o->keys[i]), &k)) push(r, o->keys[i]);
   }
   free(idx);
   return r;
@@ -1854,7 +1921,32 @@ typedef struct {
   yk gen;         /* for…of over a generator: the generator, or 0 */
   int32_t awaits; /* for await…of: each next() result (an async generator's) or element awaited */
   yk agen;        /* for await…of over an async generator: it, or 0 */
+  yk proto;       /* an iterator by the protocol (an object's [Symbol.iterator]()), or 0 */
+  yk next;        /* its next method */
+  int32_t proto_async; /* the iterator is an async one ([Symbol.asyncIterator]): next() awaited */
+  int32_t finished;    /* it said done (or threw): not closed again */
 } yk_iter;
+/* An object's (or function's) iterator method by the protocol, or 0: [Symbol.asyncIterator] first
+   when asked for an async one, then [Symbol.iterator]. */
+static yk protocol_method(yk v, int async, int *is_async) {
+  if (!((is_object(v) && ((yk_object *)PTR(v))->kind == 0) || is_closure(v))) return 0;
+  yk m;
+  if (async) {
+    m = yk_get(v, symbol_async_iterator());
+    if (is_closure(m)) return *is_async = 1, m;
+  }
+  m = yk_get(v, symbol_iterator());
+  if (is_closure(m)) return *is_async = 0, m;
+  return 0;
+}
+static yk protocol_start(yk_iter *it, yk v, yk method, int is_async) {
+  yk iter = call_value(method, v, 0, NULL);
+  if (!is_object(iter) && !is_closure(iter)) type_error("the iterator is not an object");
+  it->proto = iter;
+  it->next = yk_get(iter, ascii("next"));
+  it->proto_async = is_async;
+  return BOX(T_INTERNAL, it);
+}
 static yk agen_request(yk self, int mode, yk value);
 yk yk_await(yk v);
 
@@ -1865,14 +1957,26 @@ yk yk_iter_new(yk v, int32_t keys) {
   it->i = 0;
   it->keys = NULL;
   if (keys == 2) {
-    /* for await…of: an async generator is drawn one awaited next() at a time; anything else is
-       iterated as for…of, each element awaited (CreateAsyncFromSyncIterator). */
+    /* for await…of: an async generator is drawn one awaited next() at a time; an async iterable by
+       the protocol likewise; anything else is iterated as for…of, each element awaited
+       (CreateAsyncFromSyncIterator). */
     it->awaits = 1;
     if (is_object(v) && ((yk_object *)PTR(v))->kind == 9) {
       it->agen = v;
       return BOX(T_INTERNAL, it);
     }
+    int is_async = 0;
+    yk m = protocol_method(v, 1, &is_async);
+    if (m != 0) {
+      if (is_async) it->awaits = 0;
+      return protocol_start(it, v, m, is_async);
+    }
     keys = 0;
+  }
+  if (!keys) {
+    int is_async = 0;
+    yk m = protocol_method(v, 0, &is_async);
+    if (m != 0) return protocol_start(it, v, m, 0);
   }
   if (keys) {
     if (is_object(v))
@@ -1905,6 +2009,21 @@ int yk_iter_next(yk itv, yk *out) {
   return 1;
 }
 static int iter_step(yk_iter *it, yk *out) {
+  if (it->proto != 0) {
+    if (it->finished) return 0;
+    yk r = call_value(it->next, it->proto, 0, NULL);
+    if (it->proto_async) r = yk_await(r);
+    if (!is_object(r) && !is_closure(r)) {
+      it->finished = 1;
+      type_error("Iterator result is not an object");
+    }
+    if (yk_truthy(yk_get(r, ascii("done")))) {
+      it->finished = 1;
+      return 0;
+    }
+    *out = yk_get(r, ascii("value"));
+    return 1;
+  }
   if (it->gen != 0) return generator_step(it->gen, out);
   if (it->keys != NULL) {
     if (it->i >= it->keys->len) return 0;
@@ -2755,6 +2874,14 @@ static yk_array *typed_items_v(yk v);
 static yk_array *iterable_items(yk v) {
   if (is_object(v) && ((yk_object *)PTR(v))->kind == 7) return typed_items_v(v);
   yk_array *r = new_array(4);
+  {
+    int is_async = 0;
+    if (protocol_method(v, 0, &is_async) != 0) {
+      yk it = yk_iter_new(v, 0), e;
+      while (yk_iter_next(it, &e)) push(r, e);
+      return r;
+    }
+  }
   if (is_object(v) && ((yk_object *)PTR(v))->kind == 5) {
     yk e;
     while (generator_step(v, &e)) push(r, e);
@@ -2847,7 +2974,10 @@ static yk builtin_array_from(void *c, yk self, uint64_t argc, const yk *argv) {
   yk v = argc > 0 ? argv[0] : YK_UNDEFINED;
   if (is_nullish(v)) type_error("Array.from needs an iterable or array-like");
   yk_array *items;
-  if (is_array(v) || is_string(v) ||
+  int is_async = 0;
+  if (protocol_method(v, 0, &is_async) != 0)
+    items = iterable_items(v);
+  else if (is_array(v) || is_string(v) ||
       (is_object(v) && ((yk_object *)PTR(v))->kind != 0 && ((yk_object *)PTR(v))->kind != 3 &&
        ((yk_object *)PTR(v))->kind != 4))
     items = iterable_items(v);
@@ -3385,7 +3515,61 @@ static yk builtin_array(void *c, yk self, uint64_t argc, const yk *argv) {
 
 static yk builtin_string(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
+  if (argc > 0 && is_symbol(argv[0])) return symbol_descriptive(argv[0]);
   return argc == 0 ? ascii("") : to_string(argv[0]);
+}
+/* Symbol([description]): a new symbol (new Symbol throws: it is no constructor). */
+static yk builtin_symbol(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  return symbol_new(argc > 0 && argv[0] != YK_UNDEFINED ? to_string(argv[0]) : YK_UNDEFINED);
+}
+/* Symbol.for(key): the registry's symbol for the string, made once; Symbol.keyFor(sym): its key. */
+static yk symbol_registry = 0;
+static yk symbol_for(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  yk key = to_string(argc > 0 ? argv[0] : YK_UNDEFINED), known;
+  if (symbol_registry == 0) symbol_registry = yk_object_of(0, NULL, NULL);
+  if (own_get((yk_object *)PTR(symbol_registry), key, &known)) return known;
+  yk sym = symbol_new(key);
+  ((yk_symbol *)PTR(sym))->registered = 1;
+  own_set((yk_object *)PTR(symbol_registry), key, sym);
+  return sym;
+}
+static yk symbol_key_for(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  yk v = argc > 0 ? argv[0] : YK_UNDEFINED;
+  if (!is_symbol(v)) type_error("the value is not a symbol");
+  return ((yk_symbol *)PTR(v))->registered ? ((yk_symbol *)PTR(v))->description : YK_UNDEFINED;
+}
+static yk symbol_to_string_m(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)argc, (void)argv;
+  if (!is_symbol(self)) type_error("Symbol.prototype.toString requires that 'this' be a Symbol");
+  return symbol_descriptive(self);
+}
+static yk symbol_value_of_m(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)argc, (void)argv;
+  return self;
+}
+static yk symbol_global(void) {
+  static const char *const m[2] = {"for", "keyFor"};
+  static const yk_code k[2] = {symbol_for, symbol_key_for};
+  yk f = with_methods(builtin_symbol, 2, m, k);
+  for (int i = 0; i < N_WELL_KNOWN; i++) yk_set(f, ascii(well_known_names[i]), well_known_symbol(i));
+  return f;
+}
+/* A symbol's members: description, toString, valueOf. */
+static int symbol_member(yk sym, yk key, yk *out) {
+  static yk fns[2];
+  if (key_is(key, "description")) return *out = ((yk_symbol *)PTR(sym))->description, 1;
+  if (key_is(key, "toString")) {
+    if (fns[0] == 0) fns[0] = yk_closure_new(symbol_to_string_m, 1, 0, NULL);
+    return *out = fns[0], 1;
+  }
+  if (key_is(key, "valueOf")) {
+    if (fns[1] == 0) fns[1] = yk_closure_new(symbol_value_of_m, 1, 0, NULL);
+    return *out = fns[1], 1;
+  }
+  return 0;
 }
 static yk builtin_number(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
@@ -3950,6 +4134,17 @@ static yk try_async_gen_code(void *c, yk self, uint64_t argc, const yk *argv) {
    generator's return() runs, so its finally blocks do (IteratorClose). Done iterators are left. */
 void yk_iter_close(yk itv) {
   yk_iter *it = (yk_iter *)PTR(itv);
+  if (it->proto != 0) {
+    /* IteratorClose: its return(), if it has one. */
+    if (it->finished) return;
+    it->finished = 1;
+    yk ret = yk_get(it->proto, ascii("return"));
+    if (is_closure(ret)) {
+      yk r = call_value(ret, it->proto, 0, NULL);
+      if (it->proto_async) yk_await(r);
+    }
+    return;
+  }
   if (it->agen != 0) {
     coro *ac = (coro *)((yk_object *)PTR(it->agen))->ext;
     if (ac->state != 3) yk_await(agen_request(it->agen, 2, YK_UNDEFINED));
@@ -5785,6 +5980,7 @@ yk yk_global(const char *name, uint64_t n) {
         static const yk_code k[2] = {builtin_json_stringify, builtin_json_parse};
         return fns[i] = with_methods(NULL, 2, m, k);
       }
+      if (strcmp(names[i], "Symbol") == 0) return fns[i] = symbol_global();
       if (codes[i] == NULL) return YK_UNDEFINED;
       if (codes[i] == builtin_promise) {
         static const char *const m[5] = {"resolve", "reject", "all", "allSettled", "race"};
@@ -5938,6 +6134,13 @@ yk yk_spread_into(yk obj, yk src) {
     own_get(from, keys->items[i], &slot);
     own_set(o, keys->items[i], resolve_slot(slot, src));
   }
+  /* CopyDataProperties copies the symbol-keyed ones too, after the strings. */
+  keys = symbol_keys(from);
+  for (uint32_t i = 0; i < keys->len; i++) {
+    yk slot;
+    own_get(from, keys->items[i], &slot);
+    own_set(o, keys->items[i], resolve_slot(slot, src));
+  }
   return obj;
 }
 
@@ -5945,7 +6148,7 @@ yk yk_spread_into(yk obj, yk src) {
 yk yk_in(yk key, yk obj) {
   if (is_object(obj)) {
     /* Its own properties, then its prototype's (HasProperty follows the chain). */
-    yk v, k = to_string(key);
+    yk v, k = to_property_key(key);
     for (yk o = obj; is_object(o); o = ((yk_object *)PTR(o))->proto)
       if (own_get((yk_object *)PTR(o), k, &v)) return YK_TRUE;
     return YK_FALSE;
