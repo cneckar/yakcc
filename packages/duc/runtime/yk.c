@@ -2151,6 +2151,7 @@ static const struct {
 };
 static yk intrinsic_protos[N_INTRINSIC];
 static int view_type(yk v);
+static yk intrinsic_proto(int which);
 static uint32_t ta_bytes(int type);
 static const char *ta_name(int type);
 /* An array, string, Map or Set iterator (object kind 13; ECMA-262 23.1.5, 22.1.5, 24.1.5, 24.2.6). */
