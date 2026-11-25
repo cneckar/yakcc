@@ -2214,6 +2214,11 @@ static yk method_thunk_code(void *c, yk self, uint64_t argc, const yk *argv) {
   int which = (int)num(((yk_closure *)c)->captures[1]);
   /* %IteratorPrototype%[Symbol.iterator], %AsyncIteratorPrototype%[Symbol.asyncIterator]: this. */
   if (which == I_ITERATOR || which == I_ASYNC_ITERATOR) return self;
+  /* Symbol.prototype[Symbol.toPrimitive]: thisSymbolValue. */
+  if (which == I_SYMBOL && key == well_known_symbol(10)) {
+    if (!is_symbol(self)) type_error("Symbol.prototype [ @@toPrimitive ] requires that 'this' be a Symbol");
+    return self;
+  }
   /* Function.prototype[Symbol.hasInstance]: OrdinaryHasInstance (its prototype along the value's chain). */
   if (which == I_FUNCTION && key == well_known_symbol(1)) {
     yk v = argc > 0 ? argv[0] : YK_UNDEFINED;
@@ -2311,6 +2316,10 @@ static yk intrinsic_proto(int which) {
     yk g = intrinsic_proto(which == I_GENERATOR_FUNCTION ? I_GENERATOR : I_ASYNC_GENERATOR);
     own_set(o, ascii("prototype"), g);
     own_set((yk_object *)PTR(g), ascii("constructor"), p);
+  }
+  if (which == I_SYMBOL) {
+    yk key = well_known_symbol(10), caps[2] = {key, yk_number(which)};
+    own_set(o, key, named(yk_closure_new(method_thunk_code, 1, 2, caps), ascii("[Symbol.toPrimitive]")));
   }
   if (which == I_FUNCTION) {
     yk key = well_known_symbol(1), caps[2] = {key, yk_number(which)};
@@ -2435,6 +2444,8 @@ static yk object_to_string(yk v) {
   else if (is_string(v)) tag = "String";
   else if (is_number(v)) tag = "Number";
   else if (is_bool(v)) tag = "Boolean";
+  else if (is_symbol(v)) tag = "Symbol";
+  else if (is_bigint(v)) tag = "BigInt";
   else if (is_object(v)) {
     yk_object *o = (yk_object *)PTR(v);
     if (o->error) tag = "Error";
