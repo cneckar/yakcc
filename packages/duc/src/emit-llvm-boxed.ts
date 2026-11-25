@@ -1663,6 +1663,14 @@ function lowerFunction(
     return r;
   };
   const set = (v: ValueId, r: string): void => emit(`store i64 ${r}, ptr ${slotOf(v)}`);
+  /** A fast path's condition, told to LLVM as the likely one (its block laid out to fall through). */
+  const likely = (c: string): string => {
+    if (c === "true" || c === "false") return c;
+    m.intrinsics.add("declare i1 @llvm.expect.i1(i1, i1)");
+    const r = fresh();
+    emit(`${r} = call i1 @llvm.expect.i1(i1 ${c}, i1 true)`);
+    return r;
+  };
   // Integers' own slots (#1369, DEC-DUC-TYPED-NATIVE-001): a value proven in an integer range keeps
   // its int64 beside its box, written where it is made (integer operations, loop carries), so a
   // chain of integer operations is not converted to doubles and back between them.
@@ -1815,14 +1823,15 @@ function lowerFunction(
       }
     }
     const check = freshLabel("check");
-    emit(`br i1 ${all}, label %${check}, label %${slowLabel}`);
+    emit(`br i1 ${likely(all)}, label %${check}, label %${slowLabel}`);
     block(check);
     const ds = args.map((a) => {
       const d = fresh();
       emit(`${d} = bitcast i64 ${a} to double`);
       return d;
     });
-    if (guard !== undefined) emit(`br i1 ${guard(ds)}, label %${fastLabel}, label %${slowLabel}`);
+    if (guard !== undefined)
+      emit(`br i1 ${likely(guard(ds))}, label %${fastLabel}, label %${slowLabel}`);
     else emit(`br label %${fastLabel}`);
     block(fastLabel);
     const r1 = fast(ds);
@@ -2283,7 +2292,7 @@ function lowerFunction(
         emit(`${both} = and i1 ${numbers}, ${v}`);
         numbers = both;
       }
-      emit(`br i1 ${numbers}, label %${range}, label %${slowLabel}`);
+      emit(`br i1 ${likely(numbers)}, label %${range}, label %${slowLabel}`);
       block(range);
       const d = fresh();
       emit(`${d} = bitcast i64 ${addr} to double`);
@@ -2306,7 +2315,7 @@ function lowerFunction(
           ok = small;
         }
       }
-      emit(`br i1 ${ok}, label %${conv}, label %${slowLabel}`);
+      emit(`br i1 ${likely(ok)}, label %${conv}, label %${slowLabel}`);
       block(conv);
       let i = addrInt as string;
       if (!natural || addrInt === undefined) {
@@ -2362,7 +2371,7 @@ function lowerFunction(
         }
         const gHit = freshLabel("mglobal");
         const next = freshLabel("mnext");
-        emit(`br i1 ${gOk}, label %${gHit}, label %${next}`);
+        emit(`br i1 ${likely(gOk)}, label %${gHit}, label %${next}`);
         block(gHit);
         const gBytes = fresh();
         emit(`${gBytes} = load ptr, ptr ${g0}_bytes`);
@@ -2393,7 +2402,7 @@ function lowerFunction(
       const all = fresh();
       emit(`${all} = and i1 ${sc.ok}, ${current}`);
       const live = freshLabel("mlive");
-      emit(`br i1 ${all}, label %${live}, label %${slowLabel}`);
+      emit(`br i1 ${likely(all)}, label %${live}, label %${slowLabel}`);
       block(live);
       const bytes = fresh();
       emit(`${bytes} = load ptr, ptr ${siteField(2)}`);
@@ -2405,7 +2414,7 @@ function lowerFunction(
       emit(`${same} = icmp eq i64 ${owner}, ${base}`);
       const sP = fresh();
       emit(`${sP} = getelementptr i8, ptr ${bytes}, i64 ${sc.off}`);
-      emit(`br i1 ${same}, label %${fast}, label %${slowLabel}`);
+      emit(`br i1 ${likely(same)}, label %${fast}, label %${slowLabel}`);
       block(fast);
       p = fresh();
       emit(`${p} = phi ptr ${[...hits, [sP, live]].map(([v, l]) => `[ ${v}, %${l} ]`).join(", ")}`);
