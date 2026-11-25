@@ -2212,6 +2212,19 @@ static yk method_thunk_code(void *c, yk self, uint64_t argc, const yk *argv) {
   int which = (int)num(((yk_closure *)c)->captures[1]);
   /* %IteratorPrototype%[Symbol.iterator], %AsyncIteratorPrototype%[Symbol.asyncIterator]: this. */
   if (which == I_ITERATOR || which == I_ASYNC_ITERATOR) return self;
+  /* RegExp.prototype[Symbol.replace] and its kin: the string method with this RegExp. */
+  if (which == I_REGEXP && is_symbol(key))
+    for (int w = 4; w <= 9; w++)
+      if (key == well_known_symbol(w)) {
+        yk subject = to_string(argc > 0 ? argv[0] : YK_UNDEFINED);
+        yk args[3] = {self, argc > 1 ? argv[1] : YK_UNDEFINED, argc > 2 ? argv[2] : YK_UNDEFINED};
+        return call_method_key(subject, ascii(well_known_names[w]), argc > 1 ? (argc > 2 ? 3 : 2) : 1, args);
+      }
+  /* String.prototype[Symbol.iterator] on any value (String.prototype itself among them): its string's. */
+  if (which == I_STRING && key == symbol_iterator() && !is_string(self)) {
+    if (is_nullish(self)) type_error("String.prototype[Symbol.iterator] called on null or undefined");
+    return builtin_iter_new(self == intrinsic_proto(I_STRING) ? ascii("") : to_string(self), 1, 1);
+  }
   /* Array.prototype's iterators on any array-like. */
   if (which == I_ARRAY && !is_array(self) && !is_object(self) && !is_closure(self) && is_nullish(self))
     type_error("Cannot convert undefined or null to object");
@@ -2287,6 +2300,14 @@ static yk intrinsic_proto(int which) {
     own_set(o, ascii("prototype"), g);
     own_set((yk_object *)PTR(g), ascii("constructor"), p);
   }
+  if (which == I_REGEXP)
+    for (int w = 4; w <= 9; w++) {
+      if (w == 8) continue; /* species is a constructor's */
+      yk key = well_known_symbol(w), caps[2] = {key, yk_number(which)};
+      char nm[32];
+      snprintf(nm, sizeof nm, "[Symbol.%s]", well_known_names[w]);
+      own_set(o, key, named(yk_closure_new(method_thunk_code, 1, 2, caps), ascii(nm)));
+    }
   if (which == I_ASYNC_ITERATOR) {
     yk key = symbol_async_iterator();
     yk caps[2] = {key, yk_number(which)};
@@ -7609,13 +7630,90 @@ static yk builtin_runtime_binding(void *c, yk self, uint64_t argc, const yk *arg
   }
   return YK_UNDEFINED;
 }
+/* String's statics: fromCharCode, fromCodePoint, raw. */
+static yk string_from_char_code(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk_string *r = new_string((uint32_t)argc);
+  for (uint64_t i = 0; i < argc; i++) r->units[i] = (uint16_t)to_uint32(argv[i]);
+  return string_of(r);
+}
+static yk string_from_code_point(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk_string *r = new_string((uint32_t)argc * 2);
+  uint32_t n = 0;
+  for (uint64_t i = 0; i < argc; i++) {
+    double d = to_number(argv[i]);
+    if (!(d >= 0 && d <= 0x10FFFF && d == floor(d))) {
+      yk m = concat(str(ascii("Invalid code point ")), str(to_string(argv[i])));
+      yk_throw(make_error("RangeError", m));
+    }
+    uint32_t cp = (uint32_t)d;
+    if (cp > 0xFFFF) cp -= 0x10000, r->units[n++] = (uint16_t)(0xD800 + (cp >> 10)), r->units[n++] = (uint16_t)(0xDC00 + (cp & 0x3FF));
+    else r->units[n++] = (uint16_t)cp;
+  }
+  r->len = n;
+  return string_of(r);
+}
+static yk string_raw(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk raw = yk_get(arg_or_undefined(argc, argv, 0), ascii("raw"));
+  double len = to_number(yk_get(raw, ascii("length")));
+  yk out = ascii("");
+  for (double i = 0; i < len; i++) {
+    out = concat(str(out), str(to_string(yk_get(raw, to_string(yk_number(i))))));
+    if (i + 1 < len && (uint64_t)i + 1 < argc) out = concat(str(out), str(to_string(argv[(uint64_t)i + 1])));
+  }
+  return out;
+}
+/* Error.captureStackTrace(object): its stack, the header V8 gives (no frames: the runtime keeps none). */
+static yk error_capture_stack_trace(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk o = arg_or_undefined(argc, argv, 0);
+  if (!is_object(o) && !is_closure(o)) type_error("Invalid argument");
+  yk name = yk_get(o, ascii("name")), message = yk_get(o, ascii("message"));
+  yk n = name == YK_UNDEFINED ? ascii("Error") : to_string(name);
+  yk m = message == YK_UNDEFINED ? ascii("") : to_string(message);
+  yk header = str(m)->len == 0 ? n : str(n)->len == 0 ? m : concat(str(concat(str(n), str(ascii(": ")))), str(m));
+  yk_set(o, ascii("stack"), header);
+  return YK_UNDEFINED;
+}
+/* Globals a program defines for the runtime (__yakccDefineGlobal): Math as the boot module makes it. */
+static yk defined_globals;
+static yk global_this(void);
+static yk builtin_define_global(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  if (defined_globals == 0) defined_globals = yk_object_of(0, NULL, NULL);
+  yk name = to_string(arg_or_undefined(argc, argv, 0)), value = arg_or_undefined(argc, argv, 1);
+  own_set((yk_object *)PTR(defined_globals), name, value);
+  own_set((yk_object *)PTR(global_this()), name, value);
+  return value;
+}
 yk yk_global(const char *name, uint64_t n) {
+  if (defined_globals != 0) {
+    yk v;
+    if (own_get((yk_object *)PTR(defined_globals), yk_string_utf8(name, n), &v)) return v;
+  }
+  if (n == 19 && memcmp(name, "__yakccDefineGlobal", 19) == 0) {
+    static yk f;
+    return f != 0 ? f : (f = yk_closure_new(builtin_define_global, 0, 0, NULL));
+  }
   if (n == 10 && memcmp(name, "globalThis", 10) == 0) return global_this();
   if (n == 7 && memcmp(name, "Reflect", 7) == 0) return reflect_global();
   if (n == 8 && memcmp(name, "Function", 8) == 0) return function_global();
   yk v = global_raw(name, n);
   if (!is_closure(v)) return v;
-  if (!has_own(v, ascii("name"))) named(v, yk_string_utf8(name, n));
+  if (!has_own(v, ascii("name"))) {
+    named(v, yk_string_utf8(name, n));
+    if (n == 6 && memcmp(name, "String", 6) == 0) {
+      static const char *const m[3] = {"fromCharCode", "fromCodePoint", "raw"};
+      static const yk_code k[3] = {string_from_char_code, string_from_code_point, string_raw};
+      for (int i = 0; i < 3; i++) own_set(own_props(v), ascii(m[i]), named(yk_closure_new(k[i], 0, 0, NULL), ascii(m[i])));
+    }
+    if (n == 5 && memcmp(name, "Error", 5) == 0) {
+      own_set(own_props(v), ascii("captureStackTrace"), named(yk_closure_new(error_capture_stack_trace, 0, 0, NULL), ascii("captureStackTrace")));
+      own_set(own_props(v), ascii("stackTraceLimit"), yk_number(10));
+    }
+  }
   static const char *const ctors[] = {"Object", "Array", "String", "Number", "Boolean", "Symbol", "BigInt",
                                       "Map", "Set", "Promise", "Error", "TypeError", "RangeError", "SyntaxError",
                                       "EvalError", "ReferenceError", "URIError", "AggregateError", "WeakMap",

@@ -380,9 +380,13 @@ export function nodeBootProgram(
 /** The boot program's entry module. */
 export const NODE_BOOT = "yakcc:node-boot";
 
+/** The runtime's `Math` value, made by the boot module before any library code runs. */
+const MATH_VALUE =
+  '// Math as a value (primordials copies its members): each member Math\'s own operation, the\n// approximated ones V8\'s shaved atoms (#1362); hypot, approximated with no atom yet, is absent.\nconst MathObject = {\n  E: Math.E,\n  LN10: Math.LN10,\n  LN2: Math.LN2,\n  LOG10E: Math.LOG10E,\n  LOG2E: Math.LOG2E,\n  PI: Math.PI,\n  SQRT1_2: Math.SQRT1_2,\n  SQRT2: Math.SQRT2,\n  abs: (a0) => Math.abs(a0),\n  acos: (a0) => Math.acos(a0),\n  acosh: (a0) => Math.acosh(a0),\n  asin: (a0) => Math.asin(a0),\n  asinh: (a0) => Math.asinh(a0),\n  atan: (a0) => Math.atan(a0),\n  atanh: (a0) => Math.atanh(a0),\n  atan2: (a0, a1) => Math.atan2(a0, a1),\n  ceil: (a0) => Math.ceil(a0),\n  cbrt: (a0) => Math.cbrt(a0),\n  expm1: (a0) => Math.expm1(a0),\n  cos: (a0) => Math.cos(a0),\n  cosh: (a0) => Math.cosh(a0),\n  exp: (a0) => Math.exp(a0),\n  floor: (a0) => Math.floor(a0),\n  log: (a0) => Math.log(a0),\n  log1p: (a0) => Math.log1p(a0),\n  log2: (a0) => Math.log2(a0),\n  log10: (a0) => Math.log10(a0),\n  max: (...a) => Math.max(...a),\n  min: (...a) => Math.min(...a),\n  pow: (a0, a1) => Math.pow(a0, a1),\n  random: () => Math.random(),\n  round: (a0) => Math.round(a0),\n  sign: (a0) => Math.sign(a0),\n  sin: (a0) => Math.sin(a0),\n  sinh: (a0) => Math.sinh(a0),\n  sqrt: (a0) => Math.sqrt(a0),\n  tan: (a0) => Math.tan(a0),\n  tanh: (a0) => Math.tanh(a0),\n  trunc: (a0) => Math.trunc(a0),\n  // Exact, so given here: ToUint32\'s leading zeros; Int32 multiplication; the nearest float32.\n  clz32: (x) => {\n    let v = x >>> 0;\n    if (v === 0) return 32;\n    let n = 0;\n    while ((v & 0x80000000) === 0) {\n      v = v << 1;\n      n++;\n    }\n    return n;\n  },\n  imul: (a, b) => {\n    const ah = (a >>> 16) & 0xffff;\n    const al = a & 0xffff;\n    const bh = (b >>> 16) & 0xffff;\n    const bl = b & 0xffff;\n    return (al * bl + (((ah * bl + al * bh) << 16) >>> 0)) | 0;\n  },\n  fround: (x) => new Float32Array([x])[0],\n};\nObject.defineProperty(MathObject, Symbol.toStringTag, { value: "Math", configurable: true });\n__yakccDefineGlobal("Math", MathObject);\n';
+
 /** The boot module's source: Node's realm set up over the table, then `main` loaded. */
 function nodeBootSource(main: string, bindings: string | undefined): string {
-  return `const table = require(${JSON.stringify(NODE_BUILTINS)});
+  return `${MATH_VALUE}const table = require(${JSON.stringify(NODE_BUILTINS)});
 const given = ${bindings !== undefined ? `require(${JSON.stringify(bindings)})` : "{}"};
 const primordials = { __proto__: null };
 const privateSymbols = {

@@ -150,6 +150,7 @@ const GLOBALS = new Set([
   "unescape",
   // The runtime's own internalBinding layer (#1331): Node's bindings V8's role gives.
   "__yakccRuntimeBinding",
+  "__yakccDefineGlobal",
   "eval",
   "EvalError",
   "ReferenceError",
@@ -1073,7 +1074,8 @@ function lowerFunction(
         // probed (DEC-DUC-FEATURE-DETECTION-001).
         return scope?.read(free, emit, fresh) ?? UNDEFINED;
       }
-      const sym = globalValue.get(v);
+      // Math read as a value (`const { abs } = Math`): the runtime's global, as a program makes it.
+      const sym = globalValue.get(v) ?? (mathValue.has(v) ? "Math" : undefined);
       if (sym === undefined) throw new LlvmEmitError("Math is not a value here");
       const key = m.constant(sym);
       return call("yk_global", `ptr ${key.ptr}, i64 ${key.length}`);
