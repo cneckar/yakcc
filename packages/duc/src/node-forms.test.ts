@@ -1151,4 +1151,37 @@ export function f(xs: number[]) {
       ],
     );
   });
+
+  it("two cells equal in themselves, told apart by what is written into them, are two invariants of a loop (#1292)", () => {
+    agrees(
+      `export function f(xs: number[], ys: number[]) {
+  const seen: number[] = [];
+  function scan(scope: number): number[] {
+    const out: number[] = [];
+    for (const x of xs) {
+      if (x === scope || owners.has(x) || inline.has(x)) continue;
+      out.push(x);
+    }
+    return out;
+  }
+  const owners = new Map(ys.map((y) => [y, 1]));
+  const inline = new Set<number>();
+  for (const y of ys) {
+    const mark = (v: number): void => {
+      inline.add(v + 1);
+      seen.push(owners.get(v) ?? 0);
+    };
+    mark(y);
+  }
+  return [scan(0), seen];
+}`,
+      [
+        [
+          [0, 1, 2, 3, 4, 5],
+          [1, 3],
+        ],
+        [[], [2]],
+      ],
+    );
+  });
 });
