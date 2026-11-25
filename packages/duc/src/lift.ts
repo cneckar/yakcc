@@ -294,6 +294,11 @@ function normalizeJumps(
   const braced = braceLoopBodies(sf);
   if (braced !== undefined) sf = reparse(braced);
   for (let round = 0; round < 64; round++) {
+    const text = perPassForBinding(sf);
+    if (text === undefined) break;
+    sf = reparse(text);
+  }
+  for (let round = 0; round < 64; round++) {
     const text = nextJumpRewrite(sf, round);
     if (text === undefined) return sf;
     sf = reparse(text);
@@ -350,6 +355,16 @@ function parameterProperties(
     .filter((p) => p.getScope() !== undefined || p.isReadonly() || p.hasOverrideKeyword());
 }
 
+/**
+ * Whether a class extends another: its constructor is a derived one, whose receiver its `super(..)`
+ * makes. An `implements` clause is a type, and makes nothing derived (#1292).
+ */
+function extendsSomething(
+  cls: import("ts-morph").ClassDeclaration | import("ts-morph").ClassExpression,
+): boolean {
+  return cls.getHeritageClauses().some((h) => h.getToken() === SyntaxKind.ExtendsKeyword);
+}
+
 /** The innermost loop around a node, inside its own function. */
 function ownLoop(n: Node): Node | undefined {
   for (let p: Node | undefined = n.getParent(); p !== undefined; p = p.getParent()) {
@@ -396,6 +411,129 @@ function braceLoopBodies(sf: SourceFile): string | undefined {
   let text = sf.getFullText();
   for (const e of edits) text = text.slice(0, e.at) + e.text + text.slice(e.at);
   return text;
+}
+
+/**
+ * A `for` header's `let` that something nested in the body rebinds (a closure, or a try statement's
+ * block, which is one once lowered), written as a binding of the body's own, copied from the header's
+ * at the start of each pass and back at its end and at each `continue` (#1292):
+ * `for (let a = 0; c(a); a++) { B }` is `for (let a$1 = 0; c(a$1); a$1++) { let a = a$1; B a$1 = a; }`.
+ * That is JavaScript's own rule (each pass has its binding, copied into the next before the update),
+ * and the body's `let` is a cell made each pass, as any other block's is. A header whose initializer,
+ * condition or update holds a function, or a body that declares the name itself, is left as it is.
+ * Undefined when no header needs it.
+ */
+function perPassForBinding(sf: SourceFile): string | undefined {
+  const text = sf.getFullText();
+  for (const loop of sf.getDescendantsOfKind(SyntaxKind.ForStatement)) {
+    const init = loop.getInitializer();
+    const body = loop.getStatement();
+    if (
+      init === undefined ||
+      !Node.isVariableDeclarationList(init) ||
+      init.getDeclarationKind() !== "let" ||
+      !Node.isBlock(body)
+    )
+      continue;
+    const header = [init, loop.getCondition(), loop.getIncrementor()].filter(
+      (n): n is Node => n !== undefined,
+    );
+    if (
+      header.some((n) =>
+        n.getDescendants().some((d) => isFunctionLikeNode(d) || Node.isClassExpression(d)),
+      )
+    )
+      continue;
+    const nested = body
+      .getDescendants()
+      .filter(
+        (d) =>
+          isFunctionLikeNode(d) ||
+          Node.isClassStaticBlockDeclaration(d) ||
+          (Node.isBlock(d) && Node.isTryStatement(d.getParent())) ||
+          Node.isCatchClause(d),
+      );
+    if (nested.length === 0) continue;
+    const ownDeclared = new Set(
+      body
+        .getStatements()
+        .flatMap((st) =>
+          Node.isVariableStatement(st)
+            ? st.getDeclarations().flatMap((d) => patternNames(d.getNameNode()))
+            : (Node.isFunctionDeclaration(st) || Node.isClassDeclaration(st)) &&
+                st.getName() !== undefined
+              ? [st.getName() as string]
+              : [],
+        ),
+    );
+    const names = init
+      .getDeclarations()
+      .map((d) => d.getNameNode())
+      .filter((n) => Node.isIdentifier(n))
+      .map((n) => n.getText())
+      .filter(
+        (name) =>
+          !ownDeclared.has(name) &&
+          nested.some((fn) =>
+            assignmentTargetsOf(fn).some((t) =>
+              targetNames(t).some(
+                (id) => id.getText() === name && !declaredBetween(id, name, loop),
+              ),
+            ),
+          ),
+      );
+    if (names.length === 0) continue;
+    const fresh = new Map<string, string>();
+    for (const name of names) {
+      let n = 1;
+      while (text.includes(`${name}$${n}`)) n++;
+      fresh.set(name, `${name}$${n}`);
+    }
+    // The header's references, renamed: its declarations, and the names its expressions use.
+    const edits: { from: number; to: number; text: string }[] = [];
+    let shorthand = false;
+    for (const part of header) {
+      for (const id of [
+        ...(Node.isIdentifier(part) ? [part] : []),
+        ...part.getDescendantsOfKind(SyntaxKind.Identifier),
+      ]) {
+        const to = fresh.get(id.getText());
+        if (to === undefined) continue;
+        const parent = id.getParent();
+        if (Node.isShorthandPropertyAssignment(parent)) shorthand = true;
+        if (Node.isPropertyAccessExpression(parent) && parent.getNameNode() === id) continue;
+        if (Node.isPropertyAssignment(parent) && parent.getNameNode() === id) continue;
+        edits.push({ from: id.getStart(), to: id.getEnd(), text: to });
+      }
+    }
+    if (shorthand) continue;
+    const copyBack = names.map((name) => `${fresh.get(name)} = ${name};`).join(" ");
+    for (const j of body.getDescendantsOfKind(SyntaxKind.ContinueStatement)) {
+      const label = j.getLabel()?.getText();
+      const target =
+        label === undefined
+          ? ownLoop(j)
+          : (() => {
+              const l = labelTarget(j, label);
+              return l === undefined ? undefined : labelled(l);
+            })();
+      if (target?.compilerNode !== loop.compilerNode) continue;
+      edits.push({ from: j.getStart(), to: j.getEnd(), text: `{ ${copyBack} ${j.getText()} }` });
+    }
+    const open = body.getStart() + 1;
+    const close = body.getEnd() - 1;
+    edits.push({
+      from: open,
+      to: open,
+      text: ` ${names.map((name) => `let ${name} = ${fresh.get(name)};`).join(" ")}`,
+    });
+    edits.push({ from: close, to: close, text: ` ${copyBack} ` });
+    edits.sort((a, b) => b.from - a.from);
+    let out = text;
+    for (const e of edits) out = out.slice(0, e.from) + e.text + out.slice(e.to);
+    return out;
+  }
+  return undefined;
 }
 
 function nextJumpRewrite(sf: SourceFile, round: number): string | undefined {
@@ -1545,7 +1683,13 @@ class Lifter {
     const file = normalizeJumps(syntheticFile(sw, "__switchpass", source), (text) =>
       syntheticFile(sw, "__switchpass", text),
     );
-    const first = file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0];
+    const synthetic = file.getFunctions()[0];
+    // A flag a closure in a clause sets (a try's block, lowered, that returns) is a cell, as any
+    // name a closure rebinds is (#1292): the function's cells were found before the pass existed.
+    if (synthetic !== undefined)
+      for (const name of cellNames(synthetic))
+        if (name === cont || name === ret || name === value) this.cells.add(name);
+    const first = synthetic?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0];
     // With a continue, the block sits in a loop of the synthetic function only so it parses: the
     // block is what replaces the switch, inside the real loop, and its continue is that loop's.
     return this.noteExits(
@@ -1734,7 +1878,7 @@ class Lifter {
     // `super(..)` is a derived constructor's own statement, and nothing else uses `super` (#1276).
     const derived =
       Node.isConstructorDeclaration(fn) &&
-      (fn.getParent() as import("ts-morph").ClassDeclaration).getHeritageClauses().length > 0;
+      extendsSomething(fn.getParent() as import("ts-morph").ClassDeclaration);
     // Its own: one in a function or class inside it is that function's (#1330).
     const supers = fn
       .getDescendantsOfKind(SyntaxKind.SuperKeyword)
@@ -1776,8 +1920,7 @@ class Lifter {
     const inDerivedConstructor =
       arrowOwner !== undefined &&
       Node.isConstructorDeclaration(arrowOwner) &&
-      (arrowOwner.getParent() as import("ts-morph").ClassDeclaration).getHeritageClauses().length >
-        0;
+      extendsSomething(arrowOwner.getParent() as import("ts-morph").ClassDeclaration);
     // `super.name` (read or called) in a member of a derived class, or an arrow inside one: the
     // parent's member, with this function's receiver (#1294). A write through `super` is not.
     const superMember = (k: Node): boolean => {
@@ -5748,12 +5891,15 @@ function jumpsSupported(loop: Node): boolean {
       // return, when the switch is a pass (#1368). A continue that ends an arm of the chain of ifs
       // is the loop's (#1368).
       const nearest = breakTarget(j)?.compilerNode === p.compilerNode;
+      // A throw ends its path wherever it is: in a switch that lowers, either way, it stays a throw
+      // (#1292).
       const switchLeaves =
         Node.isSwitchStatement(p) &&
-        (Node.isContinueStatement(j) || Node.isReturnStatement(j)) &&
-        (switchArms(p) !== undefined
-          ? Node.isReturnStatement(j) || nearest
-          : nearest && switchPassShape(p) !== undefined);
+        ((Node.isThrowStatement(j) && !opaqueSwitch(p)) ||
+          ((Node.isContinueStatement(j) || Node.isReturnStatement(j)) &&
+            (switchArms(p) !== undefined
+              ? Node.isReturnStatement(j) || nearest
+              : nearest && switchPassShape(p) !== undefined)));
       if (
         isLoopStatement(p) ||
         (Node.isSwitchStatement(p) && !switchLeaves) ||

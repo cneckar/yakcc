@@ -869,4 +869,121 @@ describe("the round trip on yakcc's own sources (#1292)", () => {
     expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
     expect(liftFidelity(code, g).holds).toBe(true);
   });
+
+  it("a class that implements an interface is not a derived class: its constructor makes its receiver", () => {
+    agrees(
+      `interface Sink { send(e: number): void }
+export function f(xs: number[]) {
+  class Composite implements Sink {
+    private readonly seen: number[];
+    constructor(seen: number[]) {
+      this.seen = seen;
+    }
+    send(e: number): void {
+      for (const x of xs) {
+        try {
+          if (x === e) throw new RangeError("same");
+          this.seen.push(x + e);
+        } catch {
+          this.seen.push(-1);
+        }
+      }
+    }
+  }
+  const c = new Composite([]);
+  c.send(2);
+  return xs.length;
+}`,
+      [[[1, 2, 3]], [[]]],
+    );
+  });
+
+  it("a throw inside a switch a pass's clause holds ends its path", () => {
+    agrees(
+      `export function f(kind: string, sub: string, x: number) {
+  switch (kind) {
+    case "name":
+      return ["name", x];
+    case "lit": {
+      switch (sub) {
+        case "int":
+          return ["int", x];
+        default: {
+          throw new RangeError("lit " + sub);
+        }
+      }
+    }
+    case "neg":
+      if (x > 0) {
+        throw new RangeError("neg " + x);
+      }
+      return ["neg", -x];
+  }
+  return null;
+}`,
+      [
+        ["name", "", 1],
+        ["lit", "int", 2],
+        ["lit", "x", 2],
+        ["neg", "", 3],
+        ["neg", "", -3],
+        ["other", "", 0],
+      ],
+    );
+  });
+
+  it("a for header's let a closure in the body rebinds is the pass's own, copied on to the next", () => {
+    agrees(
+      `export function f(xs: number[]) {
+  const later: (() => number)[] = [];
+  let seen = 0;
+  for (let changed = true, i = 0; changed && i < 10; i++) {
+    changed = false;
+    if (i % 3 === 2) continue;
+    xs.forEach((x) => { if (x > i) { changed = true; seen += x; } });
+    later.push(() => { i += 100; return i; });
+  }
+  const outs = later.map((g) => g());
+  return [seen, outs, later.map((g) => g())];
+}`,
+      [[[1, 2, 3]], [[]], [[5, 0, 7]]],
+    );
+  });
+
+  it("a clause whose try returns from its catch falls into the next: the pass's flag is a cell", () => {
+    agrees(
+      `export function f(kind: string, x: any) {
+  const log: string[] = [];
+  switch (kind) {
+    case "char":
+      try {
+        log.push(String(x.code.length));
+      } catch {
+        return ["caught", log];
+      }
+    case "str":
+      log.push("str");
+    default:
+      log.push("end");
+  }
+  return ["done", log];
+}`,
+      [
+        ["char", { code: "ab" }],
+        ["char", {}],
+        ["str", null],
+        ["other", null],
+      ],
+    );
+  });
+
+  it("an arrow's capture of its function's arguments stays a capture: the arrow has none of its own", () => {
+    const g = liftAtom(
+      "export function f(a: any) { function g(x: any) { const inner = () => arguments.length; return inner(); } return g(a, a); }",
+    );
+    const fn = g.nodes.find((n) => n.closure !== undefined)?.closure;
+    const arrow = fn?.nodes.find((n) => n.closure !== undefined);
+    expect(arrow?.inputs.length).toBe(1);
+    expect(arrow?.closure?.nodes.some((n) => n.kind === "diamond-source")).toBe(false);
+  });
 });
