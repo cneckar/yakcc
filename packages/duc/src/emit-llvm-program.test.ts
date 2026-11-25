@@ -150,6 +150,14 @@ describe.skipIf(!canRun("x86_64-linux"))("programs, natively (#1333)", () => {
       ["mixed", [3, 4]],
       ["mixed", ["a", 2]],
       ["mixed", [null, undefined]],
+      ["hashLoop", [0, 50]],
+      ["hashLoop", [4294967295, 50]],
+      ["hashLoop", [-5, 9]],
+      ["hashLoop", [2 ** 40, 9]],
+      ["hashLoop", [1.5, 9]],
+      ["hashLoop", ["q", 9]],
+      ["hashLoop", [Number.NaN, 3]],
+      ["hashLoop", [-0, 3]],
     ];
     const got = run(calls);
     const ref = (await import("./__fixtures__/program/records/entry.js")) as unknown as Record<
