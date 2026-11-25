@@ -100,6 +100,11 @@ const PROGRAMS: [string, string, number][] = [
   // + with ToPrimitive, string concatenation and Number::toString's shortest digits.
   ["+ on every pair of kinds", "export function f(a, b) { return a + b; }", 2],
   [
+    "object literals: __proto__ sets the prototype and defines no key; computed method keys (#1331)",
+    "export function f(a, b) { const base = { greet() { return 'hi ' + this.name; }, kind: 'base' }; const o = { __proto__: base, name: String(a) }; const n = { __proto__: null, value: b }; const k = 'm' + typeof a; const c = { [k]() { return k + '!'; }, ['x' + 1]: 2 }; return [o.greet(), o.kind, Object.keys(o), JSON.stringify(n), Object.keys(n), n.value, c[k](), Object.keys(c), 'kind' in o]; }",
+    2,
+  ],
+  [
     "the other operators and their coercions",
     "export function f(a, b) { return [a == b, a === b, a != b, a < b, a >= b, a > b, a <= b, typeof a, !a, a - b, a * b, a / b, a % b, -a, +b, a && b, a || b]; }",
     2,

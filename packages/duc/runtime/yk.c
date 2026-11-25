@@ -1402,6 +1402,12 @@ yk yk_define(yk obj, yk key, yk value) {
   own_set((yk_object *)PTR(obj), to_string(key), value);
   return obj;
 }
+/* An object literal's `__proto__: v` (B.3.1): an object becomes the prototype; anything else
+   (null among them) leaves the object as it is; no property is defined. */
+yk yk_object_set_proto(yk obj, yk proto) {
+  if (is_object(proto)) ((yk_object *)PTR(obj))->proto = proto;
+  return obj;
+}
 yk yk_define_accessor(yk obj, yk key, yk getter, yk setter) {
   define_accessor((yk_object *)PTR(obj), to_string(key), getter == YK_UNDEFINED ? 0 : getter,
                   setter == YK_UNDEFINED ? 0 : setter);
@@ -5882,8 +5888,11 @@ yk yk_spread_into(yk obj, yk src) {
 /* key in obj: an object's own property, an array's index or length. */
 yk yk_in(yk key, yk obj) {
   if (is_object(obj)) {
-    yk v;
-    return yk_bool(own_get((yk_object *)PTR(obj), to_string(key), &v));
+    /* Its own properties, then its prototype's (HasProperty follows the chain). */
+    yk v, k = to_string(key);
+    for (yk o = obj; is_object(o); o = ((yk_object *)PTR(o))->proto)
+      if (own_get((yk_object *)PTR(o), k, &v)) return YK_TRUE;
+    return YK_FALSE;
   }
   if (is_array(obj)) {
     if (key_is(to_string(key), "length")) return YK_TRUE;

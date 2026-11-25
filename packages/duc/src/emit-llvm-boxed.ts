@@ -244,6 +244,7 @@ const RUNTIME_DECLS: Readonly<Record<string, string>> = {
   yk_string_utf8: "declare i64 @yk_string_utf8(ptr, i64)",
   yk_array_of: "declare i64 @yk_array_of(i64, ptr)",
   yk_object_of: "declare i64 @yk_object_of(i64, ptr, ptr)",
+  yk_object_set_proto: "declare i64 @yk_object_set_proto(i64, i64)",
   yk_template: "declare i64 @yk_template(i64, ptr, ptr)",
   yk_get: "declare i64 @yk_get(i64, i64)",
   yk_get_named: "declare i64 @yk_get_named(i64, ptr, i64)",
@@ -328,6 +329,8 @@ function slotsOf(label: string): Slot[] {
     if (typeof entry === "string") return { kind: "named", name: entry };
     const [kind, k] = Object.entries(entry as Record<string, unknown>)[0] ?? [];
     if (kind === "method" && typeof k === "string") return { kind: "method", name: k };
+    // A method with a computed key (`[Symbol.asyncIterator]() {}`): its key, then its function.
+    if (kind === "method" && k === 1) return { kind: "computed" };
     // An accessor: named, or computed (its key the input before its function).
     if (kind === "get" || kind === "set")
       return typeof k === "string" ? { kind, name: k } : { kind };
@@ -2494,7 +2497,10 @@ function lowerFunction(
     }
     if (lbl.startsWith("object:")) {
       const slots = slotsOf(lbl);
-      if (slots.some((x) => x.kind === "spread" || x.kind === "get" || x.kind === "set")) {
+      const isProto = (x: Slot): boolean => x.kind === "named" && x.name === "__proto__";
+      if (
+        slots.some((x) => x.kind === "spread" || x.kind === "get" || x.kind === "set" || isProto(x))
+      ) {
         // Slot by slot, in source order: a spread copies, an accessor defines, a later key wins.
         let obj = call("yk_object_of", "i64 0, ptr null, ptr null");
         let at = 0;
@@ -2503,6 +2509,11 @@ function lowerFunction(
             throw new LlvmEmitError(`${slot.what} is not in the subset yet`);
           if (slot.kind === "spread") {
             obj = call("yk_spread_into", `i64 ${obj}, i64 ${operand(ins[at++] as ValueId)}`);
+            continue;
+          }
+          if (isProto(slot)) {
+            // `__proto__: v` sets the prototype (an object), and defines no property.
+            obj = call("yk_object_set_proto", `i64 ${obj}, i64 ${operand(ins[at++] as ValueId)}`);
             continue;
           }
           const key =
