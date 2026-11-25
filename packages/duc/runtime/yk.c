@@ -1167,7 +1167,22 @@ static inline __attribute__((always_inline)) int key_is(yk key, const char *name
   return 1;
 }
 
+static int typed_fast_get(yk obj, uint32_t i, yk *out);
 yk yk_get(yk obj, yk key) {
+  /* An element by an integer index: an array's (not a hole), a typed array's, in range. */
+  if (is_number(key)) {
+    double d = num(key);
+    if (d >= 0 && d < 4294967295.0 && d == (double)(uint32_t)d) {
+      uint32_t i = (uint32_t)d;
+      if (is_array(obj)) {
+        yk_array *a = arr(obj);
+        if (i < a->len && !array_hole(a, i)) return a->items[i];
+      } else if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 7) {
+        yk r;
+        if (typed_fast_get(obj, i, &r)) return r;
+      }
+    }
+  }
   /* A plain object's own property by the very key (names are made once, so a read by name finds the
      key the object was made with): its value, before anything else is asked. */
   if (is_object(obj)) {
@@ -6674,6 +6689,12 @@ static yk builtin_text_encoder(void *c, yk s, uint64_t argc, const yk *argv) {
 }
 
 /* A property of a buffer or a view: its element, or its own accessors' values; 0 if none. */
+static int typed_fast_get(yk obj, uint32_t i, yk *out) {
+  yk_view *t = typed_of(obj);
+  if (t == NULL || i >= t->length) return 0;
+  *out = ta_get(t, i);
+  return 1;
+}
 static int buffer_get(yk obj, yk key, yk *out) {
   yk_view *t = typed_of(obj);
   if (t != NULL) {
