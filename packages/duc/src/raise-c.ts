@@ -3738,6 +3738,7 @@ function raiseBody(
       const d = dispatch;
       // A goto from inside it to a label of the body: the loop in a block the goto leaves.
       const label = d.depth === 0 && gotoToTarget(d, s) ? `__dl${temps++}` : undefined;
+      const open = lines.length;
       if (label !== undefined) {
         push(`${label}: do {`);
         d.exitLabel = label;
@@ -3749,7 +3750,13 @@ function raiseBody(
         d.depth--;
         if (label !== undefined) {
           d.exitLabel = undefined;
-          push("} while (false);");
+          // (No goto in it breaks out, when the loop or switch dispatches them itself: a block.)
+          const used = lines.slice(open + 1).some((l) => l.includes(`break ${label};`));
+          if (used) push("} while (false);");
+          else {
+            lines[open] = "{";
+            push("}");
+          }
         }
       }
       return;
