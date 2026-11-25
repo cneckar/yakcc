@@ -69,8 +69,8 @@ describe.skipIf(!canRun("x86_64-linux"))("Node's library, natively (#1331)", () 
     const exe = join(work, "boot");
     buildRecord(record, exe);
     const r = spawnSync(exe, [], { encoding: "utf8" });
-    expect(r.stderr).toBe("");
     const want = spawnSync(process.execPath, ["-e", BOOT_PROGRAM], { encoding: "utf8" });
+    expect(r.stderr).toBe(want.stderr);
     expect(r.stdout).toBe(want.stdout);
     expect(r.status).toBe(0);
   }, 1_200_000);
@@ -88,4 +88,7 @@ class Point { constructor(x, y) { this.x = x; this.y = y; } }
 console.log(util.inspect(new Point(1, 2)), util.inspect(Promise.resolve(4)), util.inspect(new Error("boom").message));
 console.log(util.isDeepStrictEqual({ a: [1, 2] }, { a: [1, 2] }), util.types.isMap(new Map()));
 try { path.join(1); } catch (e) { console.log(e.code, e.name, e.message); }
+console.log({ a: 1, b: [2, { c: 3 }] }, new Map([[1, "x"]]), [undefined, null], "%s!", "fmt");
+console.error("to stderr %d", 5);
+console.dir({ deep: { er: { est: { x: 1 } } } }, { depth: 0 });
 `;
