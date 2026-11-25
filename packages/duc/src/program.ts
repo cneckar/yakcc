@@ -226,12 +226,14 @@ const NODE_PRELUDE = `const { primordials, internalBinding, process } = require(
  * top level, transitively, read from `lib` (one file per builtin id), each a CommonJS module with
  * the wrapper's names bound (NODE_PRELUDE). `extra` modules (the environment, and anything a test
  * provides) are taken as given. A require inside a function names a module only when it runs: one
- * outside the program then fails there, as a missing module does.
+ * outside the program then fails there, as a missing module does; `include` names such modules
+ * (and theirs, transitively) to put in the program all the same.
  */
 export function nodeLibraryProgram(
   lib: string,
   entry: SourceModule,
   extra: readonly SourceModule[] = [],
+  include: readonly string[] = [],
 ): ProgramRecord {
   const project = new Project({ useInMemoryFileSystem: true, compilerOptions: { allowJs: true } });
   const given = new Map([entry, ...extra].map((m) => [m.id, m.source] as const));
@@ -250,6 +252,7 @@ export function nodeLibraryProgram(
     for (const dep of parsed.topLevel) visit(dep);
   };
   visit(entry.id);
+  for (const id of include) visit(id);
   return { entry: entry.id, modules: [...modules.values()] };
 }
 

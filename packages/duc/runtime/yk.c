@@ -2793,7 +2793,15 @@ yk yk_arg(uint64_t argc, const yk *argv, uint64_t i) { return i < argc ? argv[i]
 yk yk_rest(uint64_t argc, const yk *argv, uint64_t i) { return yk_array_of(i < argc ? argc - i : 0, argv + (i < argc ? i : argc)); }
 
 static yk call_value(yk f, yk self, uint64_t argc, const yk *argv) {
-  if (!is_closure(f)) type_error("not a function");
+  if (!is_closure(f)) {
+    /* V8 names the callee's expression; the runtime names the value's kind. */
+    const char *what = f == YK_UNDEFINED ? "undefined" : f == YK_NULL ? "null" : is_string(f) ? "a string"
+                       : is_number(f) ? "a number" : is_array(f) ? "an array" : is_object(f) ? "an object"
+                       : "the value";
+    char msg[64];
+    snprintf(msg, sizeof msg, "%s is not a function", what);
+    type_error(msg);
+  }
   yk_closure *c = (yk_closure *)PTR(f);
   if (c->is_class) type_error("Class constructor cannot be invoked without 'new'");
   if (c->mode == 1) return async_call(c, self, argc, argv);
@@ -4118,9 +4126,12 @@ static yk builtin_aggregate_error(void *c, yk s, uint64_t argc, const yk *argv) 
    A weak collection is a Map or Set whose prototype is its own intrinsic one: the collector keeps
    whatever is reachable, so holding the keys strongly only keeps more alive, which nothing can
    observe (no WeakRef here is ever cleared, no finalization callback ever runs). */
+/* A WeakMap's or WeakSet's ext: marks it weak (a Map's and a Set's is NULL). */
+static int weak_marker;
 static yk weak_collection(int kind, int which, uint64_t argc, const yk *argv) {
   yk c = new_collection(kind);
   ((yk_object *)PTR(c))->proto = intrinsic_proto(which);
+  ((yk_object *)PTR(c))->ext = &weak_marker;
   if (argc > 0 && !is_nullish(argv[0])) {
     yk_array *items = iterable_items(argv[0]);
     for (uint32_t i = 0; i < items->len; i++) {
@@ -6423,6 +6434,21 @@ static yk process_global(void) {
   }
   own_set(o, ascii("env"), env);
   own_set(o, ascii("platform"), ascii("linux"));
+  own_set(o, ascii("arch"), ascii(sizeof(void *) == 8 ? (
+#if defined(__aarch64__)
+                                       "arm64"
+#else
+                                       "x64"
+#endif
+                                       ) : "ia32"));
+  /* versions: the Node library the program is built from; no OpenSSL (no crypto binding yet). */
+  {
+    yk v = yk_object_of(0, NULL, NULL);
+    own_set((yk_object *)PTR(v), ascii("node"), ascii("22.23.5"));
+    own_set((yk_object *)PTR(v), ascii("yakcc"), ascii("native"));
+    own_set(o, ascii("versions"), v);
+    own_set(o, ascii("version"), ascii("v22.23.5"));
+  }
   own_set(o, ascii("exit"), yk_closure_new(process_exit, 0, 0, NULL));
   own_set(o, ascii("stdout"), with_one_method("write", stdout_write));
   own_set(o, ascii("stderr"), with_one_method("write", stderr_write));
@@ -7278,6 +7304,58 @@ static yk global_this(void);
 static yk reflect_global(void);
 static yk function_global(void);
 /* A global's value; a built-in constructor's `prototype` is its intrinsic prototype (#1331). */
+/* --- the runtime's own internalBinding layer (V8's role for Node: node-platform's BINDINGS,
+       layer "runtime"); the others come from shaved code --- */
+
+/* internalBinding('types'): V8's value predicates, over the runtime's object model. */
+static const char *const type_predicates[] = {
+    "isAnyArrayBuffer", "isArgumentsObject", "isArrayBuffer", "isAsyncFunction", "isBigIntObject",
+    "isBooleanObject", "isBoxedPrimitive", "isDataView", "isDate", "isExternal", "isGeneratorFunction",
+    "isGeneratorObject", "isMap", "isMapIterator", "isModuleNamespaceObject", "isNativeError",
+    "isNumberObject", "isPromise", "isProxy", "isRegExp", "isSet", "isSetIterator",
+    "isSharedArrayBuffer", "isStringObject", "isSymbolObject", "isWeakMap", "isWeakSet", NULL};
+static yk type_predicate(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)self;
+  const char *which = type_predicates[(int)num(((yk_closure *)c)->captures[0])];
+  yk v = arg_or_undefined(argc, argv, 0);
+  int kind = is_object(v) ? ((yk_object *)PTR(v))->kind : -1;
+  yk_object *o = is_object(v) ? (yk_object *)PTR(v) : NULL;
+  int weak = o != NULL && (kind == 1 || kind == 2) && o->ext == &weak_marker;
+  int mode = is_closure(v) ? ((yk_closure *)PTR(v))->mode : -1;
+  int r = 0;
+  if (!strcmp(which, "isAnyArrayBuffer") || !strcmp(which, "isArrayBuffer")) r = kind == 6;
+  else if (!strcmp(which, "isAsyncFunction")) r = mode == 1 || mode == 3;
+  else if (!strcmp(which, "isGeneratorFunction")) r = mode == 2 || mode == 3;
+  else if (!strcmp(which, "isGeneratorObject")) r = kind == 5 || kind == 9;
+  else if (!strcmp(which, "isDataView")) r = kind == 8;
+  else if (!strcmp(which, "isDate")) r = kind == 10;
+  else if (!strcmp(which, "isMap")) r = kind == 1 && !weak;
+  else if (!strcmp(which, "isSet")) r = kind == 2 && !weak;
+  else if (!strcmp(which, "isWeakMap")) r = kind == 1 && weak;
+  else if (!strcmp(which, "isWeakSet")) r = kind == 2 && weak;
+  else if (!strcmp(which, "isMapIterator")) r = kind == 13 && ((builtin_iter *)o->ext)->type == 2;
+  else if (!strcmp(which, "isSetIterator")) r = kind == 13 && ((builtin_iter *)o->ext)->type == 3;
+  else if (!strcmp(which, "isNativeError")) r = o != NULL && o->error;
+  else if (!strcmp(which, "isPromise")) r = kind == 4;
+  else if (!strcmp(which, "isRegExp")) r = kind == 3;
+  /* No arguments objects, primitive wrappers, externals, proxies or shared memory in the runtime. */
+  return yk_bool(r);
+}
+static yk builtin_runtime_binding(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  static yk types;
+  yk name = arg_or_undefined(argc, argv, 0);
+  if (is_string(name) && key_is(name, "types")) {
+    if (types != 0) return types;
+    types = yk_object_of(0, NULL, NULL);
+    for (int i = 0; type_predicates[i] != NULL; i++) {
+      yk cap = yk_number(i), key = ascii(type_predicates[i]);
+      own_set((yk_object *)PTR(types), key, named(yk_closure_new(type_predicate, 0, 1, &cap), key));
+    }
+    return types;
+  }
+  return YK_UNDEFINED;
+}
 yk yk_global(const char *name, uint64_t n) {
   if (n == 10 && memcmp(name, "globalThis", 10) == 0) return global_this();
   if (n == 7 && memcmp(name, "Reflect", 7) == 0) return reflect_global();
@@ -7313,6 +7391,10 @@ static yk global_raw(const char *name, uint64_t n) {
     if (b != 0) return b;
   }
   if (n == 7 && memcmp(name, "process", 7) == 0) return process_global();
+  if (n == 21 && memcmp(name, "__yakccRuntimeBinding", 21) == 0) {
+    static yk f;
+    return f != 0 ? f : (f = named(yk_closure_new(builtin_runtime_binding, 0, 0, NULL), ascii("internalBinding")));
+  }
   if (n == 7 && memcmp(name, "console", 7) == 0) return console_global();
   if (n == 3 && memcmp(name, "NaN", 3) == 0) return yk_number(NAN);
   if (n == 8 && memcmp(name, "Infinity", 8) == 0) return yk_number(INFINITY);

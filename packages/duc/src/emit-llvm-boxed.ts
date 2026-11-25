@@ -148,6 +148,8 @@ const GLOBALS = new Set([
   "decodeURI",
   "escape",
   "unescape",
+  // The runtime's own internalBinding layer (#1331): Node's bindings V8's role gives.
+  "__yakccRuntimeBinding",
   "eval",
   "EvalError",
   "ReferenceError",
@@ -473,7 +475,13 @@ function lowerFunction(
   m: ModuleBuilder,
   source: DucGraph,
   name: string,
-  closure: { readonly captures: number } | undefined,
+  closure:
+    | {
+        readonly captures: number;
+        /** Each capture that is a binding of the module: its name (read and written as the module's). */
+        readonly moduleCaptures?: readonly (string | undefined)[] | undefined;
+      }
+    | undefined,
   scope?: ModuleScope,
   /** The parameters (by value) this lowering may take as numbers: a speculated clone's (#1369). */
   numberParams?: ReadonlySet<ValueId>,
@@ -528,7 +536,12 @@ function lowerFunction(
     if (LEAVES[sym] !== undefined) leafValue.set(n.outputs[0] as ValueId, sym);
     else if (n.diamond?.reason === "platform-primitive" && sym === "Math")
       mathValue.add(n.outputs[0] as ValueId);
-    else if (n.diamond?.reason === "platform-primitive" && GLOBALS.has(sym))
+    else if (
+      GLOBALS.has(sym) &&
+      (n.diamond?.reason === "platform-primitive" || sym.startsWith("__yakcc"))
+    )
+      // A platform global the runtime gives; the runtime's own (__yakcc…) whatever the lifter's
+      // base set calls them.
       globalValue.set(n.outputs[0] as ValueId, sym);
     else if (scope !== undefined && n.diamond?.reason === "free-identifier")
       freeValue.set(n.outputs[0] as ValueId, sym);
@@ -1041,7 +1054,7 @@ function lowerFunction(
         throw new LlvmEmitError(`the literal ${text} is not in the subset yet`);
       return boxedNumber(n);
     }
-    if (p?.kind === "diamond-source") {
+    if (p?.kind === "diamond-source" || freeValue.has(v)) {
       const leaf = leafValue.get(v);
       if (leaf !== undefined) {
         // A leaf as a value: the runtime's function value for it.
@@ -1569,9 +1582,21 @@ function lowerFunction(
     const [hasThis, mode] = shape;
     const fn = m.closureName(name);
     // Inside a module, a closure's free names are its captures; it keeps the module's platform rule.
+    // A capture of a module binding is the binding itself: the closure reads and writes the
+    // module's (a later write is seen; its own writes are the module's).
+    const moduleCaptures =
+      scope === undefined ? undefined : n.inputs.map((v) => freeValue.get(resolve(v as ValueId)));
     const inner: ModuleScope | undefined =
-      scope === undefined ? undefined : { read: () => undefined, write: () => false };
-    lowerFunction(m, graph, fn, { captures: n.inputs.length }, inner);
+      scope === undefined
+        ? undefined
+        : moduleCaptures?.some((c) => c !== undefined)
+          ? {
+              read: scope.read,
+              write: scope.write,
+              ...(scope.direct !== undefined ? { direct: scope.direct } : {}),
+            }
+          : { read: () => undefined, write: () => false };
+    lowerFunction(m, graph, fn, { captures: n.inputs.length, moduleCaptures }, inner);
     const caps = n.inputs.map(operand);
     m.used.add("yk_closure_new");
     const r = fresh();
@@ -2712,7 +2737,9 @@ function lowerFunction(
       set(out, call("yk_template", `i64 ${subs.length}, ptr ${list(strings)}, ptr ${list(subs)}`));
       return;
     }
-    throw new LlvmEmitError(`the operation "${lbl}" is not in the subset yet`);
+    throw new LlvmEmitError(
+      `the operation "${lbl}" is not in the subset yet${n.origin?.text !== undefined ? ` (at ${n.origin.text})` : ""}`,
+    );
   };
 
   const emitItems = (items: readonly ScopeItem[]): void => {
@@ -2859,6 +2886,8 @@ function lowerFunction(
     if (closure === undefined && (p.label ?? "").endsWith("..."))
       throw new LlvmEmitError("a rest parameter of the exported function is not in the subset yet");
     if (closure === undefined) set(v, `%p${i}`);
+    else if (i < closure.captures && closure.moduleCaptures?.[i] !== undefined)
+      freeValue.set(v, closure.moduleCaptures[i] as string);
     else if (i < closure.captures) set(v, call("yk_capture", `ptr %closure, i64 ${i}`));
     else if ((p.label ?? "").endsWith("..."))
       set(v, call("yk_rest", `i64 %argc, ptr %argv, i64 ${i - closure.captures}`));
@@ -3401,8 +3430,9 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     req.push("  %spec = call i64 @yk_arg(i64 %argc, ptr %argv, i64 0)");
     Object.entries(mod.requires ?? {}).forEach(([spec, target], r) => {
       const t = index.get(target);
-      if (t === undefined)
-        throw new LlvmEmitError(`require("${spec}") names ${target}, which is not in the package`);
+      // A require the record left out (one a function makes, of a module no top level needs):
+      // it fails when it runs, as Node's would for a module it cannot find.
+      if (t === undefined) return;
       const key = m.constant(spec);
       req.push(`  %is${r} = call i32 @yk_string_is(i64 %spec, ptr ${key.ptr}, i64 ${key.length})`);
       req.push(`  %c${r} = icmp ne i32 %is${r}, 0`);
