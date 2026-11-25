@@ -607,3 +607,45 @@ describe("a switch lowered to a pass, inside an if, returning from an inner swit
     );
   });
 });
+
+describe("a class's static block assigning a name outside the class (#1368)", () => {
+  it("the name is a cell the block writes, as a closure's would be", () => {
+    agrees(
+      `export function f(n: number) {
+  let decorators: number[] = [];
+  const C = class A {
+    static {
+      decorators = [n, n + 1];
+    }
+    static get d() {
+      return decorators;
+    }
+  };
+  return [decorators, C.d];
+}`,
+      [[1], [5]],
+    );
+  });
+});
+
+describe("a loop whose body is one jump, unbraced (#1368)", () => {
+  it("for...of, for and while", () => {
+    agrees(
+      `export function f(xs: number[], n: number) {
+  for (const x of xs)
+    if (x > n) return ["of", x];
+  for (let i = 0; i < n; i++)
+    return ["for", i];
+  while (n < 0)
+    return ["while", n];
+  return "none";
+}`,
+      [
+        [[1, 5], 2],
+        [[1], 3],
+        [[], 0],
+        [[], -1],
+      ],
+    );
+  });
+});
