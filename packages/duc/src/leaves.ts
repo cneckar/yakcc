@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { C_LEAVES_JS, createCMemory } from "./raise-c.js";
+import { C_LEAVES_JS, createCMemory, createCSystem } from "./raise-c.js";
 
 /**
  * The leaves (DEC-DUC-OPERATIONS-AS-ATOMS-001, #1362, #1363): the operations a target implements
@@ -86,9 +86,36 @@ const MEMORY_LEAVES: readonly LeafFunction[] = [
   leaf("__ykStoreF64", ["addr", "f64"], "f64", "a binary64"),
 ];
 
+/**
+ * Functions as values and module state, in memory (#1363): C's function pointers and statics, as
+ * the C front end raises them.
+ */
+const REFERENCE_LEAVES: readonly LeafFunction[] = [
+  leaf("__ykFnAddr", ["f64"], "addr", "a function's address: one per function, never 0"),
+  leaf("__ykFnAt", ["addr"], "f64", "the function at an address from __ykFnAddr"),
+  leaf("__ykStatic", ["f64"], "addr", "a static's block, by its key: defined once, initialized"),
+];
+
+/**
+ * Layer 0 (#1365, DEC-DUC-NODE-BASE-SET-001): the operating system, below the shaved C library.
+ * `__yk_syscall` is Linux's system call by its x86-64 number (createCSystem gives its meaning per
+ * call); `__yk_tp` is the thread pointer.
+ */
+const SYSTEM_LEAVES: readonly LeafFunction[] = [
+  leaf(
+    "__yk_syscall",
+    ["i64", "i64", "i64", "i64", "i64", "i64", "i64"],
+    "i64",
+    "the system call n with six arguments: its result, or -errno",
+  ),
+  leaf("__yk_tp", [], "i64", "the thread pointer: a block whose first word is its own address"),
+];
+
 /** Every leaf function, by name. */
 export const LEAF_FUNCTIONS: ReadonlyMap<string, LeafFunction> = new Map(
-  [...INTEGER_LEAVES, ...BITS_LEAVES, ...MEMORY_LEAVES].map((l) => [l.name, l]),
+  [...INTEGER_LEAVES, ...BITS_LEAVES, ...MEMORY_LEAVES, ...REFERENCE_LEAVES, ...SYSTEM_LEAVES].map(
+    (l) => [l.name, l],
+  ),
 );
 
 /** The memory leaves' names (#1363). */
@@ -136,8 +163,10 @@ export type LeafImpl = (...args: never[]) => unknown;
  * end's (`C_LEAVES_JS`, `createCMemory`), which its tests show equal C compiled natively.
  */
 export function leafFunctionsJs(): Readonly<Record<string, LeafImpl>> {
+  const memory = createCMemory();
   return {
     ...(C_LEAVES_JS as unknown as Record<string, LeafImpl>),
-    ...(createCMemory().leaves as unknown as Record<string, LeafImpl>),
+    ...(memory.leaves as unknown as Record<string, LeafImpl>),
+    ...(createCSystem(memory).leaves as unknown as Record<string, LeafImpl>),
   };
 }
