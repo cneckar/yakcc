@@ -19,7 +19,23 @@ export interface BuildOptions {
   readonly target?: string;
   /** The directory module ids are relative to. Default: the current directory. */
   readonly root?: string;
+  /**
+   * Link no C library (#1361 P1, #1370): the runtime on Linux's system calls alone (nolibc.h), the
+   * executable static with the runtime's own entry. x86_64-linux only, for now.
+   */
+  readonly noLibc?: boolean;
 }
+
+/** The runtime's and main's flags with no C library, and the link's. */
+const NOLIBC_CFLAGS = [
+  "-DYK_NOLIBC",
+  "-ffreestanding",
+  "-fno-builtin",
+  "-fno-math-errno",
+  "-fno-stack-protector",
+];
+/** The link with no C library: static, the runtime's _start; libgcc for the compiler's helpers. */
+const NOLIBC_LDFLAGS = ["-nostdlib", "-static", "-no-pie"];
 
 /** What a build made: the executable, and the program's modules. */
 export interface BuildResult {
@@ -90,6 +106,9 @@ export function buildRecord(
   const entrySymbol = symbols[program.entry];
   if (entrySymbol === undefined) throw new NativeToolError("the entry module was not lowered");
   const { cc, flags } = linker(target);
+  const noLibc = options.noLibc === true;
+  if (noLibc && target !== "x86_64-linux")
+    throw new NativeToolError(`building with no C library for ${target} is not supported yet`);
   const work = mkdtempSync(join(tmpdir(), "yakcc-build-"));
   try {
     const cflags = flags.filter(
@@ -99,12 +118,28 @@ export function buildRecord(
       join(work, "program.o"),
       compileObject({ ir, symbol: "", params: [], result: "i64" }, { target }),
     );
-    writeFileSync(join(work, "yk.o"), compileRuntime({ target, cflags }));
+    writeFileSync(
+      join(work, "yk.o"),
+      compileRuntime({ target, cflags: [...cflags, ...(noLibc ? NOLIBC_CFLAGS : [])] }),
+    );
     writeFileSync(join(work, "main.c"), mainSource(entrySymbol));
     mkdirSync(dirname(resolve(out)), { recursive: true });
     const link = spawnSync(
       cc,
-      [...flags, "-O2", "main.c", "program.o", "yk.o", "-lm", "-o", resolve(out)],
+      noLibc
+        ? [
+            ...flags,
+            ...NOLIBC_CFLAGS,
+            ...NOLIBC_LDFLAGS,
+            "-O2",
+            "main.c",
+            "program.o",
+            "yk.o",
+            "-lgcc",
+            "-o",
+            resolve(out),
+          ]
+        : [...flags, "-O2", "main.c", "program.o", "yk.o", "-lm", "-o", resolve(out)],
       { cwd: work },
     );
     if (link.error !== undefined)

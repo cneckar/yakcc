@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `yakcc build --native <entry> [--target <t>] [-o <out>]` (#1333): an ECMAScript or TypeScript
- * program built into an executable. The entry module and every module it imports are lifted, linked
- * and lowered to native code with the yakcc runtime, and a generated main: the arguments are
- * `process.argv`, the exit code `process.exitCode` (1 for an exception nothing catches).
+ * `yakcc build --native <entry> [--target <t>] [-o <out>] [--no-libc]` (#1333): an ECMAScript or
+ * TypeScript program built into an executable. The entry module and every module it imports are
+ * lifted, linked and lowered to native code with the yakcc runtime, and a generated main: the
+ * arguments are `process.argv`, the exit code `process.exitCode` (1 for an exception nothing
+ * catches). With `--no-libc` (x86_64-linux), no C library is linked: the runtime on Linux's system
+ * calls alone.
  */
 import { basename, extname } from "node:path";
 import { parseArgs } from "node:util";
@@ -20,6 +22,7 @@ export async function buildNative(argv: readonly string[], logger: Logger): Prom
         target: { type: "string", default: "x86_64-linux" },
         out: { type: "string", short: "o" },
         root: { type: "string" },
+        "no-libc": { type: "boolean" },
       },
       allowPositionals: true,
     });
@@ -39,6 +42,7 @@ export async function buildNative(argv: readonly string[], logger: Logger): Prom
     const built = buildProgram(entry, out, {
       target: parsed.values.target as string,
       ...(parsed.values.root !== undefined ? { root: parsed.values.root as string } : {}),
+      ...(parsed.values["no-libc"] === true ? { noLibc: true } : {}),
     });
     logger.log(
       `built ${built.executable} from ${built.modules.length} modules (${parsed.values.target})`,

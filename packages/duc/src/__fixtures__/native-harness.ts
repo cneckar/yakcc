@@ -183,6 +183,19 @@ export function same(a: unknown, b: unknown): boolean {
 let built = 0;
 
 /**
+ * YK_NOLIBC=1: the x86_64 harnesses linked with no C library (#1361 P1), the runtime on system
+ * calls alone, so every native test runs against nolibc.h too.
+ */
+const NOLIBC = process.env.YK_NOLIBC === "1";
+const NOLIBC_CFLAGS = [
+  "-DYK_NOLIBC",
+  "-ffreestanding",
+  "-fno-builtin",
+  "-fno-math-errno",
+  "-fno-stack-protector",
+];
+
+/**
  * The module and the runtime linked into a harness for the target. The harness reads each call's
  * arguments and writes its result, one line each; a call that throws ends the run with the error.
  */
@@ -195,12 +208,22 @@ export function harness(
   const dir = join(work, `h${built++}`);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "f.o"), compileObject(m, { target }));
-  writeFileSync(join(dir, "yk.o"), compileRuntime({ target, cflags: t.cflags }));
+  const nolibc = NOLIBC && target === "x86_64-linux";
+  writeFileSync(
+    join(dir, "yk.o"),
+    compileRuntime({ target, cflags: [...t.cflags, ...(nolibc ? NOLIBC_CFLAGS : [])] }),
+  );
   const n = m.params.length;
   writeFileSync(
     join(dir, "h.c"),
     [
-      "#include <stdio.h>",
+      ...(nolibc
+        ? [
+            "typedef struct FILE FILE; extern FILE *stdin, *stdout;",
+            "int fputc(int, FILE *); int fflush(FILE *);",
+            "#define setvbuf(f, b, m, n) ((void)0)",
+          ]
+        : ["#include <stdio.h>"]),
       "#include <stdint.h>",
       "typedef uint64_t yk;",
       `extern yk ${m.symbol}(${Array(n).fill("yk").join(", ") || "void"});`,
@@ -209,9 +232,25 @@ export function harness(
       `int main(void) { setvbuf(stdout, NULL, _IOFBF, 1 << 16); for (;;) { ${Array.from({ length: n }, (_, i) => `yk a${i} = yk_read(stdin);`).join(" ")} yk_write(stdout, yk_settle(${m.symbol}(${Array.from({ length: n }, (_, i) => `a${i}`).join(", ")}))); fputc('\\n', stdout); fflush(stdout); } }`,
     ].join("\n"),
   );
-  const cc = spawnSync(t.cc, [...t.link, "-O0", "h.c", "f.o", "yk.o", "-lm", "-o", "run"], {
-    cwd: dir,
-  });
+  const cc = spawnSync(
+    t.cc,
+    nolibc
+      ? [
+          ...NOLIBC_CFLAGS,
+          "-nostdlib",
+          "-static",
+          "-no-pie",
+          "-O0",
+          "h.c",
+          "f.o",
+          "yk.o",
+          "-lgcc",
+          "-o",
+          "run",
+        ]
+      : [...t.link, "-O0", "h.c", "f.o", "yk.o", "-lm", "-o", "run"],
+    { cwd: dir },
+  );
   if (cc.status !== 0) throw new Error(`${t.cc} failed: ${cc.stderr.toString()}`);
   return (calls) => {
     const input = calls.map((args) => args.map(encode).join(" ")).join("\n");
