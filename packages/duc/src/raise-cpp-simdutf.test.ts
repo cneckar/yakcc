@@ -90,12 +90,7 @@ describe.skipIf(!hasClang)("simdutf's scalar UTF-8/UTF-16, shaved from C++", () 
           .map(
             (s): Input => ({
               k: 16,
-              units: [...s].flatMap((c) =>
-                [...Buffer.from(c, "utf16le")].reduce<number[]>(
-                  (a, b, j, all) => (j % 2 === 0 ? [...a, b | ((all[j + 1] as number) << 8)] : a),
-                  [],
-                ),
-              ),
+              units: Array.from({ length: s.length }, (_, k) => s.charCodeAt(k)),
             }),
           ),
         fc

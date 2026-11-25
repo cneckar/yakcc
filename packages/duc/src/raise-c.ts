@@ -18,6 +18,9 @@
  * always raises to the same graphs.
  */
 import { execFileSync } from "node:child_process";
+import { closeSync, mkdtempSync, openSync, readSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 export class RaiseCError extends Error {}
 
@@ -46,6 +49,99 @@ export interface ClangNode {
  * qualified name (clang's `-ast-dump-filter`), so only the unit's own code is dumped, not its
  * headers'.
  */
+/**
+ * A large unit's AST (an amalgamation: SQLite's is 725 MB of JSON), dumped once to a file: its
+ * top-level declarations indexed by kind and name with their byte ranges, each parsed when it is
+ * asked for. A filtered dump per name would parse the whole unit each time.
+ */
+interface UnitIndex {
+  readonly path: string;
+  readonly decls: readonly {
+    readonly kind: string;
+    readonly name: string;
+    readonly start: number;
+    readonly end: number;
+  }[];
+  readonly byName: ReadonlyMap<string, readonly number[]>;
+}
+
+/** Dump a unit's AST to a file and index its top-level declarations. */
+function indexUnit(clang: string, args: readonly string[], file: string): UnitIndex {
+  const dir = mkdtempSync(join(tmpdir(), "yakcc-ast-"));
+  const path = join(dir, "ast.json");
+  const out = openSync(path, "w");
+  try {
+    execFileSync(clang, [...args, "-fsyntax-only", "-Xclang", "-ast-dump=json", file], {
+      stdio: ["ignore", out, "ignore"],
+      maxBuffer: 1 << 30,
+    });
+  } finally {
+    closeSync(out);
+  }
+  const decls: { kind: string; name: string; start: number; end: number }[] = [];
+  const byName = new Map<string, number[]>();
+  const fd = openSync(path, "r");
+  try {
+    const size = statSync(path).size;
+    const chunk = Buffer.alloc(1 << 24);
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let start = -1;
+    let head: number[] = [];
+    for (let at = 0; at < size; ) {
+      const n = readSync(fd, chunk, 0, chunk.length, at);
+      for (let i = 0; i < n; i++) {
+        const c = chunk[i] as number;
+        if (start >= 0 && head.length < 2048) head.push(c);
+        if (inString) {
+          if (escaped) escaped = false;
+          else if (c === 0x5c) escaped = true;
+          else if (c === 0x22) inString = false;
+          continue;
+        }
+        if (c === 0x22) inString = true;
+        else if (c === 0x7b || c === 0x5b) {
+          // A declaration: an object in the translation unit's `inner` array (depth 2).
+          if (depth === 2 && c === 0x7b) {
+            start = at + i;
+            head = [c];
+          }
+          depth++;
+        } else if (c === 0x7d || c === 0x5d) {
+          depth--;
+          if (depth === 2 && start >= 0) {
+            const text = Buffer.from(head).toString("latin1");
+            const kind = /"kind":\s*"(\w+)"/.exec(text)?.[1] ?? "";
+            const name = /"name":\s*"([^"]*)"/.exec(text)?.[1] ?? "";
+            byName.set(name, [...(byName.get(name) ?? []), decls.length]);
+            decls.push({ kind, name, start, end: at + i + 1 });
+            start = -1;
+          }
+        }
+      }
+      at += n;
+    }
+  } finally {
+    closeSync(fd);
+  }
+  process.once("exit", () => rmSync(dir, { recursive: true, force: true }));
+  return { path, decls, byName };
+}
+
+/** One indexed declaration, parsed. */
+function readDecl(ix: UnitIndex, i: number): ClangNode {
+  const d = ix.decls[i] as UnitIndex["decls"][number];
+  const fd = openSync(ix.path, "r");
+  try {
+    const b = Buffer.alloc(d.end - d.start);
+    readSync(fd, b, 0, b.length, d.start);
+    return JSON.parse(b.toString("utf8")) as ClangNode;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** clang's output for `args` (an AST dump). */
 export function clangDump(clang: string, args: readonly string[]): string {
   return execFileSync(clang, [...args], {
@@ -2494,8 +2590,31 @@ export function shaveCUnit(
     }
     return calls.get(caller) ?? [];
   };
+  // A large unit (an amalgamation) is dumped once and indexed; a small one, filtered per name.
+  const large =
+    statSync(file).size > 2_000_000 ||
+    execFileSync(clang, [...args, "-E", file], {
+      encoding: "utf8",
+      maxBuffer: 1 << 30,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).length > 3_000_000;
+  const indexed = large ? indexUnit(clang, args, file) : undefined;
+  /** The unit's top-level declarations in order, each parsed in turn (an indexed unit's). */
+  const eachDecl = function* (kinds?: ReadonlySet<string>): Generator<ClangNode> {
+    if (indexed === undefined) {
+      yield wholeUnit();
+      return;
+    }
+    for (let i = 0; i < indexed.decls.length; i++)
+      if (kinds === undefined || kinds.has((indexed.decls[i] as { kind: string }).kind))
+        yield readDecl(indexed, i);
+  };
   const dumpOf = (name: string): ClangNode[] => {
     let nodes = dumps.get(name);
+    if (nodes === undefined && indexed !== undefined) {
+      nodes = (indexed.byName.get(name) ?? []).map((i) => readDecl(indexed, i));
+      dumps.set(name, nodes);
+    }
     if (nodes === undefined) {
       nodes = [];
       const json = clangDump(clang, [
@@ -2625,7 +2744,7 @@ export function shaveCUnit(
           for (const x of Object.values(v)) walk(x);
         }
       };
-      walk(wholeUnit());
+      for (const d of eachDecl()) walk(d);
       offsets = new Map();
       if (nodes.length === written.length)
         nodes.forEach((n, i) => offsets?.set(rangeKey(n), written[i] as [string, string]));
@@ -2651,7 +2770,10 @@ export function shaveCUnit(
         }
         for (const k of n.inner ?? []) walk(k);
       };
-      walk(wholeUnit());
+      for (const d of eachDecl(
+        new Set(["EnumDecl", "TypedefDecl", "NamespaceDecl", "LinkageSpecDecl"]),
+      ))
+        walk(d);
       enums = values;
     }
     return enums.get(name);
