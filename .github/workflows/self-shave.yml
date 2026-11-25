@@ -1,3 +1,15 @@
+# @decision DEC-V2-CI-GATE-MANUAL-001
+# @title Self-shave two-pass check runs on demand only: not on PRs, not on push:main
+# @status accepted (2026-11-25, the user's call: "it is not needed for us to get a full equiv pass
+#   done on every merge ... disable this in CI and make sure the lanes aren't trying to get to
+#   this passing on every PR")
+# @rationale The two-pass bootstrap equivalence check takes most of the CI time on every PR
+#   (40-60 min on a cache miss, and every lifter or shave change is a miss), and it is not a
+#   required check. Two-pass equivalence stays the goal; it is run by hand (workflow_dispatch,
+#   Actions -> "v2 self-shave" -> Run workflow) when a milestone needs it, not on each merge.
+#   pr-ci.yml (build, typecheck, lint, tests) remains the PR gate. Supersedes the trigger design
+#   of DEC-V2-CI-GATE-FINAL-001 below; its cache and step design are unchanged.
+#
 # @decision DEC-V2-CI-GATE-FINAL-001
 # @title Self-shave two-pass CI gate: push:main + PR unconditional + source-hash fast-skip cache
 # @status accepted (2026-05-13 — supersedes DEC-V2-CI-GATE-001 production trigger design)
@@ -20,10 +32,8 @@
 name: v2 self-shave
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  # On demand only (DEC-V2-CI-GATE-MANUAL-001): no pull_request or push:main trigger.
+  workflow_dispatch:
 
 concurrency:
   group: self-shave-${{ github.ref }}
