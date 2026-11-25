@@ -1168,6 +1168,16 @@ static inline __attribute__((always_inline)) int key_is(yk key, const char *name
 }
 
 yk yk_get(yk obj, yk key) {
+  /* A plain object's own property by the very key (names are made once, so a read by name finds the
+     key the object was made with): its value, before anything else is asked. */
+  if (is_object(obj)) {
+    yk_object *o = (yk_object *)PTR(obj);
+    if (o->kind == 0) {
+      uint32_t n = o->len < 8 ? o->len : 8;
+      for (uint32_t i = 0; i < n; i++)
+        if (o->keys[i] == key) return resolve_slot(o->values[i], obj);
+    }
+  }
   if (is_nullish(obj)) {
     /* V8's message: the property read, by its key. */
     yk k = is_symbol(key) ? symbol_descriptive(key) : to_string(key);
@@ -1285,6 +1295,11 @@ static yk interned(const char *name, uint64_t n) {
   return yk_string_utf8(name, n);
 }
 yk yk_get_named(yk obj, const char *name, uint64_t n) { return yk_get(obj, interned(name, n)); }
+/* A name or literal the lowered code keeps in a global (its slot): the string, made at first use. */
+yk yk_key_of(yk *slot, const char *p, uint64_t n) {
+  if (*slot != 0) return *slot;
+  return *slot = interned(p, n);
+}
 /* A string literal of the lowered code: its constant bytes' string, made once. */
 yk yk_string_const(const char *p, uint64_t n) { return interned(p, n); }
 

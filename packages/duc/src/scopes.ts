@@ -68,7 +68,13 @@ export function scopePlanner(
     const joins = g.nodes
       .filter((n) => owners.get(n.id)?.id === b.id)
       .flatMap((n) => n.inputs.slice(1).map(resolve));
-    return [resolve(b.cond), ...inner, ...joins];
+    // A branch nested in a side tests its condition there: a value the item reads, like a node's
+    // input (an if whose only exits are throws leaves its condition outside, #1292).
+    const nestedConds = branches
+      .filter((nb) => nb.within !== undefined && paths.some((p) => isPrefix(p, nb.within)))
+      .map((nb) => resolve(nb.cond))
+      .filter((v) => !inside.has(v));
+    return [resolve(b.cond), ...inner, ...joins, ...nestedConds];
   };
   const producesOf = (item: ScopeItem): readonly ValueId[] =>
     item.kind === "branch"

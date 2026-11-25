@@ -1245,34 +1245,16 @@ function lowerFunction(
       m.keys.set(name, g0);
       m.globals.push(`${g0} = internal global i64 0`);
     }
-    const known = fresh();
-    emit(`${known} = load i64, ptr ${g0}`);
-    const has = fresh();
-    emit(`${has} = icmp ne i64 ${known}, 0`);
-    const make = freshLabel("kmake");
-    const join = freshLabel("kjoin");
-    const before = currentLabel();
-    emit(`br i1 ${has}, label %${join}, label %${make}`);
-    block(make);
+    // The runtime's check-and-fill: no branch here, so this block stays one block.
     const c = m.constant(name);
-    m.intrinsics.add("declare i64 @yk_string_const(ptr, i64)");
-    const made = fresh();
-    emit(`${made} = call i64 @yk_string_const(ptr ${c.ptr}, i64 ${c.length})`);
-    emit(`store i64 ${made}, ptr ${g0}`);
-    emit(`br label %${join}`);
-    block(join);
+    m.intrinsics.add("declare i64 @yk_key_of(ptr, ptr, i64)");
     const k = fresh();
-    emit(`${k} = phi i64 [ ${known}, %${before} ], [ ${made}, %${make} ]`);
+    emit(`${k} = call i64 @yk_key_of(ptr ${g0}, ptr ${c.ptr}, i64 ${c.length})`);
     return k;
   };
-  /** A string literal: the runtime's string of its constant bytes, made once (#1369). */
-  const str = (text: string): string => {
-    const s = m.constant(text);
-    m.intrinsics.add("declare i64 @yk_string_const(ptr, i64)");
-    const r = fresh();
-    emit(`${r} = call i64 @yk_string_const(ptr ${s.ptr}, i64 ${s.length})`);
-    return r;
-  };
+  /** A string literal: the module's one string of its text (immutable, so shared). */
+  const str = (text: string): string => keyOf(text);
+
   // Stack arrays live in the entry block: one inside a loop would grow the stack each iteration.
   const list = (values: readonly string[]): string => {
     const at = fresh();
