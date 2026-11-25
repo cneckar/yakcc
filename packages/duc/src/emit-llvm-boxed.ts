@@ -434,6 +434,8 @@ class ModuleBuilder {
   readonly atoms = new Map<string, string>();
   /** The number clones lowered (#1369): a function's `<name>.num`. */
   readonly numClones = new Set<string>();
+  /** Each property name a site reads, writes or calls by: the global its string is kept in. */
+  readonly keys = new Map<string, string>();
   /** The number clones calls name, each its function's and its raw arguments' parameter list. */
   readonly numCalled = new Map<string, { of: string; rawBlocks: number; regs: number }>();
   private closures = 0;
@@ -1232,9 +1234,44 @@ function lowerFunction(
     emit(`${r} = call i64 @${fn}(${args})`);
     return r;
   };
+  /**
+   * A property name as a key (#1369): the module's one string of it, made at its first use and kept
+   * in a global (one per name), so a read, a write or a call by name makes and hashes no string.
+   */
+  const keyOf = (name: string): string => {
+    let g0 = m.keys.get(name);
+    if (g0 === undefined) {
+      g0 = `@ykey${m.keys.size}`;
+      m.keys.set(name, g0);
+      m.globals.push(`${g0} = internal global i64 0`);
+    }
+    const known = fresh();
+    emit(`${known} = load i64, ptr ${g0}`);
+    const has = fresh();
+    emit(`${has} = icmp ne i64 ${known}, 0`);
+    const make = freshLabel("kmake");
+    const join = freshLabel("kjoin");
+    const before = currentLabel();
+    emit(`br i1 ${has}, label %${join}, label %${make}`);
+    block(make);
+    const c = m.constant(name);
+    m.intrinsics.add("declare i64 @yk_string_const(ptr, i64)");
+    const made = fresh();
+    emit(`${made} = call i64 @yk_string_const(ptr ${c.ptr}, i64 ${c.length})`);
+    emit(`store i64 ${made}, ptr ${g0}`);
+    emit(`br label %${join}`);
+    block(join);
+    const k = fresh();
+    emit(`${k} = phi i64 [ ${known}, %${before} ], [ ${made}, %${make} ]`);
+    return k;
+  };
+  /** A string literal: the runtime's string of its constant bytes, made once (#1369). */
   const str = (text: string): string => {
     const s = m.constant(text);
-    return call("yk_string_utf8", `ptr ${s.ptr}, i64 ${s.length}`);
+    m.intrinsics.add("declare i64 @yk_string_const(ptr, i64)");
+    const r = fresh();
+    emit(`${r} = call i64 @yk_string_const(ptr ${s.ptr}, i64 ${s.length})`);
+    return r;
   };
   // Stack arrays live in the entry block: one inside a loop would grow the stack each iteration.
   const list = (values: readonly string[]): string => {
@@ -2613,26 +2650,14 @@ function lowerFunction(
     const member = /^\.[\w$]+$/.test(lbl) && ins.length === 1;
     if (member && isMath(ins[0] as ValueId)) return;
     if (member) {
-      const key = m.constant(lbl.slice(1));
-      set(
-        out,
-        call(
-          "yk_get_named",
-          `i64 ${operand(ins[0] as ValueId)}, ptr ${key.ptr}, i64 ${key.length}`,
-        ),
-      );
+      const obj = operand(ins[0] as ValueId);
+      set(out, call("yk_get", `i64 ${obj}, i64 ${keyOf(lbl.slice(1))}`));
       return;
     }
     if (/^\.[\w$]+=$/.test(lbl) && ins.length === 2) {
-      const key = m.constant(lbl.slice(1, -1));
       const obj = operand(ins[0] as ValueId);
-      set(
-        out,
-        call(
-          "yk_set_named",
-          `i64 ${obj}, ptr ${key.ptr}, i64 ${key.length}, i64 ${operand(ins[1] as ValueId)}`,
-        ),
-      );
+      const value = operand(ins[1] as ValueId);
+      set(out, call("yk_set", `i64 ${obj}, i64 ${keyOf(lbl.slice(1, -1))}, i64 ${value}`));
       return;
     }
     if (lbl === "ElementAccess" && ins.length === 2) {
@@ -3141,15 +3166,14 @@ function lowerFunction(
       }
       if (callee !== undefined) {
         // A method call: the receiver is the object the member is read from.
-        const key = m.constant(callee.name);
         const recv = operand(callee.node.inputs[0] as ValueId);
-        set(
-          out,
-          call(
-            "yk_call_method",
-            `i64 ${recv}, ptr ${key.ptr}, i64 ${key.length}, i64 ${args.length}, ptr ${list(args)}`,
-          ),
+        const key = keyOf(callee.name);
+        m.intrinsics.add("declare i64 @yk_call_method_k(i64, i64, i64, ptr)");
+        const r = fresh();
+        emit(
+          `${r} = call i64 @yk_call_method_k(i64 ${recv}, i64 ${key}, i64 ${args.length}, ptr ${list(args)})`,
         );
+        set(out, r);
         return;
       }
       const fn = operand(ins[0] as ValueId);
