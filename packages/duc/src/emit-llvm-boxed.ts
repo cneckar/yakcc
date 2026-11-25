@@ -958,13 +958,43 @@ function lowerFunction(
         (FAST_ARITH[n.label ?? ""] !== undefined || FAST_COMPARE[n.label ?? ""] !== undefined)) ||
         (n.inputs.length === 1 && n.label === "-")) &&
       allNumbers(n.inputs as readonly ValueId[]);
+    // A float store's value: its fast path writes the double as it is, its slow path (a runtime
+    // call) canonicalizes it first. Only a store whose own result nothing reads (it orders after).
+    const heapOnlyUse = (u: DucNode, i: number): boolean =>
+      (u.order === 1 && i === u.inputs.length - 1) ||
+      (u.kind === "sel" && u.label === "heap") ||
+      (u.label ?? "").endsWith(":heap");
+    const rawStoreUse = (n: DucNode, o: ValueId): boolean => {
+      const leaf =
+        n.kind === "op" && n.label === "CallExpression"
+          ? leafValue.get(resolve(n.inputs[0] as ValueId))
+          : undefined;
+      if (leaf !== "__ykStoreF64" && leaf !== "__ykStoreF32") return false;
+      if (resolve(n.inputs[1] as ValueId) === o || resolve(n.inputs[2] as ValueId) !== o)
+        return false;
+      const st = n.outputs[0] as ValueId;
+      if (escapes.has(st)) return false;
+      return (usesOf.get(st) ?? []).every((u) =>
+        u.inputs.every((x, i) => resolve(x as ValueId) !== st || heapOnlyUse(u, i)),
+      );
+    };
     for (const n of g.nodes) {
       const o = n.outputs[0] as ValueId | undefined;
       if (o === undefined || escapes.has(o) || !provenNumber.has(o)) continue;
       const us = usesOf.get(o) ?? [];
-      if (us.length > 0 && us.every(numericUse)) rawNumbers.add(o);
+      if (us.length > 0 && us.every((u) => numericUse(u) || rawStoreUse(u, o))) rawNumbers.add(o);
     }
   }
+  /** A raw double's bits made canonical (a NaN as the one NaN boxed values use). */
+  const canonicalBits = (bits: string): string => {
+    const d = fresh();
+    emit(`${d} = bitcast i64 ${bits} to double`);
+    const nan = fresh();
+    emit(`${nan} = fcmp uno double ${d}, 0.0`);
+    const r = fresh();
+    emit(`${r} = select i1 ${nan}, i64 ${CANONICAL_NAN}, i64 ${bits}`);
+    return r;
+  };
   /** A double result for `out`: its bits as they are when only numeric operations read it. */
   const numberResult = (out: ValueId, d: string): string => {
     if (!rawNumbers.has(out)) return boxDouble(d);
@@ -1037,6 +1067,28 @@ function lowerFunction(
 
   const operand = (v0: ValueId): string => {
     const v = resolve(v0);
+    const lazy = lazyFrames.get(v);
+    if (lazy !== undefined) {
+      // A lazily allocated frame: allocated here when it is not yet.
+      m.intrinsics.add("declare i64 @yk_frame_alloc(i64, i64)");
+      const before = fresh();
+      emit(`${before} = load i64, ptr ${slotOf(v)}`);
+      const none = fresh();
+      emit(`${none} = icmp eq i64 ${before}, 0`);
+      const make = freshLabel("lazymake");
+      const done = freshLabel("lazydone");
+      const from = currentLabel();
+      emit(`br i1 ${none}, label %${make}, label %${done}`);
+      block(make);
+      const made = fresh();
+      emit(`${made} = call i64 @yk_frame_alloc(i64 ${lazy.size}, i64 ${lazy.align})`);
+      emit(`store i64 ${made}, ptr ${slotOf(v)}`);
+      emit(`br label %${done}`);
+      block(done);
+      const r = fresh();
+      emit(`${r} = phi i64 [ ${before}, %${from} ], [ ${made}, %${make} ]`);
+      return r;
+    }
     const p = producer.get(v);
     if (p?.kind === "literal-source") {
       const text = p.label ?? "";
@@ -1387,6 +1439,51 @@ function lowerFunction(
       const slot = `%lb${localBlocks.size}`;
       entryAllocas.push(`  ${slot} = alloca [${size} x i8], align 16`);
       localBlocks.set(v, { slot, size });
+    }
+  }
+  // Frames allocated on first use (#1369): an escaping block every use of which (but its frees and
+  // heap tokens) is inside a branch: a rarely taken path (V8's rem_pio2 hands its tx[] to the
+  // kernel only for huge arguments) costs no allocation on the common one. Its value is 0 until
+  // a use allocates it; a free of one never allocated is nothing.
+  const lazyFrames = new Map<ValueId, { size: number; align: number }>();
+  {
+    const heapOnly = (u: DucNode, i: number): boolean =>
+      (u.order === 1 && i === u.inputs.length - 1) ||
+      (u.kind === "sel" && u.label === "heap") ||
+      (u.label ?? "").endsWith(":heap");
+    // How many branches (and loop bodies) a region is inside: its path's steps ("b10.e/b8.e").
+    const depthOf = (region: string | undefined): number =>
+      region === undefined ? 0 : region.split("/").length;
+    for (const n of g.nodes) {
+      if (leafOfCall(n) !== "__ykAlloc" || n.region !== undefined) continue;
+      const v = n.outputs[0] as ValueId;
+      if (localBlocks.has(v)) continue;
+      const size = literalNumber(n.inputs[1] as ValueId);
+      const align = literalNumber(n.inputs[2] as ValueId);
+      if (
+        size === undefined ||
+        align === undefined ||
+        !Number.isInteger(size) ||
+        size < 0 ||
+        size >= 2 ** 31
+      )
+        continue;
+      if (!Number.isInteger(align) || align < 1 || align > 4096 || (align & (align - 1)) !== 0)
+        continue;
+      let uses = 0;
+      const ok = (usersOf.get(v) ?? []).every((u) =>
+        u.inputs.every((x, i) => {
+          if (resolve(x as ValueId) !== v || heapOnly(u, i)) return true;
+          if (leafOfCall(u) === "__ykFree" && i === 1) return true;
+          uses++;
+          // Three branches deep or more: a path taken rarely enough that a check on it costs less
+          // than an allocation on every call (V8's sin hands rem_pio2 its y[] two deep, on the
+          // common path for |x| > pi/4; rem_pio2's tx[] is four deep, for huge arguments only).
+          return u.closure === undefined && depthOf(u.region) >= 3;
+        }),
+      );
+      if (ok && uses > 0 && !g.obs.some((o) => resolve(o) === v))
+        lazyFrames.set(v, { size, align });
     }
   }
   const memoryAccess = (
@@ -2385,6 +2482,26 @@ function lowerFunction(
       const [fn, arity] = LEAVES[leafName] as [string, number];
       if (ins.length - 1 !== arity)
         throw new LlvmEmitError(`the leaf ${fn} takes ${arity} arguments`);
+      if (leafName === "__ykAlloc" && lazyFrames.has(out as ValueId)) {
+        set(out, "0"); // not yet allocated
+        return;
+      }
+      if (leafName === "__ykFree" && lazyFrames.has(resolve(ins[1] as ValueId))) {
+        m.intrinsics.add("declare void @yk_frame_free(i64)");
+        const bits = fresh();
+        emit(`${bits} = load i64, ptr ${slotOf(resolve(ins[1] as ValueId))}`);
+        const some = fresh();
+        emit(`${some} = icmp ne i64 ${bits}, 0`);
+        const freeL = freshLabel("lazyfree");
+        const after = freshLabel("lazyfreed");
+        emit(`br i1 ${some}, label %${freeL}, label %${after}`);
+        block(freeL);
+        emit(`call void @yk_frame_free(i64 ${bits})`);
+        emit(`br label %${after}`);
+        block(after);
+        set(out, UNDEFINED);
+        return;
+      }
       if (leafName === "__ykAlloc" && localBlocks.has(out as ValueId)) {
         // A block whose address never escapes: zeroed, as an allocation's bytes are.
         const b = localBlocks.get(out as ValueId) as { slot: string; size: number };
@@ -2549,12 +2666,17 @@ function lowerFunction(
         return;
       }
       if (mem !== undefined) {
+        // A raw double stored (rawNumbers): the runtime's call takes it canonical.
+        const rawValue = mem.store && rawNumbers.has(resolve(ins[2] as ValueId));
         set(
           out,
           memoryAccess(
             mem,
             args,
-            () => call(fn, args.map((a) => `i64 ${a}`).join(", ")),
+            () =>
+              rawValue
+                ? call(fn, `i64 ${args[0]}, i64 ${canonicalBits(args[1] as string)}`)
+                : call(fn, args.map((a) => `i64 ${a}`).join(", ")),
             ins.slice(1).map((v) => allNumbers([v as ValueId])),
             frameAccess(ins[1] as ValueId, mem.size),
           ),
