@@ -100,6 +100,11 @@ const PROGRAMS: [string, string, number][] = [
   // + with ToPrimitive, string concatenation and Number::toString's shortest digits.
   ["+ on every pair of kinds", "export function f(a, b) { return a + b; }", 2],
   [
+    "Math's approximated functions are V8's atoms (#1362), and ** is pow's; BigInt ** is exact",
+    "export function f(a, b) { const t = (g) => { try { return g(); } catch (e) { return e.name; } }; const x = typeof a === 'object' ? 0.5 : a; return [Math.sin(x), Math.cos(b), Math.tan(x), Math.exp(x), Math.log(b), Math.atan2(x, b), Math.pow(x, b), x ** b, Math.cbrt(x), Math.sinh(x), Math.expm1(b), Math.log1p(x), t(() => 3n ** 40n), t(() => (-2n) ** 63n), t(() => 2n ** -1n), t(() => 2n ** 2), 10 ** -2]; }",
+    2,
+  ],
+  [
     "object literals: __proto__ sets the prototype and defines no key; computed method keys (#1331)",
     "export function f(a, b) { const base = { greet() { return 'hi ' + this.name; }, kind: 'base' }; const o = { __proto__: base, name: String(a) }; const n = { __proto__: null, value: b }; const k = 'm' + typeof a; const c = { [k]() { return k + '!'; }, ['x' + 1]: 2 }; return [o.greet(), o.kind, Object.keys(o), JSON.stringify(n), Object.keys(n), n.value, c[k](), Object.keys(c), 'kind' in o]; }",
     2,
@@ -356,9 +361,7 @@ describe("what the boxed lowering refuses, for now (#1292)", () => {
       "lowered",
     );
     expect(refusal("export function f(x) { return [, x]; }")).toMatch(/an array with holes/);
-    // Math.sin is a reference to V8's shaved atom (#1362): lane:native lowers the atom next.
-    expect(refusal("export function f(x) { return Math.sin(x); }")).toMatch(
-      /"Math.sin" is not in the subset/,
-    );
+    // Math.sin is a reference to V8's shaved atom (#1362), lowered with it.
+    expect(refusal("export function f(x) { return Math.sin(x); }")).toBe("lowered");
   });
 });

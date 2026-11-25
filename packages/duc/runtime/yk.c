@@ -1948,6 +1948,11 @@ yk yk_closure_new(yk_code code, int32_t has_this, uint64_t n, const yk *captures
   return BOX(T_CLOSURE, c);
 }
 yk yk_closure_self(void *closure) { return BOX(T_CLOSURE, closure); }
+/* A function's closure with no captures, made once into *slot (an atom's, #1362). */
+yk yk_closure_once(yk *slot, yk_code code) {
+  if (*slot == 0) *slot = yk_closure_new(code, 0, 0, NULL);
+  return *slot;
+}
 yk yk_capture(void *closure, uint64_t i) { return ((yk_closure *)closure)->captures[i]; }
 yk yk_arg(uint64_t argc, const yk *argv, uint64_t i) { return i < argc ? argv[i] : YK_UNDEFINED; }
 /* A rest parameter (...xs): the arguments from i on, as an array. */
@@ -2549,6 +2554,36 @@ static int numeric_pair(yk *a, yk *b) {
   int x = is_bigint(*a), y = is_bigint(*b);
   if (x && y) return 1;
   if (x || y) mix_error();
+  return 0;
+}
+
+/* a ** b's first steps (ECMA-262 13.6): ToNumeric of each, once. Two BigInts: the exact power, in
+   out[0], and 1. A BigInt and a Number: a TypeError. Two Numbers: out[0] and out[1], and 0; the
+   lowering then calls pow's atom (Number::exponentiate is Math.pow). */
+int32_t yk_exponent(yk a, yk b, yk *out) {
+  if (numeric_pair(&a, &b)) {
+    const yk_bigint *e = big(b);
+    if (e->neg) range_error("Exponent must be non-negative");
+    const yk_bigint *x = big(a);
+    yk one = big_from_u64(1, 0);
+    if (e->len == 0) return out[0] = one, 1;
+    if (x->len == 0) return out[0] = a, 1;
+    if (x->len == 1 && x->d[0] == 1) {
+      int odd = e->d[0] & 1;
+      return out[0] = x->neg && odd ? a : one, 1;
+    }
+    if (e->len > 1 || e->d[0] > (1u << 30)) range_error("Maximum BigInt size exceeded");
+    uint32_t k = e->d[0];
+    yk r = one, base = a;
+    while (k > 0) {
+      if (k & 1) r = big_binary(r, base, '*');
+      k >>= 1;
+      if (k > 0) base = big_binary(base, base, '*');
+    }
+    return out[0] = r, 1;
+  }
+  out[0] = yk_number(to_number(a));
+  out[1] = yk_number(to_number(b));
   return 0;
 }
 

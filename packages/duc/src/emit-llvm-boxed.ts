@@ -28,6 +28,7 @@ import { LlvmEmitError, type LlvmModule } from "./emit-llvm.js";
 import { DECLARES } from "./lift.js";
 import { bodyPathOf, joinOwners, sidePath } from "./line-form.js";
 import { ecmaScriptView } from "./ops.js";
+import { atomGraph, atomNames, mathOperation, operationReference } from "./operations.js";
 import { loweringView } from "./ordering.js";
 import { paramIndex } from "./params.js";
 import { RegexCompileError, regexMatcherGraph } from "./regex.js";
@@ -338,6 +339,38 @@ function slotsOf(label: string): Slot[] {
   });
 }
 
+/**
+ * An atom of the library (`Math.sin` is V8's `sin`, #1362), lowered into the module once as a
+ * function of the closure convention; the atoms it calls by name are lowered too, and called
+ * directly. Its name.
+ */
+function atomFunction(m: ModuleBuilder, atom: string): string {
+  const known = m.atoms.get(atom);
+  if (known !== undefined) return known;
+  const fn = `yk.atom.${atom}`;
+  m.atoms.set(atom, fn);
+  const library = new Set(atomNames());
+  const scope: ModuleScope = {
+    read: (name, emitLine, freshName) => {
+      if (!library.has(name)) return undefined;
+      // Its closure, made once (a call to it is direct; the closure is the binding's value).
+      const slot = `@yk.atomc.${name}`;
+      if (!m.atoms.has(`slot:${name}`)) {
+        m.atoms.set(`slot:${name}`, slot);
+        m.globals.push(`${slot} = internal global i64 0`);
+      }
+      m.intrinsics.add("declare i64 @yk_closure_once(ptr, ptr)");
+      const r = freshName();
+      emitLine(`${r} = call i64 @yk_closure_once(ptr ${slot}, ptr @${atomFunction(m, name)})`);
+      return r;
+    },
+    write: () => false,
+    direct: (name) => (library.has(name) ? atomFunction(m, name) : undefined),
+  };
+  lowerFunction(m, ecmaScriptView(atomGraph(atom)), fn, { captures: 0 }, scope);
+  return fn;
+}
+
 /** The module being built: its constants, the runtime functions it calls, its functions. */
 class ModuleBuilder {
   readonly globals: string[] = [];
@@ -347,6 +380,8 @@ class ModuleBuilder {
   readonly functions: string[] = [];
   /** Each regex literal's matcher, lowered once: its function's name. */
   readonly matchers = new Map<string, string>();
+  /** Each atom an operation references (#1362), lowered once: its function's name. */
+  readonly atoms = new Map<string, string>();
   private closures = 0;
 
   constant(text: string, nul = false): { ptr: string; length: number } {
@@ -2228,6 +2263,18 @@ function lowerFunction(
           );
           return;
         }
+        const ref = mathOperation(callee.name, args.length);
+        if (ref !== undefined) {
+          // A reference to the atom implementing it: ToNumber of each argument, then the atom.
+          const nums = args.map((a) => call("yk_pos", `i64 ${a}`));
+          const fn = atomFunction(m, ref.atom);
+          const r = fresh();
+          emit(
+            `${r} = call i64 @${fn}(ptr null, i64 ${UNDEFINED}, i64 ${nums.length}, ptr ${list(nums)})`,
+          );
+          set(out, r);
+          return;
+        }
         if (APPROXIMATED.test(callee.name))
           throw new LlvmEmitError(
             `Math.${callee.name} is implementation-approximated in ECMAScript: a native libm need not give the reference's last bit`,
@@ -2418,10 +2465,51 @@ function lowerFunction(
         return;
       }
     }
-    if (ins.length === 2 && lbl === "**")
-      throw new LlvmEmitError(
-        "** is implementation-approximated in ECMAScript: a native pow need not give the reference's last bit",
+    const opRef = operationReference(lbl);
+    if (opRef !== undefined && ins.length === opRef.arity) {
+      // An operation named by its reference (`Math.sin`, #1362): ToNumber of each argument, then
+      // the atom implementing it.
+      const nums = ins.map((v) => call("yk_pos", `i64 ${operand(v as ValueId)}`));
+      const fn = atomFunction(m, opRef.atom);
+      const r = fresh();
+      emit(
+        `${r} = call i64 @${fn}(ptr null, i64 ${UNDEFINED}, i64 ${nums.length}, ptr ${list(nums)})`,
       );
+      set(out, r);
+      return;
+    }
+    if (ins.length === 2 && lbl === "**") {
+      // ToNumeric of each, once; two BigInts: the runtime's exact power; two Numbers: pow's atom
+      // (Number::exponentiate is Math.pow, V8's shaved `pow`, #1362).
+      m.intrinsics.add("declare i32 @yk_exponent(i64, i64, ptr)");
+      const pair = fresh();
+      entryAllocas.push(`  ${pair} = alloca [2 x i64]`);
+      const kind = fresh();
+      emit(
+        `${kind} = call i32 @yk_exponent(i64 ${operand(ins[0] as ValueId)}, i64 ${operand(ins[1] as ValueId)}, ptr ${pair})`,
+      );
+      const isBig = fresh();
+      emit(`${isBig} = icmp ne i32 ${kind}, 0`);
+      const bigL = freshLabel("powbig");
+      const numL = freshLabel("pownum");
+      const join = freshLabel("powjoin");
+      emit(`br i1 ${isBig}, label %${bigL}, label %${numL}`);
+      block(bigL);
+      const r1 = fresh();
+      emit(`${r1} = load i64, ptr ${pair}`);
+      emit(`br label %${join}`);
+      block(numL);
+      const fn = atomFunction(m, "pow");
+      const r2 = fresh();
+      emit(`${r2} = call i64 @${fn}(ptr null, i64 ${UNDEFINED}, i64 2, ptr ${pair})`);
+      const numEnd = currentLabel();
+      emit(`br label %${join}`);
+      block(join);
+      const r = fresh();
+      emit(`${r} = phi i64 [ ${r1}, %${bigL} ], [ ${r2}, %${numEnd} ]`);
+      set(out, r);
+      return;
+    }
     if (ins.length === 1 && UNARY[lbl] !== undefined) {
       const x = operand(ins[0] as ValueId);
       const slow = (): string => call(UNARY[lbl] as string, `i64 ${x}`);
