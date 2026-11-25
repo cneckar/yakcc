@@ -28,7 +28,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <ucontext.h>
+#include <unistd.h>
 #if defined(__linux__)
 #include <link.h>
 #include <pthread.h>
@@ -5224,6 +5226,94 @@ static uint64_t c_le64(const uint8_t *p) {
   return x;
 }
 yk yk_leaf_load64(yk a) { return big_from_u64(c_le64(c_at(a, 8, 0)), 0); }
+
+/* --- The system-call leaf and the thread pointer (#1365, layer 0) ---
+ *
+ * As raise-c's createCSystem defines them over C's memory: Linux x86-64's call numbers, for the
+ * calls musl makes on behalf of malloc, stdio, time and exit. Arguments and the result are BigInts
+ * (64-bit, signed). write and writev write the bytes of C's memory to the host's descriptor; an
+ * anonymous mmap is a new region of whole pages; brk fails and mremap is refused (so malloc maps
+ * and realloc copies); clock_gettime is the host's real-time clock; exit and exit_group end the
+ * process; anything else is -ENOSYS.
+ */
+static void c_put(uint8_t *p, uint64_t x, int n);
+static int64_t big_i64(yk v) { return (int64_t)big_low64(want_big(v)); }
+static yk big_of_i64(int64_t x) { return x < 0 ? big_from_u64(-(uint64_t)x, 1) : big_from_u64((uint64_t)x, 0); }
+static int64_t c_write(int64_t fd, double a, int64_t n) {
+  if (n <= 0) return 0;
+  c_region *r = c_region_of(a, (uint32_t)n, 0);
+  uint8_t *p = r->bytes + (uint64_t)(a - (double)r->base);
+  if (fd == 1) fflush(stdout);
+  if (fd == 2) fflush(stderr);
+  for (int64_t done = 0; done < n;) {
+    ssize_t w = write((int)fd, p + done, (size_t)(n - done));
+    if (w <= 0) break;
+    done += w;
+  }
+  return n;
+}
+yk yk_leaf_syscall(yk nr, yk a, yk b, yk c, yk d, yk e, yk f) {
+  (void)d;
+  (void)f;
+  switch (big_i64(nr)) {
+  case 1: /* write(fd, buf, count) */
+    return big_of_i64(c_write(big_i64(a), (double)big_i64(b), big_i64(c)));
+  case 20: { /* writev(fd, iov, iovcnt): each iovec { base, len } */
+    int64_t total = 0, iov = big_i64(b);
+    for (int64_t i = 0; i < big_i64(c); i++) {
+      uint64_t base = c_le64(c_at(yk_number((double)(iov + 16 * i)), 8, 0));
+      uint64_t len = c_le64(c_at(yk_number((double)(iov + 16 * i + 8)), 8, 0));
+      total += c_write(big_i64(a), (double)base, (int64_t)len);
+    }
+    return big_of_i64(total);
+  }
+  case 9: { /* mmap(addr, length, prot, flags, fd, offset): anonymous only, whole pages */
+    if (big_i64(e) != -1) return big_of_i64(-38);
+    double pages = ceil((double)big_i64(b) / 4096) * 4096;
+    return big_of_i64((int64_t)c_alloc(pages, 4096, 0));
+  }
+  case 11: /* munmap */
+  case 12: /* brk: no break */
+    return big_of_i64(0);
+  case 25: /* mremap: not offered */
+    return big_of_i64(-12);
+  case 28: /* madvise */
+  case 3:  /* close */
+  case 14: /* rt_sigprocmask */
+    return big_of_i64(0);
+  case 16: /* ioctl: no terminal */
+    return big_of_i64(-25);
+  case 8: /* lseek: not seekable */
+    return big_of_i64(-29);
+  case 39:  /* getpid */
+  case 186: /* gettid */
+    return big_of_i64(1);
+  case 228: { /* clock_gettime(clock, timespec) */
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    double at = (double)big_i64(b);
+    c_put(c_at(yk_number(at), 8, 1), (uint64_t)ts.tv_sec, 8);
+    c_put(c_at(yk_number(at + 8), 8, 1), (uint64_t)ts.tv_nsec, 8);
+    return big_of_i64(0);
+  }
+  case 60:  /* exit */
+  case 231: /* exit_group */
+    fflush(stdout);
+    fflush(stderr);
+    exit((int)big_i64(a));
+  default:
+    return big_of_i64(-38);
+  }
+}
+/* The thread's control block: zeroed, its first word its own address. */
+yk yk_leaf_tp(void) {
+  static uint64_t tp = 0;
+  if (tp == 0) {
+    tp = c_alloc(4096, 64, 0);
+    c_put(c_at(yk_number((double)tp), 8, 1), tp, 8);
+  }
+  return big_from_u64(tp, 0);
+}
 yk yk_leaf_load_f64(yk a) {
   uint64_t x = c_le64(c_at(a, 8, 0));
   double d;

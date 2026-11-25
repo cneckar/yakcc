@@ -174,6 +174,9 @@ const LEAVES: Readonly<Record<string, [string, number]>> = {
   __ykAlloc: ["yk_leaf_alloc", 2],
   __ykFree: ["yk_leaf_free", 1],
   __ykData: ["yk_leaf_data", 2],
+  // The system-call leaf and the thread pointer (#1365, layer 0): createCSystem's meaning.
+  __yk_syscall: ["yk_leaf_syscall", 7],
+  __yk_tp: ["yk_leaf_tp", 0],
   __ykLoad8: ["yk_leaf_load8", 1],
   __ykLoad16: ["yk_leaf_load16", 1],
   __ykLoad32: ["yk_leaf_load32", 1],
