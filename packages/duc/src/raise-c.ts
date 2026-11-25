@@ -2204,7 +2204,8 @@ function raiseBody(
           type: normType(d?.type?.qualType ?? ""),
           id: d?.id,
         });
-        if (key === undefined) throw new RaiseCError(`the operator ${d?.name} is not in the unit`);
+        if (key === undefined)
+          throw new RaiseCError(`the operator ${d?.name ?? callee.kind} is not in the unit`);
         return `${key}(${kids.slice(1).map(argOf).join(", ")})`;
       }
       case "ConditionalOperator":
