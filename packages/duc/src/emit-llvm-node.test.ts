@@ -50,7 +50,7 @@ describe.skipIf(!canRun("x86_64-linux"))("Node's library, natively (#1331)", () 
   }, 600_000);
 
   // Node booted as Node boots: the per-context scripts, realm, then main through realm's require.
-  it("booted through realm.js: util.format and util.inspect, path, a library error", () => {
+  it("booted through realm.js: util.format and util.inspect, path, console, events, a library error", () => {
     const record = nodeBootProgram(
       lib,
       { id: "main", source: BOOT_PROGRAM },
@@ -90,5 +90,15 @@ console.log(util.isDeepStrictEqual({ a: [1, 2] }, { a: [1, 2] }), util.types.isM
 try { path.join(1); } catch (e) { console.log(e.code, e.name, e.message); }
 console.log({ a: 1, b: [2, { c: 3 }] }, new Map([[1, "x"]]), [undefined, null], "%s!", "fmt");
 console.error("to stderr %d", 5);
+const EventEmitter = require("events");
+const em = new EventEmitter();
+const heard = [];
+em.on("x", (a) => heard.push(a));
+em.once("x", (a) => heard.push("once " + a));
+em.prependListener("x", (a) => heard.push("first " + a));
+em.emit("x", 1);
+em.emit("x", 2);
+console.log(heard, em.listenerCount("x"), em.eventNames(), em.emit("none"));
+try { em.emit("error", new Error("unhandled")); } catch (e) { console.log(e.message); }
 console.dir({ deep: { er: { est: { x: 1 } } } }, { depth: 0 });
 `;
