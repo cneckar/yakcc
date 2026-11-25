@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // The C++ front end on simdutf's scalar UTF-8/UTF-16 paths (#1364 acceptance): validation, code
-// point counts, lengths and conversions (both byte orders), from the vendored amalgamation through
-// template instances (each `convert<endianness>` its own atom), C++ character types, enum classes
-// and anonymous namespaces. The shaved atoms run over the memory leaves; the oracle is the same
-// C++ compiled natively. On random valid and invalid UTF-8 and UTF-16, each result and each output
-// buffer must be the same.
+// point counts, lengths and conversions (both byte orders), from Node's simdutf (6.4.2,
+// vendor/node/deps/simdutf) through template instances (each `convert<endianness>` its own atom),
+// C++ character types, enum classes and anonymous namespaces. The shaved atoms run over the memory
+// leaves; the oracle is the same C++ compiled natively. On random valid and invalid UTF-8 and
+// UTF-16, each result and each output buffer must be the same.
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -25,7 +25,7 @@ const hasClang = (() => {
   }
 })();
 
-const SIMDUTF = fileURLToPath(new URL("../vendor/simdutf/", import.meta.url));
+const SIMDUTF = fileURLToPath(new URL("../vendor/node/deps/simdutf/", import.meta.url));
 const FIXTURE = fileURLToPath(new URL("./__fixtures__/c/simdutf-scalar.cpp", import.meta.url));
 const ARGS = [
   "-std=c++17",

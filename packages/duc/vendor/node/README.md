@@ -23,3 +23,7 @@ the C/C++ front end to shave (#1367):
   (`zlib.gyp`'s defines: SSSE3 adler32, SSE2 slide hash and chunked inflate, chosen by `cpuid` as it
   runs); the streams of each equal Node's. The fixture `src/__fixtures__/c/node-zlib.c` runs it as
   Node's binding does.
+- `deps/simdutf/` (simdutf 6.4.2, MIT, `deps/simdutf/LICENSE-MIT`; it replaces the 7.3.0 release
+  `vendor/simdutf` held, which is not Node's): Node's UTF-8/UTF-16/Latin-1 transcoding. Node
+  compiles every kernel and picks one by the CPU; the test shaves the portable one (fallback),
+  through `src/__fixtures__/c/simdutf-scalar.cpp`.
