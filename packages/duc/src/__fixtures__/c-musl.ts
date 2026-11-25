@@ -31,6 +31,16 @@ export const MUSL_ARGS = [
  * macro (`#define free __libc_free` in glue.h), and a strong definition wins over lite_malloc's
  * weak one.
  */
+/**
+ * The public allocator's names, which mallocng's glue.h renames by macro (`#define malloc
+ * __libc_malloc_impl`): each is its implementation's atom.
+ */
+const RENAMED: Readonly<Record<string, string>> = {
+  malloc: "__libc_malloc_impl",
+  free: "__libc_free",
+  realloc: "__libc_realloc",
+};
+
 const OVERRIDES: Readonly<Record<string, string>> = {
   __libc_malloc_impl: "src/malloc/mallocng/malloc.c",
   __libc_free: "src/malloc/mallocng/free.c",
@@ -98,6 +108,12 @@ export function shaveMusl(roots: readonly string[]): {
   while (todo.length > 0) {
     const name = todo.pop() as string;
     if (seen.has(name) || atoms.has(name) || MUSL_LEAVES.has(name)) continue;
+    const renamed = RENAMED[name];
+    if (renamed !== undefined) {
+      seen.add(name);
+      todo.push(renamed);
+      continue;
+    }
     seen.add(name);
     // A weak alias in a file already shaved (`weak_alias(dummy, __aio_close)`) is what a static
     // link uses when nothing else brings the strong definition in; mallocng's are overrides.
@@ -146,6 +162,8 @@ export function shaveMusl(roots: readonly string[]): {
       defined.add(key);
     }
   }
+  for (const [name, impl] of Object.entries(RENAMED))
+    if (seen.has(name) && atoms.has(impl)) atoms.set(name, atoms.get(impl) as never);
   return { atoms, units, refused, missing: [...missing] };
 }
 

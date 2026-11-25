@@ -543,12 +543,19 @@ function parseType(spelled: string, depth = 0): CType {
     .replace(/\b(const|volatile|restrict|__restrict)\b/g, "")
     .replace(/\s*\bnoexcept\b(\([^)]*\))?/g, "")
     .replace(/\s+/g, " ")
+    // (`int (*const *)(int)` without its qualifier is `int (**)(int)`.)
+    .replace(/\*\s+(?=[*)\[])/g, "*")
+    .replace(/\(\s+\*/g, "(*")
     .trim();
   // A pointer to a function, and a pointer to one (`void (**)(int)`).
-  const fnPtr = /\((\*+)\)\s*\(.*\)$/.exec(raw);
+  const fnPtr = /\((\*+)((?:\[\d*\])*)\)\s*\(.*\)$/.exec(raw);
   if (fnPtr !== null) {
     let t: CType = { k: "fn" };
     for (let i = 0; i < (fnPtr[1] as string).length; i++) t = { k: "ptr", to: t };
+    // An array of them (`void (*[3])(int)`): its dimensions, outermost first.
+    const dims = [...(fnPtr[2] as string).matchAll(/\[(\d*)\]/g)].map((m) => m[1] as string);
+    for (const d of dims.reverse())
+      t = d === "" ? { k: "arr", of: t } : { k: "arr", of: t, size: Number(d) };
     return t;
   }
   // std::enable_if<C, T>::type, and enable_if_t (an instance exists only where C holds): T.
@@ -740,6 +747,9 @@ function arith(op: string, a: string, b: string, t: CType, rhs: CType): string {
   if (t.k === "bool") throw new RaiseCError(`"${op}" on bool`);
   // C promotes 8- and 16-bit operands to int; an operation in a narrow type (++ on a char) is
   // computed as int and narrowed.
+  // A shift's count has its own type (`1 << (h & 7)` with h 64-bit): the count as a number.
+  if ((op === "<<" || op === ">>") && !wide(t) && wide(rhs))
+    return arith(op, a, `__ykBigToI32(${b})`, t, { k: "i32" });
   if (narrow(t)) return toNarrow(arith(op, a, b, { k: "i32" }, { k: "i32" }), t);
   if (t.k === "i32" || t.k === "u32") {
     // Each wrapped in its own parentheses: `a & b >>> 0` would bind as `a & (b >>> 0)`.
@@ -1256,6 +1266,27 @@ export function returnTypeOf(fnType: string): string {
   return t;
 }
 
+/**
+ * Whether a variable of this type is itself constant: `const int`, `const char [4]`,
+ * `char *const`; not `const char *` (a pointer to constants, itself writable).
+ */
+const constVariable = (qualType: string): boolean => {
+  const star = qualType.lastIndexOf("*");
+  return star < 0 ? /\bconst\b/.test(qualType) : /\bconst\b/.test(qualType.slice(star));
+};
+
+/** Whether two clang types are one C type (as raised). */
+const sameType = (
+  a: { qualType: string } | undefined,
+  b: { qualType: string } | undefined,
+): boolean => {
+  try {
+    return JSON.stringify(ctype(a)) === JSON.stringify(ctype(b));
+  } catch {
+    return false;
+  }
+};
+
 /** A record type's name as parseType names it (a lambda's closure: `class (lambda at ..)`). */
 const parseRecordName = (spelled: string): string => {
   const t = parseType(spelled);
@@ -1457,7 +1488,11 @@ function raiseBody(
       n.opcode === "*" &&
       (() => {
         const s = stripCasts((n.inner ?? [])[0] as ClangNode);
-        return s.kind === "UnaryOperator" && s.opcode === "&";
+        return (
+          s.kind === "UnaryOperator" &&
+          s.opcode === "&" &&
+          sameType(n.type, ((s.inner ?? [])[0] as ClangNode).type)
+        );
       })();
     if (n.kind === "UnaryOperator" && n.opcode === "&" && !viaDeref) {
       // The address of a variable, or of an element or member of one (`&buf[12]`, `&s.f`).
@@ -1517,7 +1552,8 @@ function raiseBody(
     }
     return p;
   };
-  const isMem = (d: ClangNode, t: CType): boolean => inMemory.has(d.id ?? "") || t.k === "rec";
+  const isMem = (d: ClangNode, t: CType): boolean =>
+    inMemory.has(d.id ?? "") || t.k === "rec" || (t.k === "arr" && t.of.k === "rec");
 
   // Temporaries for read-modify-write of memory (`*p += 1`, `s[i]++`): declared at the top.
   let temps = 0;
@@ -1585,12 +1621,14 @@ function raiseBody(
   /** Whether a global is a constant read as a value (not module state, its address not taken). */
   const constGlobal = (d: ClangNode): boolean => {
     if (inMemory.has(d.id ?? "")) return false;
+    // A record, or an array of records, is memory (its members are at offsets): static memory.
+    const t = ctype(d.type);
+    if (t.k === "rec" || (t.k === "arr" && t.of.k === "rec")) return false;
     const decl = resolveGlobal(d.name ?? "", normType(d.type?.qualType ?? ""));
     return (
       decl !== undefined &&
       initOf(decl) !== undefined &&
-      (/\bconst\b/.test(decl.type?.qualType ?? "") ||
-        /\bconstexpr\b/.test(decl.type?.qualType ?? ""))
+      (constVariable(decl.type?.qualType ?? "") || /\bconstexpr\b/.test(decl.type?.qualType ?? ""))
     );
   };
   /** Whether this unit has a global's initializer. */
@@ -1626,8 +1664,10 @@ function raiseBody(
       case "CStyleCastExpr":
       case "CXXConstCastExpr":
       case "CXXStaticCastExpr":
-        // A cast that keeps an lvalue (a qualification): the same object.
+        // A cast that keeps an lvalue (a qualification): the same object; a record read as a
+        // value (to be copied), the record itself.
         if (e.castKind === "NoOp") return place(k0);
+        if (e.castKind === "LValueToRValue" && typeOf(e).k === "rec") return place(k0);
         // An object as its base's subobject (C++): at the base's offset.
         if (e.castKind === "DerivedToBase" || e.castKind === "UncheckedDerivedToBase") {
           const from = typeOf(k0);
@@ -1666,8 +1706,13 @@ function raiseBody(
           return { k: "reg", e: expr(e), t: typeOf(e) };
         if (e.opcode !== "*") break;
         // *&x is x (fdlibm writes `*(volatile double *)&a[3]` to stop a compiler folding).
+        // (Only as the same type: `*(u16 *)&c[2]` reads two chars as one u16, in memory.)
         const inner = stripCasts(k0);
-        if (inner.kind === "UnaryOperator" && inner.opcode === "&")
+        if (
+          inner.kind === "UnaryOperator" &&
+          inner.opcode === "&" &&
+          sameType(e.type, ((inner.inner as ClangNode[])[0] as ClangNode).type)
+        )
           return place((inner.inner as ClangNode[])[0] as ClangNode);
         return { k: "mem", addr: expr(k0), t: typeOf(e) };
       }
@@ -1686,6 +1731,13 @@ function raiseBody(
         };
       }
       case "ConditionalOperator":
+        {
+          // A conditional of two objects in memory (records): the chosen one, by address.
+          const a = place(kids[1] as ClangNode);
+          const b = place(kids[2] as ClangNode);
+          if (a.k === "mem" && b.k === "mem")
+            return { k: "mem", addr: `(${cond(k0)} ? ${a.addr} : ${b.addr})`, t: typeOf(e) };
+        }
         // C++: a conditional of two lvalues is an lvalue; read, it is the chosen one's value.
         return {
           k: "reg",
@@ -1718,7 +1770,10 @@ function raiseBody(
         if (arrow) addr = expr(k0);
         else {
           const p = place(k0);
-          if (p.k !== "mem") throw new RaiseCError("a member of a record that is not in memory");
+          if (p.k !== "mem")
+            throw new RaiseCError(
+              `a member of a record that is not in memory (${`${stripCasts(k0).kind} ${stripCasts(k0).referencedDecl?.name ?? stripCasts(k0).name ?? ""}`})`,
+            );
           addr = p.addr;
         }
         if (field.bit !== undefined) return bitsPlace(addr, field.bit, t);
@@ -1743,7 +1798,9 @@ function raiseBody(
           t: typeOf(e),
         };
     }
-    throw new RaiseCError(`the lvalue ${e.kind} is not raised yet`);
+    throw new RaiseCError(
+      `the lvalue ${e.kind}${e.castKind !== undefined ? ` (${e.castKind})` : ""} is not raised yet`,
+    );
   };
   /** The JavaScript array an array expression is (a local only indexed, or a constant table). */
   const valueArray = (decay: ClangNode): string | undefined => {
@@ -1889,11 +1946,17 @@ function raiseBody(
             const global = isGlobal(d);
             // A global that is state, or a constant whose initializer this unit lacks (an extern
             // declaration): static memory.
-            if (global && (!/\bconst\b/.test(d.type?.qualType ?? "") || !hasInit(d))) {
-              const sp = staticPlace(d, typeOf(target));
+            // An array of records is memory too (its members are at offsets).
+            const at = typeOf(target);
+            const records = at.k === "arr" && at.of.k === "rec";
+            // (A global's address is the same from every function: `zName == row_numberName`
+            // compares them. Its static memory, then, constant or not.)
+            if (global) {
+              const sp = staticPlace(d, at);
               if (sp !== undefined) return sp.addr;
             }
-            if (global || /\bconst\b/.test(d.type?.qualType ?? "")) return constData(d, global);
+            if (!records && (global || /\bconst\b/.test(d.type?.qualType ?? "")))
+              return constData(d, global);
           }
           const p = place(k0);
           if (p.k !== "mem")
@@ -1916,7 +1979,8 @@ function raiseBody(
           return `(((${p} = ${expr(k0)}) !== 0) ? ${p} ${ck === "BaseToDerived" ? "-" : "+"} ${off} : 0)`;
         }
         if (ck === "NullToPointer") return "0";
-        if (ck === "ToVoid") return expr(k0);
+        // (A record cast to void, `(void)u.minor;`, is not read.)
+        if (ck === "ToVoid") return typeOf(k0).k === "rec" ? "undefined" : expr(k0);
         if (
           [
             "IntegralCast",
@@ -1968,11 +2032,15 @@ function raiseBody(
               ? `((~${expr(k0)}) >>> 0)`
               : convert(`(~${expr(k0)})`, { k: "i64" }, t);
         if (op === "!") return t.k === "bool" ? `(!${cond(k0)})` : `(${cond(k0)} ? 0 : 1)`;
+        // A function through its pointer (`(*xFunc)`, as a callee decays it back): the address.
+        if (op === "*" && typeOf(e).k === "fn") return expr(k0);
         if (op === "*") return read(place(e));
         if (op === "&") {
           const p = place(k0);
           if (p.k === "mem") return p.addr;
-          throw new RaiseCError("the address of an object that is not in memory");
+          throw new RaiseCError(
+            `the address of an object that is not in memory (${stripCasts(k0).kind} ${stripCasts(stripCasts(k0).inner?.[0] ?? k0).referencedDecl?.name ?? stripCasts(k0).referencedDecl?.name ?? ""})`,
+          );
         }
         throw new RaiseCError(`the unary operator "${op}" is not raised yet`);
       }
@@ -2110,7 +2178,8 @@ function raiseBody(
       case "CallExpr": {
         const callee = stripCasts(k0);
         const name = callee.referencedDecl?.name ?? "";
-        const args = kids.slice(1).map(expr);
+        // (A record argument is passed by address: see argOf.)
+        const args = kids.slice(1).map((x) => (typeOf(x).k === "rec" ? argOf(x) : expr(x)));
         if (name === "bit_cast") {
           const to = typeOf(e);
           const from = typeOf(kids[1] as ClangNode);
@@ -2281,7 +2350,10 @@ function raiseBody(
     )
       return [`(${from} = ${expr(s0)})`, ...copyBytes(to, from, sizeOf(t)), `__ykFree(${from})`];
     const sp = place(s0);
-    if (sp.k !== "mem") throw new RaiseCError("a record copied from one not in memory");
+    if (sp.k !== "mem")
+      throw new RaiseCError(
+        `a record copied from one not in memory (${`${stripCasts(s0).kind} ${stripCasts(s0).referencedDecl?.name ?? stripCasts(s0).name ?? ""}`})`,
+      );
     return [`(${from} = ${sp.addr})`, ...copyBytes(to, from, sizeOf(t))];
   };
   /** A C++ temporary's wrappers (cleanups, materialization, binding, casts) stripped. */
@@ -2380,6 +2452,14 @@ function raiseBody(
    */
   const argOf = (x: ClangNode): string => {
     const cat = (x as { valueCategory?: string }).valueCategory;
+    // A record by value: a copy in a slot of this frame, its address.
+    if (cat !== "lvalue" && cat !== "xvalue" && typeOf(x).k === "rec") {
+      const t = typeOf(x);
+      const slot = `__arg${temps++}`;
+      top.push(`const ${slot} = __ykAlloc(${Math.max(8, sizeOf(t))}, ${Math.max(8, alignOf(t))});`);
+      frame.push(slot);
+      return `(${copyFrom(slot, t, x).join(", ")}, ${slot})`;
+    }
     if (cat !== "lvalue" && cat !== "xvalue") return expr(x);
     let n = x;
     while (
@@ -2482,6 +2562,16 @@ function raiseBody(
 
   const lines: string[] = [];
   const continueLabels = new Set<string>();
+  // Each label's name, by its declaration id (for messages).
+  const labelNames = new Map<string, string>();
+  {
+    const walk = (n: ClangNode): void => {
+      if (n.kind === "LabelStmt")
+        labelNames.set((n as { declId?: string }).declId ?? "", n.name ?? "");
+      for (const k of n.inner ?? []) walk(k);
+    };
+    walk(fn);
+  }
   const forwardLabels = new Map<string, string>(); // label decl id -> its block's JavaScript label
   const enterLabels = new Map<string, string>(); // label decl id -> the flag a goto into it sets
   // A label that starts a later if's then branch (`if (c) { L: .. }`), reached by forward gotos:
@@ -2582,21 +2672,30 @@ function raiseBody(
   let switchType: CType | undefined;
   // A dispatched switch body's declaration (see guarded): its variables declared at the top.
   let hoisting = false;
+  const hoisted = new Set<string>();
   /**
    * The switch being dispatched (see SwitchStmt): its target variable, its jump variable, its
    * targets' numbers, and how many loops or switches of its body the statement is inside.
    */
-  let dispatch:
-    | {
-        sw: string;
-        j: string;
-        targets: Map<ClangNode, number>;
-        depth: number;
-        continues: boolean;
-        /** The jumps out of the body (gotos), each made after it when the jump code is 3 + its index. */
-        exits: string[];
-      }
-    | undefined;
+  interface Dispatch {
+    sw: string;
+    j: string;
+    targets: Map<ClangNode, number>;
+    depth: number;
+    continues: boolean;
+    /** The jumps out of the body (gotos), each made after it when the jump code is 3 + its index. */
+    exits: { key: string; emit: () => void }[];
+    /** The dispatched switch whose body this one is in. */
+    parent: Dispatch | undefined;
+    /** A block's region (a break leaves the loop around it), not a switch's (a break ends it). */
+    block: boolean;
+    /**
+     * The block around the loop or switch of the body the statement is in, when a goto in it
+     * names one of the body's labels: the goto breaks out of it.
+     */
+    exitLabel?: string | undefined;
+  }
+  let dispatch: Dispatch | undefined;
   const stmt = (s: ClangNode): void => {
     if (["ForStmt", "WhileStmt", "DoStmt", "SwitchStmt"].includes(s.kind)) {
       scopes.push("loop");
@@ -2615,11 +2714,21 @@ function raiseBody(
       ["ForStmt", "WhileStmt", "DoStmt", "SwitchStmt"].includes(s.kind)
     ) {
       const d = dispatch;
+      // A goto from inside it to a label of the body: the loop in a block the goto leaves.
+      const label = d.depth === 0 && gotoToTarget(d, s) ? `__dl${temps++}` : undefined;
+      if (label !== undefined) {
+        push(`${label}: do {`);
+        d.exitLabel = label;
+      }
       d.depth++;
       try {
         stmtOf(s);
       } finally {
         d.depth--;
+        if (label !== undefined) {
+          d.exitLabel = undefined;
+          push("} while (false);");
+        }
       }
       return;
     }
@@ -2630,7 +2739,7 @@ function raiseBody(
       const at = lines.length;
       stmtOf(s);
       const jump = lines.splice(at).join("\n");
-      const code = d.exits.push(jump) - 1;
+      const code = d.exits.push({ key: `return${d.exits.length}`, emit: () => push(jump) }) - 1;
       push(`${d.sw} = -1; ${d.j} = ${code + 3};`);
       return;
     }
@@ -2639,8 +2748,82 @@ function raiseBody(
   /** Whether `s` has a jump of a dispatched switch's body (not of a loop or switch inside it). */
   const bodyJump = (s: ClangNode): boolean => {
     if (["BreakStmt", "ContinueStmt", "GotoStmt", "ReturnStmt"].includes(s.kind)) return true;
-    if (["ForStmt", "WhileStmt", "DoStmt", "SwitchStmt"].includes(s.kind)) return false;
+    if (["ForStmt", "WhileStmt", "DoStmt", "SwitchStmt"].includes(s.kind))
+      return dispatch !== undefined && gotoToTarget(dispatch, s);
     return (s.inner ?? []).some(bodyJump);
+  };
+  /** Whether a goto inside `s` names a label of a dispatched switch's body. */
+  const gotoToTarget = (d: Dispatch, s: ClangNode): boolean => {
+    // (This region's labels, and those of the regions it is inside.)
+    const labels = new Set<string>();
+    for (let x: Dispatch | undefined = d; x !== undefined; x = x.parent)
+      for (const n of x.targets.keys()) {
+        const id = (n as { declId?: string }).declId;
+        if (id !== undefined) labels.add(id);
+      }
+    const walk = (n: ClangNode): boolean =>
+      (n.kind === "GotoStmt" &&
+        labels.has((n as { targetLabelDeclId?: string }).targetLabelDeclId as string)) ||
+      (n.inner ?? []).some(walk);
+    return walk(s);
+  };
+  /**
+   * A dispatched region (a switch's body, or a block a goto enters inside one of its statements):
+   * its statements guarded by the target number (see guarded); a goto to one of its targets sets
+   * the number and runs the region again; the jumps out are made after it. `start` sets the
+   * number first (a switch maps its value to a case; a block starts at its top, 0).
+   */
+  const runDispatch = (
+    b: ClangNode,
+    targets: readonly ClangNode[],
+    block: boolean,
+    start: (sw: string) => void,
+  ): void => {
+    const outer = dispatch;
+    const sw = `__sw${temps++}`;
+    const j = `__j${temps++}`;
+    top.push(`let ${sw} = -1;`, `let ${j} = 0;`);
+    start(sw);
+    const again = targets.some((n) => n.kind === "LabelStmt");
+    if (again) push("while (true) {");
+    push(`${j} = 0;`);
+    const d: Dispatch = {
+      sw,
+      j,
+      targets: new Map(targets.map((n, i) => [n, i + 1] as const)),
+      depth: 0,
+      continues: false,
+      exits: [],
+      parent: outer,
+      block,
+    };
+    dispatch = d;
+    try {
+      guarded(b);
+    } finally {
+      dispatch = outer;
+    }
+    if (again) {
+      push(`if (${j} !== 2) break;`);
+      push("}");
+    }
+    // The jumps out, made here: in the region this one is inside (as one of its own statements,
+    // not inside a loop of its body), or plainly. (A switch was counted as a loop of its region.)
+    if (outer !== undefined && !block) outer.depth--;
+    try {
+      if (d.continues) {
+        push(`if (${j} === 1) {`);
+        stmtOf({ kind: "ContinueStmt" } as ClangNode);
+        push("}");
+      }
+      d.exits.forEach((x, i) => {
+        push(`if (${j} === ${i + 3}) {`);
+        x.emit();
+        push("}");
+      });
+    } finally {
+      if (outer !== undefined && !block) outer.depth++;
+    }
   };
   /** A dispatched statement: run while the target is 0 (reached), entered toward a target in it. */
   const guarded = (s: ClangNode): void => {
@@ -2651,7 +2834,8 @@ function raiseBody(
     ];
     const here = inside(s);
     const jumps = ["BreakStmt", "ContinueStmt", "GotoStmt", "ReturnStmt"].includes(s.kind);
-    if (here.length === 0 && (jumps || !bodyJump(s))) {
+    const loop = ["ForStmt", "WhileStmt", "DoStmt", "SwitchStmt"].includes(s.kind);
+    if (here.length === 0 && (jumps || loop || !bodyJump(s))) {
       if (s.kind === "NullStmt") return;
       if (s.kind === "DeclStmt") {
         // A declaration at the body's level: its variables live at the function's top (later
@@ -2705,90 +2889,127 @@ function raiseBody(
     }
     throw new RaiseCError(`a case label, goto target or jump inside a ${s.kind} of a switch body`);
   };
+  /** A block, with its forward and backward gotos as blocks and loops. */
+  const compound = (s: ClangNode): void => {
+    const kids = s.inner ?? [];
+    push("{");
+    const scope: string[] = [];
+    scopes.push(scope);
+    // A forward goto to a label of this block, from inside a statement before it: the
+    // statements from that one up to the label are a labelled block the goto breaks out of,
+    // written `L: do { .. } while (false)` (the lifter's form of a block left by a jump).
+    // Blocks that would overlap are widened to nest (starting earlier changes nothing).
+    const forward = new Map<number, { label: string; start: number; js: string }>();
+    const viaIf = new Set<number>();
+    kids.forEach((c0, j) => {
+      const c = c0.kind === "LabelStmt" ? c0 : ifEntry(c0);
+      if (c === undefined) return;
+      const label = (c as { declId?: string }).declId ?? "";
+      const start = kids.slice(0, j).findIndex((k) => gotosTo(k, label));
+      if (start < 0) return;
+      if (c !== c0) viaIf.add(j);
+      const name = ident((c as { name?: string }).name ?? "L");
+      forward.set(j, { label, start, js: `${name}_${forwardLabels.size + forward.size}` });
+    });
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const [j, a] of forward)
+        for (const [k, b] of forward)
+          if (k < j && b.start < a.start && a.start < k) {
+            a.start = b.start;
+            changed = true;
+          }
+    }
+    const opensAt = (i: number): [number, { label: string; start: number; js: string }][] =>
+      [...forward].filter(([, f]) => f.start === i).sort(([a], [b]) => b - a);
+    for (let i = 0; i < kids.length; i++) {
+      // The block a label ends closes before any block that starts at the label opens.
+      if (forward.has(i)) push("} while (false);");
+      for (const [j, f] of opensAt(i)) {
+        // An unlabelled break or continue of an enclosing loop would end the block instead.
+        if (kids.slice(i, j).some((k) => escapingJump(k)))
+          throw new RaiseCError("a break or continue of an outer loop inside a goto's block");
+        forwardLabels.set(f.label, f.js);
+        if (viaIf.has(j)) {
+          const flag = `__enter${temps++}`;
+          top.push(`let ${flag} = false;`);
+          push(`${flag} = false;`);
+          enterIf.set(f.label, flag);
+        }
+        push(`${f.js}: do {`);
+      }
+      const c = kids[i] as ClangNode;
+      if (c.kind !== "LabelStmt") {
+        stmt(c);
+        continue;
+      }
+      // A backward goto to a label of this block, from a statement after it and in no loop or
+      // switch of its own: the statements from the label through that one are a loop the
+      // goto continues, left at its end.
+      const label = (c as { declId?: string }).declId ?? "";
+      let last = i;
+      for (let j = i; j < kids.length; j++) if (gotosTo(kids[j] as ClangNode, label)) last = j;
+      if (last === i && !gotosTo(c, label)) {
+        stmt((c.inner as ClangNode[])[0] as ClangNode);
+        continue;
+      }
+      if (forward.has(i)) throw new RaiseCError("a label reached by gotos both forward and back");
+      for (const [j, f] of forward)
+        if ((f.start > i && f.start <= last) || (j > i && j <= last && f.start < i))
+          throw new RaiseCError("a backward goto's loop across a forward goto's block");
+      for (let j = i; j <= last; j++)
+        if (gotoInLoop(kids[j] as ClangNode, label, false))
+          throw new RaiseCError("a goto inside a loop or switch of its own");
+      continueLabels.add(label);
+      push("while (true) {");
+      stmt((c.inner as ClangNode[])[0] as ClangNode);
+      for (let j = i + 1; j <= last; j++) stmt(kids[j] as ClangNode);
+      push("break;");
+      push("}");
+      i = last;
+    }
+    for (const d of [...scope].reverse()) push(`${d};`);
+    scopes.pop();
+    push("}");
+    return;
+  };
   const stmtOf = (s: ClangNode): void => {
     const kids = s.inner ?? [];
     switch (s.kind) {
       case "CompoundStmt": {
-        push("{");
-        const scope: string[] = [];
-        scopes.push(scope);
-        // A forward goto to a label of this block, from inside a statement before it: the
-        // statements from that one up to the label are a labelled block the goto breaks out of,
-        // written `L: do { .. } while (false)` (the lifter's form of a block left by a jump).
-        // Blocks that would overlap are widened to nest (starting earlier changes nothing).
-        const forward = new Map<number, { label: string; start: number; js: string }>();
-        const viaIf = new Set<number>();
-        kids.forEach((c0, j) => {
-          const c = c0.kind === "LabelStmt" ? c0 : ifEntry(c0);
-          if (c === undefined) return;
-          const label = (c as { declId?: string }).declId ?? "";
-          const start = kids.slice(0, j).findIndex((k) => gotosTo(k, label));
-          if (start < 0) return;
-          if (c !== c0) viaIf.add(j);
-          const name = ident((c as { name?: string }).name ?? "L");
-          forward.set(j, { label, start, js: `${name}_${forwardLabels.size + forward.size}` });
-        });
-        for (let changed = true; changed; ) {
-          changed = false;
-          for (const [j, a] of forward)
-            for (const [k, b] of forward)
-              if (k < j && b.start < a.start && a.start < k) {
-                a.start = b.start;
-                changed = true;
-              }
-        }
-        const opensAt = (i: number): [number, { label: string; start: number; js: string }][] =>
-          [...forward].filter(([, f]) => f.start === i).sort(([a], [b]) => b - a);
-        for (let i = 0; i < kids.length; i++) {
-          // The block a label ends closes before any block that starts at the label opens.
-          if (forward.has(i)) push("} while (false);");
-          for (const [j, f] of opensAt(i)) {
-            // An unlabelled break or continue of an enclosing loop would end the block instead.
-            if (kids.slice(i, j).some((k) => escapingJump(k)))
-              throw new RaiseCError("a break or continue of an outer loop inside a goto's block");
-            forwardLabels.set(f.label, f.js);
-            if (viaIf.has(j)) {
-              const flag = `__enter${temps++}`;
-              top.push(`let ${flag} = false;`);
-              push(`${flag} = false;`);
-              enterIf.set(f.label, flag);
-            }
-            push(`${f.js}: do {`);
-          }
-          const c = kids[i] as ClangNode;
-          if (c.kind !== "LabelStmt") {
-            stmt(c);
-            continue;
-          }
-          // A backward goto to a label of this block, from a statement after it and in no loop or
-          // switch of its own: the statements from the label through that one are a loop the
-          // goto continues, left at its end.
-          const label = (c as { declId?: string }).declId ?? "";
-          let last = i;
-          for (let j = i; j < kids.length; j++) if (gotosTo(kids[j] as ClangNode, label)) last = j;
-          if (last === i && !gotosTo(c, label)) {
-            stmt((c.inner as ClangNode[])[0] as ClangNode);
-            continue;
-          }
-          if (forward.has(i))
-            throw new RaiseCError("a label reached by gotos both forward and back");
-          for (const [j, f] of forward)
-            if ((f.start > i && f.start <= last) || (j > i && j <= last && f.start < i))
-              throw new RaiseCError("a backward goto's loop across a forward goto's block");
-          for (let j = i; j <= last; j++)
-            if (gotoInLoop(kids[j] as ClangNode, label, false))
-              throw new RaiseCError("a goto inside a loop or switch of its own");
-          continueLabels.add(label);
-          push("while (true) {");
-          stmt((c.inner as ClangNode[])[0] as ClangNode);
-          for (let j = i + 1; j <= last; j++) stmt(kids[j] as ClangNode);
-          push("break;");
+        // Gotos to labels inside this block's statements (into a branch, back into one): the
+        // block dispatched, from its top.
+        const into = blockTargets(s, false);
+        if (into.length > 0) {
+          push("{");
+          runDispatch(s, into, true, (sw) => push(`${sw} = 0;`));
           push("}");
-          i = last;
+          return;
         }
-        for (const d of [...scope].reverse()) push(`${d};`);
-        scopes.pop();
-        push("}");
+        // The block's own forms (forward blocks, backward loops) first; where they cannot reach a
+        // label, the block dispatched over all its gotos' labels.
+        const at = lines.length;
+        const depth = scopes.length;
+        const saved = [new Map(forwardLabels), new Set(continueLabels), new Map(enterIf)] as const;
+        try {
+          compound(s);
+        } catch (err) {
+          const all = blockTargets(s, true);
+          if (!(err instanceof RaiseCError) || !/goto/.test(err.message) || all.length === 0)
+            throw err;
+          // The first try undone: its lines, its blocks, and its gotos' labels.
+          lines.length = at;
+          scopes.length = depth;
+          forwardLabels.clear();
+          for (const [k, v] of saved[0]) forwardLabels.set(k, v);
+          continueLabels.clear();
+          for (const k of saved[1]) continueLabels.add(k);
+          enterIf.clear();
+          for (const [k, v] of saved[2]) enterIf.set(k, v);
+          push("{");
+          runDispatch(s, all, true, (sw) => push(`${sw} = 0;`));
+          push("}");
+        }
         return;
       }
       case "GotoStmt": {
@@ -2797,11 +3018,30 @@ function raiseBody(
         const target = (s as { targetLabelDeclId?: string }).targetLabelDeclId ?? "";
         if (dispatch !== undefined) {
           const d = dispatch;
-          const k = [...d.targets].find(([n]) => (n as { declId?: string }).declId === target)?.[1];
+          const targetOf = (x: Dispatch): number | undefined =>
+            [...x.targets].find(([n]) => (n as { declId?: string }).declId === target)?.[1];
+          const k = targetOf(d);
           if (k !== undefined) {
-            if (d.depth > 0)
-              throw new RaiseCError("a goto into a switch body from a loop inside it");
+            if (d.depth > 0) {
+              if (d.exitLabel === undefined)
+                throw new RaiseCError("a goto into a switch body from a loop inside it");
+              push(`${d.sw} = ${k}; ${d.j} = 2; break ${d.exitLabel};`);
+              return;
+            }
             push(`${d.sw} = ${k}; ${d.j} = 2;`);
+            return;
+          }
+          // A label of a dispatched switch this one is inside: out of this body, then the goto
+          // again, there.
+          let up = d.parent;
+          while (up !== undefined && targetOf(up) === undefined) up = up.parent;
+          if (up !== undefined && (d.depth === 0 || d.exitLabel !== undefined)) {
+            const key = `goto:${target}`;
+            let code = d.exits.findIndex((x) => x.key === key);
+            if (code < 0) code = d.exits.push({ key, emit: () => stmt(s) }) - 1;
+            push(
+              `${d.sw} = -1; ${d.j} = ${code + 3};${d.depth > 0 ? ` break ${d.exitLabel};` : ""}`,
+            );
             return;
           }
         }
@@ -2812,7 +3052,9 @@ function raiseBody(
         }
         const fwd = forwardLabels.get(target);
         if (fwd === undefined && !continueLabels.has(target))
-          throw new RaiseCError("a goto into a block, or out of it");
+          throw new RaiseCError(
+            `a goto into a block, or out of it (${(s as { targetLabelDeclId?: string }).targetLabelDeclId}: ${labelNames.get((s as { targetLabelDeclId?: string }).targetLabelDeclId ?? "") ?? ""})`,
+          );
         const into = enterIf.get(target);
         const jump =
           fwd !== undefined
@@ -2823,8 +3065,8 @@ function raiseBody(
         // Out of a dispatched switch's body: a jump code, the jump made after the body.
         if (dispatch !== undefined && dispatch.depth === 0) {
           const d = dispatch;
-          let code = d.exits.indexOf(jump);
-          if (code < 0) code = d.exits.push(jump) - 1;
+          let code = d.exits.findIndex((x) => x.key === jump);
+          if (code < 0) code = d.exits.push({ key: jump, emit: () => push(jump) }) - 1;
           push(`${d.sw} = -1; ${d.j} = ${code + 3};`);
           return;
         }
@@ -2928,7 +3170,11 @@ function raiseBody(
             continue;
           }
           if (hoisting) {
-            top.push(`let ${declName(d)} = ${zeroOf(t)};`);
+            // (Once: a block raised twice, its first try rolled back, declares it again.)
+            if (!hoisted.has(declName(d))) {
+              hoisted.add(declName(d));
+              top.push(`let ${declName(d)} = ${zeroOf(t)};`);
+            }
             if (init !== undefined) push(`${declName(d)} = ${expr(init)};`);
             continue;
           }
@@ -3041,8 +3287,20 @@ function raiseBody(
       case "BreakStmt":
         // Out of a dispatched switch's body: what follows is skipped.
         for (const d of leaving(true)) push(`${d};`);
-        if (dispatch !== undefined && dispatch.depth === 0) push(`${dispatch.sw} = -1;`);
-        else push("break;");
+        if (dispatch !== undefined && dispatch.depth === 0) {
+          const d = dispatch;
+          if (d.block) {
+            // A break of the loop around a block's region: made after the region.
+            let code = d.exits.findIndex((x) => x.key === "break");
+            if (code < 0)
+              code =
+                d.exits.push({
+                  key: "break",
+                  emit: () => stmtOf({ kind: "BreakStmt" } as ClangNode),
+                }) - 1;
+            push(`${d.sw} = -1; ${d.j} = ${code + 3};`);
+          } else push(`${d.sw} = -1;`);
+        } else push("break;");
         return;
       case "ContinueStmt":
         for (const d of leaving(true)) push(`${d};`);
@@ -3064,51 +3322,32 @@ function raiseBody(
         // a label of the body sets the number to the label's, and the body runs again.
         const targets = dispatchTargets(b);
         if (targets.length > 0) {
-          const outer = dispatch;
-          if (outer !== undefined) throw new RaiseCError("a dispatched switch inside another");
-          const sw = `__sw${temps++}`;
-          const j = `__j${temps++}`;
-          top.push(`let ${sw} = -1;`, `let ${j} = 0;`);
           const t = typeOf(c);
-          push(`${sw} = -1;`);
-          push(`switch (${expr(c)}) {`);
-          targets.forEach((n, i) => {
-            if (n.kind === "CaseStmt") {
-              const v = (n.inner ?? [])[0] as ClangNode;
-              if ((n.inner ?? []).length !== 2) throw new RaiseCError("a case range");
-              push(`case ${convert(expr(v), typeOf(v), t)}: ${sw} = ${i + 1}; break;`);
-            } else if (n.kind === "DefaultStmt") push(`default: ${sw} = ${i + 1}; break;`);
-          });
-          push("}");
-          const again = targets.some((n) => n.kind === "LabelStmt");
-          if (again) push("while (true) {");
-          push(`${j} = 0;`);
-          const d = {
-            sw,
-            j,
-            targets: new Map(targets.map((n, i) => [n, i + 1] as const)),
-            depth: 0,
-            continues: false,
-            exits: [] as string[],
-          };
-          dispatch = d;
-          try {
-            guarded(b);
-          } finally {
-            dispatch = outer;
-          }
-          if (again) {
-            push(`if (${j} !== 2) break;`);
+          runDispatch(b, targets, false, (sw) => {
+            push(`${sw} = -1;`);
+            push(`switch (${expr(c)}) {`);
+            targets.forEach((n, i) => {
+              if (n.kind === "CaseStmt") {
+                const v = (n.inner ?? [])[0] as ClangNode;
+                if ((n.inner ?? []).length !== 2) throw new RaiseCError("a case range");
+                push(`case ${convert(expr(v), typeOf(v), t)}: ${sw} = ${i + 1}; break;`);
+              } else if (n.kind === "DefaultStmt") push(`default: ${sw} = ${i + 1}; break;`);
+            });
             push("}");
-          }
-          if (d.continues) push(`if (${j} === 1) continue;`);
-          d.exits.forEach((jump, i) => push(`if (${j} === ${i + 3}) ${jump}`));
+          });
           return;
         }
         const outer = switchType;
         switchType = typeOf(c);
+        // Declarations before the first case (in scope for the whole body, never run): before it.
+        const items = b.inner ?? [];
+        const first = items.findIndex((k) => k.kind === "CaseStmt" || k.kind === "DefaultStmt");
+        for (const item of items.slice(0, Math.max(0, first)))
+          if (item.kind === "DeclStmt") stmt(item);
+          else if (item.kind !== "NullStmt")
+            throw new RaiseCError("a statement before a switch's first case");
         push(`switch (${expr(c)}) {`);
-        for (const item of b.inner ?? []) caseItem(item);
+        for (const item of items.slice(Math.max(0, first))) caseItem(item);
         push("}");
         switchType = outer;
         return;
@@ -3149,6 +3388,11 @@ function raiseBody(
   const entry: string[] = [];
   for (const p of params) {
     const t = ctype(p.type);
+    // A record by value: the address of the caller's copy (see argOf), the record itself.
+    if (t.k === "rec") {
+      mems.set(p.id ?? "", { k: "mem", addr: declName(p), t });
+      continue;
+    }
     if (!inMemory.has(p.id ?? "")) continue;
     const name = declName(p);
     const slot = memOf(p, t);
@@ -3344,6 +3588,57 @@ function dispatchTargets(body: ClangNode): ClangNode[] {
   };
   if (body.kind === "CompoundStmt" && (body.inner ?? []).some(out_)) nested = true;
   return nested ? out : [];
+}
+
+/**
+ * The labels a block's dispatch enters (see CompoundStmt), when a goto in the block names a
+ * label inside one of its statements (not a loop or switch of it) that the block's own forms do
+ * not reach: a branch's first label reached only from earlier statements (a forward goto into a
+ * then branch) is the if's. None when no such goto.
+ */
+function blockTargets(block: ClangNode, all: boolean): ClangNode[] {
+  const kids = block.inner ?? [];
+  const gotos = new Map<string, number[]>(); // label id -> the indices of the children with gotos to it
+  kids.forEach((k, i) => {
+    const walk = (n: ClangNode): void => {
+      if (n.kind === "GotoStmt") {
+        const t = (n as { targetLabelDeclId?: string }).targetLabelDeclId ?? "";
+        gotos.set(t, [...(gotos.get(t) ?? []), i]);
+      }
+      for (const c of n.inner ?? []) walk(c);
+    };
+    walk(k);
+  });
+  const labels: ClangNode[] = [];
+  let nested = false;
+  kids.forEach((k, i) => {
+    const walk = (n: ClangNode, depth: number, firstOfThen: boolean): void => {
+      if (["ForStmt", "WhileStmt", "DoStmt", "SwitchStmt"].includes(n.kind)) return;
+      if (n.kind === "LabelStmt") {
+        const id = (n as { declId?: string }).declId ?? "";
+        const from = gotos.get(id);
+        if (from !== undefined) {
+          labels.push(n);
+          if (depth > 0 && !(firstOfThen && from.every((j) => j < i))) nested = true;
+        }
+      }
+      const inner = n.inner ?? [];
+      inner.forEach((c, ci) => {
+        const then = n.kind === "IfStmt" && ci === 1;
+        const first =
+          then &&
+          (c.kind === "LabelStmt" ||
+            (c.kind === "CompoundStmt" && c.inner?.[0]?.kind === "LabelStmt"));
+        walk(
+          c,
+          depth + (n.kind === "LabelStmt" ? 0 : 1),
+          first || (firstOfThen && n.kind === "CompoundStmt" && ci === 0),
+        );
+      });
+    };
+    walk(k, 0, false);
+  });
+  return nested || all ? labels : [];
 }
 
 /** Whether `s` has a break or continue that leaves it (not one of a loop or switch inside it). */
@@ -4209,6 +4504,15 @@ function staticDefinition(
           "&": () => x & y,
           "|": () => x | y,
           "^": () => x ^ y,
+          // Comparisons and logic: C's int 0 or 1.
+          "==": () => (x === y ? 1n : 0n),
+          "!=": () => (x !== y ? 1n : 0n),
+          "<": () => (x < y ? 1n : 0n),
+          "<=": () => (x <= y ? 1n : 0n),
+          ">": () => (x > y ? 1n : 0n),
+          ">=": () => (x >= y ? 1n : 0n),
+          "&&": () => (x !== 0n && y !== 0n ? 1n : 0n),
+          "||": () => (x !== 0n || y !== 0n ? 1n : 0n),
         };
         if (r[op] === undefined) throw new RaiseCError(`"${op}" in an initializer`);
         return { k: "v", v: (r[op] as () => bigint)() };
