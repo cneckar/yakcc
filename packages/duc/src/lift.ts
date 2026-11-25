@@ -5368,8 +5368,9 @@ function hasJump(node: Node): boolean {
 
 /**
  * Whether evaluating an expression can only produce a value: no call or `new`, no member read (which
- * can throw on null or run a getter), no assignment, step, delete, await or yield. Operators on
- * values count as producing a value. Such an expression may be computed on every path, so a
+ * can throw on null or run a getter), no assignment, step, delete, await or yield, and no division,
+ * remainder or power (which throw on some bigints). Other operators on values count as producing a
+ * value. Such an expression may be computed on every path, so a
  * ternary of such arms is a select (D3); otherwise it is a branch.
  */
 function isInert(node: Node): boolean {
@@ -5391,6 +5392,14 @@ function isInert(node: Node): boolean {
     if (Node.isBinaryExpression(n)) {
       const k = n.getOperatorToken().getKind();
       if (k === SyntaxKind.EqualsToken || COMPOUND_ASSIGN.has(k)) return true;
+      // A division or remainder throws on a bigint zero, and a power on a negative bigint exponent:
+      // computed only on the paths that reach it.
+      if (
+        k === SyntaxKind.SlashToken ||
+        k === SyntaxKind.PercentToken ||
+        k === SyntaxKind.AsteriskAsteriskToken
+      )
+        return true;
     }
     if (
       (Node.isPrefixUnaryExpression(n) || Node.isPostfixUnaryExpression(n)) &&
