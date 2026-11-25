@@ -132,7 +132,7 @@ export const ECMASCRIPT: BaseSet = {
 /** Node.js: ECMAScript, plus the host's data APIs and its authority-bearing APIs, and its modules. */
 export const NODE: BaseSet = {
   target: "node",
-  version: 2,
+  version: 3,
   modules: {
     ...pure([
       "assert",
@@ -172,6 +172,8 @@ export const NODE: BaseSet = {
   primitives: {
     ...ECMASCRIPT.primitives,
     ...pure([
+      // Node's name for the global object, as `globalThis` is ECMAScript's (#1331).
+      "global",
       "Buffer",
       "TextEncoder",
       "TextDecoder",

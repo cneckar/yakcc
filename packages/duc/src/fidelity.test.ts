@@ -73,4 +73,11 @@ describe("lift fidelity (#1173)", () => {
       expect(holds(fragment), fragment).toEqual({ holds: true, missing: [], extra: [] });
     }
   });
+
+  it("`globalThis` declared by the source is its own binding, not the platform's (#1331)", () => {
+    const declared = "const { Error, globalThis } = primordials;\nif (m) { globalThis.x = Error; }";
+    expect(sourceFreeNames(declared).has("globalThis")).toBe(false);
+    expect(holds(declared)).toEqual({ holds: true, missing: [], extra: [] });
+    expect(sourceFreeNames("globalThis.x = 1;").has("globalThis")).toBe(true);
+  });
 });
