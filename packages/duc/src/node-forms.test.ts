@@ -1014,4 +1014,94 @@ export function f(xs: number[]) {
       ],
     );
   });
+
+  it("an if whose only exits are throws takes no tail: the rest is lifted once, however long", () => {
+    const program = (rest: number) =>
+      `export function f(c: boolean, x: number) {
+  const log: number[] = [];
+  if (c) {
+    if (x > 2) {
+      throw new RangeError("big " + x);
+    }
+    log.push(x);
+  }
+${Array.from({ length: rest }, (_, i) => `  log.push(x + ${i});`).join("\n")}
+  return log;
+}`;
+    for (const rest of [1, 200]) {
+      const code = program(rest);
+      const g = liftAtom(code);
+      expect(g.nodes.filter((n) => n.origin?.kind === "ReturnSelect").length, code).toBe(0);
+      expect(g.nodes.filter((n) => n.label === ".push").length, code).toBe(rest + 1);
+      agrees(code, [
+        [true, 1],
+        [true, 3],
+        [false, 5],
+      ]);
+    }
+  }, 60_000);
+
+  it("a class named as a platform global is itself in a closure inside it, as Node's URL is", () => {
+    agrees(
+      `export function f(p: string) {
+  class URL {
+    path: string;
+    constructor(path: string) {
+      if (path === "bad") throw new TypeError("bad");
+      this.path = path;
+    }
+    get origin() {
+      try {
+        const out = new URL(this.path + "/o");
+        return out instanceof URL ? out.path : "platform";
+      } catch {
+        return null;
+      }
+    }
+  }
+  return [new URL(p).origin, new URL(p + "x").origin];
+}`,
+      [["a"], ["b"]],
+    );
+  });
+
+  it("a closure's captures that the outer graph cannot tell apart are ordered by their use inside a loop (#1292)", () => {
+    agrees(
+      `export function f(k: any, n: number) {
+  function go(c: any, n: number): number {
+    let out = 0;
+    while (n-- > 0) {
+      const r = c[kA][c[kB]];
+      if (c[kC].p === "s" && c[kD] !== r.s) {
+        c[kE]?.d(new IE("x" + c[kF]), () => {
+          c[kE] = null;
+          again(c, 0);
+        });
+      }
+      out += r.v;
+    }
+    return out;
+  }
+  function again(c: any, n: number): number {
+    return go(c, n);
+  }
+  var { kA, kB, kC, kD, kE, kF } = k;
+  var IE = Error;
+  const log: string[] = [];
+  const c: any = {
+    a: [{ s: "t", v: 2 }, { s: "s", v: 3 }],
+    b: 1,
+    c: { p: "s" },
+    d: "u",
+    e: { d: (err: Error, cb: () => void) => { log.push(err.message); cb(); } },
+    f: 7,
+  };
+  return [go(c, n), c.e, log];
+}`,
+      [
+        [{ kA: "a", kB: "b", kC: "c", kD: "d", kE: "e", kF: "f" }, 2],
+        [{ kA: "a", kB: "b", kC: "c", kD: "d", kE: "e", kF: "f" }, 0],
+      ],
+    );
+  });
 });
