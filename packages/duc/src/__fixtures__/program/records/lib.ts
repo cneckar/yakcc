@@ -13,3 +13,13 @@ export function mix(a: unknown, b: unknown, tag: string) {
 export function callCount(): number {
   return calls;
 }
+
+// Integer results (#1369): a rotate's result is an int32 whatever it is given, and a record's keys
+// are when its values are.
+export function rot(w: number, s: number): number {
+  return (w << (32 - s)) | (w >>> s);
+}
+export function step(a: number, b: number): { a: number; b: number } {
+  const s = (a + b) | 0;
+  return { a: s, b: rot(s ^ b, 7) };
+}

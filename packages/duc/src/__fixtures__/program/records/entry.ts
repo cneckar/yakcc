@@ -1,6 +1,6 @@
 // Record results (#1369): keys read, the result kept whole, a method among the values, numbers and
 // not, in a loop, and a function only called before its module's bindings are evaluated.
-import { callCount, mix, split } from "./lib.js";
+import { callCount, mix, rot, split, step } from "./lib.js";
 
 export function sums(k: number): unknown {
   let acc = 0;
@@ -26,4 +26,16 @@ export function mixed(a: unknown, b: unknown): unknown {
     mix(1, 2, "w").sum,
     callCount(),
   ];
+}
+
+// A loop carried from its parameters (int32 carries that may start from a uint32, or from anything
+// else), through a record result's integer keys and a rotate's.
+export function hashLoop(seed: unknown, n: number): unknown {
+  let x = seed as number;
+  let y = (seed as number) >>> 0;
+  for (let i = 0; i < n; i++) {
+    ({ a: x, b: y } = step(x, y));
+    x = rot(x, 3) ^ i;
+  }
+  return [x, y];
 }

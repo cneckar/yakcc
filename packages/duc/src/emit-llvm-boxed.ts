@@ -487,6 +487,10 @@ interface ModuleScope {
   readonly arity?: (name: string) => number | undefined;
   /** For a direct callee with a `.rec` variant: its record result's keys (#1369). */
   readonly record?: (name: string) => readonly string[] | undefined;
+  /** For a direct callee: its result's integer range, and its record result's keys' (#1369). */
+  readonly ranges?: (
+    name: string,
+  ) => { ret?: IntRange; keys?: ReadonlyMap<string, IntRange> } | undefined;
   /** For a statement: the globals its results (its graph's observations) are stored in, in order. */
   readonly outs?: readonly string[];
 }
@@ -632,6 +636,105 @@ export function recordKeys(source: DucGraph): readonly string[] | undefined {
   return names as string[];
 }
 
+type IntRange = "i32" | "u32";
+/** A number proven an integer: an int32, a uint32, or either (in [-2^31, 2^32): below 2^32 in
+ * magnitude, which is all its ToInt32 needs). */
+type NumRange = IntRange | "int";
+/**
+ * A function's integer result ranges (#1369): its result's, when it is an int32 or a uint32 whatever
+ * it is given (a bitwise operation with a number operand, `>>> `, Math.imul, a direct call of such a
+ * function), and its record result's keys'. A direct call's result is then in that range (a binding
+ * not yet its closure throws when called).
+ */
+export function resultRanges(
+  source: DucGraph,
+  callee: (name: string) => { ret?: IntRange; keys?: ReadonlyMap<string, IntRange> } | undefined,
+): { ret?: IntRange; keys?: Map<string, IntRange> } {
+  if (source.mode !== undefined) return {};
+  const { graph: g } = loweringView(ecmaScriptView(source));
+  const producer = new Map<ValueId, DucNode>();
+  for (const n of g.nodes) for (const v of n.outputs) producer.set(v, n);
+  const users = new Map<ValueId, DucNode[]>();
+  for (const n of g.nodes)
+    for (const v of n.inputs) users.set(v as ValueId, [...(users.get(v as ValueId) ?? []), n]);
+  const freeName = (v: ValueId): string | undefined => {
+    const p = producer.get(v);
+    return p?.kind === "diamond-source" && p.diamond?.reason === "free-identifier"
+      ? p.diamond.symbol
+      : undefined;
+  };
+  const literalInt = (v: ValueId): IntRange | undefined => {
+    const p = producer.get(v);
+    if (p?.kind !== "literal-source") return undefined;
+    const t = (p.label ?? "").replace(/_/g, "");
+    if (!/^(0|[1-9][0-9]*)$/.test(t)) return undefined;
+    const x = Number(t);
+    return x < 2 ** 31 ? "i32" : x < 2 ** 32 ? "u32" : undefined;
+  };
+  const isNumber = (v: ValueId, depth: number): boolean => {
+    const p = producer.get(v);
+    if (p?.kind === "literal-source") {
+      const t = (p.label ?? "").replace(/_/g, "");
+      return t !== "" && !BIGINT_LITERAL.test(t) && !t.startsWith('"') && !Number.isNaN(Number(t));
+    }
+    return range(v, depth + 1) !== undefined;
+  };
+  const range = (v: ValueId, depth = 0): IntRange | undefined => {
+    if (depth > 24) return undefined;
+    const lit = literalInt(v);
+    if (lit !== undefined) return lit;
+    const p = producer.get(v);
+    if (p?.kind !== "op") return undefined;
+    const lbl = p.label ?? "";
+    const ins = p.inputs as readonly ValueId[];
+    if (ins.length === 2 && lbl === ">>>") return "u32";
+    if (ins.length === 2 && ["|", "&", "^", "<<", ">>"].includes(lbl))
+      return isNumber(ins[0] as ValueId, depth) || isNumber(ins[1] as ValueId, depth)
+        ? "i32"
+        : undefined;
+    if (ins.length === 1 && lbl === "~")
+      return isNumber(ins[0] as ValueId, depth) ? "i32" : undefined;
+    if (lbl === "CallExpression") {
+      const f = producer.get(ins[0] as ValueId);
+      if (f?.kind === "diamond-source" && f.diamond?.symbol === "__ykI32Mul") return "i32";
+      const name = freeName(ins[0] as ValueId);
+      return name === undefined ? undefined : callee(name)?.ret;
+    }
+    // A key of a direct call's record result, the call's result only read by key.
+    const key = /^\.([\w$]+)$/.exec(lbl)?.[1];
+    if (key !== undefined && ins.length === 1) {
+      const c = producer.get(ins[0] as ValueId);
+      if (c?.kind !== "op" || c.label !== "CallExpression") return undefined;
+      const name = freeName(c.inputs[0] as ValueId);
+      const out = c.outputs[0] as ValueId;
+      const onlyReads = (users.get(out) ?? []).every(
+        (u) => u.kind === "op" && /^\.[\w$]+$/.test(u.label ?? "") && u.inputs.length === 1,
+      );
+      if (name === undefined || !onlyReads || g.obs.includes(out)) return undefined;
+      return callee(name)?.keys?.get(key);
+    }
+    return undefined;
+  };
+  const r = g.obs[0];
+  if (r === undefined) return {};
+  const out: { ret?: IntRange; keys?: Map<string, IntRange> } = {};
+  const ret = range(r);
+  if (ret !== undefined) out.ret = ret;
+  const p = producer.get(r);
+  if (p?.kind === "op" && (p.label ?? "").startsWith("object:")) {
+    const slots = slotsOf(p.label as string);
+    if (slots.every((x) => x.kind === "named") && p.inputs.length === slots.length) {
+      const keys = new Map<string, IntRange>();
+      slots.forEach((x, i) => {
+        const kr = range(p.inputs[i] as ValueId);
+        if (kr !== undefined) keys.set((x as { name: string }).name, kr);
+      });
+      if (keys.size > 0) out.keys = keys;
+    }
+  }
+  return out;
+}
+
 /** A number clone this small (its graph's nodes) is a hint to inline into its callers (#1369). */
 const SMALL_CLONE = 200;
 
@@ -654,7 +757,7 @@ function lowerFunction(
   /** A `.rec` variant's (#1369): its record result's values written to %recout, not made. */
   recOut?: boolean,
   /** An `.int` clone's (#1369): number parameters its `.num` clone checked are integers in a range. */
-  paramRanges?: ReadonlyMap<ValueId, "i32" | "u32">,
+  paramRanges?: ReadonlyMap<ValueId, NumRange>,
 ): void {
   const rawList = [...(rawParams ?? [])].sort((a, b) => a - b);
   const rawHead =
@@ -805,7 +908,7 @@ function lowerFunction(
   // leaves, literals, and the operators' growth). Anything else stays boxed.
   const leafOf = (n: DucNode): string | undefined =>
     n.label === "CallExpression" ? leafValue.get(resolve(n.inputs[0] as ValueId)) : undefined;
-  const numRange = new Map<ValueId, "i32" | "u32">(paramRanges ?? []);
+  const numRange = new Map<ValueId, NumRange>(paramRanges ?? []);
   const bigWidth = new Map<ValueId, number>();
   /** A BigInt the graph fixes: a literal, or __ykNumToBig of an integer literal (raise-c's `32n`). */
   const literalBig = (v: ValueId): bigint | undefined => {
@@ -829,7 +932,7 @@ function lowerFunction(
     if (lit !== undefined) return (lit < 0n ? -lit : lit).toString(2).length + 1;
     return bigWidth.get(resolve(v));
   };
-  const rangeOf = (v: ValueId): "i32" | "u32" | undefined => {
+  const rangeOf = (v: ValueId): NumRange | undefined => {
     const p = producer.get(resolve(v));
     if (p?.kind === "literal-source") {
       const x = Number(p.label);
@@ -857,9 +960,37 @@ function lowerFunction(
       const ins = n.inputs as readonly ValueId[];
       const lbl = n.label ?? "";
       const leaf = leafOf(n);
-      let range: "i32" | "u32" | undefined;
+      let range: NumRange | undefined;
       let width: number | undefined;
-      if (leaf !== undefined) {
+      const directName =
+        lbl === "CallExpression" ? freeValue.get(resolve(ins[0] as ValueId)) : undefined;
+      const recordKey = /^\.([\w$]+)$/.exec(lbl)?.[1];
+      if (directName !== undefined && scope?.direct?.(directName) !== undefined) {
+        // A direct call: its callee's result range (a binding not yet its closure throws).
+        range = scope.ranges?.(directName)?.ret;
+      } else if (recordKey !== undefined && ins.length === 1) {
+        // A key of a direct call's record result, the call's result only read by key.
+        const c = producer.get(resolve(ins[0] as ValueId));
+        const cname =
+          c?.kind === "op" && c.label === "CallExpression"
+            ? freeValue.get(resolve(c.inputs[0] as ValueId))
+            : undefined;
+        const cout = c?.outputs[0] as ValueId | undefined;
+        if (cname !== undefined && cout !== undefined && scope?.direct?.(cname) !== undefined) {
+          const onlyReads = g.nodes.every((u) =>
+            u.inputs.every(
+              (x, xi) =>
+                resolve(x as ValueId) !== cout ||
+                (xi === 0 &&
+                  u.kind === "op" &&
+                  /^\.[\w$]+$/.test(u.label ?? "") &&
+                  u.inputs.length === 1),
+            ),
+          );
+          if (onlyReads && !g.obs.map((o) => resolve(o)).includes(cout))
+            range = scope.ranges?.(cname)?.keys?.get(recordKey);
+        }
+      } else if (leaf !== undefined) {
         const a = ins[1] as ValueId;
         if (leaf === "__ykBigToI32" || leaf === "__ykI32Mul") range = "i32";
         else if (
@@ -925,7 +1056,7 @@ function lowerFunction(
     }
     // A loop's carry: its initial value or an iteration's next one, so in a range when both are
     // (an integer literal is in the ranges it fits).
-    const litRange = (v: ValueId): "i32" | "u32" | "both" | undefined => {
+    const litRange = (v: ValueId): NumRange | "both" | undefined => {
       const r = numRange.get(resolve(v));
       if (r !== undefined) return r;
       const p = producer.get(resolve(v));
@@ -944,9 +1075,8 @@ function lowerFunction(
         const a = litRange(n.inputs[j] as ValueId);
         const b = litRange(rec.next[j] as ValueId);
         if (a === undefined || b === undefined) return;
-        const r =
-          a === "both" ? (b === "both" ? "i32" : b) : b === "both" || a === b ? a : undefined;
-        if (r === undefined) return;
+        const r: NumRange =
+          a === "both" ? (b === "both" ? "i32" : b) : b === "both" || a === b ? a : "int";
         numRange.set(v, r);
         changed = true;
       });
@@ -4601,7 +4731,7 @@ function lowerFunction(
     paramRanges === undefined &&
     regList !== undefined
   ) {
-    const ranged = new Map<ValueId, "i32" | "u32">();
+    const ranged = new Map<ValueId, NumRange>();
     const clash = new Set<ValueId>();
     for (const n of g.nodes) {
       const rec = n.loop;
@@ -4609,9 +4739,16 @@ function lowerFunction(
       rec.carry.forEach((c, j) => {
         const init = resolve(n.inputs[j] as ValueId);
         const r = numRange.get(resolve(rec.next[j] as ValueId));
-        if (r === undefined || numRange.has(resolve(c)) || !numberParams.has(init)) return;
-        if (ranged.has(init) && ranged.get(init) !== r) clash.add(init);
-        ranged.set(init, r);
+        const isParam = params.some(
+          (p, pi) =>
+            p.outputs[0] === init && pi >= closure.captures && !(p.label ?? "").endsWith("..."),
+        );
+        if (r === undefined || numRange.has(resolve(c)) || !isParam) return;
+        // A uint32 carry's parameter is checked a uint32 (its % and >>> 0 stay integer); any other
+        // an integer of either range (an int32 carry may start from a uint32: a hash's state).
+        const want: NumRange = r === "u32" ? "u32" : "int";
+        if (ranged.has(init) && ranged.get(init) !== want) clash.add(init);
+        ranged.set(init, want);
       });
     }
     // A parameter a memory access's address is made from (p + i): its addresses are below 2^32
@@ -4636,22 +4773,24 @@ function lowerFunction(
       }
     }
     for (const v of clash) ranged.delete(v);
-    const regOf = (v: ValueId): number | undefined => {
-      const i = params.findIndex((p) => p.outputs[0] === v);
-      const k = i - closure.captures;
-      return i >= 0 && regList.includes(k) ? k : undefined;
-    };
-    for (const v of [...ranged.keys()]) if (regOf(v) === undefined) ranged.delete(v);
     if (ranged.size > 0) {
       let ok = "true";
       for (const [v, r] of ranged) {
-        const x = `%n${regOf(v)}`;
+        // A number parameter's register, else its argument (a number checked here).
+        const x = operand(v);
+        if (!numberParams.has(v)) {
+          const isNum = fresh();
+          emit(`${isNum} = icmp ult i64 ${x}, ${NUMBER_LIMIT}`);
+          const t = fresh();
+          emit(`${t} = and i1 ${ok}, ${isNum}`);
+          ok = t;
+        }
         const d = fresh();
         emit(`${d} = bitcast i64 ${x} to double`);
         const lo = fresh();
         emit(`${lo} = fcmp oge double ${d}, ${r === "u32" ? "0.0" : "-2147483648.0"}`);
         const hi = fresh();
-        emit(`${hi} = fcmp olt double ${d}, ${r === "u32" ? "4294967296.0" : "2147483648.0"}`);
+        emit(`${hi} = fcmp olt double ${d}, ${r === "i32" ? "2147483648.0" : "4294967296.0"}`);
         const inR = fresh();
         emit(`${inR} = and i1 ${lo}, ${hi}`);
         // An integer (fptosi is defined where the range holds: the select keeps it so), not -0.
@@ -5233,6 +5372,34 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
       if (keys !== undefined) records.set(fn, keys);
     }),
   );
+  // Result ranges (#1369): a least fixpoint over the direct functions (each call's result is its
+  // callee's).
+  const ranges = new Map<string, { ret?: IntRange; keys?: Map<string, IntRange> }>();
+  for (let changed = true; changed; ) {
+    changed = false;
+    modules.forEach((mod, i) =>
+      mod.statements.forEach((st, k) => {
+        const fn = `m${i}_s${k}`;
+        const name = st.declares[0];
+        if (
+          st.kind !== "function" ||
+          name === undefined ||
+          directBySlot.get(g(i, `b.${name}`)) !== fn
+        )
+          return;
+        const r = resultRanges(st.graph, (callee) => {
+          const t = directOf(i, callee);
+          return t === undefined ? undefined : ranges.get(t);
+        });
+        const before = JSON.stringify([ranges.get(fn)?.ret, [...(ranges.get(fn)?.keys ?? [])]]);
+        const after = JSON.stringify([r.ret, [...(r.keys ?? [])]]);
+        if (before !== after) {
+          ranges.set(fn, r);
+          changed = true;
+        }
+      }),
+    );
+  }
   const rawSets = new Map<string, Set<number>>();
   for (const [fn, r] of rawUses) rawSets.set(fn, new Set(r.uses.keys()));
   for (let changed = true; changed; ) {
@@ -5305,6 +5472,10 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
       record: (name) => {
         const fn = directOf(i, name);
         return fn === undefined ? undefined : records.get(fn);
+      },
+      ranges: (name) => {
+        const fn = directOf(i, name);
+        return fn === undefined ? undefined : ranges.get(fn);
       },
       rawArgs: (name) => {
         const fn = directOf(i, name);
