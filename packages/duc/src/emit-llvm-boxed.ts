@@ -721,6 +721,37 @@ function lowerFunction(
     return { node: p, name: (p.label as string).slice(1) };
   };
   const isMath = (v: ValueId): boolean => mathValue.has(resolve(v));
+  // Member reads whose value only a call takes as its callee: not made where they stand (a method
+  // call reads its member by key itself; another call's operand makes the read where it is used).
+  const calleeReads = new Map<ValueId, DucNode>();
+  {
+    const observed = new Set<ValueId>([
+      ...g.obs.map((v) => resolve(v)),
+      ...(g.branches ?? []).map((b) => resolve(b.cond as ValueId)),
+    ]);
+    const candidates = new Map<ValueId, DucNode>();
+    for (const n of g.nodes)
+      if (
+        n.kind === "op" &&
+        /^\.[\w$]+$/.test(n.label ?? "") &&
+        n.inputs.length === 1 &&
+        n.outputs.length === 1
+      ) {
+        const out = resolve(n.outputs[0] as ValueId);
+        if (out === (n.outputs[0] as ValueId) && !observed.has(out)) candidates.set(out, n);
+      }
+    const bad = new Set<ValueId>();
+    const called = new Set<ValueId>();
+    for (const n of g.nodes)
+      n.inputs.forEach((v, i) => {
+        const r = resolve(v as ValueId);
+        if (!candidates.has(r)) return;
+        if (n.kind === "op" && n.label === "CallExpression" && i === 0) called.add(r);
+        else bad.add(r);
+      });
+    for (const [v, n] of candidates)
+      if (called.has(v) && !bad.has(v) && !isMath(n.inputs[0] as ValueId)) calleeReads.set(v, n);
+  }
 
   // --- Typed BigInts (#1369, DEC-DUC-TYPED-NATIVE-001): a BigInt the graph proves narrower than 128
   // bits is an i128, not a heap value. The proof: the integer ranges of numbers (an int32 or uint32
@@ -1270,6 +1301,12 @@ function lowerFunction(
 
   const operand = (v0: ValueId): string => {
     const v = resolve(v0);
+    const read = calleeReads.get(v);
+    if (read !== undefined)
+      return call(
+        "yk_get",
+        `i64 ${operand(read.inputs[0] as ValueId)}, i64 ${keyOf((read.label as string).slice(1))}`,
+      );
     const lazy = lazyFrames.get(v);
     if (lazy !== undefined) {
       // A lazily allocated frame: allocated here when it is not yet.
@@ -2649,6 +2686,8 @@ function lowerFunction(
     // A member read: of Math, nothing (the call names it); otherwise the property's value.
     const member = /^\.[\w$]+$/.test(lbl) && ins.length === 1;
     if (member && isMath(ins[0] as ValueId)) return;
+    // Read only to be called: the call reads it (a method call by its key; else operand, there).
+    if (member && calleeReads.has(out)) return;
     if (member) {
       const obj = operand(ins[0] as ValueId);
       set(out, call("yk_get", `i64 ${obj}, i64 ${keyOf(lbl.slice(1))}`));

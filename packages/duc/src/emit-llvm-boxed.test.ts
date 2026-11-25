@@ -300,6 +300,11 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "a method call reads its member once: a getter's count; of undefined or null, the read's TypeError (#1369)",
+    "export function f(a, b) { let reads = 0; const o = { get m() { reads++; return (x) => 'm' + x; } }; const t = (g) => { try { return g(); } catch (e) { return e.name + ': ' + e.message; } }; const u = typeof a === 'string' ? null : undefined; const r = [o.m(1), o.m(b), reads, t(() => u.toString()), t(() => u.charCodeAt(0)), String(a).charCodeAt(0), [1, 2].map(String).join()]; const fn = o.m; return [...r, fn(3), reads]; }",
+    2,
+  ],
+  [
     "Math.random, with arguments it ignores (undici's random(max)): a number in [0, 1) (#1331)",
     "export function f(a, b) { const r = Math.random(a); const q = Math.random(); return [typeof r, r >= 0 && r < 1, q >= 0 && q < 1, r !== q || r === q]; }",
     2,
