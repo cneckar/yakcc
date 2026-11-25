@@ -37,6 +37,7 @@ const OVERRIDES: Readonly<Record<string, string>> = {
   __libc_realloc: "src/malloc/mallocng/realloc.c",
   __malloc_context: "src/malloc/mallocng/malloc.c",
   __malloc_size_classes: "src/malloc/mallocng/malloc.c",
+  __malloc_lock: "src/malloc/mallocng/malloc.c", // by a macro, LOCK_OBJ_DEF
   __libc: "src/internal/libc.c",
 };
 

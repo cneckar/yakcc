@@ -46,6 +46,15 @@ export interface ClangNode {
  * qualified name (clang's `-ast-dump-filter`), so only the unit's own code is dumped, not its
  * headers'.
  */
+/** clang's output for `args` (an AST dump). */
+export function clangDump(clang: string, args: readonly string[]): string {
+  return execFileSync(clang, [...args], {
+    encoding: "utf8",
+    maxBuffer: 1 << 30,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+}
+
 export function clangFunctions(
   file: string,
   filters: readonly string[],
@@ -54,19 +63,15 @@ export function clangFunctions(
 ): Map<string, ClangNode> {
   const out = new Map<string, ClangNode>();
   for (const filter of filters) {
-    const json = execFileSync(
-      clang,
-      [
-        ...args,
-        "-fsyntax-only",
-        "-Xclang",
-        "-ast-dump=json",
-        "-Xclang",
-        `-ast-dump-filter=${filter}`,
-        file,
-      ],
-      { encoding: "utf8", maxBuffer: 1 << 30, stdio: ["ignore", "pipe", "ignore"] },
-    );
+    const json = clangDump(clang, [
+      ...args,
+      "-fsyntax-only",
+      "-Xclang",
+      "-ast-dump=json",
+      "-Xclang",
+      `-ast-dump-filter=${filter}`,
+      file,
+    ]);
     // The filtered dump is a sequence of JSON values, one per matching declaration.
     let i = 0;
     while (i < json.length) {
@@ -75,7 +80,13 @@ export function clangFunctions(
       const [node, next] = readJsonValue(json, i);
       i = next;
       const n = node as ClangNode;
-      if (n.kind === "FunctionDecl" && n.name !== undefined && body(n) !== undefined)
+      // The filter is a substring of a qualified name: the function it names.
+      if (
+        n.kind === "FunctionDecl" &&
+        n.name !== undefined &&
+        body(n) !== undefined &&
+        (n.name === filter || filter.includes("::"))
+      )
         out.set(n.name, n);
     }
   }
@@ -115,7 +126,17 @@ const initItems = (n: ClangNode): readonly ClangNode[] =>
 const unbrace = (n: ClangNode): ClangNode => {
   if (n.kind !== "InitListExpr" || n.array_filler !== undefined) return n;
   const only = n.inner?.length === 1 ? (n.inner[0] as ClangNode) : undefined;
-  return only?.kind === "StringLiteral" && /\[\d*\]$/.test(n.type?.qualType ?? "") ? only : n;
+  if (only?.kind === "StringLiteral" && /\[\d*\]$/.test(n.type?.qualType ?? "")) return only;
+  // A scalar in braces (C++'s `uint64_t v{a | b}`) is its value; empty braces, zero.
+  let scalar = false;
+  try {
+    const k = ctype(n.type).k;
+    scalar = k !== "rec" && k !== "arr";
+  } catch {
+    scalar = false;
+  }
+  if (!scalar) return n;
+  return only ?? ({ kind: "ImplicitValueInitExpr", type: n.type } as ClangNode);
 };
 
 /** A variable declaration's initializer: its child that is not an attribute (`__attribute__((visibility))` comes first). */
@@ -244,6 +265,11 @@ const BUILTIN: Readonly<Record<string, CType>> = {
   "signed short": { k: "i16" },
   "unsigned short": { k: "u16" },
   "unsigned short int": { k: "u16" },
+  // C++'s character types (x86-64 Linux: wchar_t is a signed 32-bit integer).
+  char8_t: { k: "u8" },
+  char16_t: { k: "u16" },
+  char32_t: { k: "u32" },
+  wchar_t: { k: "i32" },
   int: { k: "i32" },
   signed: { k: "i32" },
   "signed int": { k: "i32" },
@@ -290,6 +316,10 @@ function parseType(spelled: string, depth = 0): CType {
   const builtin = BUILTIN[raw];
   if (builtin !== undefined) return builtin;
   if (/^(struct|union) /.test(raw)) return { k: "rec", name: raw };
+  if (/^enum /.test(raw)) {
+    const e = unitTypedef(raw);
+    if (e !== undefined) return parseType(e, depth + 1);
+  }
   if (/\)$/.test(raw)) return { k: "fn" };
   if (raw === "long double" && unitLongDouble64) return F64;
   if (raw === "long double") throw new RaiseCError(`the C type "${raw}" is not raised yet`);
@@ -537,6 +567,13 @@ export interface Callee {
   readonly name: string;
   readonly kind: string;
   readonly type: string;
+  /**
+   * Where the call is: its caller's symbol, and which call of a function of this name it is, in
+   * the order code generation emits them. It tells template instances apart that have the same
+   * name and type (simdutf's `convert<LITTLE>` and `convert<BIG>`): the unit's IR names the
+   * instance each call calls.
+   */
+  readonly at?: { readonly caller: string; readonly index: number } | undefined;
 }
 
 /**
@@ -813,6 +850,39 @@ const dataKind = (t: CType): string => (t.k === "ptr" ? "u64" : t.k === "bool" ?
  * A function of the unit as the TypeScript the lifter reads: `export function f(..)`. A call to
  * another function of the unit is a call of that name, a reference the link makes an atom.
  */
+/** A function's symbol: its mangled name (C++), or its name (C). */
+export const symbolOf = (fn: ClangNode): string =>
+  (fn as { mangledName?: string }).mangledName ?? fn.name ?? "";
+
+/**
+ * Each direct call in a function, numbered among the calls of functions of the same name, in
+ * the order code generation emits them: a call's arguments (and their calls) before it, a for
+ * loop's body before its increment.
+ */
+function emissionOrder(fn: ClangNode): Map<ClangNode, number> {
+  const out = new Map<ClangNode, number>();
+  const counts = new Map<string, number>();
+  const walk = (n: ClangNode): void => {
+    const kids = n.inner ?? [];
+    if (n.kind === "ForStmt") {
+      const [init, condVar, c, inc, b] = kids;
+      for (const k of [init, condVar, c, b, inc]) if (k?.kind !== undefined) walk(k);
+      return;
+    }
+    for (const k of kids) walk(k);
+    if (n.kind === "CallExpr") {
+      const name = stripCasts(kids[0] as ClangNode).referencedDecl?.name;
+      if (name !== undefined) {
+        const i = counts.get(name) ?? 0;
+        counts.set(name, i + 1);
+        out.set(n, i);
+      }
+    }
+  };
+  walk(fn);
+  return out;
+}
+
 export function raiseCFunction(
   fn: ClangNode,
   resolve: CalleeResolver,
@@ -844,6 +914,8 @@ function raiseBody(
   resolveGlobal: GlobalResolver,
   unitStatic: UnitTypes["static"],
 ): string {
+  // Each direct call's place among the calls of functions of its name (see Callee.at).
+  const callOrder = emissionOrder(fn);
   // The constants at namespace or file scope the function reads: each a const at its top.
   const globals = new Map<string, string>(); // decl id -> its const's line
   const globalNames = new Map<string, string>();
@@ -1037,6 +1109,8 @@ function raiseBody(
     switch (e.kind) {
       case "ParenExpr":
         return place(k0);
+      case "SubstNonTypeTemplateParmExpr":
+        return place(kids[kids.length - 1] as ClangNode);
       case "ImplicitCastExpr":
       case "CStyleCastExpr":
       case "CXXConstCastExpr":
@@ -1202,6 +1276,9 @@ function raiseBody(
       case "ExprWithCleanups":
       case "MaterializeTemporaryExpr":
         return `(${expr(k0)})`;
+      // A template argument's value where its parameter is used: the argument (the last child).
+      case "SubstNonTypeTemplateParmExpr":
+        return `(${expr(kids[kids.length - 1] as ClangNode)})`;
       case "IntegerLiteral":
         return wide(typeOf(e)) ? `${e.value}n` : String(Number(e.value));
       case "CharacterLiteral":
@@ -1467,7 +1544,13 @@ function raiseBody(
           ];
           callArgs = [...args.slice(0, fixed), area];
         }
-        const key = resolve({ name, kind: d.kind, type: normType(d.type?.qualType ?? "") });
+        const index = callOrder.get(e);
+        const key = resolve({
+          name,
+          kind: d.kind,
+          type: normType(d.type?.qualType ?? ""),
+          at: index === undefined ? undefined : { caller: symbolOf(fn), index },
+        });
         const target = key ?? ident(name);
         if (key === undefined) externals.add(name);
         const call = `${target}(${callArgs.join(", ")})`;
@@ -2360,27 +2443,50 @@ export function shaveCUnit(
   const found = new Map<string, ClangNode>(); // key -> declaration
   const keyOf = new Map<string, string>(); // name + type -> key
   const sig = (name: string, type: string): string => `${name} :: ${normType(type)}`;
+  const keyBySymbol = new Map<string, string>(); // mangled name -> key (template instances)
   for (const [name, fn] of roots) {
     found.set(name, fn);
     keyOf.set(sig(name, fn.type?.qualType ?? ""), name);
+    keyBySymbol.set(symbolOf(fn), name);
   }
+  // The unit's calls by caller, as code generation emits them (no inlining): each callee's symbol.
+  let calls: Map<string, string[]> | undefined;
+  const irCalls = (caller: string): string[] => {
+    if (calls === undefined) {
+      calls = new Map();
+      const ir = execFileSync(
+        clang,
+        [...args, "-S", "-emit-llvm", "-O0", "-Xclang", "-disable-llvm-passes", "-o", "-", file],
+        { encoding: "utf8", maxBuffer: 1 << 30, stdio: ["ignore", "pipe", "ignore"] },
+      );
+      let current: string[] | undefined;
+      for (const line of ir.split("\n")) {
+        const def = /^define .*?@("?)([^\s("]+)\1\(/.exec(line);
+        if (def !== null) {
+          current = [];
+          calls.set(def[2] as string, current);
+        } else if (line === "}") current = undefined;
+        else if (current !== undefined) {
+          const call = /\b(?:call|invoke) [^@]*@("?)([^\s("]+)\1\(/.exec(line);
+          if (call !== null) current.push(call[2] as string);
+        }
+      }
+    }
+    return calls.get(caller) ?? [];
+  };
   const dumpOf = (name: string): ClangNode[] => {
     let nodes = dumps.get(name);
     if (nodes === undefined) {
       nodes = [];
-      const json = execFileSync(
-        clang,
-        [
-          ...args,
-          "-fsyntax-only",
-          "-Xclang",
-          "-ast-dump=json",
-          "-Xclang",
-          `-ast-dump-filter=${name}`,
-          file,
-        ],
-        { encoding: "utf8", maxBuffer: 1 << 30, stdio: ["ignore", "pipe", "ignore"] },
-      );
+      const json = clangDump(clang, [
+        ...args,
+        "-fsyntax-only",
+        "-Xclang",
+        "-ast-dump=json",
+        "-Xclang",
+        `-ast-dump-filter=${name}`,
+        file,
+      ]);
       let i = 0;
       while (i < json.length) {
         while (i < json.length && /\s/.test(json[i] as string)) i++;
@@ -2393,30 +2499,46 @@ export function shaveCUnit(
     }
     return nodes;
   };
-  const lookup = (c: Callee): ClangNode | undefined => {
-    const nodes = dumpOf(c.name);
-    let hit: ClangNode | undefined;
-    const walk = (n: ClangNode): void => {
-      if (hit !== undefined) return;
-      if (
-        (n.kind === "FunctionDecl" || n.kind === "CXXMethodDecl") &&
-        n.name === c.name &&
-        normType(n.type?.qualType ?? "") === c.type &&
-        body(n) !== undefined
-      ) {
-        hit = n;
-        return;
-      }
-      for (const k of n.inner ?? []) walk(k);
-    };
-    for (const n of nodes) walk(n);
-    return hit;
+  /** The definitions of a name and type: more than one when template instances share them. */
+  const candidates = new Map<string, ClangNode[]>();
+  const lookup = (c: Callee): { decl: ClangNode | undefined; ambiguous: boolean } => {
+    let all = candidates.get(sig(c.name, c.type));
+    if (all === undefined) {
+      const hits: ClangNode[] = [];
+      const walk = (n: ClangNode): void => {
+        if (
+          (n.kind === "FunctionDecl" || n.kind === "CXXMethodDecl") &&
+          n.name === c.name &&
+          normType(n.type?.qualType ?? "") === c.type &&
+          body(n) !== undefined
+        ) {
+          if (!hits.some((h) => symbolOf(h) === symbolOf(n))) hits.push(n);
+          return;
+        }
+        for (const k of n.inner ?? []) walk(k);
+      };
+      for (const n of dumpOf(c.name)) walk(n);
+      all = hits;
+      candidates.set(sig(c.name, c.type), all);
+    }
+    if (all.length <= 1 || c.at === undefined) return { decl: all[0], ambiguous: all.length > 1 };
+    // Template instances alike in name and type: the one this call calls, by the IR.
+    const length = String(c.name.length);
+    const called = irCalls(c.at.caller).filter((s) => s.includes(`${length}${c.name}`))[c.at.index];
+    const decl = all.find((d) => symbolOf(d) === called);
+    if (decl === undefined)
+      throw new RaiseCError(
+        `the instance of ${c.name} a call calls (${called ?? "not in the IR"})`,
+      );
+    return { decl, ambiguous: true };
   };
   const resolve: CalleeResolver = (c) => {
     const known = keyOf.get(sig(c.name, c.type));
-    if (known !== undefined) return known;
-    const decl = lookup(c);
+    const { decl, ambiguous } = lookup(c);
+    if (!ambiguous && known !== undefined) return known;
     if (decl === undefined) return undefined;
+    const bySymbol = keyBySymbol.get(symbolOf(decl));
+    if (bySymbol !== undefined) return bySymbol;
     // A static function's name is its unit's alone (strtol.c's strtox is not strtod.c's): its key
     // carries the unit's.
     const base =
@@ -2426,7 +2548,8 @@ export function shaveCUnit(
     let key = base;
     for (let n = 2; found.has(key); n++) key = `${base}_${n}`;
     found.set(key, decl);
-    keyOf.set(sig(c.name, c.type), key);
+    keyBySymbol.set(symbolOf(decl), key);
+    if (!ambiguous) keyOf.set(sig(c.name, c.type), key);
     return key;
   };
   const resolveGlobal: GlobalResolver = (name, type) => {
@@ -2454,11 +2577,7 @@ export function shaveCUnit(
   let whole: ClangNode | undefined;
   const wholeUnit = (): ClangNode => {
     whole ??= JSON.parse(
-      execFileSync(clang, [...args, "-fsyntax-only", "-Xclang", "-ast-dump=json", file], {
-        encoding: "utf8",
-        maxBuffer: 1 << 30,
-        stdio: ["ignore", "pipe", "ignore"],
-      }),
+      clangDump(clang, [...args, "-fsyntax-only", "-Xclang", "-ast-dump=json", file]),
     ) as ClangNode;
     return whole;
   };
@@ -2528,7 +2647,35 @@ export function shaveCUnit(
       for (const k of n.inner ?? []) walk(k);
     };
     for (const n of dumpOf(name)) walk(n);
-    return hit;
+    if (hit !== undefined) return hit;
+    // An enumeration (`enum e`, `ns::e`): its underlying type, fixed (`enum class e : uint8_t`,
+    // and int for a scoped one) or chosen by the compiler (int, or unsigned int when no
+    // enumerator is negative).
+    const bare =
+      name
+        .replace(/^enum /, "")
+        .split("::")
+        .pop() ?? name;
+    let found: ClangNode | undefined;
+    const find = (n: ClangNode): void => {
+      if (found !== undefined) return;
+      if (n.kind === "EnumDecl" && n.name === bare) {
+        found = n;
+        return;
+      }
+      for (const k of n.inner ?? []) find(k);
+    };
+    for (const n of dumpOf(bare)) find(n);
+    if (found === undefined) return undefined;
+    const fixed = (
+      found as { fixedUnderlyingType?: { qualType?: string; desugaredQualType?: string } }
+    ).fixedUnderlyingType;
+    if (fixed !== undefined) return fixed.desugaredQualType ?? fixed.qualType;
+    if ((found as { scopedEnumTag?: string }).scopedEnumTag !== undefined) return "int";
+    const negative = (found.inner ?? []).some(
+      (c) => c.kind === "EnumConstantDecl" && (enumValue(c.name ?? "") ?? 0n) < 0n,
+    );
+    return negative ? "int" : "unsigned int";
   };
   let layouts: Map<string, RecordLayout> | undefined;
   const layout: LayoutResolver = (name) => {
@@ -2688,6 +2835,8 @@ function staticDefinition(
       case "ParenExpr":
       case "ConstantExpr":
         return scalar(k0);
+      case "SubstNonTypeTemplateParmExpr":
+        return scalar(kids[kids.length - 1] as ClangNode);
       case "IntegerLiteral":
         return { k: "v", v: BigInt(e.value ?? "0") };
       case "DeclRefExpr": {
