@@ -73,6 +73,19 @@ A number that is known to be an int32 or a uint32 needs no range check before To
 
 So a caller that passes anything else still gets exactly the boxed result.
 
+**Integers' own slots.** A value proven an integer keeps its int64 in a slot of its own beside its box:
+- a value in a range;
+- an integer literal;
+- the result of an integer operation, which is exact below 2^53 and never `-0`.
+
+These integer operations on two such integers run on their int64s:
+- `+` and `-`, when the result is bounded;
+- `%` of a non-negative integer by a positive literal;
+- the bitwise operators, on the low 32 bits;
+- the comparisons.
+
+A box made from an int64 that nothing uses is dropped. Loop carries keep their int64s, and integer loads give theirs.
+
 ### Results and strings
 - **Record results.** Some functions return an object literal of distinct named keys, made only to be returned. Such a function also has a `.rec` variant that writes the values into slots the caller provides. A direct call takes it when the result is used only by reads of those keys, and none of those reads is a method call's callee. No object is made.
 - **String builders.** A loop variable that starts as a constant string and that the loop only appends to (`out += x` on every path) is a runtime builder while the loop runs. Appends happen in place, each doing ToPrimitive then ToString as `+` does, and the string is made once when the loop exits.
@@ -88,11 +101,11 @@ Compile with `-O2` without fast-math and without FP contraction (`-ffp-contract=
 
 | shaved C | native | clang -O2 | ratio |
 |---|---|---|---|
-| V8's `sin` + `exp` (`ieee754.cc`), 200K calls each | 79.0M | 41.6M | 1.9× |
-| an FNV-style integer loop (xor, `Math.imul`, rotate, add), 2M iterations | 38.5M | 19.2M | 2.0× |
-| an adler32-style loop over a 4096-byte local buffer, 500 passes | 88.8M | 27.9M | 3.2× |
+| V8's `sin` + `exp` (`ieee754.cc`), 200K calls each | 76.4M | 41.6M | 1.84× |
+| an FNV-style integer loop (xor, `Math.imul`, rotate, add), 2M iterations | 32.5M | 19.2M | 1.69× |
+| an adler32-style loop over a 4096-byte local buffer, 500 passes | 60.1M | 27.9M | 2.15× |
 
-The byte loop still pays for the double representation between integer operations, and for the memory cache check on each load.
+What makes the integer loops fast: each proven integer keeps its int64 beside its box, through operations, loop carries and loads; fast paths are marked likely. What the byte loop still pays for is its memory region check on each load.
 
 ## Alternatives
 - **A second, separate typed emitter.** It duplicates the scope, loop and branch lowering, and gives no fallback for values outside its types.
