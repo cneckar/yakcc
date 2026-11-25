@@ -27,3 +27,7 @@ the C/C++ front end to shave (#1367):
   `vendor/simdutf` held, which is not Node's): Node's UTF-8/UTF-16/Latin-1 transcoding. Node
   compiles every kernel and picks one by the CPU; the test shaves the portable one (fallback),
   through `src/__fixtures__/c/simdutf-scalar.cpp`.
+- `deps/sqlite/` (SQLite 3.54.1, public domain): the amalgamation behind `node:sqlite`. The test
+  shaves it with `sqlite.gyp`'s defines (FTS3/4/5, R*Tree, Geopoly, sessions, RBU, math functions,
+  dbstat, column metadata, the preupdate hook; threadsafe; the unix VFS), and the fixture
+  `src/__fixtures__/c/node-sqlite.c` opens a database as `DatabaseSync` does.
