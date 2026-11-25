@@ -1249,4 +1249,56 @@ export function f(xs: number[]) {
       [[1], [3]],
     );
   });
+  it("an if whose only exits are throws takes no tail: the rest is lifted once, however long", () => {
+    const program = (rest: number) =>
+      `export function f(c: boolean, x: number) {
+  const log: number[] = [];
+  if (c) {
+    if (x > 2) {
+      throw new RangeError("big " + x);
+    }
+    log.push(x);
+  }
+${Array.from({ length: rest }, (_, i) => `  log.push(x + ${i});`).join("\n")}
+  return log;
+}`;
+    for (const rest of [1, 200]) {
+      const code = program(rest);
+      const g = liftAtom(code);
+      expect(g.nodes.filter((n) => n.origin?.kind === "ReturnSelect").length, code).toBe(0);
+      expect(g.nodes.filter((n) => n.label === ".push").length, code).toBe(rest + 1);
+      agrees(code, [
+        [true, 1],
+        [true, 3],
+        [false, 5],
+      ]);
+    }
+  }, 60_000);
+
+  it("a constructor whose branch throws on one side, with the heap joined after it (#1370)", () => {
+    agrees(
+      `export function f(a: number, b: number) {
+  class B {
+    v: number;
+    w: number;
+    constructor(o: { k?: number; c?: number } = {}, fl = 0) {
+      const { k, c } = o;
+      const has = c !== undefined;
+      if (k !== undefined) {
+        if (has) throw new Error("x");
+        this.v = k + fl;
+      } else {
+        this.v = fl;
+      }
+      this.w = this.v * 2;
+    }
+  }
+  return [new B({ k: a }, 1).w, new B().w];
+}`,
+      [
+        [3, 4],
+        [7, 8],
+      ],
+    );
+  });
 });
