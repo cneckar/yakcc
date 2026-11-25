@@ -572,6 +572,10 @@ static yk_array *iterable_items(yk v);
    receiver's own chain goes on to the runtime's own implementation (the thunk would only come back). */
 static yk method_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
 static yk object_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
+static yk builtin_iter_new(yk src, int mode, int type);
+static int is_builtin_iter(yk v);
+static int builtin_iter_step(yk v, yk *out);
+static yk iter_result(yk value, int done);
 static int is_thunk(yk f) {
   if (TAG(f) != 0xFFFDu) return 0;
   yk_code code = ((yk_closure *)PTR(f))->code;
@@ -1165,6 +1169,12 @@ yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk
 static yk bound_new(yk target, yk self, uint64_t argc, const yk *argv);
 /* A method call by its key: the receiver's own (or inherited) method, else the runtime's own
    implementation for its type; anything else is a TypeError. */
+/* The method a value's chain (or its intrinsic prototype) gives for a key is one of the runtime's thunks. */
+static int inherits_thunk(yk recv, yk key) {
+  yk f;
+  if (chain_get(recv, key, &f)) return is_thunk(f);
+  return is_thunk(proto_lookup(recv, key));
+}
 static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
   yk arg0 = argc > 0 ? argv[0] : YK_UNDEFINED;
   yk arg1 = argc > 1 ? argv[1] : YK_UNDEFINED;
@@ -1201,6 +1211,8 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
     }
     if (o->kind == 1 || o->kind == 2) {
       yk out;
+      if (o->proto != 0 && chain_get(recv, key, &f) && !is_thunk(f = resolve_slot(f, recv)))
+        return call_value(f, recv, argc, argv); /* a subclass's own method */
       if (collection_method(o, recv, key, argc, argv, &out)) return out;
     } else if (chain_get(recv, key, &f) && !is_thunk(f = resolve_slot(f, recv)))
       return call_value(f, recv, argc, argv);
@@ -1224,6 +1236,15 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
   if (is_array(recv)) {
     yk out;
     if (array_callback_method(recv, key, argc, argv, &out)) return out;
+    if (key_is(key, "values") || key == symbol_iterator()) return builtin_iter_new(recv, 1, 0);
+    if (key_is(key, "keys")) return builtin_iter_new(recv, 0, 0);
+    if (key_is(key, "entries")) return builtin_iter_new(recv, 2, 0);
+  }
+  if (is_string(recv) && key == symbol_iterator()) return builtin_iter_new(recv, 1, 1);
+  if (is_builtin_iter(recv) && key_is(key, "next")) {
+    yk v;
+    int more = builtin_iter_step(recv, &v);
+    return iter_result(more ? v : YK_UNDEFINED, !more);
   }
   if (is_string(recv)) {
     yk_string *s0 = str(recv);
@@ -1431,6 +1452,14 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
     return object_to_string(recv);
   }
   if (key_is(key, "valueOf")) return recv;
+  /* %IteratorPrototype%[Symbol.iterator]: the iterator itself. */
+  if ((key == symbol_iterator() || key == symbol_async_iterator()) && (is_object(recv) || is_closure(recv)) &&
+      inherits_thunk(recv, key))
+    return recv;
+  /* Array.prototype's iterators on an array-like (Array.prototype itself among them). */
+  if ((key_is(key, "keys") || key_is(key, "values") || key_is(key, "entries")) && (is_object(recv) || is_closure(recv)) &&
+      inherits_thunk(recv, key))
+    return builtin_iter_new(recv, key_is(key, "keys") ? 0 : key_is(key, "values") ? 1 : 2, 0);
   yk desc = is_symbol(key) ? symbol_descriptive(key) : key;
   yk_throw(make_error("TypeError", concat(str(to_string(desc)), str(ascii(" is not a function here")))));
   return YK_UNDEFINED;
@@ -1514,7 +1543,7 @@ static int chain_get(yk obj, yk key, yk *out) {
   if (is_closure(obj)) {
     yk_closure *c = (yk_closure *)PTR(obj);
     /* A function's prototype exists from its first use, as `F.prototype.m = …` needs. */
-    if ((c->has_this || c->is_class) && key_is(key, "prototype")) ensure_prototype(obj);
+    if ((c->has_this || c->is_class || c->mode == 2 || c->mode == 3) && key_is(key, "prototype")) ensure_prototype(obj);
     if (c->props != 0 && own_get((yk_object *)PTR(c->props), key, out)) return 1;
     /* A derived class inherits its parent's statics. */
     return c->parent != 0 && is_closure(c->parent) && chain_get(c->parent, key, out);
@@ -1524,10 +1553,19 @@ static int chain_get(yk obj, yk key, yk *out) {
   return 0;
 }
 
+static yk generator_proto(int async);
 static yk ensure_prototype(yk f) {
   yk_closure *c = (yk_closure *)PTR(f);
   yk p;
   if (c->props != 0 && own_get((yk_object *)PTR(c->props), ascii("prototype"), &p)) return p;
+  if (c->mode == 2 || c->mode == 3) {
+    /* A generator function's prototype: its generators', with no constructor, inheriting
+       %GeneratorPrototype% (%AsyncGeneratorPrototype%). */
+    p = yk_object_of(0, NULL, NULL);
+    ((yk_object *)PTR(p))->proto = generator_proto(c->mode == 3);
+    own_set(own_props(f), ascii("prototype"), p);
+    return p;
+  }
   yk key = ascii("constructor");
   p = yk_object_of(1, &key, &f);
   own_set(own_props(f), ascii("prototype"), p);
@@ -1583,6 +1621,10 @@ static yk builtin_eval_error(void *, yk, uint64_t, const yk *);
 static yk builtin_reference_error(void *, yk, uint64_t, const yk *);
 static yk builtin_uri_error(void *, yk, uint64_t, const yk *);
 static yk builtin_aggregate_error(void *, yk, uint64_t, const yk *);
+static int is_adoptable_builtin(yk f);
+static yk builtin_map(void *c, yk s, uint64_t argc, const yk *argv);
+static yk builtin_set(void *c, yk s, uint64_t argc, const yk *argv);
+yk yk_new(yk f, uint64_t argc, const yk *argv);
 static int is_error_constructor(yk f) {
   if (!is_closure(f)) return 0;
   yk_code code = ((yk_closure *)PTR(f))->code;
@@ -1703,6 +1745,31 @@ yk yk_super_construct(void *closure, yk self, uint64_t argc, const yk *argv) {
     init_fields(cls, self);
     return self;
   }
+  if (is_adoptable_builtin(parent)) {
+    /* A built-in object constructor (Map, Set, Promise, …): its instance's internal state becomes the
+       receiver's, which keeps its own prototype (the subclass's). */
+    yk_code code = ((yk_closure *)PTR(parent))->code;
+    int adder = (code == builtin_map || code == builtin_set) && argc > 0 && !is_nullish(argv[0]);
+    yk made = yk_new(parent, adder ? 0 : argc, argv);
+    yk_object *o = (yk_object *)PTR(self), *b = (yk_object *)PTR(made);
+    o->kind = b->kind, o->entries = b->entries, o->ext = b->ext, o->regex = b->regex, o->error = b->error;
+    for (uint32_t i = 0; i < b->len; i++) own_set(o, b->keys[i], b->values[i]);
+    if (adder) {
+      /* The entries go in through the receiver's set / add, a subclass's override included. */
+      yk_array *items = iterable_items(argv[0]);
+      for (uint32_t i = 0; i < items->len; i++) {
+        yk e = items->items[i];
+        if (code == builtin_set) call_method_key(self, ascii("add"), 1, &e);
+        else {
+          if (!is_array(e) && !is_object(e)) type_error("Iterator value is not an entry object");
+          yk kv[2] = {yk_get(e, ascii("0")), yk_get(e, ascii("1"))};
+          call_method_key(self, ascii("set"), 2, kv);
+        }
+      }
+    }
+    init_fields(cls, self);
+    return self;
+  }
   yk_closure *p = (yk_closure *)PTR(parent);
   /* A base parent's fields are defined before its body runs; a derived parent's by its super(). */
   if (p->is_class && p->parent == 0) init_fields(parent, self);
@@ -1725,7 +1792,7 @@ yk yk_super_get_key(void *closure, yk self, yk key) {
   key = to_property_key(key);
   yk slot;
   yk_closure *p = (yk_closure *)PTR(parent);
-  yk base = c->home_static ? parent : (p->is_class || p->has_this) ? ensure_prototype(parent) : 0;
+  yk base = c->home_static ? parent : (p->is_class || p->has_this || is_adoptable_builtin(parent)) ? ensure_prototype(parent) : 0;
   if (base == 0 || !chain_get(base, key, &slot)) return YK_UNDEFINED;
   return resolve_slot(slot, self);
 }
@@ -1738,7 +1805,7 @@ yk yk_super_get(void *closure, yk self, const char *name, uint64_t n) {
   if (parent == 0 || !is_closure(parent)) return YK_UNDEFINED;
   yk key = yk_string_utf8(name, n), slot;
   yk_closure *p = (yk_closure *)PTR(parent);
-  yk base = c->home_static ? parent : (p->is_class || p->has_this) ? ensure_prototype(parent) : 0;
+  yk base = c->home_static ? parent : (p->is_class || p->has_this || is_adoptable_builtin(parent)) ? ensure_prototype(parent) : 0;
   if (base == 0 || !chain_get(base, key, &slot)) return YK_UNDEFINED;
   return resolve_slot(slot, self);
 }
@@ -1771,7 +1838,8 @@ yk yk_class_new(void *creator, yk parent, uint64_t n, const yk *kinds, const yk 
     type_error("Class extends value is not a constructor or null");
   if (parent != 0 && !is_error_constructor(parent)) {
     yk_closure *p = (yk_closure *)PTR(parent);
-    if (!p->is_class && !p->has_this) type_error("extending this constructor is not in the runtime yet");
+    if (!p->is_class && !p->has_this && !is_adoptable_builtin(parent))
+      type_error("extending this constructor is not in the runtime yet");
   }
   yk cls = 0;
   for (uint64_t i = 0; i < n; i++)
@@ -1977,7 +2045,9 @@ yk yk_set_named(yk obj, const char *name, uint64_t n, yk value) {
  * intrinsic prototype but Object.prototype inherits from it; Object.prototype's prototype is null.
  */
 enum { I_OBJECT, I_FUNCTION, I_ARRAY, I_STRING, I_NUMBER, I_BOOLEAN, I_SYMBOL, I_BIGINT, I_MAP, I_SET,
-       I_PROMISE, I_REGEXP, I_ERROR, I_WEAKMAP, I_WEAKSET, I_WEAKREF, I_FINREG, I_DATE, N_INTRINSIC };
+       I_PROMISE, I_REGEXP, I_ERROR, I_WEAKMAP, I_WEAKSET, I_WEAKREF, I_FINREG, I_DATE, I_ITERATOR,
+       I_ARRAY_ITERATOR, I_STRING_ITERATOR, I_MAP_ITERATOR, I_SET_ITERATOR, I_GENERATOR, I_ASYNC_ITERATOR,
+       I_ASYNC_GENERATOR, I_ASYNC_FUNCTION, I_GENERATOR_FUNCTION, I_ASYNC_GENERATOR_FUNCTION, N_INTRINSIC };
 static const struct {
   const char *name;
   const char *const *methods;
@@ -2001,9 +2071,89 @@ static const struct {
   {"WeakRef", (const char *const[]){"deref", NULL}, (const char *const[]){NULL}},
   {"FinalizationRegistry", (const char *const[]){"register", "unregister", NULL}, (const char *const[]){NULL}},
   {"Date", (const char *const[]){"toString", "toDateString", "toTimeString", "toISOString", "toUTCString", "toGMTString", "getDate", "setDate", "getDay", "getFullYear", "setFullYear", "getHours", "setHours", "getMilliseconds", "setMilliseconds", "getMinutes", "setMinutes", "getMonth", "setMonth", "getSeconds", "setSeconds", "getTime", "setTime", "getTimezoneOffset", "getUTCDate", "setUTCDate", "getUTCDay", "getUTCFullYear", "setUTCFullYear", "getUTCHours", "setUTCHours", "getUTCMilliseconds", "setUTCMilliseconds", "getUTCMinutes", "setUTCMinutes", "getUTCMonth", "setUTCMonth", "getUTCSeconds", "setUTCSeconds", "valueOf", "getYear", "setYear", "toJSON", "toLocaleString", "toLocaleDateString", "toLocaleTimeString", NULL}, (const char *const[]){NULL}},
+  {"Iterator", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"Array Iterator", (const char *const[]){"next", NULL}, (const char *const[]){NULL}},
+  {"String Iterator", (const char *const[]){"next", NULL}, (const char *const[]){NULL}},
+  {"Map Iterator", (const char *const[]){"next", NULL}, (const char *const[]){NULL}},
+  {"Set Iterator", (const char *const[]){"next", NULL}, (const char *const[]){NULL}},
+  {"Generator", (const char *const[]){"next", "return", "throw", NULL}, (const char *const[]){NULL}},
+  {"AsyncIterator", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"AsyncGenerator", (const char *const[]){"next", "return", "throw", NULL}, (const char *const[]){NULL}},
+  {"AsyncFunction", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"GeneratorFunction", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"AsyncGeneratorFunction", (const char *const[]){NULL}, (const char *const[]){NULL}},
 };
 static yk intrinsic_protos[N_INTRINSIC];
+/* An array, string, Map or Set iterator (object kind 13; ECMA-262 23.1.5, 22.1.5, 24.1.5, 24.2.6). */
+typedef struct {
+  yk src;       /* what it iterates: an array or array-like, a string, a Map, a Set; 0 when done */
+  uint32_t i;   /* the next index (a string's: the next code unit) */
+  int32_t mode; /* 0 keys, 1 values, 2 entries */
+  int32_t type; /* 0 array, 1 string, 2 Map, 3 Set */
+} builtin_iter;
+static yk builtin_iter_new(yk src, int mode, int type) {
+  yk r = yk_object_of(0, NULL, NULL);
+  yk_object *o = (yk_object *)PTR(r);
+  builtin_iter *b = alloc(sizeof(builtin_iter));
+  b->src = src, b->i = 0, b->mode = mode, b->type = type;
+  o->kind = 13;
+  o->ext = b;
+  return r;
+}
+static int is_builtin_iter(yk v) { return is_object(v) && ((yk_object *)PTR(v))->kind == 13; }
+/* The iterator's next value, or 0 when it is done (and stays done). */
+static int builtin_iter_step(yk v, yk *out) {
+  builtin_iter *b = ((yk_object *)PTR(v))->ext;
+  if (b->src == 0) return 0;
+  uint32_t i = b->i;
+  if (b->type == 1) {
+    yk_string *s = str(b->src);
+    if (i >= s->len) return b->src = 0, 0;
+    uint32_t n = s->units[i] >= 0xD800 && s->units[i] <= 0xDBFF && i + 1 < s->len && s->units[i + 1] >= 0xDC00 &&
+                 s->units[i + 1] <= 0xDFFF ? 2 : 1;
+    yk_string *c = new_string(n);
+    memcpy(c->units, s->units + i, n * 2);
+    b->i += n;
+    return *out = BOX(T_STRING, c), 1;
+  }
+  if (b->type >= 2) {
+    yk_array *e = ((yk_object *)PTR(b->src))->entries;
+    if (i >= e->len) return b->src = 0, 0;
+    b->i++;
+    yk item = e->items[i];
+    if (b->type == 3) {
+      yk pair[2] = {item, item};
+      return *out = b->mode == 2 ? yk_array_of(2, pair) : item, 1;
+    }
+    return *out = b->mode == 2 ? yk_array_of(2, arr(item)->items) : arr(item)->items[b->mode == 0 ? 0 : 1], 1;
+  }
+  double len = is_array(b->src) ? arr(b->src)->len : to_number(yk_get(b->src, ascii("length")));
+  if (!(i < len)) return b->src = 0, 0;
+  b->i++;
+  yk value = b->mode == 0 ? YK_UNDEFINED
+             : is_array(b->src) ? arr(b->src)->items[i] : yk_get(b->src, to_string(yk_number(i)));
+  if (b->mode == 0) return *out = yk_number(i), 1;
+  if (b->mode == 1) return *out = value, 1;
+  yk pair[2] = {yk_number(i), value};
+  return *out = yk_array_of(2, pair), 1;
+}
+static yk iter_result(yk value, int done);
 static yk method_thunk_code(void *c, yk self, uint64_t argc, const yk *argv) {
+  yk key = ((yk_closure *)c)->captures[0];
+  int which = (int)num(((yk_closure *)c)->captures[1]);
+  /* %IteratorPrototype%[Symbol.iterator], %AsyncIteratorPrototype%[Symbol.asyncIterator]: this. */
+  if (which == I_ITERATOR || which == I_ASYNC_ITERATOR) return self;
+  /* Array.prototype's iterators on any array-like. */
+  if (which == I_ARRAY && !is_array(self) && !is_object(self) && !is_closure(self) && is_nullish(self))
+    type_error("Cannot convert undefined or null to object");
+  if (which == I_ARRAY && !is_array(self) && (key_is(key, "keys") || key_is(key, "values") || key_is(key, "entries") ||
+                                             key == symbol_iterator()))
+    return builtin_iter_new(self, key_is(key, "keys") ? 0 : key_is(key, "entries") ? 2 : 1, 0);
+  if (is_object(self) && (((yk_object *)PTR(self))->kind == 1 || ((yk_object *)PTR(self))->kind == 2)) {
+    /* Map.prototype.set and the like on a Map: its own semantics, not a subclass's override. */
+    yk out;
+    if (collection_method((yk_object *)PTR(self), self, ((yk_closure *)c)->captures[0], argc, argv, &out)) return out;
+  }
   return call_method_key(self, ((yk_closure *)c)->captures[0], argc, argv);
 }
 /* Object.prototype's own methods: its semantics on any receiver (not the receiver's type's). */
@@ -2026,10 +2176,16 @@ static yk intrinsic_proto(int which) {
   yk p = yk_object_of(0, NULL, NULL);
   intrinsic_protos[which] = p;
   yk_object *o = (yk_object *)PTR(p);
-  o->proto = which == I_OBJECT ? YK_NULL : intrinsic_proto(I_OBJECT);
+  o->proto = which == I_OBJECT                ? YK_NULL
+             : which == I_ASYNC_GENERATOR     ? intrinsic_proto(I_ASYNC_ITERATOR)
+             : which == I_ASYNC_ITERATOR      ? intrinsic_proto(I_OBJECT)
+             : which >= I_ASYNC_FUNCTION      ? intrinsic_proto(I_FUNCTION)
+             : which > I_ITERATOR             ? intrinsic_proto(I_ITERATOR)
+                                              : intrinsic_proto(I_OBJECT);
   for (const char *const *m = intrinsic_table[which].methods; *m != NULL; m++) {
     yk key = ascii(*m);
-    own_set(o, key, named(yk_closure_new(which == I_OBJECT ? object_thunk_code : method_thunk_code, 1, 1, &key), key));
+    yk caps[2] = {key, yk_number(which)};
+    own_set(o, key, named(yk_closure_new(which == I_OBJECT ? object_thunk_code : method_thunk_code, 1, 2, caps), key));
   }
   for (const char *const *g = intrinsic_table[which].getters; *g != NULL; g++) {
     yk key = ascii(*g);
@@ -2038,12 +2194,34 @@ static yk intrinsic_proto(int which) {
   /* The iterator method each iterable type has. */
   if (which == I_ARRAY || which == I_SET) own_set(o, symbol_iterator(), yk_get(p, ascii("values")));
   if (which == I_MAP) own_set(o, symbol_iterator(), yk_get(p, ascii("entries")));
-  if (which == I_STRING) {
+  if ((which > I_ITERATOR && which != I_ASYNC_ITERATOR) || (which >= I_MAP && which <= I_PROMISE) || (which >= I_WEAKMAP && which <= I_FINREG) ||
+      which == I_SYMBOL || which == I_BIGINT)
+    own_set(o, well_known_symbol(11), ascii(intrinsic_table[which].name));
+  if (which == I_GENERATOR_FUNCTION || which == I_ASYNC_GENERATOR_FUNCTION) {
+    /* %GeneratorFunction.prototype%.prototype: %GeneratorPrototype%, whose constructor it is. */
+    yk g = intrinsic_proto(which == I_GENERATOR_FUNCTION ? I_GENERATOR : I_ASYNC_GENERATOR);
+    own_set(o, ascii("prototype"), g);
+    own_set((yk_object *)PTR(g), ascii("constructor"), p);
+  }
+  if (which == I_ASYNC_ITERATOR) {
+    yk key = symbol_async_iterator();
+    yk caps[2] = {key, yk_number(which)};
+    own_set(o, key, named(yk_closure_new(method_thunk_code, 1, 2, caps), ascii("[Symbol.asyncIterator]")));
+  }
+  if (which == I_STRING || which == I_ITERATOR) {
     yk key = symbol_iterator();
-    own_set(o, key, named(yk_closure_new(method_thunk_code, 1, 1, &key), ascii("[Symbol.iterator]")));
+    yk caps[2] = {key, yk_number(which)};
+    own_set(o, key, named(yk_closure_new(method_thunk_code, 1, 2, caps), ascii("[Symbol.iterator]")));
   }
   return p;
 }
+/* A function's intrinsic prototype: %AsyncFunction.prototype%, %GeneratorFunction.prototype%,
+   %AsyncGeneratorFunction.prototype%, or Function.prototype. */
+static yk closure_proto(yk_closure *c) {
+  return intrinsic_proto(c->mode == 1 ? I_ASYNC_FUNCTION : c->mode == 2 ? I_GENERATOR_FUNCTION
+                         : c->mode == 3 ? I_ASYNC_GENERATOR_FUNCTION : I_FUNCTION);
+}
+static yk generator_proto(int async) { return intrinsic_proto(async ? I_ASYNC_GENERATOR : I_GENERATOR); }
 /* The intrinsic prototype a value's own chain ends in, or 0 (an object whose chain ends in null). */
 static yk tail_proto(yk v) {
   if (is_object(v)) {
@@ -2059,10 +2237,11 @@ static yk tail_proto(yk v) {
     case 10: return intrinsic_proto(I_DATE);
     case 11: return intrinsic_proto(I_WEAKREF);
     case 12: return intrinsic_proto(I_FINREG);
+    case 13: return intrinsic_proto(I_ARRAY_ITERATOR + ((builtin_iter *)o->ext)->type);
     default: return intrinsic_proto(o->error ? I_ERROR : I_OBJECT);
     }
   }
-  if (is_closure(v)) return intrinsic_proto(I_FUNCTION);
+  if (is_closure(v)) return closure_proto((yk_closure *)PTR(v));
   if (is_array(v)) return intrinsic_proto(I_ARRAY);
   if (is_string(v)) return intrinsic_proto(I_STRING);
   if (is_number(v)) return intrinsic_proto(I_NUMBER);
@@ -2158,7 +2337,7 @@ static yk prototype_of(yk v) {
   if (is_closure(v)) {
     yk_closure *c = (yk_closure *)PTR(v);
     if (c->parent != 0 && is_closure(c->parent)) return c->parent;
-    return intrinsic_proto(I_FUNCTION);
+    return closure_proto(c);
   }
   yk t = tail_proto(v);
   return t == 0 ? YK_NULL : t;
@@ -2457,6 +2636,7 @@ typedef struct {
   yk next;        /* its next method */
   int32_t proto_async; /* the iterator is an async one ([Symbol.asyncIterator]): next() awaited */
   int32_t finished;    /* it said done (or threw): not closed again */
+  yk biter;            /* a built-in iterator (kind 13), or 0 */
 } yk_iter;
 /* An object's (or function's) iterator method by the protocol, or 0: [Symbol.asyncIterator] first
    when asked for an async one, then [Symbol.iterator]. */
@@ -2520,6 +2700,8 @@ yk yk_iter_new(yk v, int32_t keys) {
     }
   } else if (is_object(v) && ((yk_object *)PTR(v))->kind == 5) {
     it->gen = v; /* a generator: drawn from one next() at a time */
+  } else if (is_builtin_iter(v)) {
+    it->biter = v; /* an array's, string's, Map's or Set's iterator: drawn as it goes */
   } else if (is_object(v) && ((yk_object *)PTR(v))->kind != 0) {
     it->src = BOX(T_ARRAY, iterable_items(v));
   } else if (!is_array(v) && !is_string(v))
@@ -2557,6 +2739,7 @@ static int iter_step(yk_iter *it, yk *out) {
     return 1;
   }
   if (it->gen != 0) return generator_step(it->gen, out);
+  if (it->biter != 0) return builtin_iter_step(it->biter, out);
   if (it->keys != NULL) {
     if (it->i >= it->keys->len) return 0;
     *out = it->keys->items[it->i++];
@@ -3377,7 +3560,8 @@ static int collection_method(yk_object *o, yk recv, yk key, uint64_t argc, const
   }
   /* keys / values / entries: the items, as an array (iterable, as the iterators they stand for). */
   int keys = key_is(key, "keys"), values = key_is(key, "values"), entries = key_is(key, "entries");
-  if (keys || values || entries) {
+  if (keys || values || entries) return *out = builtin_iter_new(recv, keys ? 0 : values ? 1 : 2, o->kind == 1 ? 2 : 3), 1;
+  if (0) {
     yk_array *r = new_array(o->entries->len);
     for (uint32_t j = 0; j < o->entries->len; j++) {
       yk e = o->entries->items[j];
@@ -3420,9 +3604,12 @@ static yk_array *iterable_items(yk v) {
     return r;
   }
   if (is_object(v) && (((yk_object *)PTR(v))->kind == 1 || ((yk_object *)PTR(v))->kind == 2)) {
-    yk out, key = ascii(((yk_object *)PTR(v))->kind == 1 ? "entries" : "values");
-    collection_method((yk_object *)PTR(v), v, key, 0, NULL, &out);
-    return arr(out);
+    v = builtin_iter_new(v, ((yk_object *)PTR(v))->kind == 1 ? 2 : 1, ((yk_object *)PTR(v))->kind == 1 ? 2 : 3);
+  }
+  if (is_builtin_iter(v)) {
+    yk e;
+    while (builtin_iter_step(v, &e)) push(r, e);
+    return r;
   }
   yk it = yk_iter_new(v, 0), e;
   while (yk_iter_next(it, &e)) push(r, e);
@@ -5121,6 +5308,7 @@ static yk agen_new(void *c, yk self, uint64_t argc, const yk *argv);
 static yk agen_new(void *c, yk self, uint64_t argc, const yk *argv) {
   yk g = yk_object_of(0, NULL, NULL);
   ((yk_object *)PTR(g))->kind = 9;
+  ((yk_object *)PTR(g))->proto = ensure_prototype(BOX(T_CLOSURE, c));
   coro *co = coro_new(2, (yk_closure *)c, self, argc, argv);
   co->requests = new_array(6);
   ((yk_object *)PTR(g))->ext = co;
@@ -5129,6 +5317,7 @@ static yk agen_new(void *c, yk self, uint64_t argc, const yk *argv) {
 static yk generator_new(void *c, yk self, uint64_t argc, const yk *argv) {
   yk g = yk_object_of(0, NULL, NULL);
   ((yk_object *)PTR(g))->kind = 5;
+  ((yk_object *)PTR(g))->proto = ensure_prototype(BOX(T_CLOSURE, c));
   ((yk_object *)PTR(g))->ext = coro_new(1, (yk_closure *)c, self, argc, argv);
   return g;
 }
@@ -7218,6 +7407,15 @@ yk yk_new(yk f, uint64_t argc, const yk *argv) {
   return YK_UNDEFINED;
 }
 
+/* The built-in constructors whose instances are objects with internal state a subclass's receiver
+   can take over (class SafeMap extends Map). */
+static int is_adoptable_builtin(yk f) {
+  if (!is_closure(f)) return 0;
+  yk_code code = ((yk_closure *)PTR(f))->code;
+  return code == builtin_map || code == builtin_set || code == builtin_weak_map || code == builtin_weak_set ||
+         code == builtin_weak_ref || code == builtin_finalization_registry || code == builtin_promise ||
+         code == builtin_date || code == builtin_regexp;
+}
 /* a instanceof F, for the constructors the runtime has: Array, and the Error family. */
 yk yk_instanceof(yk v, yk f) {
   if (!is_closure(f)) type_error("Right-hand side of 'instanceof' is not callable");
@@ -7237,9 +7435,10 @@ yk yk_instanceof(yk v, yk f) {
     return yk_bool(strict_equal(name, ascii(want)));
   }
   yk_closure *c = (yk_closure *)PTR(f);
-  if (c->is_class || c->has_this) {
+  if (c->is_class || c->has_this || is_adoptable_builtin(f)) {
     yk proto = ensure_prototype(f);
-    for (yk o = is_object(v) ? ((yk_object *)PTR(v))->proto : 0; o != 0 && is_object(o); o = ((yk_object *)PTR(o))->proto)
+    if (!is_object(v) && !is_closure(v)) return YK_FALSE;
+    for (yk o = prototype_of(v); is_object(o); o = prototype_of(o))
       if (o == proto) return YK_TRUE;
   }
   return YK_FALSE;
