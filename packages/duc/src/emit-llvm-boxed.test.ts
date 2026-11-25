@@ -335,6 +335,11 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "charCodeAt in a loop: every index kind, other receivers, an own method (#1369)",
+    "export function f(a, b) { const recv = ['h\u00e9\ud83d\ude00' + a, '', 12345, { charCodeAt: (i) => 'own' + i }]; const idx = [0, 1, 2, 3, 99, -1, -0, 1.9, NaN, '1', undefined, 2 ** 33]; const out = []; for (const r of recv) for (const i of idx) { let v; try { v = r.charCodeAt(i); } catch (e) { v = e.name; } out.push(v); } return out; }",
+    2,
+  ],
+  [
     "Math.random, with arguments it ignores (undici's random(max)): a number in [0, 1) (#1331)",
     "export function f(a, b) { const r = Math.random(a); const q = Math.random(); return [typeof r, r >= 0 && r < 1, q >= 0 && q < 1, r !== q || r === q]; }",
     2,
