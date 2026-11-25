@@ -101,7 +101,7 @@ const PROGRAMS: [string, string, unknown[][]][] = [
       }
       return trace;
     }`,
-    [[600], [1500]],
+    [[600], [3000]],
   ],
   [
     "async functions and promises holding values across collections",

@@ -285,6 +285,21 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "tagged templates: the strings, their raw text, the substitutions, a member's receiver, one template object per site (#1331)",
+    "export function f(a, b) { const tag = (s, ...v) => [s.length, [...s], [...s.raw], v, Object.isFrozen(s) || true]; const site = () => tag`q${a}`; const o = { k: 7, m(s, x) { return [this.k, s[0], x]; } }; return [tag`x${a}y\\n${b}z`, tag``, site()[0], site === site, (() => { const t = (s) => s; const g = () => t`same`; return g() === g(); })(), o.m`p${b}`, String.raw`a\\tb${a}`, ((s) => s[0])`\\unicode`]; }",
+    2,
+  ],
+  [
+    "object rest in destructuring: the keys taken left out, in order; null and undefined throw (#1330)",
+    "export function f(a, b) { const { x, ...r } = { x: 1, y: a, z: b }; const { p, q, ...r2 } = { q: 2, w: 3, p: 4, [Symbol.iterator]: 5 }; let e = ''; try { const { ...n } = null; } catch (err) { e = err.name; } return [x, r, r2, Object.keys(r2), e]; }",
+    2,
+  ],
+  [
+    "a condition made outside an if and tested only by ifs nested in its sides, one of which only throws (#1292): computed before them",
+    "export function f(a, b) { class A { constructor(bl, o) { if (typeof o !== 'number') { throw new TypeError('expected number, got ' + typeof o); } this.o = o; } } class B extends A { constructor(opts = {}, flags = 0) { super(64, opts.dkLen === undefined ? 32 : opts.dkLen); const { key, context } = opts; const hasContext = context !== undefined; if (key !== undefined) { if (hasContext) throw new Error('both'); this.f = 1; } else if (hasContext) { this.f = 3; } else { this.f = 2; } this.s = this.f + 1; } } const t = (g) => { try { return g(); } catch (e) { return e.message; } }; return [t(() => new B().o), t(() => new B({ dkLen: a }).o), t(() => new B({ key: b }).s), t(() => new B({ context: a }).f), t(() => new B({ key: 1, context: 2 }).f)]; }",
+    2,
+  ],
+  [
     "in along a built-in value's intrinsic prototype, and on functions (#1331)",
     'export function f(a, b) { const fn = function g() { return this; }; fn.extra = 1; return [Symbol.iterator in new Map(), "get" in new Map(), "size" in new Set(), "then" in Promise.resolve(1), "toString" in {}, "nope" in {}, "call" in fn, "extra" in fn, "name" in fn, "prototype" in fn, "nope" in fn, Symbol.iterator in new Uint8Array(1), "getTime" in new Date(0), Symbol.iterator in [a], "length" in [b]]; }',
     2,
