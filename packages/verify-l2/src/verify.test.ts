@@ -161,12 +161,13 @@ describe("unsupported, never approximated", () => {
     }
   });
 
-  it("refuses bitwise operations until ToInt32 is encoded", async () => {
+  it("refuses ** (pow is implementation-approximated)", async () => {
     const r = await verifyL2(
-      "function f(x: number): number { return x | 0; }",
+      "function f(x: number): number { return x ** 2; }",
       contract([num("x")], ["result === result"]),
     );
-    expect(r.obligations[0]?.reason).toMatch(/ToInt32/);
+    expect(r.obligations[0]?.outcome).toBe("unsupported");
+    expect(r.obligations[0]?.reason).toMatch(/\*\*/);
   });
 
   it("refuses types it has no sort for", async () => {

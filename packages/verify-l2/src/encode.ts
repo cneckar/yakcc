@@ -100,21 +100,46 @@ const RELATIONAL: Readonly<Record<string, string>> = {
   ">=": "fp.geq",
 };
 
-const BITWISE = new Set([
-  "&",
-  "|",
-  "^",
-  "~",
-  "<<",
-  ">>",
-  ">>>",
-  "&=",
-  "|=",
-  "^=",
-  "<<=",
-  ">>=",
-  ">>>=",
-]);
+/**
+ * ECMAScript's ToInt32, as an SMT-LIB2 function from binary64 to a 32-bit vector (#1421 slice 2).
+ *
+ * NaN and the infinities give 0. Otherwise the value is truncated, and its integer taken modulo
+ * 2^32. A binary64 of magnitude 2^84 or more is a multiple of 2^32 (its unit in the last place is at
+ * least 2^32), so it gives 0. Below 2^84 the truncated magnitude converts to an 84-bit unsigned
+ * vector exactly, whose low 32 bits, negated for a negative value, are the result. No integer
+ * theory and no int2bv: everything stays in floating point and bit vectors.
+ */
+export const PRELUDE: readonly string[] = [
+  "(define-fun yk_toInt32 ((x (_ FloatingPoint 11 53))) (_ BitVec 32)",
+  "  (let ((t (fp.roundToIntegral RTZ x)))",
+  `    (ite (or (fp.isNaN x) (fp.isInfinite x) (fp.geq (fp.abs t) ${f64LiteralSmt(2 ** 84)})) #x00000000`,
+  "      (let ((m ((_ extract 31 0) ((_ fp.to_ubv 84) RTZ (fp.abs t)))))",
+  "        (ite (fp.isNegative t) (bvneg m) m)))))",
+];
+
+function f64LiteralSmt(x: number): string {
+  return `((_ to_fp 11 53) #x${f64Bits(x)})`;
+}
+
+/** The binary bitwise operations: the bit-vector operation, whether the result is unsigned. */
+const BITWISE: Readonly<Record<string, readonly [string, "int32" | "uint32", boolean]>> = {
+  "&": ["bvand", "int32", false],
+  "|": ["bvor", "int32", false],
+  "^": ["bvxor", "int32", false],
+  "<<": ["bvshl", "int32", true],
+  ">>": ["bvashr", "int32", true],
+  ">>>": ["bvlshr", "uint32", true],
+};
+
+/** A 32-bit vector as the binary64 it denotes: exact, as every 32-bit integer is a binary64. */
+function fromInt32(bv: string, kind: "int32" | "uint32"): Term {
+  const conv = kind === "int32" ? "(_ to_fp 11 53)" : "(_ to_fp_unsigned 11 53)";
+  return { sort: "F64", smt: `(${conv} RNE ${bv})` };
+}
+
+function toInt32(t: Term): string {
+  return `(yk_toInt32 ${toNumber(t).smt})`;
+}
 
 /** The platform constants that are numbers. */
 const PLATFORM_NUMBERS: Readonly<Record<string, number>> = {
@@ -241,6 +266,13 @@ function operation(label: string, args: readonly Term[]): Term {
     if (arith !== undefined) {
       return { sort: "F64", smt: `(${arith} ${toNumber(a).smt} ${toNumber(b).smt})` };
     }
+    const bitwise = BITWISE[label.endsWith("=") ? label.slice(0, -1) : label];
+    if (bitwise !== undefined) {
+      const [op, kind, shift] = bitwise;
+      // A shift count is ToUint32 of the right operand, masked to its low five bits.
+      const right = shift ? `(bvand ${toInt32(b)} #x0000001f)` : toInt32(b);
+      return fromInt32(`(${op} ${toInt32(a)} ${right})`, kind);
+    }
     const rel = RELATIONAL[label];
     if (rel !== undefined) {
       return { sort: "Bool", smt: `(${rel} ${toNumber(a).smt} ${toNumber(b).smt})` };
@@ -287,10 +319,9 @@ function operation(label: string, args: readonly Term[]): Term {
         return toNumber(a);
       case "!":
         return { sort: "Bool", smt: `(not ${truthy(a).smt})` };
+      case "~":
+        return fromInt32(`(bvnot ${toInt32(a)})`, "int32");
     }
-  }
-  if (BITWISE.has(label)) {
-    throw new Unsupported(label, `the bitwise operation ${label} (ToInt32 is #1421 slice 2)`);
   }
   throw new Unsupported(label, `the operation ${label} on ${args.length} operand(s)`);
 }

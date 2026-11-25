@@ -21,6 +21,7 @@ import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { type DucGraph, emitTypeScript, liftAtom } from "@yakcc/duc";
 import {
+  PRELUDE,
   type Sort,
   type Term,
   Unsupported,
@@ -32,7 +33,7 @@ import {
 import { type SolverAnswer, check, solverVersion } from "./solver.js";
 
 /** The encoder's version: part of every record, since a query's meaning depends on it. */
-export const ENCODER_VERSION = "verify-l2/1";
+export const ENCODER_VERSION = "verify-l2/2";
 
 /** The part of a contract L2 reads: the typed signature and the conditions. */
 export interface L2Contract {
@@ -174,6 +175,7 @@ export async function verifyL2(
     "(set-option :produce-models true)",
     `(set-option :timeout ${budgets.timeoutMs})`,
     `(set-option :rlimit ${budgets.rlimit})`,
+    ...PRELUDE,
     ...declarations,
     ...impl.defs,
     resultDef,

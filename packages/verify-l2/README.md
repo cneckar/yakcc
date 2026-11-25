@@ -49,17 +49,18 @@ const report = await verifyL2(
 - **Every query is a deterministic SMT-LIB2 text,** recorded with its BLAKE3 hash, the encoder
   version, the solver version and the budgets, so anyone can rerun it.
 
-## The fragment (slice 1)
+## The fragment (slices 1 and 2)
 
 | Supported | |
 |---|---|
 | Types | `number` (binary64) and `boolean` |
 | Operations | `+ - * /` (also as compound assignments), unary `-`, `+` and `!`; `< > <= >=`; `=== !== == !=`; `&& \|\| ??`; `?:` and `if`/`return` (selects) |
+| Bitwise (slice 2) | `& \| ^ ~ << >> >>>` and their compound assignments, through an exact ToInt32 (`yk_toInt32` in the query prelude), checked against ECMAScript at edge values |
 | Constants | number and boolean literals, `NaN`, `Infinity` |
 
 **Unsupported** (with the construct named in the reason):
 - `%`: ECMAScript's is fmod, and SMT's `fp.rem` is the IEEE remainder;
-- the bitwise operations (slice 2);
+- `**` (pow is implementation-approximated in ECMAScript);
 - loops (slice 3);
 - calls (slice 4);
 - throws and every other effect, anywhere in the graph (slice 5);

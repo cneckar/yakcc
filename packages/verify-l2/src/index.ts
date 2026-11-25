@@ -13,6 +13,6 @@ export type {
 } from "./verify.js";
 export { ENCODER_VERSION, verifyL2 } from "./verify.js";
 export type { EncodedGraph, Sort, Term } from "./encode.js";
-export { Unsupported, encodeGraph, f64Bits, f64FromBits, f64Literal } from "./encode.js";
+export { PRELUDE, Unsupported, encodeGraph, f64Bits, f64FromBits, f64Literal } from "./encode.js";
 export type { SolverAnswer } from "./solver.js";
 export { check, shutdownSolver, solverVersion } from "./solver.js";
