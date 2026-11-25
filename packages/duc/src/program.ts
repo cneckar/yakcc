@@ -512,6 +512,24 @@ function getLinkedBinding(name) {
   throw new Error("No such binding: " + name);
 }
 table.get("internal/bootstrap/realm")(process, getLinkedBinding, getInternalBinding, primordials);
+// console, as Node's prints: each line formatted by internal/util/inspect's formatWithOptions.
+let inspectModule;
+const formatLine = (args) =>
+  (inspectModule ??= loaders.requireBuiltin("internal/util/inspect")).formatWithOptions({}, ...args) + "\\n";
+const toStdout = (...args) => process.stdout.write(formatLine(args));
+const toStderr = (...args) => process.stderr.write(formatLine(args));
+__yakccDefineGlobal("console", {
+  log: toStdout,
+  info: toStdout,
+  debug: toStdout,
+  error: toStderr,
+  warn: toStderr,
+  trace: toStderr,
+  dir: (value, options) => {
+    inspectModule ??= loaders.requireBuiltin("internal/util/inspect");
+    process.stdout.write(inspectModule.inspect(value, { customInspect: false, ...options }) + "\\n");
+  },
+});
 loaders.requireBuiltin(${JSON.stringify(main)});
 `;
 }
