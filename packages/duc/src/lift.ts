@@ -291,6 +291,11 @@ function normalizeJumps(
     }),
 ): SourceFile {
   let sf = file;
+  for (let round = 0; round < 64; round++) {
+    const text = dropUnreachable(sf);
+    if (text === undefined) break;
+    sf = reparse(text);
+  }
   const braced = braceLoopBodies(sf);
   if (braced !== undefined) sf = reparse(braced);
   for (let round = 0; round < 64; round++) {
@@ -434,6 +439,67 @@ function labelled(l: import("ts-morph").LabeledStatement): Node {
   let st: Node = l.getStatement();
   while (Node.isLabeledStatement(st)) st = st.getStatement();
   return st;
+}
+
+/**
+ * The statements after a `return`, `throw`, `break` or `continue` in the same list, which never run,
+ * dropped (#1292): what the graph holds, and so what the emitter writes back. Left in, a write there
+ * (`throw e; n--;`) makes `n` a binding the atom writes, which the emitted source does not. A function
+ * declaration there is hoisted and stays; a `var` keeps its binding without its initializer. A list
+ * whose dead statements declare a `let`, `const` or `class` (a binding of the block's, though never
+ * initialized) is left as it is. Undefined when nothing is dropped.
+ */
+function dropUnreachable(sf: SourceFile): string | undefined {
+  const jump = (st: Node): boolean =>
+    Node.isReturnStatement(st) ||
+    Node.isThrowStatement(st) ||
+    Node.isBreakStatement(st) ||
+    Node.isContinueStatement(st);
+  const edits: { start: number; end: number; text: string }[] = [];
+  const lists = [sf, ...sf.getDescendants()].filter(
+    (n) =>
+      Node.isSourceFile(n) || Node.isBlock(n) || Node.isCaseClause(n) || Node.isDefaultClause(n),
+  ) as (SourceFile | import("ts-morph").Block | import("ts-morph").CaseClause)[];
+  for (const list of lists) {
+    const statements = list.getStatements();
+    const at = statements.findIndex(jump);
+    if (at === -1 || at === statements.length - 1) continue;
+    const dead = statements.slice(at + 1);
+    const binds = dead.some(
+      (st) =>
+        Node.isClassDeclaration(st) ||
+        (Node.isVariableStatement(st) && st.getDeclarationKind() !== VariableDeclarationKind.Var),
+    );
+    if (binds) continue;
+    const kept = dead.flatMap((st) => {
+      if (Node.isFunctionDeclaration(st)) return [st.getText()];
+      if (Node.isVariableStatement(st))
+        return [
+          `var ${st
+            .getDeclarations()
+            .flatMap((d) => patternNames(d.getNameNode()))
+            .join(", ")};`,
+        ];
+      return [];
+    });
+    edits.push({
+      start: dead[0]?.getStart() ?? 0,
+      end: dead[dead.length - 1]?.getEnd() ?? 0,
+      text: kept.join(" "),
+    });
+  }
+  if (edits.length === 0) return undefined;
+  // Outermost first: a nested list's edit inside a dropped range goes with it.
+  edits.sort((a, b) => a.start - b.start || b.end - a.end);
+  const outer: typeof edits = [];
+  for (const e of edits) {
+    const last = outer[outer.length - 1];
+    if (last !== undefined && e.start < last.end) continue;
+    outer.push(e);
+  }
+  let text = sf.getFullText();
+  for (const e of outer.reverse()) text = text.slice(0, e.start) + e.text + text.slice(e.end);
+  return text;
 }
 
 /**

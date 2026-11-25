@@ -1615,3 +1615,25 @@ export function pick(): number {
     expect(tree.leafCount).toBeGreaterThan(0);
   });
 });
+
+describe("decompose — a class's static block descends into its statements (#1368)", () => {
+  /**
+   * ts-morph's classes set their decorators up in `static { .. }` blocks too large to be one atom, and
+   * the whole module failed to decompose.
+   */
+  it("a static block with more than one branch decomposes (was DidNotReachAtomError)", async () => {
+    const src = `
+declare const memoize: unknown;
+export class Node {
+  static {
+    const meta = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
+    if (meta) Object.defineProperty(this, "a", { value: [memoize] });
+    if (meta) Object.defineProperty(this, "b", { value: [memoize] });
+    for (const k of ["c", "d"]) if (meta) Object.defineProperty(this, k, { value: meta });
+  }
+}
+`.trim();
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.leafCount).toBeGreaterThan(1);
+  });
+});

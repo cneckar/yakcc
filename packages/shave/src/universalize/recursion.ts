@@ -803,7 +803,8 @@ function unwrapCalleeToDecomposable(callee: Node): Node | undefined {
  * - SourceFile → its top-level statements.
  * - Block → its statements.
  * - FunctionDeclaration / FunctionExpression / ArrowFunction /
- *   MethodDeclaration / Constructor / GetAccessor / SetAccessor →
+ *   MethodDeclaration / Constructor / GetAccessor / SetAccessor /
+ *   ClassStaticBlockDeclaration →
  *   if the body is a Block, its statements; else [] (expression body).
  * - IfStatement → [thenStatement, elseStatement?].
  * - ForStatement / WhileStatement / DoStatement → [statement (body)],
@@ -837,7 +838,9 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
     kind === SyntaxKind.MethodDeclaration ||
     kind === SyntaxKind.Constructor ||
     kind === SyntaxKind.GetAccessor ||
-    kind === SyntaxKind.SetAccessor
+    kind === SyntaxKind.SetAccessor ||
+    // A class's static block runs once, with the class as `this`: its statements, as a method's (#1368).
+    kind === SyntaxKind.ClassStaticBlockDeclaration
   ) {
     const fnNode = node as Node & { getBody?(): Node | undefined };
     const body = fnNode.getBody?.();
