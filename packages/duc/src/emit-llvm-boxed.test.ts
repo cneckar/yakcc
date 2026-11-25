@@ -350,6 +350,11 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "join: its length at the start, each element's ToString in order (one that grows the array), holes, null; JSON strings with and without escapes (#1369)",
+    "export function f(a, b) { const t = (g) => { try { return g(); } catch (e) { return e.name; } }; const arr = [1, null, , undefined, 'x', [2, [3, 4]], { toString() { arr.push('late'); return 'O'; } }, -0, 1e21, b]; const j1 = arr.join(); const j2 = arr.join(' | '); const big = Array.from({ length: 50000 }, (_, i) => i % 7).join(''); return [j1, j2, arr.length, [].join(), [a].join('-'), [null].join(), big.length, big.slice(0, 9), JSON.parse('\"plain text\"'), JSON.parse('[\"a\\\\b\", \"\\\\u00e9\\\\n\", \"\"]'), JSON.parse('{\"k\": \"v\", \"\": 1}'), t(() => JSON.parse('\"tab\\there\"')), t(() => JSON.parse('\"open'))]; }",
+    2,
+  ],
+  [
     "Math.random, with arguments it ignores (undici's random(max)): a number in [0, 1) (#1331)",
     "export function f(a, b) { const r = Math.random(a); const q = Math.random(); return [typeof r, r >= 0 && r < 1, q >= 0 && q < 1, r !== q || r === q]; }",
     2,

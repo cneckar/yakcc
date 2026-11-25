@@ -822,12 +822,33 @@ static yk number_to_radix(double value, int radix) {
 }
 
 static yk array_join(yk_array *a, yk_string *sep) {
-  yk s = ascii("");
-  for (uint32_t i = 0; i < a->len; i++) {
-    if (i > 0) s = concat(str(s), sep);
-    if (!is_nullish(a->items[i])) s = concat(str(s), str(to_string(a->items[i])));
+  /* Its length when the join starts; each element's ToString in order (undefined and null: ""),
+     then one string of them (each kept in a block the collector sees). */
+  uint32_t len = a->len;
+  if (len == 0) return ascii("");
+  if (len == 1) return a->len > 0 && !is_nullish(a->items[0]) ? to_string(a->items[0]) : ascii("");
+  yk *parts = alloc((size_t)len * sizeof(yk));
+  uint64_t total = (uint64_t)sep->len * (len - 1);
+  for (uint32_t i = 0; i < len; i++) {
+    yk v = i < a->len ? a->items[i] : YK_UNDEFINED;
+    parts[i] = is_nullish(v) ? 0 : to_string(v);
+    if (parts[i] != 0) total += str(parts[i])->len;
   }
-  return s;
+  if (total > 536870888) range_error("Invalid string length");
+  yk_string *r = new_string((uint32_t)total);
+  uint64_t at = 0;
+  for (uint32_t i = 0; i < len; i++) {
+    if (i > 0) {
+      memcpy(r->units + at, sep->units, (size_t)sep->len * 2);
+      at += sep->len;
+    }
+    if (parts[i] != 0) {
+      yk_string *t = str(parts[i]);
+      memcpy(r->units + at, t->units, (size_t)t->len * 2);
+      at += t->len;
+    }
+  }
+  return string_of(r);
 }
 
 static yk to_primitive(yk v);
@@ -7386,6 +7407,17 @@ static int json_word(json_reader *r, const char *w) {
 }
 static yk json_string(json_reader *r) {
   r->i++; /* the opening quote */
+  /* With no escape before its closing quote: its units copied at once. */
+  for (uint32_t j = r->i; j < r->s->len; j++) {
+    uint16_t c = r->s->units[j];
+    if (c == '\\' || c < 0x20) break;
+    if (c == '"') {
+      yk_string *s = new_string(j - r->i);
+      memcpy(s->units, r->s->units + r->i, (size_t)(j - r->i) * 2);
+      r->i = j + 1;
+      return string_of(s);
+    }
+  }
   yk_array *units = new_array(8);
   for (;;) {
     if (r->i >= r->s->len) json_error(r);
