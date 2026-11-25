@@ -20,9 +20,9 @@ beforeAll(() => {
   process.env.YK_GC_STATS = "1";
 });
 afterAll(() => {
-  if (saved.stress === undefined) delete process.env.YK_GC_STRESS;
+  if (saved.stress === undefined) Reflect.deleteProperty(process.env, "YK_GC_STRESS");
   else process.env.YK_GC_STRESS = saved.stress;
-  if (saved.stats === undefined) delete process.env.YK_GC_STATS;
+  if (saved.stats === undefined) Reflect.deleteProperty(process.env, "YK_GC_STATS");
   else process.env.YK_GC_STATS = saved.stats;
   rmSync(work, { recursive: true, force: true });
 });
