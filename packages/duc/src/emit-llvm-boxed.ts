@@ -653,6 +653,8 @@ function lowerFunction(
   rawParams?: ReadonlySet<number>,
   /** A `.rec` variant's (#1369): its record result's values written to %recout, not made. */
   recOut?: boolean,
+  /** An `.int` clone's (#1369): number parameters its `.num` clone checked are integers in a range. */
+  paramRanges?: ReadonlyMap<ValueId, "i32" | "u32">,
 ): void {
   const rawList = [...(rawParams ?? [])].sort((a, b) => a - b);
   const rawHead =
@@ -803,7 +805,7 @@ function lowerFunction(
   // leaves, literals, and the operators' growth). Anything else stays boxed.
   const leafOf = (n: DucNode): string | undefined =>
     n.label === "CallExpression" ? leafValue.get(resolve(n.inputs[0] as ValueId)) : undefined;
-  const numRange = new Map<ValueId, "i32" | "u32">();
+  const numRange = new Map<ValueId, "i32" | "u32">(paramRanges ?? []);
   const bigWidth = new Map<ValueId, number>();
   /** A BigInt the graph fixes: a literal, or __ykNumToBig of an integer literal (raise-c's `32n`). */
   const literalBig = (v: ValueId): bigint | undefined => {
@@ -888,6 +890,18 @@ function lowerFunction(
       } else if (ins.length === 2 && lbl === ">>>") {
         // On anything but BigInts (which throw), ToUint32's.
         range = "u32";
+      } else if (ins.length === 2 && lbl === "%") {
+        // A uint32 modulo a positive integer literal: below both.
+        const k = producer.get(resolve(ins[1] as ValueId));
+        const kv =
+          k?.kind === "literal-source" ? Number((k.label ?? "").replace(/_/g, "")) : Number.NaN;
+        if (
+          numRange.get(resolve(ins[0] as ValueId)) === "u32" &&
+          Number.isInteger(kv) &&
+          kv > 0 &&
+          kv < 2 ** 32
+        )
+          range = "u32";
       } else if (ins.length === 2 && (lbl === "+" || lbl === "-" || lbl === "*")) {
         const wa = widthOf(ins[0] as ValueId);
         const wb = widthOf(ins[1] as ValueId);
@@ -3839,6 +3853,42 @@ function lowerFunction(
       const arith = FAST_ARITH[lbl];
       const compare = FAST_COMPARE[lbl];
       const bitwise = FAST_BITWISE[lbl];
+      const nonNegInt = (v: ValueId): boolean => {
+        if (numRange.get(resolve(v)) === "u32") return true;
+        const x = literalNumber(v);
+        return x !== undefined && Number.isInteger(x) && x >= 0 && x < 2 ** 32 && !Object.is(x, -0);
+      };
+      if (
+        lbl === "%" &&
+        nonNegInt(ins[0] as ValueId) &&
+        nonNegInt(ins[1] as ValueId) &&
+        allNumbers(ins as readonly ValueId[])
+      ) {
+        // Two non-negative integers below 2^32: an integer remainder (NaN by zero), not fmod. (Below
+        // 2^32, the signed conversions are exact and the cheaper ones.)
+        const x = fresh();
+        emit(`${x} = bitcast i64 ${a} to double`);
+        const y = fresh();
+        emit(`${y} = bitcast i64 ${b} to double`);
+        const xi = fresh();
+        emit(`${xi} = fptosi double ${x} to i64`);
+        const yi = fresh();
+        emit(`${yi} = fptosi double ${y} to i64`);
+        const zero = fresh();
+        emit(`${zero} = icmp eq i64 ${yi}, 0`);
+        const safe = fresh();
+        emit(`${safe} = select i1 ${zero}, i64 1, i64 ${yi}`);
+        const q = fresh();
+        emit(`${q} = urem i64 ${xi}, ${safe}`);
+        const d = fresh();
+        emit(`${d} = sitofp i64 ${q} to double`);
+        const bits = fresh();
+        emit(`${bits} = bitcast double ${d} to i64`);
+        const r = fresh();
+        emit(`${r} = select i1 ${zero}, i64 ${CANONICAL_NAN}, i64 ${bits}`);
+        set(out, r);
+        return;
+      }
       if (arith !== undefined) {
         set(
           out,
@@ -4429,6 +4479,21 @@ function lowerFunction(
       else if (callee !== undefined && isMath(callee.node.inputs[0] as ValueId))
         for (const v of n.inputs.slice(1)) numericUse.add(resolve(v as ValueId));
     }
+    // A loop's carry used numerically: its initial value is (a parameter the loop starts from).
+    for (let more = true; more; ) {
+      more = false;
+      for (const n of g.nodes) {
+        const rec = n.loop;
+        if (n.kind !== "loop" || rec === undefined) continue;
+        rec.carry.forEach((c, j) => {
+          const init = resolve(n.inputs[j] as ValueId);
+          if (numericUse.has(resolve(c)) && !numericUse.has(init)) {
+            numericUse.add(init);
+            more = true;
+          }
+        });
+      }
+    }
     const worth = numericWork;
     const speculated = params.filter(
       (p, i) =>
@@ -4484,6 +4549,80 @@ function lowerFunction(
       dispatchOnly = g.nodes.length <= SMALL_CLONE;
       finish();
       return;
+    }
+  }
+  // An integer range for a number clone's parameters (#1369): a parameter that a loop's carry starts
+  // from, when the carry's next value is in a range (kept by | 0 or >>> 0), is checked once here; in
+  // that range, the `.int` clone runs, where the carry needs no range check. Else this clone's body.
+  if (
+    closure !== undefined &&
+    numberParams !== undefined &&
+    numberParams.size > 0 &&
+    paramRanges === undefined &&
+    regList !== undefined
+  ) {
+    const ranged = new Map<ValueId, "i32" | "u32">();
+    const clash = new Set<ValueId>();
+    for (const n of g.nodes) {
+      const rec = n.loop;
+      if (n.kind !== "loop" || rec === undefined) continue;
+      rec.carry.forEach((c, j) => {
+        const init = resolve(n.inputs[j] as ValueId);
+        const r = numRange.get(resolve(rec.next[j] as ValueId));
+        if (r === undefined || numRange.has(resolve(c)) || !numberParams.has(init)) return;
+        if (ranged.has(init) && ranged.get(init) !== r) clash.add(init);
+        ranged.set(init, r);
+      });
+    }
+    for (const v of clash) ranged.delete(v);
+    const regOf = (v: ValueId): number | undefined => {
+      const i = params.findIndex((p) => p.outputs[0] === v);
+      const k = i - closure.captures;
+      return i >= 0 && regList.includes(k) ? k : undefined;
+    };
+    for (const v of [...ranged.keys()]) if (regOf(v) === undefined) ranged.delete(v);
+    if (ranged.size > 0) {
+      let ok = "true";
+      for (const [v, r] of ranged) {
+        const x = `%n${regOf(v)}`;
+        const d = fresh();
+        emit(`${d} = bitcast i64 ${x} to double`);
+        const lo = fresh();
+        emit(`${lo} = fcmp oge double ${d}, ${r === "u32" ? "0.0" : "-2147483648.0"}`);
+        const hi = fresh();
+        emit(`${hi} = fcmp olt double ${d}, ${r === "u32" ? "4294967296.0" : "2147483648.0"}`);
+        const inR = fresh();
+        emit(`${inR} = and i1 ${lo}, ${hi}`);
+        // An integer (fptosi is defined where the range holds: the select keeps it so), not -0.
+        const safe = fresh();
+        emit(`${safe} = select i1 ${inR}, double ${d}, double 0.0`);
+        const w = fresh();
+        emit(`${w} = fptosi double ${safe} to i64`);
+        const back = fresh();
+        emit(`${back} = sitofp i64 ${w} to double`);
+        const whole = fresh();
+        emit(`${whole} = fcmp oeq double ${back}, ${d}`);
+        const notNegZero = fresh();
+        emit(`${notNegZero} = icmp ne i64 ${x}, -9223372036854775808`);
+        const all = [inR, whole, notNegZero].reduce((acc, c) => {
+          const t = fresh();
+          emit(`${t} = and i1 ${acc}, ${c}`);
+          return t;
+        }, ok);
+        ok = all;
+      }
+      const intL = freshLabel("ints");
+      const bodyL = freshLabel("body");
+      emit(`br i1 ${ok}, label %${intL}, label %${bodyL}`);
+      block(intL);
+      const clone = `${name.replace(/"/g, "")}.int`;
+      lowerFunction(m, source, clone, closure, scope, numberParams, rawParams, recOut, ranged);
+      const r = fresh();
+      emit(
+        `${r} = tail call i64 @${clone}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead}${regList.map((k) => `, i64 %n${k}`).join("")})`,
+      );
+      emit(`ret i64 ${r}`);
+      block(bodyL);
     }
   }
   // Pointer parameters read or written at constant offsets (#1369): the span they reach is looked
