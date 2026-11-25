@@ -378,6 +378,12 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
         "export function f(n: number): unknown { const a = __ykAlloc(16, 8); __ykStore32(a, n); const d = __ykAlloc(16, 8); __ykStore32(d, n + 1); const x = readAt(a); const e = __ykAlloc(16, 8); const y = readAt(d) + readAt(a); __ykFree(a); const c = __ykAlloc(16, 8); __ykStore32(c, 7); try { return [x, y, e - d, readAt(a)]; } catch (err) { return [x, y, readAt(c), (err as Error).message]; } }",
       ],
       [
+        // Blocks whose address never escapes (a C front end's spilled locals): a bit cast through
+        // memory and stores of every width at constant offsets, as allocas (#1369).
+        "tLocal",
+        "export function f(x: number, k: number): unknown { const n = k | 0; const p = __ykAlloc(8, 8); const q = __ykAlloc(16, 8); __ykStoreF64(p, x); const bits = __ykLoad64(p); __ykStore64(p, (bits & 18446744069414584320n) | 5n); const y = __ykLoadF64(p); __ykStore32(q + 4, n); __ykStore8(q, n); __ykStore16(q + 2, n); __ykStoreF32(q + 8, x); const f32 = __ykLoadF32(q + 8); __ykStore64(q + 8, bits); const r = [y, __ykLoad32(q + 4), __ykLoad8(q), __ykLoad16(q + 2), f32, __ykLoad64(q + 8) === bits]; __ykFree(q); __ykFree(p); return r; }",
+      ],
+      [
         "tTrap",
         "export function f(n: number): unknown { const a = __ykAlloc(8, 8); __ykFree(a); try { return __ykLoad8(a + n); } catch (e) { return [(e as Error).name, (e as Error).message]; } }",
       ],
@@ -439,6 +445,10 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
       ["tFrame", [7, false]],
       ["tFrame", [-2.5, false]],
       ["tFrame", [3, true]],
+      ["tLocal", [1.5, 300]],
+      ["tLocal", [-0, -7]],
+      ["tLocal", [Number.NaN, 70000]],
+      ["tLocal", [-123456.789, 4294967295]],
     );
     const got = run(calls);
     const bad: string[] = [];

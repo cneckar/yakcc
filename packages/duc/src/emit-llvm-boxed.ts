@@ -1261,6 +1261,134 @@ function lowerFunction(
     if (f === undefined || f.len > 4096 || off < 0 || off + size > f.len) return undefined;
     return { bytes: f.bytes, hdr: f.hdr, base: f.base, off };
   };
+  // Blocks whose address never escapes (#1369): an __ykAlloc of a constant size whose value is
+  // only the address of inline loads and stores (at constant offsets inside it, a store's value a
+  // proven number), its __ykFree, or a loop's invariant. Such a block is an alloca: no region, no
+  // trap is possible (every access is inside it), and its free is nothing. A C front end spills an
+  // address-taken local (a bit cast through memory) this way.
+  const usersOf = new Map<ValueId, DucNode[]>();
+  for (const n of g.nodes)
+    for (const v of n.inputs) {
+      const r = resolve(v as ValueId);
+      const list = usersOf.get(r) ?? [];
+      list.push(n);
+      usersOf.set(r, list);
+    }
+  const leafOfCall = (n: DucNode): string | undefined =>
+    n.kind === "op" && n.label === "CallExpression"
+      ? leafValue.get(resolve(n.inputs[0] as ValueId))
+      : undefined;
+  const localBlocks = new Map<ValueId, { slot: string; size: number }>();
+  /**
+   * Whether some node reads a value, not only orders after it (a heap token's use). A comma reads
+   * only its last input, and only when its own value is read.
+   */
+  const valueRead = (v: ValueId, depth = 0): boolean =>
+    depth > 16 ||
+    (usersOf.get(v) ?? []).some((u) =>
+      u.inputs.some((x, i) => {
+        if (resolve(x as ValueId) !== v) return false;
+        if (
+          (u.order === 1 && i === u.inputs.length - 1) ||
+          (u.kind === "sel" && u.label === "heap") ||
+          (u.label ?? "").endsWith(":heap")
+        )
+          return false;
+        if (u.kind === "op" && u.label === ",")
+          return i === u.inputs.length - 1 && valueRead(u.outputs[0] as ValueId, depth + 1);
+        return true;
+      }),
+    ) ||
+    g.obs.some((o) => resolve(o) === v);
+  const localAccess = (v0: ValueId, size: number): { slot: string; off: number } | undefined => {
+    const v = resolve(v0);
+    const direct = localBlocks.get(v);
+    if (direct !== undefined)
+      return size <= direct.size ? { slot: direct.slot, off: 0 } : undefined;
+    const p = producer.get(v);
+    if (p?.kind !== "op" || p.label !== "+" || p.inputs.length !== 2) return undefined;
+    for (const [x, y] of [
+      [p.inputs[0], p.inputs[1]],
+      [p.inputs[1], p.inputs[0]],
+    ] as [ValueId, ValueId][]) {
+      const b = localBlocks.get(resolve(x));
+      const k = constantInt(y);
+      if (b !== undefined && k !== undefined && Number.isInteger(k) && k >= 0 && k + size <= b.size)
+        return { slot: b.slot, off: k };
+    }
+    return undefined;
+  };
+  {
+    // An address use: a load's or store's address operand (never a store's value), in bounds.
+    const addressUse = (u: DucNode, v: ValueId, blockSize: number, off: number): boolean => {
+      const leaf = leafOfCall(u) ?? "";
+      // 64-bit accesses: a load whose result is a typed BigInt, a store of any value.
+      if (leaf === "__ykLoad64" || leaf === "__ykStore64") {
+        if (resolve(u.inputs[1] as ValueId) !== v) return false;
+        if (leaf === "__ykStore64" && resolve(u.inputs[2] as ValueId) === v) return false;
+        if (leaf === "__ykLoad64" && !isTypedBig(u.outputs[0] as ValueId)) return false;
+        return off >= 0 && off + 8 <= blockSize;
+      }
+      const mem = MEM_INLINE[leaf];
+      if (mem === undefined) return false;
+      if (resolve(u.inputs[1] as ValueId) !== v) return false;
+      if (mem.store && resolve(u.inputs[2] as ValueId) === v) return false;
+      if (mem.store && !allNumbers([u.inputs[2] as ValueId])) return false;
+      return off >= 0 && off + mem.size <= blockSize;
+    };
+    // Each use of a value, by input position: a heap token (an ordered node's last input, a heap
+    // select or carry) orders and reads nothing.
+    const heapOnly = (u: DucNode, i: number): boolean =>
+      (u.order === 1 && i === u.inputs.length - 1) ||
+      (u.kind === "sel" && u.label === "heap") ||
+      (u.label ?? "").endsWith(":heap");
+    // As localAccess reads them: the block itself, or the block plus a constant (one step).
+    const blockUsesOk = (v: ValueId, size: number, off: number, depth = 0): boolean => {
+      if (depth > 1) return false;
+      return (usersOf.get(v) ?? []).every((u) =>
+        u.inputs.every((x, i) => {
+          if (resolve(x as ValueId) !== v || heapOnly(u, i)) return true;
+          const leaf = leafOfCall(u);
+          if (i === 1 && leaf !== undefined && addressUse(u, v, size, off)) return true;
+          if (i === 1 && leaf === "__ykFree" && off === 0) return true;
+          if (u.kind === "loop" && u.loop !== undefined) {
+            // Only as an invariant (its uses inside are the body's, checked as these are).
+            return i >= u.loop.carry.length + (u.loop.iterate !== undefined ? 1 : 0);
+          }
+          // (a, b): b is its value; a is computed and dropped.
+          if (u.kind === "op" && u.label === ",") return i < u.inputs.length - 1;
+          if (depth === 0 && u.kind === "op" && u.label === "+" && u.inputs.length === 2) {
+            const other = u.inputs[1 - i] as ValueId;
+            const k = constantInt(other);
+            if (k === undefined || !Number.isInteger(k) || resolve(other) === v) return false;
+            return blockUsesOk(u.outputs[0] as ValueId, size, off + k, depth + 1);
+          }
+          return false;
+        }),
+      );
+    };
+    for (const n of g.nodes) {
+      if (leafOfCall(n) !== "__ykAlloc") continue;
+      const size = literalNumber(n.inputs[1] as ValueId);
+      const align = literalNumber(n.inputs[2] as ValueId);
+      if (
+        size === undefined ||
+        align === undefined ||
+        !Number.isInteger(size) ||
+        size <= 0 ||
+        size > 4096
+      )
+        continue;
+      if (!Number.isInteger(align) || align < 1 || align > 16 || (align & (align - 1)) !== 0)
+        continue;
+      const v = n.outputs[0] as ValueId;
+      const ok = blockUsesOk(v, size, 0);
+      if (!ok) continue;
+      const slot = `%lb${localBlocks.size}`;
+      entryAllocas.push(`  ${slot} = alloca [${size} x i8], align 16`);
+      localBlocks.set(v, { slot, size });
+    }
+  }
   const memoryAccess = (
     mem: { size: number; ty: string; kind: "u" | "f64" | "f32"; store: boolean },
     args: readonly string[],
@@ -1681,6 +1809,18 @@ function lowerFunction(
         block(join);
         emit(`${r} = phi i128 [ ${w}, %${fastEnd} ], [ ${u}, %${slowEnd} ]`);
         return r;
+      }
+      if (leaf === "__ykLoad64") {
+        // From a block whose address never escapes: its bytes, unsigned.
+        const local = localAccess(ins[1] as ValueId, 8);
+        if (local !== undefined) {
+          const q = fresh();
+          emit(`${q} = getelementptr i8, ptr ${local.slot}, i64 ${local.off}`);
+          const v = fresh();
+          emit(`${v} = load i64, ptr ${q}, align 1`);
+          emit(`${r} = zext i64 ${v} to i128`);
+          return r;
+        }
       }
       // __ykU64/__ykI64 of a boxed value, __ykLoad64: the runtime's leaf, its result unboxed.
       const args = ins.slice(1).map(operand);
@@ -2245,6 +2385,18 @@ function lowerFunction(
       const [fn, arity] = LEAVES[leafName] as [string, number];
       if (ins.length - 1 !== arity)
         throw new LlvmEmitError(`the leaf ${fn} takes ${arity} arguments`);
+      if (leafName === "__ykAlloc" && localBlocks.has(out as ValueId)) {
+        // A block whose address never escapes: zeroed, as an allocation's bytes are.
+        const b = localBlocks.get(out as ValueId) as { slot: string; size: number };
+        m.intrinsics.add("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)");
+        emit(`call void @llvm.memset.p0.i64(ptr ${b.slot}, i8 0, i64 ${b.size}, i1 false)`);
+        set(out, boxedNumber(0));
+        return;
+      }
+      if (leafName === "__ykFree" && localBlocks.has(resolve(ins[1] as ValueId))) {
+        set(out, UNDEFINED);
+        return;
+      }
       if (leafName === "__ykAlloc") {
         // A frame's block: a constant integral size and power-of-two alignment, with no boxing.
         const size = literalNumber(ins[1] as ValueId);
@@ -2327,8 +2479,75 @@ function lowerFunction(
         set(out, r);
         return;
       }
+      if (leafName === "__ykStore64") {
+        const local64 = localAccess(ins[1] as ValueId, 8);
+        if (local64 !== undefined) {
+          // Into a block whose address never escapes: the value's low 64 bits.
+          const q = fresh();
+          emit(`${q} = getelementptr i8, ptr ${local64.slot}, i64 ${local64.off}`);
+          let bits: string;
+          if (isTypedBig(ins[2] as ValueId)) {
+            bits = fresh();
+            emit(`${bits} = trunc i128 ${bigOperand(ins[2] as ValueId)} to i64`);
+          } else {
+            m.intrinsics.add("declare i64 @yk_big_low64(i64)");
+            bits = fresh();
+            emit(`${bits} = call i64 @yk_big_low64(i64 ${operand(ins[2] as ValueId)})`);
+          }
+          emit(`store i64 ${bits}, ptr ${q}, align 1`);
+          // Its value (the stored BigInt), boxed only when something reads it rather than ordering
+          // after it.
+          set(out, valueRead(out as ValueId) ? operand(ins[2] as ValueId) : UNDEFINED);
+          return;
+        }
+      }
       const args = ins.slice(1).map(operand);
       const mem = MEM_INLINE[leafName];
+      const local = mem === undefined ? undefined : localAccess(ins[1] as ValueId, mem.size);
+      if (mem !== undefined && local !== undefined) {
+        // Inside a block whose address never escapes: the bytes themselves.
+        const q = fresh();
+        emit(`${q} = getelementptr i8, ptr ${local.slot}, i64 ${local.off}`);
+        if (mem.store) {
+          const xd = fresh();
+          emit(`${xd} = bitcast i64 ${args[1]} to double`);
+          if (mem.kind === "u") {
+            m.intrinsics.add("declare i32 @yk_double_to_uint32(double)");
+            const w = fresh();
+            emit(`${w} = call i32 @yk_double_to_uint32(double ${xd})`);
+            let t = w;
+            if (mem.ty !== "i32") {
+              t = fresh();
+              emit(`${t} = trunc i32 ${w} to ${mem.ty}`);
+            }
+            emit(`store ${mem.ty} ${t}, ptr ${q}, align 1`);
+          } else if (mem.kind === "f64") emit(`store double ${xd}, ptr ${q}, align 1`);
+          else {
+            const f = fresh();
+            emit(`${f} = fptrunc double ${xd} to float`);
+            emit(`store float ${f}, ptr ${q}, align 1`);
+          }
+          set(out, args[1] as string);
+        } else {
+          const v = fresh();
+          emit(`${v} = load ${mem.ty}, ptr ${q}, align 1`);
+          if (mem.kind === "u") {
+            const z = fresh();
+            emit(`${z} = zext ${mem.ty} ${v} to i64`);
+            const f = fresh();
+            emit(`${f} = uitofp i64 ${z} to double`);
+            const r = fresh();
+            emit(`${r} = bitcast double ${f} to i64`);
+            set(out, r);
+          } else if (mem.kind === "f64") set(out, boxDouble(v));
+          else {
+            const f = fresh();
+            emit(`${f} = fpext float ${v} to double`);
+            set(out, boxDouble(f));
+          }
+        }
+        return;
+      }
       if (mem !== undefined) {
         set(
           out,

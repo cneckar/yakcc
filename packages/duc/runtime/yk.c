@@ -7293,7 +7293,7 @@ uint64_t yk_frame_alloc(uint64_t size, uint64_t align) {
      zeroed inline. Anything else is c_alloc's. */
   uint64_t al = align > 16 ? align : 16;
   uint32_t len = size <= 16 ? 16 : (uint32_t)((size + 15) & ~(uint64_t)15);
-  if (len <= 64 && c_nregions < c_capregions && c_free_bytes[len / 16] != NULL) {
+  if (len <= 4096 && c_nregions < c_capregions && c_free_bytes[len / 16] != NULL) {
     uint64_t base = (c_next + al - 1) & ~(al - 1);
     uint8_t *p = c_free_bytes[len / 16];
     c_free_bytes[len / 16] = *(uint8_t **)p;
@@ -7302,7 +7302,8 @@ uint64_t yk_frame_alloc(uint64_t size, uint64_t align) {
     case 64: w[6] = 0; w[7] = 0; /* fall through */
     case 48: w[4] = 0; w[5] = 0; /* fall through */
     case 32: w[2] = 0; w[3] = 0; /* fall through */
-    default: w[0] = 0; w[1] = 0;
+    case 16: w[0] = 0; w[1] = 0; break;
+    default: memset(p, 0, len);
     }
     ((uint64_t *)p)[-2] = base;
     c_regions[c_nregions++] = (c_region){base, len, 0, 1, p};
@@ -7321,6 +7322,13 @@ uint64_t yk_frame_alloc(uint64_t size, uint64_t align) {
   uint64_t bits;
   memcpy(&bits, &a, 8);
   return bits;
+}
+/* ToUint32 of a number (a store into a block whose address never escapes: its low bytes). */
+uint32_t yk_double_to_uint32(double d) {
+  if (!(d == d) || isinf(d)) return 0;
+  if (d > -9.2e18 && d < 9.2e18) return (uint32_t)(int64_t)d;
+  double r = fmod(trunc(d), 4294967296.0);
+  return (uint32_t)(r < 0 ? r + 4294967296.0 : r);
 }
 /* __ykFree of a number (a frame's block, most often), with no boxing. */
 void yk_frame_free(uint64_t bits) {
@@ -7477,6 +7485,8 @@ yk yk_leaf_store32(yk a, yk x) {
   c_put(p, to_uint32(x), 4);
   return x;
 }
+/* A BigInt's low 64 bits (a store into a block whose address never escapes). */
+uint64_t yk_big_low64(yk x) { return big_low64(want_big(x)); }
 yk yk_leaf_store64(yk a, yk x) {
   uint8_t *p = c_at(a, 8, 1);
   c_put(p, big_low64(want_big(x)), 8);
