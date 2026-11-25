@@ -1588,7 +1588,7 @@ function raiseBody(
   unitStatic: UnitTypes["static"],
 ): string {
   // (C++: a range-based for is the for loop clang spells it as.)
-  const fn = lowerRangeFor(asWritten);
+  const fn = flattenEnteredSwitches(lowerRangeFor(asWritten));
   // Each direct call's place among the calls of functions of its name (see Callee.at).
   const callOrder = emissionOrder(fn);
   // The constants at namespace or file scope the function reads: each a const at its top.
@@ -5441,9 +5441,6 @@ export function shaveCUnit(
         return t;
       }
     }
-    // (A name in a class template's instance that is none of these is a class: not an
-    // enumeration of its bare name elsewhere.)
-    if (/>::/.test(name)) return undefined;
     // An enumeration (`enum e`, `ns::e`): its underlying type, fixed (`enum class e : uint8_t`,
     // and int for a scoped one) or chosen by the compiler (int, or unsigned int when no
     // enumerator is negative).
@@ -5453,6 +5450,29 @@ export function shaveCUnit(
         .split("::")
         .pop() ?? name;
     let found: ClangNode | undefined;
+    // A name in a class template's instance (`StringSearch<unsigned char>::SearchStrategy`): an
+    // enumeration the template declares, else a class (not an enumeration of its bare name
+    // elsewhere).
+    const inTemplate = /^(?:enum )?(.*?)<.*>::(\w+)$/.exec(name);
+    if (inTemplate !== null) {
+      const owner = (inTemplate[1] as string).split("::").pop() ?? "";
+      const inClass = (n: ClangNode, depth: number): void => {
+        if (found !== undefined || depth > 2) return;
+        if (n.kind === "EnumDecl" && n.name === bare) {
+          found = n;
+          return;
+        }
+        if (depth === 0 || n.kind === "CXXRecordDecl")
+          for (const k of n.inner ?? []) inClass(k, depth + 1);
+      };
+      const findOwner = (n: ClangNode): void => {
+        if (found !== undefined) return;
+        if (n.kind === "ClassTemplateDecl" && n.name === owner) inClass(n, 0);
+        else for (const k of n.inner ?? []) findOwner(k);
+      };
+      for (const n of dumpOf(owner)) findOwner(n);
+      if (found === undefined) return undefined;
+    }
     const find = (n: ClangNode): void => {
       if (found !== undefined) return;
       if (n.kind === "EnumDecl" && n.name === bare) {
@@ -5461,7 +5481,7 @@ export function shaveCUnit(
       }
       for (const k of n.inner ?? []) find(k);
     };
-    for (const n of dumpOf(bare)) find(n);
+    if (found === undefined) for (const n of dumpOf(bare)) find(n);
     if (found === undefined) return undefined;
     const fixed = (
       found as { fixedUnderlyingType?: { qualType?: string; desugaredQualType?: string } }
@@ -6199,6 +6219,122 @@ function staticDefinition(
   };
   put(initOf(decl), t, 0);
   return { size: sizeOf(t), align: alignOf(t), init };
+}
+
+let flattened = 0;
+/**
+ * A switch whose body's labels gotos from outside it name (llhttp's state machine: each case a
+ * labelled block, the blocks after the switch going back into them): the switch of its case
+ * values, each a goto to its statement (labelled, given a label where it has none), then its body's
+ * statements in order (so a fall-through is still one), and a label after them that a break of
+ * the switch goes to (and a value with no case). The block is then one region of labels the gotos
+ * dispatch over (see blockTargets). Other nodes are kept; a subtree with no such switch is the same
+ * object.
+ */
+function flattenEnteredSwitches(n: ClangNode): ClangNode {
+  const all = n.inner;
+  if (all === undefined) return n;
+  let changed = false;
+  let kids = all.map((k) => {
+    const l = flattenEnteredSwitches(k);
+    if (l !== k) changed = true;
+    return l;
+  });
+  if (n.kind === "CompoundStmt") {
+    const out: ClangNode[] = [];
+    kids.forEach((k, i) => {
+      const flat =
+        k.kind === "SwitchStmt"
+          ? flattenSwitch(k, [...kids.slice(0, i), ...kids.slice(i + 1)])
+          : undefined;
+      if (flat === undefined) out.push(k);
+      else {
+        out.push(...flat);
+        changed = true;
+      }
+    });
+    kids = out;
+  }
+  return changed ? ({ ...n, inner: kids } as ClangNode) : n;
+}
+
+function flattenSwitch(sw: ClangNode, siblings: readonly ClangNode[]): ClangNode[] | undefined {
+  const [c, body, ...rest] = sw.inner ?? [];
+  if (c === undefined || body?.kind !== "CompoundStmt" || rest.length > 0) return undefined;
+  const labels = new Set<string>();
+  const walkLabels = (x: ClangNode): void => {
+    if (x.kind === "LabelStmt") labels.add((x as { declId?: string }).declId ?? "");
+    for (const k of x.inner ?? []) walkLabels(k);
+  };
+  walkLabels(body);
+  const entered = (x: ClangNode): boolean =>
+    (x.kind === "GotoStmt" &&
+      labels.has((x as { targetLabelDeclId?: string }).targetLabelDeclId ?? "")) ||
+    (x.inner ?? []).some(entered);
+  if (!siblings.some(entered)) return undefined;
+  const id = flattened++;
+  const after = `yk-switch-after-${id}`;
+  const goto = (target: string): ClangNode =>
+    ({ kind: "GotoStmt", targetLabelDeclId: target }) as ClangNode;
+  // (A break of the switch, not of a loop or switch inside it: to the label after.)
+  const breaks = (x: ClangNode): ClangNode => {
+    if (x.kind === "BreakStmt") return goto(after);
+    if (["ForStmt", "WhileStmt", "DoStmt", "SwitchStmt"].includes(x.kind) || x.inner === undefined)
+      return x;
+    let changed = false;
+    const inner = x.inner.map((k) => {
+      const l = breaks(k);
+      if (l !== k) changed = true;
+      return l;
+    });
+    return changed ? ({ ...x, inner } as ClangNode) : x;
+  };
+  const cases: ClangNode[] = [];
+  const flat: ClangNode[] = [];
+  let hasDefault = false;
+  let named = 0;
+  for (const item of body.inner ?? []) {
+    const chain: ClangNode[] = [];
+    let sub: ClangNode = item;
+    while (sub.kind === "CaseStmt" || sub.kind === "DefaultStmt") {
+      if (sub.kind === "CaseStmt" && (sub.inner ?? []).length !== 2) return undefined;
+      chain.push(sub);
+      sub = (sub.inner ?? [])[sub.kind === "CaseStmt" ? 1 : 0] as ClangNode;
+    }
+    if (chain.length === 0) {
+      flat.push(breaks(item));
+      continue;
+    }
+    const labelled: ClangNode =
+      sub.kind === "LabelStmt"
+        ? breaks(sub)
+        : ({
+            kind: "LabelStmt",
+            name: `__case${id}_${named}`,
+            declId: `yk-switch-case-${id}-${named++}`,
+            inner: [breaks(sub)],
+          } as ClangNode);
+    const target = (labelled as { declId?: string }).declId ?? "";
+    for (const k of chain)
+      if (k.kind === "CaseStmt")
+        cases.push({ ...k, inner: [(k.inner ?? [])[0] as ClangNode, goto(target)] } as ClangNode);
+      else {
+        hasDefault = true;
+        cases.push({ ...k, inner: [goto(target)] } as ClangNode);
+      }
+    flat.push(labelled);
+  }
+  if (!hasDefault) cases.push({ kind: "DefaultStmt", inner: [goto(after)] } as ClangNode);
+  return [
+    { ...sw, inner: [c, { ...body, inner: cases }] } as ClangNode,
+    ...flat,
+    {
+      kind: "LabelStmt",
+      name: `__after${id}`,
+      declId: after,
+      inner: [{ kind: "NullStmt" }],
+    } as ClangNode,
+  ];
 }
 
 /**
