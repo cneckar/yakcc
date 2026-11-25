@@ -1186,6 +1186,8 @@ export interface CxxUnit {
     record: string,
     move: boolean,
   ) => { readonly id: string; readonly body: boolean } | undefined;
+  /** Whether a function of the unit has this name (a local of the name would hide it). */
+  readonly isFunctionName: (name: string) => boolean;
   /** Whether a class's copy and move constructors are trivial (a copy is its bytes). */
   readonly trivialCopy: (record: string) => boolean;
   /** A member's default initializer, by its class's name and its own. */
@@ -1659,7 +1661,9 @@ function raiseBody(
     const id = n.id ?? "";
     let nm = names.get(id);
     if (nm === undefined) {
-      const base = ident(n.name ?? "v");
+      // (C++: not a function's name, which a call in the same body would then name.)
+      let base = ident(n.name ?? "v");
+      if (unitCxx?.isFunctionName(n.name ?? "") === true) base = `${base}_v`;
       nm = [...names.values()].includes(base) ? `${base}_${names.size}` : base;
       names.set(id, nm);
     }
@@ -2621,7 +2625,9 @@ function raiseBody(
         ) {
           const xs = kids.slice(1);
           const r = temp({ k: "f64" });
-          const alloc = `(${r} = __ykAlloc(16, 16))`;
+          // (Into the return slot the caller gives, C++, or a fresh object.)
+          const into = ret.applies ? ret.slot()[0] : undefined;
+          const alloc = `(${r} = ${into ?? "__ykAlloc(16, 16)"})`;
           const at = (b: string, i: number): string => (i === 0 ? b : `(${b} + ${i})`);
           const lanes = Array.from({ length: 16 }, (_, i) => i);
           const operand = (x: ClangNode): string => {
@@ -4036,7 +4042,10 @@ function raiseBody(
         // `do { .. } while (false)`, as a macro writes a statement, is its body once.
         const lit = stripCasts(c);
         const once =
-          (lit.kind === "CXXBoolLiteralExpr" ||
+          // (C++'s `false`, not its `true`: `do { .. } while (true)` loops.)
+          ((lit.kind === "CXXBoolLiteralExpr" &&
+            lit.value !== "true" &&
+            (lit as { value?: unknown }).value !== true) ||
             (lit.kind === "IntegerLiteral" && Number(lit.value) === 0)) &&
           !hasJump(b);
         if (once) {
@@ -4142,7 +4151,7 @@ function raiseBody(
           const st = typeOf(s);
           if ((st.k === "rec" || st.k === "arr") && s.valueCategory === "lvalue") {
             const p = place(s);
-            push(`${p.k === "mem" ? p.addr : "undefined"};`);
+            push(`${p.k === "mem" ? p.addr : p.k === "reg" ? p.e : "undefined"};`);
             return;
           }
           push(`${expr(s)};`);
@@ -4962,6 +4971,8 @@ export function shaveCUnit(
             }
             return undefined;
           },
+          isFunctionName: (name) =>
+            (indexed.byName.get(name) ?? []).some((d) => FUNCTION_KINDS.has(d.kind)),
           trivialCopy: (record) => {
             const dd = (
               findRecord(record) as
