@@ -2305,6 +2305,38 @@ function raiseBody(
           const v = kids[2] as ClangNode;
           return `(${storeAt(expr(k0), pt.to, convert(expr(v), typeOf(v), pt.to))}, undefined)`;
         }
+        // The read-modify-writes, in one thread of the leaves' memory: read, compute, write.
+        const T = pt.to;
+        const a = temp({ k: "f64" });
+        const old = temp(T);
+        const at = `(${a} = ${expr(k0)})`;
+        const valOf = (x: ClangNode): string => convert(expr(x), typeOf(x), T);
+        const rmw =
+          /^__(?:atomic|c11_atomic)_(fetch_(add|sub|and|or|xor)|(add|sub|and|or|xor)_fetch)$/.exec(
+            op,
+          );
+        if (rmw !== null) {
+          if (!integral(T)) throw new RaiseCError(`${op} on a ${T.k}`);
+          const sym = { add: "+", sub: "-", and: "&", or: "|", xor: "^" }[
+            (rmw[2] ?? rmw[3]) as string
+          ] as string;
+          const nu = temp(T);
+          return `(${at}, (${old} = ${loadAt(a, T)}), (${nu} = ${arith(sym, old, valOf(kids[2] as ClangNode), T, T)}), ${storeAt(a, T, nu)}, ${rmw[2] !== undefined ? old : nu})`;
+        }
+        if (op === "__atomic_exchange_n" || op === "__c11_atomic_exchange")
+          return `(${at}, (${old} = ${loadAt(a, T)}), ${storeAt(a, T, valOf(kids[2] as ClangNode))}, ${old})`;
+        if (
+          op === "__atomic_compare_exchange_n" ||
+          op === "__c11_atomic_compare_exchange_strong" ||
+          op === "__c11_atomic_compare_exchange_weak"
+        ) {
+          // (Its operands: the object, the order, the expected value's address, the failure's
+          // order, the desired value.) Equal: the desired one stored, true; else the expected
+          // value updated to the object's, false.
+          const e2 = temp({ k: "f64" });
+          const eq = arith("==", old, loadAt(e2, T), T, T);
+          return `(${at}, (${e2} = ${expr(kids[2] as ClangNode)}), (${old} = ${loadAt(a, T)}), ${eq} ? (${storeAt(a, T, valOf(kids[4] as ClangNode))}, true) : (${storeAt(e2, T, old)}, false))`;
+        }
         throw new RaiseCError(`the atomic operation ${op}`);
       }
       case "IntegerLiteral":

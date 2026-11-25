@@ -37,3 +37,6 @@ the C/C++ front end to shave (#1367):
 - `deps/cares/` (c-ares 1.34.9, MIT, `deps/cares/LICENSE.md`): Node's DNS library, `include/`,
   `src/lib/` and `config/linux/`. The fixture `src/__fixtures__/c/node-cares.c` runs a DNS response
   through each reply parser Node's `dns.resolve*` uses and through the record layer.
+- `deps/histogram/` (HdrHistogram_c, public domain/BSD-2, `deps/histogram/LICENSE.txt`):
+  `perf_hooks.createHistogram`'s histogram. The fixture `src/__fixtures__/c/node-histogram.c` runs it
+  as Node's `src/histogram-inl.h` does.
