@@ -467,6 +467,11 @@ const runtime = {
     setTraceCategoryStateUpdateHandler: () => {},
     getEnabledCategories: () => "",
   },
+  // Ports between threads (#1361 later); DOMException is per_context/domexception's.
+  messaging: {
+    setDeserializerCreateObjectFunction: () => {},
+    DOMException: exportsOfContext.DOMException,
+  },
   // ES module linking: not yet (#1361 P2).
   module_wrap: { ModuleWrap: class ModuleWrap {}, kInstantiated: 2, kEvaluated: 4, kErrored: 5 },
   // Stack traces: the runtime keeps none yet; the callbacks are kept.

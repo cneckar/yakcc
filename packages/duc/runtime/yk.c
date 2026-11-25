@@ -2588,6 +2588,12 @@ static yk descriptor_of(yk v, yk key) {
   }
   yk keys[4] = {ascii("value"), ascii("writable"), ascii("enumerable"), ascii("configurable")};
   yk vals[4] = {yk_get(v, key), t, t, t};
+  /* The non-enumerable own properties the runtime makes: an array's length; a function's name and
+     length (read-only, configurable) and prototype (writable, not configurable). */
+  if (is_array(v) && key_is(key, "length")) vals[2] = YK_FALSE, vals[3] = YK_FALSE;
+  if (is_closure(v) && (key_is(key, "name") || key_is(key, "length")) && !own_slot(v, key, &slot))
+    vals[1] = YK_FALSE, vals[2] = YK_FALSE;
+  if (is_closure(v) && key_is(key, "prototype")) vals[2] = YK_FALSE, vals[3] = YK_FALSE;
   return yk_object_of(4, keys, vals);
 }
 static yk reflect_get_own_property_descriptor(void *c, yk s, uint64_t argc, const yk *argv) {
