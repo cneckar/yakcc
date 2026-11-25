@@ -1279,19 +1279,27 @@ function lowerFunction(
       ? leafValue.get(resolve(n.inputs[0] as ValueId))
       : undefined;
   const localBlocks = new Map<ValueId, { slot: string; size: number }>();
-  /** Whether some node reads a value, not only orders after it (a heap token's use). */
-  const valueRead = (v: ValueId): boolean =>
+  /**
+   * Whether some node reads a value, not only orders after it (a heap token's use). A comma reads
+   * only its last input, and only when its own value is read.
+   */
+  const valueRead = (v: ValueId, depth = 0): boolean =>
+    depth > 16 ||
     (usersOf.get(v) ?? []).some((u) =>
-      u.inputs.some(
-        (x, i) =>
-          resolve(x as ValueId) === v &&
-          !(
-            (u.order === 1 && i === u.inputs.length - 1) ||
-            (u.kind === "sel" && u.label === "heap") ||
-            (u.label ?? "").endsWith(":heap")
-          ),
-      ),
-    ) || g.obs.some((o) => resolve(o) === v);
+      u.inputs.some((x, i) => {
+        if (resolve(x as ValueId) !== v) return false;
+        if (
+          (u.order === 1 && i === u.inputs.length - 1) ||
+          (u.kind === "sel" && u.label === "heap") ||
+          (u.label ?? "").endsWith(":heap")
+        )
+          return false;
+        if (u.kind === "op" && u.label === ",")
+          return i === u.inputs.length - 1 && valueRead(u.outputs[0] as ValueId, depth + 1);
+        return true;
+      }),
+    ) ||
+    g.obs.some((o) => resolve(o) === v);
   const localAccess = (v0: ValueId, size: number): { slot: string; off: number } | undefined => {
     const v = resolve(v0);
     const direct = localBlocks.get(v);
