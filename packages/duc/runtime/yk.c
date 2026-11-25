@@ -4711,36 +4711,41 @@ static uint64_t c_alloc(double size, double align, int constant) {
   return base;
 }
 static c_region *c_region_of(double a, uint32_t n, int write) {
-  /* The last two regions found: a function alternating between two arrays hits one of them. */
-  uint32_t recent[2] = {c_last, c_prev};
-  for (int k = 0; k < 2; k++) {
-    if (recent[k] >= c_nregions) continue;
-    c_region *r = &c_regions[recent[k]];
-    if (a >= (double)r->base && a + n <= (double)(r->base + r->len) && r->live && trunc(a) == a &&
-        !(write && r->constant)) {
-      if (k == 1) {
-        c_prev = c_last;
-        c_last = recent[1];
+  /* An integral address below 2^53 is compared as an integer; anything else is no region's. */
+  if (a >= 0 && a < 9007199254740992.0) {
+    uint64_t u = (uint64_t)a;
+    if ((double)u == a) {
+      /* The last two regions found: a function alternating between two arrays hits one of them. */
+      uint32_t recent[2] = {c_last, c_prev};
+      for (int k = 0; k < 2; k++) {
+        if (recent[k] >= c_nregions) continue;
+        c_region *r = &c_regions[recent[k]];
+        if (u - r->base < r->len && u - r->base + n <= r->len && r->live && !(write && r->constant)) {
+          if (k == 1) {
+            c_prev = c_last;
+            c_last = recent[1];
+          }
+          c_cache(r);
+          return r;
+        }
       }
-      c_cache(r);
-      return r;
+      uint32_t lo = 0, hi = c_nregions;
+      while (lo < hi) {
+        uint32_t mid = (lo + hi) / 2;
+        c_region *r = &c_regions[mid];
+        if (u < r->base) hi = mid;
+        else if (u - r->base >= r->len) lo = mid + 1;
+        else {
+          if (!r->live || u - r->base + n > r->len || (write && r->constant)) break;
+          c_prev = c_last;
+          c_last = mid;
+          c_cache(r);
+          return r;
+        }
+      }
     }
   }
   if (!(a == a && !isinf(a) && trunc(a) == a)) c_trap(concat(str(ascii("address ")), str(number_to_string(a))));
-  uint32_t lo = 0, hi = c_nregions;
-  while (lo < hi) {
-    uint32_t mid = (lo + hi) / 2;
-    c_region *r = &c_regions[mid];
-    if (a < (double)r->base) hi = mid;
-    else if (a >= (double)(r->base + r->len)) lo = mid + 1;
-    else {
-      if (!r->live || a + n > (double)(r->base + r->len) || (write && r->constant)) break;
-      c_prev = c_last;
-      c_last = mid;
-      c_cache(r);
-      return r;
-    }
-  }
   char what[48];
   snprintf(what, sizeof what, "%s of %u at 0x", write ? "store" : "load", n);
   c_trap(concat(str(ascii(what)), str(hex_of(a))));
@@ -4755,7 +4760,9 @@ yk yk_leaf_alloc(yk size, yk align) { return yk_number((double)c_alloc(to_number
 yk yk_leaf_free(yk addr) {
   double a = to_number(addr);
   if (a == 0) return YK_UNDEFINED;
-  c_region *r = c_region_of(a, 1, 0);
+  /* Frames are freed last-in, first-out: the last region, most often. */
+  c_region *last = c_nregions > 0 ? &c_regions[c_nregions - 1] : NULL;
+  c_region *r = last != NULL && last->live && (double)last->base == a ? last : c_region_of(a, 1, 0);
   if ((double)r->base != a || r->constant) c_trap(concat(str(ascii("free of 0x")), str(hex_of(a))));
   r->live = 0;
   if (yk_mcache_bytes == r->bytes) yk_mcache_len = 0;

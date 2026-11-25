@@ -384,6 +384,8 @@ function lowerFunction(
   name: string,
   closure: { readonly captures: number } | undefined,
   scope?: ModuleScope,
+  /** The parameters (by value) this lowering may take as numbers: a speculated clone's (#1369). */
+  numberParams?: ReadonlySet<ValueId>,
 ): void {
   // An async function's or a generator's body is lowered as any function's: the runtime runs it as a
   // coroutine, which await and yield suspend (#1295). The closure carries the mode.
@@ -688,7 +690,7 @@ function lowerFunction(
       const out = new Set<ValueId>();
       const num = (v0: ValueId): boolean => {
         const v = resolve(v0);
-        if (assumed.has(v)) return true;
+        if (assumed.has(v) || numberParams?.has(v) === true) return true;
         if (out.has(v)) return true;
         const p = producer.get(v);
         if (p === undefined) return false;
@@ -726,7 +728,7 @@ function lowerFunction(
       const proven = compute();
       const holds = (v: ValueId): boolean => {
         const r = resolve(v);
-        if (assumed.has(r) || proven.has(r)) return true;
+        if (assumed.has(r) || proven.has(r) || numberParams?.has(r) === true) return true;
         const p = producer.get(r);
         return p?.kind === "literal-source" && isNumberLiteral(p);
       };
@@ -752,6 +754,7 @@ function lowerFunction(
         }
       }
       if (!removed) {
+        for (const v of numberParams ?? []) provenNumber.add(v);
         for (const v of proven) provenNumber.add(v);
         for (const v of assumed) provenNumber.add(v);
         break;
@@ -2417,6 +2420,83 @@ function lowerFunction(
       set(v, r);
     }
   });
+  // Parameter speculation (#1369): a function whose arguments feed numeric operations is also
+  // lowered taking them as numbers. Called with numbers, it runs that clone; with anything else,
+  // the lowering below, which checks each operation.
+  if (
+    numberParams === undefined &&
+    closure !== undefined &&
+    source.mode === undefined &&
+    scope?.outs === undefined &&
+    !g.nodes.some(
+      (n) =>
+        n.closure !== undefined ||
+        (n.kind === "loop" && n.loop?.iterate !== undefined) ||
+        (n.kind === "literal-source" && (n.label ?? "").startsWith("/")),
+    )
+  ) {
+    const NUMERIC = new Set([
+      "+",
+      "-",
+      "*",
+      "/",
+      "%",
+      "<",
+      ">",
+      "<=",
+      ">=",
+      "&",
+      "|",
+      "^",
+      "<<",
+      ">>",
+      ">>>",
+      "~",
+    ]);
+    const numericUse = new Set<ValueId>();
+    for (const n of g.nodes) {
+      if (n.kind !== "op") continue;
+      const leaf = leafOf(n);
+      const callee = n.label === "CallExpression" ? memberOf(n.inputs[0] as ValueId) : undefined;
+      if (NUMERIC.has(n.label ?? "") || (leaf !== undefined && MEM_INLINE[leaf] !== undefined))
+        for (const v of n.inputs) numericUse.add(resolve(v as ValueId));
+      else if (callee !== undefined && isMath(callee.node.inputs[0] as ValueId))
+        for (const v of n.inputs.slice(1)) numericUse.add(resolve(v as ValueId));
+    }
+    const speculated = params.filter(
+      (p, i) =>
+        i >= closure.captures &&
+        !(p.label ?? "").endsWith("...") &&
+        numericUse.has(p.outputs[0] as ValueId),
+    );
+    if (speculated.length > 0) {
+      const clone = m.closureName(`${name.replace(/"/g, "")}.num`);
+      lowerFunction(
+        m,
+        source,
+        clone,
+        closure,
+        scope,
+        new Set(speculated.map((p) => p.outputs[0] as ValueId)),
+      );
+      let ok = "true";
+      for (const p of speculated) {
+        const c = fresh();
+        emit(`${c} = icmp ult i64 ${operand(p.outputs[0] as ValueId)}, ${NUMBER_LIMIT}`);
+        const both = fresh();
+        emit(`${both} = and i1 ${ok}, ${c}`);
+        ok = both;
+      }
+      const spec = freshLabel("numbers");
+      const general = freshLabel("general");
+      emit(`br i1 ${ok}, label %${spec}, label %${general}`);
+      block(spec);
+      const r = fresh();
+      emit(`${r} = musttail call i64 @${clone}(ptr %closure, i64 %this, i64 %argc, ptr %argv)`);
+      emit(`ret i64 ${r}`);
+      block(general);
+    }
+  }
   emitScope(undefined);
   if (scope?.outs !== undefined) {
     // A statement: the values of the names it declares, from its one result.
