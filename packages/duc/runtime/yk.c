@@ -75,7 +75,9 @@ typedef struct {
   void *privates;    /* its private members (#1330): a yk_object no enumeration sees, or NULL */
   uint32_t *index;   /* with 8 keys or more: each key's position + 1, by its hash; NULL to rebuild */
   uint32_t index_cap;
-  uint32_t digit_keys; /* nonzero once a key starting with a digit was added (an index's may be one) */
+  uint32_t digit_keys; /* 1 once a key starting with a digit was added (an index's may be one); 2
+                          too once one was not an index below 128 */
+  uint64_t small_ints[2]; /* the indices below 128 a key was added for (a bit stays when deleted) */
 } yk_object;
 
 /* A BigInt: a sign and a magnitude, 32-bit limbs least significant first, no zero limb on top. */
@@ -1035,10 +1037,12 @@ yk yk_neg(yk a) {
 yk yk_pos(yk a) { return yk_number(to_number(a)); }
 yk yk_not(yk a) { return yk_bool(!yk_truthy(a)); }
 yk yk_inc(yk a) {
+  if (is_number(a)) return yk_number(num(a) + 1);
   a = to_primitive(a);
   return is_bigint(a) ? big_add_small(a, 1) : yk_number(to_number(a) + 1);
 }
 yk yk_dec(yk a) {
+  if (is_number(a)) return yk_number(num(a) - 1);
   a = to_primitive(a);
   return is_bigint(a) ? big_add_small(a, -1) : yk_number(to_number(a) - 1);
 }
@@ -1114,25 +1118,48 @@ yk yk_gt(yk a, yk b) { return yk_bool(less_than(b, a) == 1); }
 yk yk_le(yk a, yk b) { return yk_bool(less_than(b, a) == 0); }
 yk yk_ge(yk a, yk b) { return yk_bool(less_than(a, b) == 0); }
 
+static yk interned(const char *name, uint64_t n);
+/* typeof's result: one string per type, made once. */
 yk yk_typeof(yk v) {
-  if (is_number(v)) return ascii("number");
-  if (is_string(v)) return ascii("string");
-  if (is_bool(v)) return ascii("boolean");
-  if (v == YK_UNDEFINED) return ascii("undefined");
-  if (is_closure(v)) return ascii("function");
-  if (is_bigint(v)) return ascii("bigint");
-  if (is_symbol(v)) return ascii("symbol");
-  return ascii("object");
+  static yk made[8]; /* each made once (the collector sees this table) */
+#define YK_TYPE(k, s) (made[k] != 0 ? made[k] : (made[k] = interned(s, sizeof s - 1)))
+  if (is_number(v)) return YK_TYPE(0, "number");
+  if (is_string(v)) return YK_TYPE(1, "string");
+  if (is_bool(v)) return YK_TYPE(2, "boolean");
+  if (v == YK_UNDEFINED) return YK_TYPE(3, "undefined");
+  if (is_closure(v)) return YK_TYPE(4, "function");
+  if (is_bigint(v)) return YK_TYPE(5, "bigint");
+  if (is_symbol(v)) return YK_TYPE(6, "symbol");
+  return YK_TYPE(7, "object");
+#undef YK_TYPE
 }
 
 /* A template literal: its strings (n + 1) around its substitutions (n), each by ToString. */
 yk yk_template(uint64_t n, const yk *strings, const yk *subs) {
-  yk s = strings[0];
+  if (n == 0) return strings[0];
+  /* Each substitution's string (in order: a ToString may throw or run code), then one string of
+     them all. The strings are kept on this stack or in a block the collector sees. */
+  yk small[8];
+  yk *parts = n <= 8 ? small : alloc((size_t)n * sizeof(yk));
+  uint64_t total = str(strings[0])->len;
   for (uint64_t i = 0; i < n; i++) {
-    s = concat(str(s), str(to_string(subs[i])));
-    s = concat(str(s), str(strings[i + 1]));
+    parts[i] = to_string(subs[i]);
+    total += str(parts[i])->len + str(strings[i + 1])->len;
   }
-  return s;
+  if (total > 536870888) range_error("Invalid string length");
+  yk_string *r = new_string((uint32_t)total);
+  uint64_t at = 0;
+  for (uint64_t i = 0; i <= n; i++) {
+    yk_string *a = str(strings[i]);
+    memcpy(r->units + at, a->units, (size_t)a->len * 2);
+    at += a->len;
+    if (i < n) {
+      yk_string *b = str(parts[i]);
+      memcpy(r->units + at, b->units, (size_t)b->len * 2);
+      at += b->len;
+    }
+  }
+  return string_of(r);
 }
 
 /* --- properties --- */
@@ -1168,10 +1195,34 @@ static inline __attribute__((always_inline)) int key_is(yk key, const char *name
   return 1;
 }
 
-static int typed_fast_get(yk obj, uint32_t i, yk *out);
+static inline __attribute__((always_inline)) int typed_fast_get(yk obj, uint32_t i, yk *out);
 static __attribute__((noinline)) yk yk_get_slow(yk obj, yk key);
 static int64_t own_find_chars(yk_object *o, const char *p, uint32_t n);
 static yk resolve_slot(yk slot, yk receiver);
+/* A key added to an object: whether it starts with a digit (an index's may), and which index below 128
+   it is. */
+static void note_digit_key(yk_object *o, yk key) {
+  if (!is_string(key)) return;
+  yk_string *s = str(key);
+  if (s->len == 0 || s->units[0] < '0' || s->units[0] > '9') return;
+  uint32_t v = 0;
+  int index = s->len <= 3 && (s->len == 1 || s->units[0] != '0');
+  for (uint32_t i = 0; i < s->len && index; i++) {
+    if (s->units[i] < '0' || s->units[i] > '9') index = 0;
+    else v = v * 10 + (s->units[i] - '0');
+  }
+  if (index && v < 128) {
+    o->small_ints[v >> 6] |= (uint64_t)1 << (v & 63);
+    o->digit_keys |= 1;
+  } else
+    o->digit_keys |= 3;
+}
+/* Whether an object may have a key for index i (a key starting with a digit, and i's if below 128). */
+static int digit_key_maybe(const yk_object *o, uint64_t i) {
+  if (o->digit_keys == 0) return 0;
+  if (o->digit_keys & 2) return 1;
+  return i < 128 && ((o->small_ints[i >> 6] >> (i & 63)) & 1);
+}
 /* An index read of a plain object (a table by code point): by the index's digits along a chain of
    plain objects, no string made; a miss there is undefined (no built-in has such a name). 0 when
    the chain is not all plain objects. */
@@ -1187,7 +1238,7 @@ static int object_index_get(yk obj, uint32_t i, yk *out) {
   for (; v != 0 && is_object(v); v = ((yk_object *)PTR(v))->proto) {
     yk_object *c = (yk_object *)PTR(v);
     if (c->kind != 0) return 0;
-    if (!c->digit_keys) continue;
+    if (!digit_key_maybe(c, i)) continue;
     int64_t k = own_find_chars(c, t + at, (uint32_t)(sizeof t - at));
     if (k >= 0) return *out = resolve_slot(c->values[k], obj), 1;
   }
@@ -1336,7 +1387,7 @@ static __attribute__((noinline)) yk yk_get_slow(yk obj, yk key) {
         for (; v != 0 && is_object(v); v = ((yk_object *)PTR(v))->proto) {
           yk_object *c = (yk_object *)PTR(v);
           if (c->kind != 0) break;
-          if (!c->digit_keys) continue; /* no key of it can be an index's */
+          if (!digit_key_maybe(c, (uint64_t)d)) continue; /* no key of it can be this index's */
           int64_t at = own_find_chars(c, t + i, (uint32_t)(sizeof t - i));
           if (at >= 0) return resolve_slot(c->values[at], obj);
         }
@@ -1411,6 +1462,16 @@ static yk make_error(const char *name, yk message);
 _Noreturn void yk_throw(yk v);
 /* A method call by a key the lowered code keeps (its string, made once). */
 yk yk_call_method_k(yk recv, yk key, uint64_t argc, const yk *argv) { return call_method_key(recv, key, argc, argv); }
+/* s.charCodeAt(i) (#1369): a string's unit at a number index, at once; else the method call. */
+yk yk_char_code_at(yk recv, yk key, yk i) {
+  if (is_string(recv) && is_number(i)) {
+    double d = num(i);
+    d = d != d ? 0 : trunc(d);
+    yk_string *s = str(recv);
+    return d < 0 || d >= s->len ? yk_number(NAN) : yk_number(s->units[(int64_t)d]);
+  }
+  return call_method_key(recv, key, 1, &i);
+}
 yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk *argv) {
   return call_method_key(recv, interned(name, n), argc, argv);
 }
@@ -1838,8 +1899,7 @@ static void own_set(yk_object *o, yk key, yk value) {
   }
   o->keys[o->len] = key;
   o->values[o->len++] = value;
-  if (is_string(key) && str(key)->len > 0 && str(key)->units[0] >= '0' && str(key)->units[0] <= '9')
-    o->digit_keys = 1;
+  note_digit_key(o, key);
   /* The index takes the new key while it is at most a quarter full; else it is made again. */
   if (o->index != NULL) {
     if (o->len * 4 > o->index_cap) o->index = NULL;
@@ -2279,9 +2339,7 @@ yk yk_object_of_distinct(uint64_t n, const yk *keys, const yk *values) {
   memcpy(o->keys, keys, (size_t)n * sizeof(yk));
   memcpy(o->values, values, (size_t)n * sizeof(yk));
   o->len = (uint32_t)n;
-  for (uint64_t i = 0; i < n; i++)
-    if (is_string(keys[i]) && str(keys[i])->len > 0 && str(keys[i])->units[0] >= '0' && str(keys[i])->units[0] <= '9')
-      o->digit_keys = 1;
+  for (uint64_t i = 0; i < n; i++) note_digit_key(o, keys[i]);
   o->cap = cap;
   return BOX(T_OBJECT, o);
 }
@@ -6779,9 +6837,18 @@ static yk builtin_text_encoder(void *c, yk s, uint64_t argc, const yk *argv) {
 }
 
 /* A property of a buffer or a view: its element, or its own accessors' values; 0 if none. */
-static int typed_fast_get(yk obj, uint32_t i, yk *out) {
-  yk_view *t = typed_of(obj);
-  if (t == NULL || i >= t->length) return 0;
+static inline __attribute__((always_inline)) int typed_fast_get(yk obj, uint32_t i, yk *out) {
+  /* The caller knows obj is a typed array (an object of its kind). */
+  yk_view *t = (yk_view *)((yk_object *)PTR(obj))->ext;
+  if (i >= t->length) return 0;
+  /* The common element types at once; the others through ta_get. */
+  uint8_t *p = ((yk_buffer *)((yk_object *)PTR(t->buffer))->ext)->data + t->offset;
+  if (t->type == TA_U32) {
+    uint32_t x;
+    memcpy(&x, p + (size_t)i * 4, 4);
+    return *out = yk_number(x), 1;
+  }
+  if (t->type == TA_U8) return *out = yk_number(p[i]), 1;
   *out = ta_get(t, i);
   return 1;
 }

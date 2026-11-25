@@ -305,6 +305,21 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "++ and -- on numbers inline, else ToNumeric; charCodeAt on strings at once, else the method (#1369)",
+    "export function f(a, b) { let x = a; x++; let y = b; y--; let s = '7'; s++; let z = { valueOf() { return 4; } }; z++; let big = 9n; big--; let o = null; o++; let u; u--; const str = typeof a === 'string' ? a : 'h\u00e9\ud83d\ude00'; const box = { charCodeAt: (i) => 'own ' + i }; return [x, y, s, z, big, o, u, str.charCodeAt(0), str.charCodeAt(1.7), str.charCodeAt(-1), str.charCodeAt(99), str.charCodeAt('2'), str.charCodeAt(NaN), box.charCodeAt(3), [1, 2].charCodeAt === undefined]; }",
+    2,
+  ],
+  [
+    "integer reads of objects with digit keys: small indices, larger ones, non-index digit keys, deletes, the chain (#1369)",
+    "export function f(a, b) { const t = { 0: 'z', 5: 'five', 127: 'top', 34: 'q' }; const big = { 128: 'b', 7: 's' }; const odd = { '05': 'x', '1e3': 'y' }; const tail = Object.create({ 9: 'proto', 200: 'far' }); tail[3] = 'own'; const n = typeof a === 'number' ? a : 5; const d = { 2: 'two' }; delete d[2]; d.k = 1; return [t[0], t[n], t[127], t[128], t[34], t[33], big[128], big[7], big[8], odd[5], odd[1000], odd['05'], tail[3], tail[9], tail[200], tail[4], d[2], t[1.5], t[-1]]; }",
+    2,
+  ],
+  [
+    "templates: substitutions' ToString in order, more than eight, a Symbol's TypeError; typeof's strings (#1369)",
+    "export function f(a, b) { const log = []; const o = (k) => ({ toString() { log.push(k); return '<' + k + '>'; } }); const t = (g) => { try { return g(); } catch (e) { return e.name; } }; const many = `${1}${2}${3}${4}${5}${6}${7}${8}${9}${a}${b}`; const types = [a, b, 1n, null, undefined, () => 0, Symbol(), {}, true].map((x) => typeof x); return [`x${o(1)}y${o(2)}z`, log.join(), many, `${''}`, `a${a}`, t(() => `${Symbol('s')}`), types, typeof a === 'number', types[0] === typeof a]; }",
+    2,
+  ],
+  [
     "Math.random, with arguments it ignores (undici's random(max)): a number in [0, 1) (#1331)",
     "export function f(a, b) { const r = Math.random(a); const q = Math.random(); return [typeof r, r >= 0 && r < 1, q >= 0 && q < 1, r !== q || r === q]; }",
     2,

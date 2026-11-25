@@ -2671,7 +2671,23 @@ function lowerFunction(
       (lbl === "++" || lbl === "post++" || lbl === "--" || lbl === "post--") &&
       ins.length === 1
     ) {
-      set(out, call(lbl.endsWith("++") ? "yk_inc" : "yk_dec", `i64 ${operand(ins[0] as ValueId)}`));
+      // A number's: the double's sum, inline; anything else the runtime's (ToNumeric).
+      const a = operand(ins[0] as ValueId);
+      const inc = lbl.endsWith("++");
+      set(
+        out,
+        numberFast(
+          [a],
+          ([d]) => {
+            const r = fresh();
+            emit(`${r} = fadd double ${d}, ${inc ? "1.0" : "-1.0"}`);
+            return boxDouble(r);
+          },
+          () => call(inc ? "yk_inc" : "yk_dec", `i64 ${a}`),
+          undefined,
+          allNumbers([ins[0] as ValueId]),
+        ),
+      );
       return;
     }
     // a ?? b, and the conditional assignments: a ??= b, a ||= b, a &&= b.
@@ -3256,6 +3272,14 @@ function lowerFunction(
         // A method call: the receiver is the object the member is read from.
         const recv = operand(callee.node.inputs[0] as ValueId);
         const key = keyOf(callee.name);
+        if (callee.name === "charCodeAt" && args.length === 1) {
+          // A string's unit, without the method's lookup (#1369).
+          m.intrinsics.add("declare i64 @yk_char_code_at(i64, i64, i64)");
+          const r = fresh();
+          emit(`${r} = call i64 @yk_char_code_at(i64 ${recv}, i64 ${key}, i64 ${args[0]})`);
+          set(out, r);
+          return;
+        }
         m.intrinsics.add("declare i64 @yk_call_method_k(i64, i64, i64, ptr)");
         const r = fresh();
         emit(
