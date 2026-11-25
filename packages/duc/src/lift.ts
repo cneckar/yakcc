@@ -291,6 +291,8 @@ function normalizeJumps(
     }),
 ): SourceFile {
   let sf = file;
+  const braced = braceLoopBodies(sf);
+  if (braced !== undefined) sf = reparse(braced);
   for (let round = 0; round < 64; round++) {
     const text = nextJumpRewrite(sf, round);
     if (text === undefined) return sf;
@@ -322,6 +324,29 @@ function labelled(l: import("ts-morph").LabeledStatement): Node {
   let st: Node = l.getStatement();
   while (Node.isLabeledStatement(st)) st = st.getStatement();
   return st;
+}
+
+/**
+ * Every loop body that is one statement, written as a block (`for (..) return x;` is
+ * `for (..) { return x; }`): the same loop, whose body the jump rewrites and the lifter take as a
+ * block (#1368). Undefined when every body is one already.
+ */
+function braceLoopBodies(sf: SourceFile): string | undefined {
+  const bodies = sf
+    .getDescendants()
+    .filter(isLoopStatement)
+    .map((l) => (l as import("ts-morph").WhileStatement).getStatement())
+    .filter((b) => !Node.isBlock(b));
+  if (bodies.length === 0) return undefined;
+  const edits = bodies.flatMap((b) => [
+    { at: b.getStart(), text: "{ " },
+    { at: b.getEnd(), text: " }" },
+  ]);
+  // From the end, so earlier positions hold; at one position, a close before an open.
+  edits.sort((a, b) => b.at - a.at || (a.text === "{ " ? 1 : -1));
+  let text = sf.getFullText();
+  for (const e of edits) text = text.slice(0, e.at) + e.text + text.slice(e.at);
+  return text;
 }
 
 function nextJumpRewrite(sf: SourceFile, round: number): string | undefined {
@@ -4323,11 +4348,13 @@ function closureLocals(fn: Node): Set<string> {
  */
 function cellNames(scope: Node): Set<string> {
   // A try statement's blocks are closures once it is lowered (Lifter.lowerTry): they count as nested.
+  // So does a class's static block: a closure run with the class as its receiver (#1368).
   const nested = scope
     .getDescendants()
     .filter(
       (d) =>
         isFunctionLikeNode(d) ||
+        Node.isClassStaticBlockDeclaration(d) ||
         (Node.isBlock(d) && Node.isTryStatement(d.getParent())) ||
         Node.isCatchClause(d),
     );
@@ -4335,7 +4362,7 @@ function cellNames(scope: Node): Set<string> {
   const insideNested = (n: Node): boolean => {
     for (const a of n.getAncestors()) {
       if (a.compilerNode === scope.compilerNode) return false;
-      if (isFunctionLikeNode(a)) return true;
+      if (isFunctionLikeNode(a) || Node.isClassStaticBlockDeclaration(a)) return true;
     }
     return false;
   };
@@ -4371,7 +4398,7 @@ function cellNames(scope: Node): Set<string> {
   const out = new Set<string>();
   for (const fn of nested) {
     const locals = closureLocals(fn);
-    if (!isFunctionLikeNode(fn)) {
+    if (!isFunctionLikeNode(fn) && !Node.isClassStaticBlockDeclaration(fn)) {
       // A var in a try statement's block is the function's: the block's closure assigns it.
       for (const list of fn.getDescendantsOfKind(SyntaxKind.VariableDeclarationList)) {
         if (list.getDeclarationKind() !== "var" || isInsideNestedFunction(list, fn)) continue;
