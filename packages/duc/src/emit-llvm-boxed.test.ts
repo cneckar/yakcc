@@ -339,15 +339,16 @@ describe("what the boxed lowering refuses, for now (#1292)", () => {
     }
     return "lowered";
   };
-  it("free names, new, async generators, array holes, approximated Math", () => {
+  it("free names, new, array holes, approximated Math", () => {
     expect(refusal("export function f(x) { return helper(x); }")).toMatch(
       /"helper" is not in the native base set/,
     );
     expect(refusal("export function f(x) { return new Date(); }")).toMatch(
       /not in the native base set|not in the subset/,
     );
-    expect(refusal("export function f(x) { async function* g() { yield x; } return g; }")).toMatch(
-      /not in the subset/,
+    // Async generators lower (emit-llvm-async-gen.test.ts).
+    expect(refusal("export function f(x) { async function* g() { yield x; } return g; }")).toBe(
+      "lowered",
     );
     expect(refusal("export function f(x) { return [, x]; }")).toMatch(/an array with holes/);
     // Math.sin is a reference to V8's shaved atom (#1362): lane:native lowers the atom next.

@@ -553,6 +553,7 @@ static yk call_value(yk f, yk self, uint64_t argc, const yk *argv);
 static yk async_member(void *o, yk key);
 static yk async_call(void *c, yk self, uint64_t argc, const yk *argv);
 static yk generator_new(void *c, yk self, uint64_t argc, const yk *argv);
+static yk agen_new(void *c, yk self, uint64_t argc, const yk *argv);
 static int generator_step(yk gen, yk *out);
 static void type_error(const char *what);
 yk yk_object_of(uint64_t n, const yk *keys, const yk *values);
@@ -1048,7 +1049,7 @@ yk yk_get(yk obj, yk key) {
       if (buffer_get(obj, key, &got)) return got;
     }
     if ((o->kind == 1 || o->kind == 2) && key_is(key, "size")) return yk_number(o->entries->len);
-    if (o->kind == 4 || o->kind == 5) {
+    if (o->kind == 4 || o->kind == 5 || o->kind == 9) {
       yk m = async_member(o, key);
       if (m != 0) return m;
     }
@@ -1091,7 +1092,7 @@ yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk
   if (is_object(recv)) {
     yk_object *o = (yk_object *)PTR(recv);
     yk f;
-    if (o->kind == 4 || o->kind == 5) {
+    if (o->kind == 4 || o->kind == 5 || o->kind == 9) {
       yk m = async_member(o, key);
       if (m != 0) return call_value(m, recv, argc, argv);
     }
@@ -1845,7 +1846,11 @@ typedef struct {
   uint32_t i;
   yk_array *keys; /* for…in: the keys, taken when the loop starts */
   yk gen;         /* for…of over a generator: the generator, or 0 */
+  int32_t awaits; /* for await…of: each next() result (an async generator's) or element awaited */
+  yk agen;        /* for await…of over an async generator: it, or 0 */
 } yk_iter;
+static yk agen_request(yk self, int mode, yk value);
+yk yk_await(yk v);
 
 yk yk_iter_new(yk v, int32_t keys) {
   yk_iter *it = alloc(sizeof(yk_iter));
@@ -1853,6 +1858,16 @@ yk yk_iter_new(yk v, int32_t keys) {
   it->src = v;
   it->i = 0;
   it->keys = NULL;
+  if (keys == 2) {
+    /* for await…of: an async generator is drawn one awaited next() at a time; anything else is
+       iterated as for…of, each element awaited (CreateAsyncFromSyncIterator). */
+    it->awaits = 1;
+    if (is_object(v) && ((yk_object *)PTR(v))->kind == 9) {
+      it->agen = v;
+      return BOX(T_INTERNAL, it);
+    }
+    keys = 0;
+  }
   if (keys) {
     if (is_object(v))
       it->keys = ordered_keys((yk_object *)PTR(v));
@@ -1870,8 +1885,20 @@ yk yk_iter_new(yk v, int32_t keys) {
   return BOX(T_INTERNAL, it);
 }
 
+static int iter_step(yk_iter *it, yk *out);
 int yk_iter_next(yk itv, yk *out) {
   yk_iter *it = (yk_iter *)PTR(itv);
+  if (it->agen != 0) {
+    yk r = yk_await(agen_request(it->agen, 0, YK_UNDEFINED));
+    if (yk_truthy(yk_get(r, ascii("done")))) return 0;
+    *out = yk_get(r, ascii("value"));
+    return 1;
+  }
+  if (!iter_step(it, out)) return 0;
+  if (it->awaits) *out = yk_await(*out);
+  return 1;
+}
+static int iter_step(yk_iter *it, yk *out) {
   if (it->gen != 0) return generator_step(it->gen, out);
   if (it->keys != NULL) {
     if (it->i >= it->keys->len) return 0;
@@ -1926,6 +1953,7 @@ static yk call_value(yk f, yk self, uint64_t argc, const yk *argv) {
   if (c->is_class) type_error("Class constructor cannot be invoked without 'new'");
   if (c->mode == 1) return async_call(c, self, argc, argv);
   if (c->mode == 2) return generator_new(c, self, argc, argv);
+  if (c->mode == 3) return agen_new(c, self, argc, argv);
   return c->code(c, c->has_this ? self : YK_UNDEFINED, argc, argv);
 }
 yk yk_call(yk f, yk self, uint64_t argc, const yk *argv) { return call_value(f, self, argc, argv); }
@@ -3371,6 +3399,8 @@ typedef struct coro {
   int threw;
   yk returning;        /* a generator's return(v): the v */
   void *stack;
+  int awaiting;           /* an async generator's: suspended at an await (a job resumes it) */
+  yk_array *requests;     /* an async generator's queue: [mode, value, promise] for each request */
 } coro;
 
 #define CORO_STACK (256 * 1024)
@@ -3514,6 +3544,7 @@ static yk promise_resolve(yk x) {
 
 static void coro_resume(coro *co, yk value, int mode);
 static void async_finish(coro *co);
+static void agen_drive(struct coro *co, yk value, int mode);
 
 static void run_job(job j) {
   if (j.type == 1) {
@@ -3526,6 +3557,10 @@ static void run_job(job j) {
   }
   reaction *re = j.r;
   if (re->resume != NULL) {
+    if (re->resume->kind == 2) {
+      agen_drive(re->resume, j.argument, re->kind);
+      return;
+    }
     coro_resume(re->resume, j.argument, re->kind);
     if (re->resume->state == 3) async_finish(re->resume);
     return;
@@ -3665,13 +3700,96 @@ static yk async_call(void *c, yk self, uint64_t argc, const yk *argv) {
 /* await v. */
 yk yk_await(yk v) {
   coro *co = current_coro;
-  if (co == NULL || co->kind != 0) type_error("await is only valid in async functions here");
+  if (co == NULL || co->kind == 1) type_error("await is only valid in async functions here");
   perform_then(promise_resolve(v), 0, 0, 0, co);
+  co->awaiting = 1;
   return coro_suspend(YK_UNDEFINED);
 }
 
+/* --- async generators (ECMA-262 27.6) ---
+ *
+ * An object (kind 9) over a coroutine and a queue of requests: next, throw and return each queue one
+ * with a new promise, and the body runs while there are requests. It runs until it awaits (a job
+ * resumes it), yields (the front request is fulfilled with { value, done: false }, and the next
+ * request, if any, resumes it), or completes (each request left is settled as done).
+ */
+static yk iter_result(yk value, int done);
+static void agen_settle(coro *co, int rejected, yk value, int done) {
+  yk_array *q = co->requests;
+  yk p = q->items[2];
+  memmove(q->items, q->items + 3, (size_t)(q->len - 3) * sizeof(yk));
+  q->len -= 3;
+  if (rejected) reject_promise(p, value);
+  else resolve_promise(p, iter_result(value, done));
+}
+static void agen_drive(coro *co, yk value, int mode) {
+  for (;;) {
+    if (co->requests->len == 0 && co->state != 2) return;
+    if (co->state == 3 || (co->state == 0 && mode != 0)) {
+      /* Done, or asked to throw or return before it started: each request is settled as done. */
+      co->state = 3;
+      while (co->requests->len > 0) {
+        int m = (int)to_number(co->requests->items[0]);
+        yk v = co->requests->items[1];
+        if (m == 1) agen_settle(co, 1, v, 1);
+        else agen_settle(co, 0, m == 2 ? v : YK_UNDEFINED, 1);
+      }
+      return;
+    }
+    co->awaiting = 0;
+    coro_resume(co, value, mode);
+    if (co->state == 3) {
+      if (co->requests->len > 0) agen_settle(co, co->threw, co->result, 1);
+      value = YK_UNDEFINED;
+      mode = 0;
+      continue;
+    }
+    if (co->awaiting) return;
+    /* It yielded: the front request has its value; the next one, if any, resumes it. */
+    if (co->requests->len > 0) agen_settle(co, 0, co->transfer, 0);
+    if (co->requests->len == 0) return;
+    mode = (int)to_number(co->requests->items[0]);
+    value = co->requests->items[1];
+  }
+}
+static yk agen_request(yk self, int mode, yk value) {
+  yk p = promise_new();
+  if (!is_object(self) || ((yk_object *)PTR(self))->kind != 9) {
+    reject_promise(p, make_error("TypeError", ascii("not an async generator")));
+    return p;
+  }
+  coro *co = (coro *)((yk_object *)PTR(self))->ext;
+  push(co->requests, yk_number(mode));
+  push(co->requests, value);
+  push(co->requests, p);
+  /* Idle (not started, at a yield, or done) with this the only request: it runs now. */
+  if (co->requests->len == 3 && co->state != 2 && !co->awaiting) agen_drive(co, value, mode);
+  return p;
+}
+static yk agen_next(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c;
+  return agen_request(self, 0, argc > 0 ? argv[0] : YK_UNDEFINED);
+}
+static yk agen_throw(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c;
+  return agen_request(self, 1, argc > 0 ? argv[0] : YK_UNDEFINED);
+}
+static yk agen_return(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c;
+  return agen_request(self, 2, argc > 0 ? argv[0] : YK_UNDEFINED);
+}
+static yk agen_new(void *c, yk self, uint64_t argc, const yk *argv);
+
 /* --- generators --- */
 
+static yk agen_new(void *c, yk self, uint64_t argc, const yk *argv) {
+  yk g = yk_object_of(0, NULL, NULL);
+  ((yk_object *)PTR(g))->kind = 9;
+  coro *co = coro_new(2, (yk_closure *)c, self, argc, argv);
+  co->requests = new_array(6);
+  ((yk_object *)PTR(g))->ext = co;
+  return g;
+}
 static yk generator_new(void *c, yk self, uint64_t argc, const yk *argv) {
   yk g = yk_object_of(0, NULL, NULL);
   ((yk_object *)PTR(g))->kind = 5;
@@ -3709,7 +3827,12 @@ static int generator_step(yk g, yk *out) { return generator_resume(g, YK_UNDEFIN
 /* yield v. */
 yk yk_yield(yk v) {
   coro *co = current_coro;
-  if (co == NULL || co->kind != 1) type_error("yield is only valid in generators here");
+  if (co == NULL || co->kind == 0) type_error("yield is only valid in generators here");
+  if (co->kind == 2) {
+    /* An async generator awaits what it yields; what it is resumed with, it takes as a generator. */
+    v = yk_await(v);
+    co->awaiting = 0;
+  }
   return coro_suspend(v);
 }
 
@@ -3717,6 +3840,23 @@ yk yk_yield(yk v) {
    the consumer sends, throws or returns is passed on to a generator delegated to, so its catch and
    finally blocks see it, as ECMAScript's yield* does (#1330). */
 yk yk_yield_star(yk v) {
+  if (current_coro != NULL && current_coro->kind == 2 && is_object(v) && ((yk_object *)PTR(v))->kind == 9) {
+    /* yield* in an async generator, to another: each request passed on and its result awaited; its
+       values yielded as they are. */
+    coro *co = current_coro;
+    yk sent = YK_UNDEFINED;
+    int mode = 0;
+    for (;;) {
+      yk r = yk_await(agen_request(v, mode, sent));
+      yk value = yk_get(r, ascii("value"));
+      if (yk_truthy(yk_get(r, ascii("done")))) {
+        if (mode == 2) generator_return_through(value);
+        return value;
+      }
+      co->awaiting = 0;
+      sent = coro_suspend_mode(value, &mode);
+    }
+  }
   if (is_object(v) && ((yk_object *)PTR(v))->kind == 5) {
     coro *co = current_coro;
     if (co == NULL || co->kind != 1) type_error("yield is only valid in generators here");
@@ -3760,10 +3900,20 @@ static yk try_gen_code(void *c, yk self, uint64_t argc, const yk *argv) {
   return r;
 }
 
+/* __yakccTryAsyncGen: __yakccTryGen in an async generator; its blocks are async generators. */
+static yk try_async_gen_code(void *c, yk self, uint64_t argc, const yk *argv) {
+  return try_gen_code(c, self, argc, argv);
+}
+
 /* Leaving a for…of early (a break, or a return from the loop's function) closes its iterator: a
    generator's return() runs, so its finally blocks do (IteratorClose). Done iterators are left. */
 void yk_iter_close(yk itv) {
   yk_iter *it = (yk_iter *)PTR(itv);
+  if (it->agen != 0) {
+    coro *ac = (coro *)((yk_object *)PTR(it->agen))->ext;
+    if (ac->state != 3) yk_await(agen_request(it->agen, 2, YK_UNDEFINED));
+    return;
+  }
   if (it->gen == 0) return;
   coro *co = (coro *)((yk_object *)PTR(it->gen))->ext;
   if (co->state == 3) return;
@@ -3833,11 +3983,13 @@ static yk generator_return(void *c, yk self, uint64_t argc, const yk *argv) {
 /* A promise's or a generator's method by name, or 0. */
 static yk async_member(void *obj, yk key) {
   yk_object *o = (yk_object *)obj;
-  static yk fns[6];
-  static const char *const names[6] = {"then", "catch", "finally", "next", "throw", "return"};
-  static const yk_code codes[6] = {promise_then, promise_catch, promise_finally,
-                                   generator_next, generator_throw, generator_return};
-  for (int i = o->kind == 4 ? 0 : 3; i < (o->kind == 4 ? 3 : 6); i++)
+  static yk fns[9];
+  static const char *const names[9] = {"then", "catch", "finally", "next", "throw", "return", "next", "throw", "return"};
+  static const yk_code codes[9] = {promise_then,   promise_catch, promise_finally,
+                                   generator_next, generator_throw, generator_return,
+                                   agen_next,      agen_throw,      agen_return};
+  int from = o->kind == 4 ? 0 : o->kind == 5 ? 3 : 6;
+  for (int i = from; i < from + 3; i++)
     if (key_is(key, names[i])) {
       if (fns[i] == 0) fns[i] = yk_closure_new(codes[i], 1, 0, NULL);
       return fns[i];
@@ -5556,7 +5708,7 @@ static yk leaf_value(const char *name, uint64_t n) {
   return 0;
 }
 
-#define N_GLOBALS 23
+#define N_GLOBALS 24
 yk yk_global(const char *name, uint64_t n) {
   if (n > 4 && memcmp(name, "__yk", 4) == 0) {
     yk leaf = leaf_value(name, n);
@@ -5575,14 +5727,15 @@ yk yk_global(const char *name, uint64_t n) {
                                          "isNaN", "isFinite", "Array", "globalThis", "__yakccTry",
                                          "Error", "TypeError", "RangeError", "SyntaxError",
                                          "Map", "Set", "Object", "JSON", "Symbol", "Promise",
-                                         "__yakccTryAsync", "queueMicrotask", "__yakccTryGen"};
+                                         "__yakccTryAsync", "queueMicrotask", "__yakccTryGen",
+                                         "__yakccTryAsyncGen"};
   static yk_code codes[N_GLOBALS] = {builtin_string, builtin_number, builtin_boolean,
                                      builtin_parse_float, builtin_parse_int, builtin_is_nan,
                                      builtin_is_finite, builtin_array, NULL, builtin_try,
                                      builtin_error, builtin_type_error, builtin_range_error,
                                      builtin_syntax_error, builtin_map, builtin_set, builtin_object,
                                      NULL, NULL, builtin_promise, try_async_body,
-                                     builtin_queue_microtask, try_gen_code};
+                                     builtin_queue_microtask, try_gen_code, try_async_gen_code};
   for (int i = 0; i < N_GLOBALS; i++)
     if (strlen(names[i]) == n && memcmp(names[i], name, n) == 0) {
       if (fns[i] != 0) return fns[i];
@@ -5600,6 +5753,8 @@ yk yk_global(const char *name, uint64_t n) {
       }
       if (codes[i] == try_async_body) return fns[i] = yk_closure_mode(yk_closure_new(try_async_body, 0, 0, NULL), 1);
       if (codes[i] == try_gen_code) return fns[i] = yk_closure_mode(yk_closure_new(try_gen_code, 0, 0, NULL), 2);
+      if (codes[i] == try_async_gen_code)
+        return fns[i] = yk_closure_mode(yk_closure_new(try_async_gen_code, 0, 0, NULL), 3);
       if (codes[i] == builtin_array) {
         static const char *const m[2] = {"from", "isArray"};
         static const yk_code k[2] = {builtin_array_from, builtin_array_is_array};

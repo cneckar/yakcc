@@ -126,6 +126,7 @@ const GLOBALS = new Set([
   "__yakccTry",
   "__yakccTryAsync",
   "__yakccTryGen",
+  "__yakccTryAsyncGen",
   "Promise",
   "queueMicrotask",
   "Error",
@@ -396,7 +397,7 @@ function lowerFunction(
 ): void {
   // An async function's or a generator's body is lowered as any function's: the runtime runs it as a
   // coroutine, which await and yield suspend (#1295). The closure carries the mode.
-  if (source.mode === "async generator" || (source.mode !== undefined && closure === undefined))
+  if (source.mode !== undefined && closure === undefined)
     throw new LlvmEmitError(`an ${source.mode} function is not in the subset yet`);
   if (scope?.outs === undefined && source.obs.length > 1)
     throw new LlvmEmitError("a native function has at most one result");
@@ -1477,6 +1478,7 @@ function lowerFunction(
       "async closure": [0, 1],
       "async function": [1, 1],
       "function*": [1, 2],
+      "async function*": [1, 3],
     };
     const shape = MODES[lbl];
     if (shape === undefined)
@@ -2589,16 +2591,14 @@ function lowerFunction(
     const exit = freshLabel("exit");
     // An iteration: an iterator over the input after the carries, asked for the next element first.
     let iterator: string | undefined;
-    // for await (x of it): the runtime has no async iterables (no symbols, no async generators),
-    // so `it` is iterated as it is and each element awaited, as ECMAScript does for a sync
-    // iterable (CreateAsyncFromSyncIterator, #1330).
-    const awaitEach = rec.iterate?.of === "async values";
+    // for await (x of it): the runtime's iterator awaits each next() result of an async generator,
+    // or each element of anything else (CreateAsyncFromSyncIterator, #1330).
     if (rec.iterate !== undefined) {
       m.used.add("yk_iter_new");
       const iterable = operand(loop.inputs[rec.carry.length] as ValueId);
       iterator = fresh();
       emit(
-        `${iterator} = call i64 @yk_iter_new(i64 ${iterable}, i32 ${rec.iterate.of === "keys" ? 1 : 0})`,
+        `${iterator} = call i64 @yk_iter_new(i64 ${iterable}, i32 ${rec.iterate.of === "keys" ? 1 : rec.iterate.of === "async values" ? 2 : 0})`,
       );
     }
     emit(`br label %${head}`);
@@ -2616,7 +2616,7 @@ function lowerFunction(
       block(got);
       const element = fresh();
       emit(`${element} = load i64, ptr ${cell}`);
-      set(rec.iterate.element, awaitEach ? call("yk_await", `i64 ${element}`) : element);
+      set(rec.iterate.element, element);
     }
     const items = planner.ordered(planner.itemsOf(bodyPathOf(loop)));
     const forCond = new Set<ScopeItem>();
