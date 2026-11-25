@@ -574,7 +574,10 @@ function parseType(spelled: string, depth = 0): CType {
   if (depth > 32) throw new RaiseCError(`the type "${spelled}" does not resolve`);
   const raw = spelled
     .replace(/__attribute__\(\(.*?\)\)\s*/g, "")
-    .replace(/\b(const|volatile|restrict|__restrict)\b/g, "")
+    // (Qualifiers inside a template's arguments are part of its name: `<const char *>`.)
+    .replace(/<[^]*>|\b(?:const|volatile|restrict|__restrict)\b/g, (m) =>
+      m.startsWith("<") ? m : "",
+    )
     .replace(/\s*\bnoexcept\b(\([^)]*\))?/g, "")
     .replace(/\s+/g, " ")
     // (`int (*const *)(int)` without its qualifier is `int (**)(int)`.)
@@ -614,7 +617,7 @@ function parseType(spelled: string, depth = 0): CType {
   if (ptr !== null) return { k: "ptr", to: parseType(ptr[1] as string, depth + 1) };
   const builtin = BUILTIN[raw];
   if (builtin !== undefined) return builtin;
-  if (/^(struct|union) /.test(raw)) return { k: "rec", name: raw };
+  if (/^(struct|union|class) /.test(raw)) return { k: "rec", name: raw };
   if (/^enum /.test(raw)) {
     const e = unitTypedef(raw);
     if (e !== undefined) return parseType(e, depth + 1);
@@ -1060,6 +1063,11 @@ export interface CxxUnit {
   readonly isVirtual: (methodId: string) => boolean;
   /** A function's parameter's default argument (its expression), by the function's id. */
   readonly defaultArgOf: (fnId: string, index: number) => ClangNode | undefined;
+  /**
+   * The member typedefs and aliases in scope in a member function, by its id (its class's, then
+   * the classes it is nested in): each name's type, as the class template's instance has it.
+   */
+  readonly typedefsOf: (fnId: string) => ReadonlyMap<string, string>;
   /** A member's default initializer (`bool has = false;`), by the member's id. */
   readonly fieldInitOf: (fieldId: string) => ClangNode | undefined;
   /**
@@ -1464,6 +1472,8 @@ function raiseBody(
       captured.set((lambda.captures[i] as { id: string }).id, f),
     );
   if (method && thisRecord === undefined) throw new RaiseCError(`the class of ${fn.name}`);
+  // A member function's class's typedefs (`char_type`): the instance's, before the unit's.
+  for (const [n, t] of unitCxx?.typedefsOf(fn.id ?? "") ?? []) localTypedefs.set(n, t);
   // A variadic function takes its variable arguments' address as a last parameter, `__va`.
   const variadic = variadicParams(fn.type?.qualType ?? "") !== undefined;
   // (A template instance's type spelled as written can be `typename enable_if<..>::type (T)`: its
@@ -1711,6 +1721,20 @@ function raiseBody(
         // value (to be copied), the record itself.
         if (e.castKind === "NoOp") return place(k0);
         if (e.castKind === "LValueToRValue" && typeOf(e).k === "rec") return place(k0);
+        // A record made by a conversion (C++: a converting constructor, a conversion operator):
+        // a temporary in a frame slot.
+        if (
+          (e.castKind === "ConstructorConversion" || e.castKind === "UserDefinedConversion") &&
+          typeOf(e).k === "rec"
+        ) {
+          const t = typeOf(e);
+          const slot = `__tmp${temps++}`;
+          top.push(
+            `const ${slot} = __ykAlloc(${Math.max(8, sizeOf(t))}, ${Math.max(8, alignOf(t))});`,
+          );
+          frame.push(slot);
+          return { k: "mem", addr: `(${[...copyFrom(slot, t, e), slot].join(", ")})`, t };
+        }
         // An object as its base's subobject (C++): at the base's offset.
         if (e.castKind === "DerivedToBase" || e.castKind === "UncheckedDerivedToBase") {
           const from = typeOf(k0);
@@ -1828,6 +1852,29 @@ function raiseBody(
         const t = typeOf(e);
         const slot = `__lit${temps++}`;
         top.push(`const ${slot} = __ykAlloc(${sizeOf(t)}, ${alignOf(t)});`);
+        frame.push(slot);
+        const steps = (
+          t.k === "rec" || t.k === "arr" ? initialize(slot, t, k0) : [storeAt(slot, t, expr(k0))]
+        ).map((x) => `(${x.replace(/;$/, "")})`);
+        return { k: "mem", addr: `(${[...steps, slot].join(", ")})`, t };
+      }
+      // `__func__`, `__PRETTY_FUNCTION__`: their string.
+      case "PredefinedExpr":
+      // (C++: a full expression, and a temporary to destroy: the object; temporaries are not
+      // destroyed.)
+      case "ExprWithCleanups":
+      case "CXXBindTemporaryExpr":
+        return place(k0);
+      // A temporary bound to a reference (C++): an object of its own, in a frame slot,
+      // initialized where it is evaluated.
+      case "MaterializeTemporaryExpr": {
+        const t = typeOf(e);
+        if (typeOf(k0).k === "rec" && /lvalue|xvalue/.test(k0.valueCategory ?? ""))
+          return place(k0);
+        const slot = `__tmp${temps++}`;
+        top.push(
+          `const ${slot} = __ykAlloc(${Math.max(1, sizeOf(t))}, ${Math.max(1, alignOf(t))});`,
+        );
         frame.push(slot);
         const steps = (
           t.k === "rec" || t.k === "arr" ? initialize(slot, t, k0) : [storeAt(slot, t, expr(k0))]
@@ -2023,6 +2070,13 @@ function raiseBody(
           return `(((${p} = ${expr(k0)}) !== 0) ? ${p} ${ck === "BaseToDerived" ? "-" : "+"} ${off} : 0)`;
         }
         if (ck === "NullToPointer") return "0";
+        // A conversion operator's call (C++), or a record a conversion makes: its value.
+        if (ck === "UserDefinedConversion" && typeOf(e).k !== "rec") return expr(k0);
+        if (
+          (ck === "UserDefinedConversion" || ck === "ConstructorConversion") &&
+          typeOf(e).k === "rec"
+        )
+          return (place(e) as Place & { k: "mem" }).addr;
         // (A record cast to void, `(void)u.minor;`, is not read.)
         if (ck === "ToVoid") return typeOf(k0).k === "rec" ? "undefined" : expr(k0);
         if (
@@ -2250,8 +2304,24 @@ function raiseBody(
             return convert(args[0] as string, from, to);
           throw new RaiseCError(`bit_cast from ${from.k} to ${to.k}`);
         }
-        if (callee.kind === "MemberExpr" && !(typeOf(callee).k === "ptr"))
-          throw new RaiseCError(`a call of the method "${name}" on an object`);
+        // A static member function named through an object (C++; `this->_S_copy(..)` in a
+        // template): the function, the object unused.
+        if (callee.kind === "MemberExpr" && !(typeOf(callee).k === "ptr")) {
+          const id = (callee as { referencedMemberDecl?: string }).referencedMemberDecl;
+          const base = stripCasts((callee.inner ?? [])[0] as ClangNode);
+          const key =
+            id === undefined || base.kind !== "CXXThisExpr"
+              ? undefined
+              : resolve({
+                  name: callee.name ?? "",
+                  kind: "CXXMethodDecl",
+                  type: normType(callee.type?.qualType ?? ""),
+                  id,
+                });
+          if (key === undefined)
+            throw new RaiseCError(`a call of the method "${callee.name}" on an object`);
+          return `${key}(${withDefaults(kids.slice(1), id).map(argOf).join(", ")})`;
+        }
         const d = callee.referencedDecl as ClangNode | undefined;
         // A call through a function pointer (a variable, a field, any expression): the function at
         // its address.
@@ -2425,7 +2495,9 @@ function raiseBody(
       ((n.kind === "ImplicitCastExpr" ||
         n.kind === "CStyleCastExpr" ||
         n.kind === "CXXStaticCastExpr") &&
-        (n.castKind === "NoOp" || n.castKind === "ConstructorConversion"))
+        (n.castKind === "NoOp" ||
+          n.castKind === "ConstructorConversion" ||
+          n.castKind === "UserDefinedConversion"))
     ) {
       const k = (n.inner ?? [])[0];
       if (k === undefined) break;
@@ -3501,9 +3573,21 @@ function raiseBody(
         entry.push(`${storeAt(at, { k: "ptr", to: { k: "void" } }, argOf(value as ClangNode))};`);
       else entry.push(...initialize(at, parseType(f.type), value));
     } else if (base !== undefined) {
+      // (A base named by a typedef or an alias, `allocator_type`: the class it names; an empty
+      // one the dump leaves out is at the start.)
+      let named: CType | undefined;
+      try {
+        named = parseType(base.qualType ?? "");
+      } catch {
+        named = undefined;
+      }
       const off =
         l.bases?.get(recordKey(`struct ${base.qualType ?? ""}`)) ??
-        l.bases?.get(recordKey(`class ${base.qualType ?? ""}`));
+        l.bases?.get(recordKey(`class ${base.qualType ?? ""}`)) ??
+        (named?.k === "rec" ? l.bases?.get(recordKey(named.name)) : undefined) ??
+        (named?.k === "rec" && layoutOf(named).fields.size === 0 && layoutOf(named).size <= 1
+          ? 0
+          : undefined);
       if (off === undefined) throw new RaiseCError(`the base ${base.qualType}`);
       entry.push(`${construct(off === 0 ? "__this" : `(__this + ${off})`, value as ClangNode)};`);
     } else throw new RaiseCError("a constructor's initializer of another kind");
@@ -4052,11 +4136,23 @@ export function shaveCUnit(
           },
           constructorOf: (record, type) => {
             const node = findRecord(record);
-            const ctor = (node?.inner ?? []).find(
-              (c) =>
-                c.kind === "CXXConstructorDecl" &&
-                normType(c.type?.qualType ?? "") === normType(type),
+            // Its constructors, and its constructor templates' instances; by type (scopes
+            // aside: a type can be spelled with or without them).
+            const bare = (t: string): string => normType(t.replace(/\b[A-Za-z_]\w*::/g, ""));
+            const all = (node?.inner ?? []).flatMap((c) =>
+              c.kind === "FunctionTemplateDecl" ? (c.inner ?? []) : [c],
             );
+            // (A constructor template's own declaration in the instance has the type of its
+            // instance: the one defined.)
+            const matching = (same: (t: string) => boolean): ClangNode | undefined => {
+              const hits = all.filter(
+                (c) => c.kind === "CXXConstructorDecl" && same(c.type?.qualType ?? ""),
+              );
+              return hits.find((c) => definitionIn(indexed, c.id ?? "") !== undefined) ?? hits[0];
+            };
+            const ctor =
+              matching((t) => normType(t) === normType(type)) ??
+              matching((t) => bare(t) === bare(type));
             return ctor === undefined
               ? undefined
               : { id: ctor.id ?? "", body: definitionIn(indexed, ctor.id ?? "") !== undefined };
@@ -4102,6 +4198,32 @@ export function shaveCUnit(
               };
             });
             return { record: lambda.type?.qualType ?? "", captures };
+          },
+          typedefsOf: (fnId) => {
+            const out = new Map<string, string>();
+            let at = indexed.byId.get(fnId)?.parent;
+            for (let depth = 0; at !== undefined && depth < 8; depth++) {
+              const cls = indexed.byId.get(at);
+              if (cls === undefined || !RECORD_KINDS.has(cls.kind)) break;
+              for (const c of readDecl(indexed, cls).inner ?? []) {
+                if (c.kind !== "TypedefDecl" && c.kind !== "TypeAliasDecl") continue;
+                const t = c.type?.desugaredQualType ?? c.type?.qualType;
+                if (t !== undefined && !out.has(c.name ?? "")) out.set(c.name ?? "", t);
+              }
+              at = cls.parent;
+            }
+            // Then those of the classes its typedefs name (`traits_type`'s `char_type`), which
+            // its members' types spell through them.
+            for (const t of [...out.values()]) {
+              if (!/^(?:(?:struct|class) )?[\w:]+<.*>$/.test(t)) continue;
+              for (const c of findRecord(`struct ${t.replace(/^(struct|class) /, "")}`)?.inner ??
+                []) {
+                if (c.kind !== "TypedefDecl" && c.kind !== "TypeAliasDecl") continue;
+                const u = c.type?.desugaredQualType ?? c.type?.qualType;
+                if (u !== undefined && !out.has(c.name ?? "")) out.set(c.name ?? "", u);
+              }
+            }
+            return out;
           },
           fieldInitOf: (fieldId) => {
             const d = indexed.byId.get(fieldId);
@@ -4367,6 +4489,17 @@ export function shaveCUnit(
     for (const n of dumpOf(name)) walk(n);
     if (hit !== undefined) return hit;
     if (anonymous !== undefined) return unnamedRecord(anonymous);
+    // A member typedef of a class template's instance (`typename iterator_traits<char *>::
+    // difference_type`): the instance's.
+    const member = /^(?:typename )?(.*>)::([A-Za-z_]\w*)$/.exec(name);
+    if (member !== null) {
+      const cls = findRecord(`struct ${member[1]}`);
+      for (const c of cls?.inner ?? [])
+        if ((c.kind === "TypedefDecl" || c.kind === "TypeAliasDecl") && c.name === member[2]) {
+          const t = c.type?.desugaredQualType ?? c.type?.qualType;
+          if (t !== undefined) return t;
+        }
+    }
     // A namespace's typedef or alias by its qualified name (`std::string`), in an indexed unit:
     // the one of that bare name inside a namespace of the qualifier's name.
     const scoped = /^(?:([A-Za-z_]\w*)::)+([A-Za-z_]\w*)$/.exec(name);
@@ -4499,14 +4632,33 @@ export function shaveCUnit(
     for (let tries = 0; tries < 8; tries++) {
       const l = layouts.get(key);
       if (l !== undefined) return l;
-      const m = /^(.*?<)(.*)>$/.exec(key);
-      if (m === null) return undefined;
-      const args = splitTemplateArgs(m[2] as string);
-      if (args.length < 2) return undefined;
-      key = `${m[1]}${args.slice(0, -1).join(", ")}>`;
+      // (Its first argument list, and what follows it: `basic_string<..>::_Alloc_hider`.)
+      const lt = key.indexOf("<");
+      let gt = -1;
+      for (let i = lt, depth = 0; lt >= 0 && i < key.length && gt < 0; i++) {
+        if (key[i] === "<") depth++;
+        else if (key[i] === ">" && --depth === 0) gt = i;
+      }
+      if (gt < 0) break;
+      const args = splitTemplateArgs(key.slice(lt + 1, gt));
+      if (args.length < 2) break;
+      key = `${key.slice(0, lt + 1)}${args.slice(0, -1).join(", ")}${key.slice(gt)}`;
     }
+    // (Default arguments spelled at any depth, `<const char *, basic_string<char, char_traits<
+    // char>, allocator<char>>>`: the layout whose arguments are a prefix of these, at each.)
+    const want = recordKey(name);
+    const lt = want.indexOf("<");
+    if (lt < 0) return undefined;
+    const head = want.slice(0, lt + 1);
+    let byHead = layoutsByHead.get(head);
+    if (byHead === undefined) {
+      byHead = [...layouts.keys()].filter((k) => k.startsWith(head));
+      layoutsByHead.set(head, byHead);
+    }
+    for (const k of byHead) if (argsPrefix(k, want)) return layouts.get(k);
     return undefined;
   };
+  const layoutsByHead = new Map<string, string[]>();
   // Module state: each static the atoms use, keyed and defined (when this unit defines it).
   const statics = new Map<string, StaticDef>();
   const staticKeys = new Map<string, string | undefined>(); // decl id (or name) -> key
@@ -4827,6 +4979,38 @@ function staticDefinition(
   return { size: sizeOf(t), align: alignOf(t), init };
 }
 
+/** A spelling split at its first template argument list: before, the arguments, after. */
+function templateParts(t: string): { head: string; args: string[]; tail: string } | undefined {
+  const lt = t.indexOf("<");
+  if (lt < 0) return undefined;
+  for (let i = lt, depth = 0; i < t.length; i++) {
+    if (t[i] === "<") depth++;
+    else if (t[i] === ">" && --depth === 0)
+      return {
+        head: t.slice(0, lt),
+        args: splitTemplateArgs(t.slice(lt + 1, i)).map((a) => a.trim()),
+        tail: t.slice(i + 1),
+      };
+  }
+  return undefined;
+}
+
+/**
+ * Whether `short` is `long` with trailing template arguments left out, at any depth (clang's
+ * layout dump omits default arguments: `basic_string<char>` for `basic_string<char,
+ * char_traits<char>, allocator<char>>`).
+ */
+function argsPrefix(short: string, long: string, depth = 0): boolean {
+  if (short === long) return true;
+  if (depth > 16) return false;
+  const a = templateParts(short);
+  const b = templateParts(long);
+  if (a === undefined || b === undefined) return false;
+  if (a.head !== b.head || a.args.length > b.args.length) return false;
+  if (!a.args.every((x, i) => argsPrefix(x, b.args[i] as string, depth + 1))) return false;
+  return a.tail === b.tail || argsPrefix(a.tail, b.tail, depth + 1);
+}
+
 /** A record's name as a key: C++ scopes dropped (`union P::(unnamed at f.c:1:40)` and the C spelling meet). */
 const FIXED_WIDTH: Readonly<Record<string, string>> = {
   int8_t: "signed char",
@@ -4844,7 +5028,7 @@ const FIXED_WIDTH: Readonly<Record<string, string>> = {
 };
 /** An anonymous member's key in its record's fields: its record's key. */
 const anonymousField = (type: string): string =>
-  `(anonymous) ${recordKey(type).replace(/^(struct|union|class) /, "")}`;
+  `(anonymous) ${recordKey(type.replace(/\b(const|volatile)\s+/g, "")).replace(/^(struct|union|class) /, "")}`;
 /** A member expression's key in its record's fields (an anonymous member's, by its type). */
 const memberName = (e: ClangNode): string =>
   e.name === "" || e.name === undefined
@@ -4870,7 +5054,12 @@ const recordKey = (name: string): string =>
       .replace(
         /\b(u?int(?:8|16|32|64)_t|size_t|uintptr_t|intptr_t|ptrdiff_t)\b/g,
         (t) => FIXED_WIDTH[t] ?? t,
-      ),
+      )
+      // (The dump's spellings: `_Bool`, `noexcept` in a function type, `> >`.)
+      .replace(/\b_Bool\b/g, "bool")
+      .replace(/\s*\bnoexcept\b/g, "")
+      .replace(/\s+>/g, ">")
+      .replace(/<\s+/g, "<"),
   );
 
 /**
@@ -4882,7 +5071,7 @@ export function recordLayouts(dump: string): Map<string, RecordLayout> {
   const out = new Map<string, RecordLayout>();
   for (const block of dump.split("*** Dumping AST Record Layout").slice(1)) {
     const lines = block.split("\n").filter((l) => l.includes("|"));
-    const head = /^\s*\d+ \| (.*)$/.exec(lines[0] ?? "");
+    const head = /^\s*\d+ \| (.*?)(?: \(empty\))?$/.exec(lines[0] ?? "");
     const tail = /\[sizeof=(\d+),.*?align=(\d+)/.exec(block);
     if (head === null || tail === null) continue;
     const fields = new Map<
@@ -4896,7 +5085,7 @@ export function recordLayouts(dump: string): Map<string, RecordLayout> {
       // last bit counted from that byte).
       const m = /^\s*(\d+)(?::(\d+)-(\d+))? \| {3}(\S.*)$/.exec(l);
       if (m === null) continue; // nested deeper, or the size line
-      const text = (m[4] as string).trim();
+      const text = (m[4] as string).trim().replace(/ \(empty\)$/, "");
       const baseOf = /^(.*?) \((?:primary )?(?:virtual )?base\)$/.exec(text);
       if (baseOf !== null) {
         bases.set(recordKey(baseOf[1] as string), Number(m[1]));
