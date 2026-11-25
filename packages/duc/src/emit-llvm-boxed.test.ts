@@ -345,6 +345,11 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "a loop carried from a parameter: in its integer range or not (out of range, negative, fraction, -0, NaN, strings); % of integers (#1369)",
+    "export function f(a, b) { function sum(x, y, n) { for (let i = 0; i < n; i++) { x = ((x + i) >>> 0) % 65521; y = ((y + x) | 0) % 7; } return [x, y, Object.is(y, -0)]; } function keep(h, n) { for (let i = 0; i < n; i++) h = (h ^ i) >>> 0; return h; } const vals = [0, 1, 65520, 2 ** 31, 2 ** 32 - 1, 2 ** 32 + 3, -1, -(2 ** 31), 1.5, -0, NaN, Infinity, '12', null, a, b]; const out = []; for (const v of vals) out.push(sum(v, v, 5), sum(v, -5, 3), keep(v, 4)); const mods = []; for (const [p, q] of [[7, 3], [0, 5], [5, 0], [-7, 3], [7, -3], [-0, 3], [2 ** 32 - 1, 65521], [1.5, 1]]) mods.push(p % q, Object.is(p % q, -0)); return [out, mods]; }",
+    2,
+  ],
+  [
     "Math.random, with arguments it ignores (undici's random(max)): a number in [0, 1) (#1331)",
     "export function f(a, b) { const r = Math.random(a); const q = Math.random(); return [typeof r, r >= 0 && r < 1, q >= 0 && q < 1, r !== q || r === q]; }",
     2,
