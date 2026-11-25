@@ -51,6 +51,12 @@ const OVERRIDES: Readonly<Record<string, string>> = {
   __libc: "src/internal/libc.c",
 };
 
+/**
+ * The weak symbols a static link defines only for what is in the program (`exit`'s bounds of
+ * `.fini_array`, empty in a program without C++ static destructors there): undefined, so at 0.
+ */
+const LINKER_WEAK = new Set(["__fini_array_start", "__fini_array_end"]);
+
 /** The leaves a closure stops at: the system call and the thread pointer. */
 export const MUSL_LEAVES = new Set(["__yk_syscall", "__yk_tp"]);
 
@@ -148,6 +154,12 @@ export function shaveMusl(roots: readonly string[]): {
     const defined = new Set(units.flatMap((u) => [...u.statics.keys()]));
     for (const key of unit.staticRefs) {
       if (defined.has(key) || key.includes(":")) continue;
+      if (LINKER_WEAK.has(key)) {
+        // (Defined where the link puts it: at 0, no object defining it.)
+        units.push({ statics: new Map([[key, { size: 0, align: 1, init: [], at: 0 }]]) } as never);
+        defined.add(key);
+        continue;
+      }
       const f = definingFile(key, true);
       if (f === undefined) {
         missing.add(key);
@@ -199,7 +211,7 @@ export function buildMuslNative(
   driver: string,
 ): string {
   const files = [...new Set(units.map((u) => u.file))].filter(
-    (f) => !f.endsWith("__errno_location.c"),
+    (f) => f !== undefined && !f.endsWith("__errno_location.c"),
   );
   const objs = files.map((f, i) => {
     const o = join(work, `${name}-${i}.o`);
