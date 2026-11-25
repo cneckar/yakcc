@@ -19,6 +19,8 @@ module.exports = {
     hrtime: () => {},
     hrtimeBigInt: () => {},
   },
+  // url (ada): only read when a URL is parsed.
+  url: {},
   string_decoder: {
     encodings: [
       "ascii",
