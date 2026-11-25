@@ -95,6 +95,20 @@ const PROGRAMS: [string, string][] = [
       return [got, log, first.value, err, after.done];
     }`,
   ],
+  [
+    "for await over an object's [Symbol.asyncIterator], and over its [Symbol.iterator]",
+    `export async function f(n) {
+      const log = [];
+      const asyncRange = { [Symbol.asyncIterator]() { let i = 0; return { next: async () => { await null; return i < n ? { value: i++, done: false } : { done: true }; }, return: async () => { log.push("closed"); return { done: true }; } }; } };
+      const syncRange = { [Symbol.iterator]() { let i = 0; return { next: () => (i < 3 ? { value: Promise.resolve(i++ * 10), done: false } : { done: true }) }; } };
+      const a = [];
+      for await (const x of asyncRange) a.push(x);
+      for await (const x of asyncRange) { if (x === 1) break; }
+      const b = [];
+      for await (const x of syncRange) b.push(x);
+      return [a, b, log];
+    }`,
+  ],
 ];
 
 describe.skipIf(!canRun("x86_64-linux"))("async generators, natively", () => {

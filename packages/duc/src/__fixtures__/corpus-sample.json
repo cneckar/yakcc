@@ -313,7 +313,7 @@
   {
     "name": "parseArgv",
     "origin": "6142909d11ac7b5d058975d0d9b1c0a4e9bac5859b4b7859e3d443b543124808",
-    "identity": "0bb01a7267c2ee353e39ff275706f1a23a38130655ba33e2d97eb1b8abed9383",
+    "identity": "d3c17eeea1570852a3e54f5bde7ca95f98eb6ff887930ea63003a5d74112d0d0",
     "constructs": ["loop", "closure", "object", "array", "string"],
     "args": [
       {
@@ -370,7 +370,7 @@
   {
     "name": "validateProofManifestL0",
     "origin": "fb8b23598335710d2b820e99df7fd8192cbf13f167d2495dd31c658e4d1cc4fc",
-    "identity": "0263431a8982f3ccc71f73bade93acda6fc346b65966d3ac2fed1d08586e0c5d",
+    "identity": "eb9a02abce97718af702f766a417a58567f5e608dfa8ee31244e85c6d8e0c148",
     "constructs": ["exception", "loop", "object", "in", "typeof"],
     "args": [
       {
@@ -964,7 +964,7 @@
   {
     "name": "seed:non-ascii-rejector",
     "origin": "seed:non-ascii-rejector",
-    "identity": "8a33c26734eb954a09734085a1ebc130527b7068f0ceac366f415a835262efeb",
+    "identity": "3092c5e316ada25aa9a0496c665edf9ef15dc6c244ab46691009fcc9868ed20d",
     "constructs": ["loop", "exception", "string"],
     "args": [
       {
@@ -977,7 +977,7 @@
   {
     "name": "seed:comma-separated-integers",
     "origin": "seed:comma-separated-integers",
-    "identity": "547572a86cc9d84355e304126bcd9da800eacb4f373876e2a01f036d0b0b6331",
+    "identity": "18f140aa3f135cfab80fa1faf8b545ca9af78352b5ad0f27cbbb37a247b1b36d",
     "constructs": ["loop", "exception", "array", "tuple"],
     "args": [
       {
@@ -991,7 +991,7 @@
   {
     "name": "seed:nonempty-list-content",
     "origin": "seed:nonempty-list-content",
-    "identity": "6b4c23c5d14a3c80c42c7674638f8a04839bf626c6d999e6c8277df4755807c3",
+    "identity": "86ef6d20ffc2bbacf1e5372cabe17e71b8782e84464aae74ae11ac727e3d4dd3",
     "constructs": ["loop", "exception", "array"],
     "args": [
       {

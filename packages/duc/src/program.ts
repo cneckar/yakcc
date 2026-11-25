@@ -206,3 +206,92 @@ function moduleOf(
   void file;
   return { module: { id, statements, esm }, specifiers };
 }
+
+/** A module given as source: an id and its CommonJS text. */
+export interface SourceModule {
+  readonly id: string;
+  readonly source: string;
+}
+
+/**
+ * The wrapper's names Node binds for a module of its library (`exports`, `require` and `module` are
+ * the module record's own): bound here by a first statement that takes them from the environment
+ * module `yakcc:node-env` (DEC-DUC-NODE-BASE-SET-001, section 3).
+ */
+export const NODE_ENV = "yakcc:node-env";
+const NODE_PRELUDE = `const { primordials, internalBinding, process } = require("${NODE_ENV}");`;
+
+/**
+ * A program of Node's library (#1331, P2): the entry, then each builtin module it requires at its
+ * top level, transitively, read from `lib` (one file per builtin id), each a CommonJS module with
+ * the wrapper's names bound (NODE_PRELUDE). `extra` modules (the environment, and anything a test
+ * provides) are taken as given. A require inside a function names a module only when it runs: one
+ * outside the program then fails there, as a missing module does.
+ */
+export function nodeLibraryProgram(
+  lib: string,
+  entry: SourceModule,
+  extra: readonly SourceModule[] = [],
+): ProgramRecord {
+  const project = new Project({ useInMemoryFileSystem: true, compilerOptions: { allowJs: true } });
+  const given = new Map([entry, ...extra].map((m) => [m.id, m.source] as const));
+  const modules = new Map<string, NativeModule>();
+  const visit = (id: string): void => {
+    if (modules.has(id)) return;
+    modules.set(id, { id, statements: [] });
+    let text = given.get(id);
+    if (text === undefined) {
+      const file = resolve(lib, `${id}.js`);
+      if (!existsSync(file)) throw new ProgramError(`no module ${id} in ${lib}`);
+      text = `${NODE_PRELUDE}\n${readFileSync(file, "utf8")}`;
+    }
+    const parsed = commonJsModuleOf(project, text, id);
+    modules.set(id, parsed.module);
+    for (const dep of parsed.topLevel) visit(dep);
+  };
+  visit(entry.id);
+  return { entry: entry.id, modules: [...modules.values()] };
+}
+
+/** A CommonJS module's statements, and its requires: every one, and those its top level makes. */
+function commonJsModuleOf(
+  project: Project,
+  text: string,
+  id: string,
+): { module: NativeModule; topLevel: string[] } {
+  const sf = project.createSourceFile(`/cjs/${id.replace(/[^A-Za-z0-9]/g, "_")}.js`, text, {
+    overwrite: true,
+  });
+  const requires: Record<string, string> = {};
+  const topLevel: string[] = [];
+  sf.forEachDescendant((n) => {
+    if (!Node.isCallExpression(n)) return;
+    const callee = n.getExpression();
+    const arg = n.getArguments()[0];
+    if (!Node.isIdentifier(callee) || callee.getText() !== "require") return;
+    if (arg === undefined || !Node.isStringLiteral(arg)) return;
+    const spec = arg.getLiteralValue();
+    requires[spec] = spec;
+    const inFunction = n.getAncestors().some((a) => Node.isFunctionLikeDeclaration(a));
+    if (!inFunction && !topLevel.includes(spec)) topLevel.push(spec);
+  });
+  const statements: NativeModuleStatement[] = [];
+  for (const st of sf.getStatements()) {
+    if (Node.isEmptyStatement(st)) continue;
+    const textOf = st.getText();
+    const shape = atomShape(textOf);
+    try {
+      statements.push({
+        kind: shape.kind,
+        declares:
+          shape.kind === "function" ? (shape.name !== undefined ? [shape.name] : []) : shape.names,
+        graph: liftAtom(textOf),
+      });
+    } catch (e) {
+      throw new ProgramError(
+        `${id}: a statement at line ${st.getStartLineNumber()} does not lift: ${(e as Error).message}`,
+      );
+    }
+  }
+  return { module: { id, statements, requires }, topLevel };
+}

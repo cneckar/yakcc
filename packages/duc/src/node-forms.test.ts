@@ -649,3 +649,88 @@ describe("a loop whose body is one jump, unbraced (#1368)", () => {
     );
   });
 });
+
+describe("the round trip on yakcc's own sources (#1292)", () => {
+  it("a comparison's operands are read in their order, not in canonical order", () => {
+    agrees(
+      `export function f(node: any, boundary: any) {
+  let found;
+  for (let p = node.parent; p !== undefined && p.id !== boundary.id; p = p.parent)
+    if (p.isTry) found = p;
+  return found?.id;
+}`,
+      [
+        [{ parent: { id: 1, isTry: true, parent: { id: 2, parent: { id: 3 } } } }, { id: 3 }],
+        [{ parent: { id: 1 } }, { id: 1 }],
+      ],
+    );
+  });
+
+  it("a read after an iterating loop whose body makes no heap operation comes after the loop", () => {
+    agrees(
+      `export function f(values: number[]) {
+  if (values.length === 0) return Number.NaN;
+  let sum = 0;
+  for (const v of values) sum += v;
+  return sum / values.length;
+}`,
+      [[[1, 2, 3]], [[]]],
+    );
+  });
+
+  it("a throw in a for loop's body, with the loop's update after it", () => {
+    agrees(
+      `export function f(body: string, inClass: boolean) {
+  let out = "";
+  for (let i = 0; i < body.length; i++) {
+    if (inClass) {
+      i += 1;
+    } else if (body[i] === "(" && body.startsWith("(?<=", i)) throw new RangeError("lookbehind");
+    out += body[i] ?? "";
+  }
+  return out;
+}`,
+      [
+        ["ab(c", false],
+        ["(?<=x)", false],
+        ["abcdef", true],
+      ],
+    );
+  });
+
+  it("a closure reads its own block's const, not a later one of the same name outside", () => {
+    agrees(
+      `export function f(t: string, a: number[], s: string) {
+  if (t === "nums") {
+    const r: number[] = [];
+    a.forEach((e) => r.push(e * 2));
+    return r;
+  }
+  const r = s.length;
+  return r;
+}`,
+      [
+        ["nums", [1, 2], ""],
+        ["str", [], "abc"],
+      ],
+    );
+  });
+
+  it("two equal outer values a loop reads, told apart by how its body uses them", () => {
+    agrees(
+      `export function f(fns: any[]) {
+  const ok: unknown[] = [];
+  const failed: unknown[] = [];
+  for (const fn of fns) {
+    try {
+      ok.push(fn());
+    } catch (err) {
+      failed.push(String(err));
+    }
+  }
+  return { ok, failed };
+}`,
+      [[[]]],
+    );
+  });
+});

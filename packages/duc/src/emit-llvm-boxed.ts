@@ -138,6 +138,7 @@ const GLOBALS = new Set([
   "Set",
   "Object",
   "JSON",
+  "Symbol",
   "BigInt",
   "ArrayBuffer",
   "DataView",
@@ -2720,6 +2721,32 @@ function lowerFunction(
     }
     emit(`br label %${head}`);
     block(head);
+    const items = planner.ordered(planner.itemsOf(bodyPathOf(loop)));
+    const forCond = new Set<ScopeItem>();
+    const want = rec.cond !== undefined ? [resolve(rec.cond)] : [];
+    const producedBy = new Map<ValueId, ScopeItem>();
+    for (const it of items) for (const v of planner.producesOf(it)) producedBy.set(v, it);
+    const condNeeds = new Set<ValueId>();
+    while (want.length > 0) {
+      const v = want.pop() as ValueId;
+      condNeeds.add(v);
+      const it = producedBy.get(v);
+      if (it === undefined || forCond.has(it)) continue;
+      forCond.add(it);
+      want.push(...planner.needsOf(it));
+    }
+    const checkCond = (): void => {
+      emitItems(items.filter((it) => forCond.has(it)));
+      if (rec.cond !== undefined) {
+        const go = freshLabel("go");
+        emit(`br i1 ${truthy(rec.cond)}, label %${go}, label %${exit}`);
+        block(go);
+      }
+    };
+    // An iteration's condition (its break flags) is checked before the next element is asked for,
+    // when it does not read the element: a loop left by a break asks its iterator for nothing more.
+    const condFirst = rec.iterate !== undefined && !condNeeds.has(resolve(rec.iterate.element));
+    if (condFirst) checkCond();
     if (rec.iterate !== undefined && iterator !== undefined) {
       m.used.add("yk_iter_next");
       const cell = fresh();
@@ -2735,21 +2762,8 @@ function lowerFunction(
       emit(`${element} = load i64, ptr ${cell}`);
       set(rec.iterate.element, element);
     }
-    const items = planner.ordered(planner.itemsOf(bodyPathOf(loop)));
-    const forCond = new Set<ScopeItem>();
-    const want = rec.cond !== undefined ? [resolve(rec.cond)] : [];
-    const producedBy = new Map<ValueId, ScopeItem>();
-    for (const it of items) for (const v of planner.producesOf(it)) producedBy.set(v, it);
-    while (want.length > 0) {
-      const v = want.pop() as ValueId;
-      const it = producedBy.get(v);
-      if (it === undefined || forCond.has(it)) continue;
-      forCond.add(it);
-      want.push(...planner.needsOf(it));
-    }
-    emitItems(items.filter((it) => forCond.has(it)));
-    if (rec.cond !== undefined) emit(`br i1 ${truthy(rec.cond)}, label %${inner}, label %${exit}`);
-    else emit(`br label %${inner}`);
+    if (!condFirst) checkCond();
+    emit(`br label %${inner}`);
     block(inner);
     emitItems(items.filter((it) => !forCond.has(it)));
     const next = rec.next.map((nv) => operand(nv));
@@ -2899,7 +2913,7 @@ function lowerFunction(
       emit(`br i1 ${ok}, label %${spec}, label %${general}`);
       block(spec);
       const r = fresh();
-      emit(`${r} = musttail call i64 @${clone}(ptr %closure, i64 %this, i64 %argc, ptr %argv)`);
+      emit(`${r} = tail call i64 @${clone}(ptr %closure, i64 %this, i64 %argc, ptr %argv)`);
       emit(`ret i64 ${r}`);
       block(general);
     }

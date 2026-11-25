@@ -588,6 +588,10 @@ export function canonicalizeGraph(
       if (loop.cond !== undefined) addUse(loop.cond, node, "cond");
     }
   }
+  // An invariant's position is not structure ("inv"), so two outer values that are equal in
+  // themselves (two `[]`) are told apart by how the body uses them: the invariant source standing
+  // for each is a use of it (#1292).
+  for (const [inner, outer] of invariantOuterOf) addUse(outer, inner, "invariant-source");
   obs.forEach((v, k) => addUse(v, "obs", `obs${k}`));
   for (const b of branches)
     addUse(b.cond, "branch", `cond:${branchSigOf(b.id) ?? ""}|${regionSig(b.within) ?? ""}`);
@@ -709,6 +713,11 @@ export function canonicalizeGraph(
     }),
   );
   const renameValue = (v: ValueId): ValueId => renamed.get(v) ?? v;
+  /** A value's place in canonical numbering (a value from outside the graph sorts last). */
+  const valueRank = (v: ValueId): number => {
+    const r = renamed.get(v);
+    return r === undefined ? Number.POSITIVE_INFINITY : Number(r.slice(1));
+  };
 
   // Invariants in canonical order, by the signature of the outer value each stands for; the
   // sources are renumbered to match.
@@ -720,9 +729,16 @@ export function canonicalizeGraph(
     const order = node.loop.invariant
       .map((_, j) => j)
       .sort((a, b) => {
-        const sa = sigOfValue(node.inputs[offset + a] as ValueId);
-        const sb = sigOfValue(node.inputs[offset + b] as ValueId);
-        return sa < sb ? -1 : sa > sb ? 1 : a - b;
+        const va = node.inputs[offset + a] as ValueId;
+        const vb = node.inputs[offset + b] as ValueId;
+        const sa = sigOfValue(va);
+        const sb = sigOfValue(vb);
+        if (sa !== sb) return sa < sb ? -1 : 1;
+        // Equal in themselves (two `[]`): by their canonical numbering, which tells them apart by
+        // their uses; not by the order the body read them in (#1292).
+        const ra = valueRank(va);
+        const rb = valueRank(vb);
+        return ra !== rb ? ra - rb : a - b;
       });
     invariantOrder.set(node, order);
     order.forEach((j, k) => {
