@@ -53,4 +53,10 @@ describe("per-target base sets (#1282)", () => {
     );
     expect(report.uses.map((u) => u.symbol)).toEqual(["Math"]);
   });
+
+  it("Node's web data classes are its globals: the Fetch API's, streams, DOMException (#1368)", () => {
+    for (const name of ["Headers", "Request", "Response", "ReadableStream", "DOMException"])
+      expect(NODE.primitives[name], name).toEqual({});
+    expect(NODE.primitives.fetch).toEqual({ capability: "network" });
+  });
 });

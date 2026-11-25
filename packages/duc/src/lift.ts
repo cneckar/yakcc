@@ -1670,6 +1670,12 @@ class Lifter {
       ...(lowered?.getDescendantsOfKind(SyntaxKind.ReturnStatement) ?? []),
       ...(lowered?.getDescendantsOfKind(SyntaxKind.BreakStatement) ?? []),
       ...(lowered?.getDescendantsOfKind(SyntaxKind.ContinueStatement) ?? []),
+      // A throw too, as a loop's own throw is (loopJumpsOf), outside a try the lowering holds: a
+      // switch's clause that throws is an exit of the loop around it, as the if it lowers to is when
+      // written (#1292).
+      ...(lowered?.getDescendantsOfKind(SyntaxKind.ThrowStatement) ?? []).filter(
+        (t) => outermostTry(t, lowered as Node) === undefined,
+      ),
     ])
       if (!isInsideNestedFunction(r, lowered as Node) && !insideLoop(r, lowered as Node))
         this.loweredExits.add(r.compilerNode);
@@ -5222,7 +5228,15 @@ function findPrimaryFunction(file: Node): FunctionLike | undefined {
         Node.isConstructorDeclaration(member) ||
         Node.isGetAccessorDeclaration(member) ||
         Node.isSetAccessorDeclaration(member)) &&
-      member.getBody() !== undefined
+      member.getBody() !== undefined &&
+      // A computed name that does work (`[(a = new WeakMap(), Symbol.iterator)]() {..}`, as the
+      // TypeScript lowering writes a class's private state) runs where the class is defined: the
+      // atom is the class with that member, not only the member's function (#1368).
+      !(
+        !Node.isConstructorDeclaration(member) &&
+        Node.isComputedPropertyName(member.getNameNode()) &&
+        !isInert((member.getNameNode() as import("ts-morph").ComputedPropertyName).getExpression())
+      )
     )
       return member;
   }
