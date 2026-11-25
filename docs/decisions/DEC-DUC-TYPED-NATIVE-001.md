@@ -59,12 +59,40 @@ A local array whose every use is an indexed read or write of a number, and whose
 - A call to a typed function with typed arguments is a direct call with the typed signature.
 - Any other call boxes its arguments and goes through the boxed calling convention.
 
+### Integer ranges
+A number that is known to be an int32 or a uint32 needs no range check before ToInt32. Such numbers come from `| 0`, `>>> 0`, the other bitwise operators, `Math.imul`, typed and memory loads, and a uint32 modulo a positive literal.
+- **Loop carries.** A carry is in a range when both its initial value and its next value are. An integer literal counts as in every range it fits. The proof is by induction, so no optimistic assumption is involved.
+- **Identities.** `x >>> 0` of a uint32 and `x | 0` of an int32 are the value itself.
+- **Remainder.** `%` of two non-negative integers below 2^32 is an integer remainder, NaN when divided by zero.
+- **No NaN check.** A `+`, `-` or `*` of bounded magnitude is never NaN, so its double is boxed as it is.
+- **Integer addresses.** When a memory address is a sum of non-negative integers, the access only checks the address's region.
+
+**`.int` clones.** In some functions, a number parameter starts a loop carry that is kept in a range. In a function with a loop, a parameter that a memory address is built from qualifies too. That function's `.num` clone checks once that each such parameter is an integer in its range, and not `-0`.
+- If they all are, it tail-calls its `.int` clone, which assumes those ranges.
+- Otherwise it runs its own body.
+
+So a caller that passes anything else still gets exactly the boxed result.
+
+### Results and strings
+- **Record results.** Some functions return an object literal of distinct named keys, made only to be returned. Such a function also has a `.rec` variant that writes the values into slots the caller provides. A direct call takes it when the result is used only by reads of those keys, and none of those reads is a method call's callee. No object is made.
+- **String builders.** A loop variable that starts as a constant string and that the loop only appends to (`out += x` on every path) is a runtime builder while the loop runs. Appends happen in place, each doing ToPrimitive then ToString as `+` does, and the string is made once when the loop exits.
+
 ### Floating point
 Compile with `-O2` without fast-math and without FP contraction (`-ffp-contract=off`), so no `fma` changes a result.
 
 ## Evidence required
 - The #1359 Math and the #1363 musl functions lower typed, and equal the boxed lowering and native C bit for bit.
 - Their speed is within 2× of clang `-O2` on the same C.
+
+**So far** (instruction counts, callgrind; results equal clang's):
+
+| shaved C | native | clang -O2 | ratio |
+|---|---|---|---|
+| V8's `sin` + `exp` (`ieee754.cc`), 200K calls each | 79.0M | 41.6M | 1.9× |
+| an FNV-style integer loop (xor, `Math.imul`, rotate, add), 2M iterations | 38.5M | 19.2M | 2.0× |
+| an adler32-style loop over a 4096-byte local buffer, 500 passes | 88.8M | 27.9M | 3.2× |
+
+The byte loop still pays for the double representation between integer operations, and for the memory cache check on each load.
 
 ## Alternatives
 - **A second, separate typed emitter.** It duplicates the scope, loop and branch lowering, and gives no fallback for values outside its types.
