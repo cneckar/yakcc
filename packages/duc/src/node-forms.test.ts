@@ -289,3 +289,225 @@ describe("a join of two equal arms, one on a side of a branch (#1330)", () => {
     );
   });
 });
+
+describe("a switch in a closure, inside a switch (#1368)", () => {
+  it("the closure's rewrite does not replace its parent's", () => {
+    agrees(
+      `export function f(kind: number, xs: number[]) {
+  switch (kind) {
+    case 1: {
+      let state = 0;
+      xs.forEach((n) => { switch (n) { case 2: state = 2; return; case 3: state = 3; return; } });
+      return state;
+    }
+  }
+  return -1;
+}`,
+      [
+        [1, [2, 3, 4]],
+        [1, [3, 2]],
+        [1, []],
+        [2, [2]],
+      ],
+    );
+  });
+});
+
+describe("a switch in a loop that continues and returns (#1368)", () => {
+  it("an arm that ends in a continue does not fall into the next", () => {
+    agrees(
+      `export function f(xs: number[]) {
+  const out: number[] = [];
+  let last = -1;
+  for (let i = 0; i < xs.length; i++) {
+    const next = xs[i];
+    switch (Math.sign(next - last)) {
+      case 0:
+        continue;
+      case -1:
+        return ["unsorted", i];
+    }
+    out.push(last = next);
+  }
+  return out;
+}`,
+      [[[1, 2, 2, 3]], [[1, 3, 2]], [[]], [[5, 5, 5]]],
+    );
+  });
+
+  it("a clause that returns on one side falls into the next on the other", () => {
+    agrees(
+      `export function f(node: any, stop: boolean) {
+  while (true) {
+    switch (node.kind) {
+      case 1:
+        node = node.left;
+        continue;
+      case 2:
+        if (stop) {
+          return ["stopped", node.kind];
+        }
+      case 3:
+      case 4:
+        node = node.expression;
+        continue;
+    }
+    return node;
+  }
+}`,
+      [
+        [{ kind: 1, left: { kind: 3, expression: { kind: 9 } } }, false],
+        [{ kind: 2, expression: { kind: 4, expression: 7 } }, false],
+        [{ kind: 2, expression: 1 }, true],
+        [{ kind: 0 }, true],
+      ],
+    );
+  });
+});
+
+describe("a labelled jump to an outer loop, from a switch (#1368)", () => {
+  it("leaves the switch, then the inner loop", () => {
+    agrees(
+      `export function f(as: number[], bs: number[]) {
+  const result: number[] = [];
+  loopB:
+    for (let offsetA = 0, offsetB = 0; offsetB < bs.length; offsetB++) {
+      loopA:
+        for (const startA = offsetA; offsetA < as.length; offsetA++) {
+          switch (Math.sign(bs[offsetB] - as[offsetA])) {
+            case -1:
+              result.push(bs[offsetB]);
+              continue loopB;
+            case 0:
+              continue loopB;
+            case 1:
+              continue loopA;
+          }
+        }
+    }
+  return result;
+}`,
+      [
+        [
+          [1, 3, 5],
+          [0, 1, 2, 3, 6],
+        ],
+        [[], [1]],
+        [[2], []],
+        [
+          [1, 2, 3],
+          [1, 2, 3],
+        ],
+      ],
+    );
+  });
+
+  it("a labelled break of the loop the switch is in", () => {
+    agrees(
+      `export function f(text: string, trailing: boolean) {
+  let pos = 0;
+  let lines = 0;
+  scan:
+    while (pos < text.length) {
+      const ch = text.charCodeAt(pos);
+      switch (ch) {
+        case 10:
+          pos++;
+          lines++;
+          if (trailing) {
+            break scan;
+          }
+          continue;
+        case 32:
+          pos++;
+          continue;
+        default:
+          break scan;
+      }
+    }
+  return [pos, lines];
+}`,
+      [
+        ["  \n \nx", false],
+        ["  \n \nx", true],
+        ["", false],
+        ["x", true],
+      ],
+    );
+  });
+
+  it("a return from a switch in an inner loop", () => {
+    agrees(
+      `export function f(rows: number[][]) {
+  for (const row of rows) {
+    for (let i = 0; i < row.length; i++) {
+      switch (row[i]) {
+        case 7:
+          return ["seven", i];
+        case 0:
+          break;
+      }
+    }
+  }
+  return "none";
+}`,
+      [
+        [
+          [
+            [1, 2],
+            [0, 7],
+          ],
+        ],
+        [[[1]]],
+        [[]],
+      ],
+    );
+  });
+});
+
+describe("a debugger statement (#1368)", () => {
+  it("does nothing where no debugger is attached", () => {
+    const code = `export function f(x: number) {
+  if (x < 0) {
+    debugger;
+  }
+  return x + 1;
+}`;
+    agrees(code, [[1], [-1]]);
+    expect(liftFidelity(code, liftAtom(code)).holds).toBe(true);
+  });
+});
+
+describe("a return from a loop in a clause that falls through (#1368)", () => {
+  it("leaves the loop, then the pass", () => {
+    agrees(
+      `export function f(text: string, ch: number) {
+  let pos = 0;
+  switch (ch) {
+    case 48:
+      if (text.length === 0) {
+        return "empty";
+      }
+    case 49:
+      pos++;
+    case 117:
+      for (; pos < text.length; pos++) {
+        if (text[pos] === "!") {
+          return text.substring(0, pos);
+        }
+      }
+      return "end " + pos;
+    default:
+      return String.fromCharCode(ch);
+  }
+}`,
+      [
+        ["", 48],
+        ["ab!c", 48],
+        ["ab!c", 49],
+        ["abc", 117],
+        ["x", 65],
+      ],
+    );
+  });
+});
