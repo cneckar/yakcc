@@ -432,6 +432,10 @@ class ModuleBuilder {
   readonly matchers = new Map<string, string>();
   /** Each atom an operation references (#1362), lowered once: its function's name. */
   readonly atoms = new Map<string, string>();
+  /** The number clones lowered (#1369): a function's `<name>.num`. */
+  readonly numClones = new Set<string>();
+  /** The number clones calls name, each its function's and its raw arguments' parameter list. */
+  readonly numCalled = new Map<string, { of: string; rawBlocks: number; regs: number }>();
   private closures = 0;
 
   constant(text: string, nul = false): { ptr: string; length: number } {
@@ -470,8 +474,127 @@ interface ModuleScope {
    * function its closure's code is, which a call may call directly (#1369). Undefined otherwise.
    */
   readonly direct?: (name: string) => string | undefined;
+  /** For a direct callee: the arguments its `.raw` variant takes as a block's bytes and length. */
+  readonly rawArgs?: (name: string) => ReadonlySet<number> | undefined;
+  /** For a direct callee: how many parameters it has. */
+  readonly arity?: (name: string) => number | undefined;
   /** For a statement: the globals its results (its graph's observations) are stored in, in order. */
   readonly outs?: readonly string[];
+}
+
+/**
+ * Raw block arguments (#1369, typed calls between atoms): for each argument of a function, whether
+ * a caller's block may be passed as its bytes and length rather than as an address. It may when the
+ * function only reads and writes the argument's memory at constant offsets (each checked against the
+ * length when it runs), or passes the argument on whole to a function that takes it so; `deps` are
+ * those (the callee's free name, the argument's position), which the module's fixpoint resolves.
+ * Such a block needs no region, and the callee no span lookup.
+ */
+function rawArgUses(source: DucGraph): Map<number, { deps: [string, number][] }> {
+  const out = new Map<number, { deps: [string, number][] }>();
+  if (source.mode !== undefined) return out;
+  const { graph: g } = loweringView(ecmaScriptView(source));
+  const alias = new Map<ValueId, ValueId>();
+  for (const n of g.nodes) {
+    const rec = n.loop;
+    if (n.kind !== "loop" || rec === undefined) continue;
+    const offset = rec.carry.length + (rec.iterate !== undefined ? 1 : 0);
+    rec.invariant.forEach((v, j) => alias.set(v, n.inputs[offset + j] as ValueId));
+  }
+  const resolve = (v: ValueId): ValueId => {
+    const a = alias.get(v);
+    return a === undefined ? v : resolve(a);
+  };
+  const producer = new Map<ValueId, DucNode>();
+  for (const n of g.nodes) for (const v of n.outputs) producer.set(v, n);
+  const usersOf = new Map<ValueId, DucNode[]>();
+  for (const n of g.nodes)
+    for (const v of n.inputs) {
+      const r = resolve(v as ValueId);
+      usersOf.set(r, [...(usersOf.get(r) ?? []), n]);
+    }
+  // Values nothing may be: a result, a branch's or loop's condition, a loop's next carry.
+  const held = new Set<ValueId>([
+    ...g.obs.map((v) => resolve(v)),
+    ...(g.branches ?? []).map((b) => resolve(b.cond as ValueId)),
+  ]);
+  for (const n of g.nodes) {
+    if (n.loop === undefined) continue;
+    for (const v of n.loop.next) held.add(resolve(v));
+    if (n.loop.cond !== undefined) held.add(resolve(n.loop.cond));
+  }
+  const diamond = (v: ValueId): DucNode | undefined => {
+    const p = producer.get(resolve(v));
+    return p?.kind === "diamond-source" ? p : undefined;
+  };
+  const leafOf = (n: DucNode): string | undefined => {
+    if (n.kind !== "op" || n.label !== "CallExpression") return undefined;
+    const sym = diamond(n.inputs[0] as ValueId)?.diamond?.symbol;
+    return sym !== undefined && LEAVES[sym] !== undefined ? sym : undefined;
+  };
+  const constantInt = (v: ValueId, depth = 0): number | undefined => {
+    const p = producer.get(resolve(v));
+    if (p?.kind === "literal-source") {
+      const x = Number((p.label ?? "").replace(/_/g, ""));
+      return /^[0-9]/.test(p.label ?? "") && Number.isSafeInteger(x) ? x : undefined;
+    }
+    if (depth > 8 || p?.kind !== "op" || p.inputs.length !== 2) return undefined;
+    const a = constantInt(p.inputs[0] as ValueId, depth + 1);
+    const b = constantInt(p.inputs[1] as ValueId, depth + 1);
+    if (a === undefined || b === undefined) return undefined;
+    const r =
+      p.label === "+" ? a + b : p.label === "-" ? a - b : p.label === "*" ? a * b : undefined;
+    return r !== undefined && Number.isSafeInteger(r) ? r : undefined;
+  };
+  const heapOnly = (u: DucNode, i: number): boolean =>
+    (u.order === 1 && i === u.inputs.length - 1) ||
+    (u.kind === "sel" && u.label === "heap") ||
+    (u.label ?? "").endsWith(":heap");
+  const usesOk = (v: ValueId, off: number, depth: number, deps: [string, number][]): boolean => {
+    if (held.has(v)) return false;
+    return (usersOf.get(v) ?? []).every((u) =>
+      u.inputs.every((x, i) => {
+        if (resolve(x as ValueId) !== v || heapOnly(u, i)) return true;
+        const leaf = leafOf(u);
+        const mem = leaf === undefined ? undefined : MEM_INLINE[leaf];
+        if (i === 1 && (mem !== undefined || leaf === "__ykStore64")) {
+          used++;
+          return off >= 0 && !(mem?.store !== false && resolve(u.inputs[2] as ValueId) === v);
+        }
+        if (u.kind === "loop" && u.loop !== undefined)
+          return i >= u.loop.carry.length + (u.loop.iterate !== undefined ? 1 : 0);
+        if (u.kind === "op" && u.label === ",") return i < u.inputs.length - 1;
+        if (depth === 0 && u.kind === "op" && u.label === "+" && u.inputs.length === 2) {
+          const other = u.inputs[1 - i] as ValueId;
+          const k = constantInt(other);
+          if (k === undefined || k < 0 || resolve(other) === v) return false;
+          return usesOk(u.outputs[0] as ValueId, off + k, depth + 1, deps);
+        }
+        if (
+          depth === 0 &&
+          i >= 1 &&
+          u.kind === "op" &&
+          u.label === "CallExpression" &&
+          leaf === undefined &&
+          diamond(u.inputs[0] as ValueId)?.diamond?.reason === "free-identifier"
+        ) {
+          deps.push([diamond(u.inputs[0] as ValueId)?.diamond?.symbol as string, i - 1]);
+          used++;
+          return true;
+        }
+        return false;
+      }),
+    );
+  };
+  let used = 0;
+  for (const p of g.nodes) {
+    if (p.kind !== "param-source" || (p.label ?? "").endsWith("...")) continue;
+    const deps: [string, number][] = [];
+    used = 0;
+    if (usesOk(p.outputs[0] as ValueId, 0, 0, deps) && used > 0)
+      out.set(paramIndex(p.label), { deps });
+  }
+  return out;
 }
 
 function lowerFunction(
@@ -488,7 +611,22 @@ function lowerFunction(
   scope?: ModuleScope,
   /** The parameters (by value) this lowering may take as numbers: a speculated clone's (#1369). */
   numberParams?: ReadonlySet<ValueId>,
+  /** The arguments this lowering takes as a block's bytes and length: a `.raw` variant's (#1369). */
+  rawParams?: ReadonlySet<number>,
 ): void {
+  const rawList = [...(rawParams ?? [])].sort((a, b) => a - b);
+  const rawHead = rawList.map((k) => `, ptr %rawb${k}, i64 %rawl${k}`).join("");
+  // A number clone's arguments, in registers too (#1369): each but a raw block's, when there is no
+  // rest parameter (a caller with them at hand passes them; the entry its loaded ones).
+  const argCount =
+    closure === undefined
+      ? 0
+      : source.nodes.filter((n) => n.kind === "param-source").length - closure.captures;
+  const regList = source.nodes.some(
+    (n) => n.kind === "param-source" && (n.label ?? "").endsWith("..."),
+  )
+    ? undefined
+    : Array.from({ length: argCount }, (_, k) => k).filter((k) => rawParams?.has(k) !== true);
   // An async function's or a generator's body is lowered as any function's: the runtime runs it as a
   // coroutine, which await and yield suspend (#1295). The closure carries the mode.
   if (source.mode !== undefined && closure === undefined)
@@ -955,8 +1093,10 @@ function lowerFunction(
     const numericUse = (n: DucNode): boolean =>
       n.kind === "op" &&
       ((n.inputs.length === 2 &&
-        (FAST_ARITH[n.label ?? ""] !== undefined || FAST_COMPARE[n.label ?? ""] !== undefined)) ||
-        (n.inputs.length === 1 && n.label === "-")) &&
+        (FAST_ARITH[n.label ?? ""] !== undefined ||
+          FAST_COMPARE[n.label ?? ""] !== undefined ||
+          FAST_BITWISE[n.label ?? ""] !== undefined)) ||
+        (n.inputs.length === 1 && (n.label === "-" || n.label === "~"))) &&
       allNumbers(n.inputs as readonly ValueId[]);
     // A float store's value: its fast path writes the double as it is, its slow path (a runtime
     // call) canonicalizes it first. Only a store whose own result nothing reads (it orders after).
@@ -985,6 +1125,32 @@ function lowerFunction(
       if (us.length > 0 && us.every((u) => numericUse(u) || rawStoreUse(u, o))) rawNumbers.add(o);
     }
   }
+  /**
+   * A bound on a number's magnitude the graph proves (#1369): an int32 or uint32 range, a finite
+   * literal, and + - * and negation of bounded numbers (each of which is a number when its inputs
+   * are). Undefined when there is none.
+   */
+  const magnitude = (v0: ValueId, depth = 0): number | undefined => {
+    const v = resolve(v0);
+    const r = numRange.get(v);
+    if (r !== undefined) return r === "i32" ? 2 ** 31 : 2 ** 32;
+    const lit = literalNumber(v);
+    if (lit !== undefined) return Number.isFinite(lit) ? Math.abs(lit) : undefined;
+    const p = producer.get(v);
+    if (depth > 12 || p?.kind !== "op") return undefined;
+    if (p.inputs.length === 1 && p.label === "-")
+      return magnitude(p.inputs[0] as ValueId, depth + 1);
+    if (p.inputs.length !== 2 || !["+", "-", "*"].includes(p.label ?? "")) return undefined;
+    const a = magnitude(p.inputs[0] as ValueId, depth + 1);
+    const b = a === undefined ? undefined : magnitude(p.inputs[1] as ValueId, depth + 1);
+    if (a === undefined || b === undefined) return undefined;
+    return p.label === "*" ? a * b : a + b;
+  };
+  /** Whether a number is proven below 2^63 in magnitude: its int64 conversion is ToInt32's modulo. */
+  const boundedInt64 = (v: ValueId): boolean => {
+    const b = magnitude(v);
+    return b !== undefined && b < 9.2e18;
+  };
   /** A raw double's bits made canonical (a NaN as the one NaN boxed values use). */
   const canonicalBits = (bits: string): string => {
     const d = fresh();
@@ -995,13 +1161,14 @@ function lowerFunction(
     emit(`${r} = select i1 ${nan}, i64 ${CANONICAL_NAN}, i64 ${bits}`);
     return r;
   };
-  /** A double result for `out`: its bits as they are when only numeric operations read it. */
-  const numberResult = (out: ValueId, d: string): string => {
-    if (!rawNumbers.has(out)) return boxDouble(d);
+  const rawBits = (d: string): string => {
     const bits = fresh();
     emit(`${bits} = bitcast double ${d} to i64`);
     return bits;
   };
+  /** A double result for `out`: its bits as they are when only numeric operations read it. */
+  const numberResult = (out: ValueId, d: string): string =>
+    rawNumbers.has(resolve(out)) ? rawBits(d) : boxDouble(d);
   /** Whether a value is a typed BigInt: an i128 (a literal, or an operation the proof types). */
   const isTypedBig = (v: ValueId): boolean =>
     widthOf(v) !== undefined && (widthOf(v) as number) <= 127;
@@ -1352,8 +1519,21 @@ function lowerFunction(
       }),
     ) ||
     g.obs.some((o) => resolve(o) === v);
-  const localAccess = (v0: ValueId, size: number): { slot: string; off: number } | undefined => {
+  // A `.raw` variant's block arguments (#1369): each its bytes' and length's parameters.
+  const rawBlocks = new Map<ValueId, { slot: string; len: string }>();
+  params.forEach((p, i) => {
+    const k = i - (closure?.captures ?? 0);
+    if (closure !== undefined && k >= 0 && rawParams?.has(k) === true)
+      rawBlocks.set(p.outputs[0] as ValueId, { slot: `%rawb${k}`, len: `%rawl${k}` });
+  });
+  /** A block's bytes for an access: a local block's (inside it) or a raw argument's (len checks). */
+  const localAccess = (
+    v0: ValueId,
+    size: number,
+  ): { slot: string; off: number; len?: string } | undefined => {
     const v = resolve(v0);
+    const raw = rawBlocks.get(v);
+    if (raw !== undefined) return { slot: raw.slot, off: 0, len: raw.len };
     const direct = localBlocks.get(v);
     if (direct !== undefined)
       return size <= direct.size ? { slot: direct.slot, off: 0 } : undefined;
@@ -1367,8 +1547,51 @@ function lowerFunction(
       const k = constantInt(y);
       if (b !== undefined && k !== undefined && Number.isInteger(k) && k >= 0 && k + size <= b.size)
         return { slot: b.slot, off: k };
+      const r = rawBlocks.get(resolve(x));
+      if (r !== undefined && k !== undefined && Number.isInteger(k) && k >= 0)
+        return { slot: r.slot, off: k, len: r.len };
     }
     return undefined;
+  };
+  /** A call's callee's raw block arguments, when it is a direct function with a `.raw` variant. */
+  const rawCallArgs = (u: DucNode): ReadonlySet<number> | undefined => {
+    if (u.kind !== "op" || u.label !== "CallExpression" || leafOfCall(u) !== undefined)
+      return undefined;
+    const name = freeValue.get(resolve(u.inputs[0] as ValueId));
+    if (name === undefined || scope?.direct?.(name) === undefined) return undefined;
+    return scope.rawArgs?.(name);
+  };
+  /**
+   * The blocks a call to a `.raw` variant passes, one per raw argument (its value is a block:
+   * `isBlock`, or this function's own raw argument); undefined when one is not.
+   */
+  const rawCallBlocks = (u: DucNode, isBlock: (v: ValueId) => boolean): ValueId[] | undefined => {
+    const raw = rawCallArgs(u);
+    if (raw === undefined) return undefined;
+    const end = u.order === 1 ? u.inputs.length - 1 : u.inputs.length;
+    const out: ValueId[] = [];
+    for (const k of [...raw].sort((a, b) => a - b)) {
+      if (1 + k >= end) return undefined;
+      const a = resolve(u.inputs[1 + k] as ValueId);
+      if (!isBlock(a) && !rawBlocks.has(a)) return undefined;
+      out.push(a);
+    }
+    return out;
+  };
+  const candidates = new Map<ValueId, { size: number; rawCalls: DucNode[] }>();
+  /** A raw argument's access: inside its length, or the runtime's memory trap. */
+  const blockBound = (local: { off: number; len?: string }, size: number): void => {
+    if (local.len === undefined) return;
+    const ok = fresh();
+    emit(`${ok} = icmp ule i64 ${local.off + size}, ${local.len}`);
+    const inside = freshLabel("rawin");
+    const outside = freshLabel("rawout");
+    emit(`br i1 ${ok}, label %${inside}, label %${outside}`);
+    block(outside);
+    m.intrinsics.add("declare void @yk_raw_trap(i64, i64)");
+    emit(`call void @yk_raw_trap(i64 ${local.off}, i64 ${size})`);
+    emit("unreachable");
+    block(inside);
   };
   {
     // An address use: a load's or store's address operand (never a store's value), in bounds.
@@ -1395,12 +1618,22 @@ function lowerFunction(
       (u.kind === "sel" && u.label === "heap") ||
       (u.label ?? "").endsWith(":heap");
     // As localAccess reads them: the block itself, or the block plus a constant (one step).
-    const blockUsesOk = (v: ValueId, size: number, off: number, depth = 0): boolean => {
+    const blockUsesOk = (
+      v: ValueId,
+      size: number,
+      off: number,
+      depth = 0,
+      rawCalls: DucNode[] = [],
+    ): boolean => {
       if (depth > 1) return false;
       return (usersOf.get(v) ?? []).every((u) =>
         u.inputs.every((x, i) => {
           if (resolve(x as ValueId) !== v || heapOnly(u, i)) return true;
           const leaf = leafOfCall(u);
+          if (depth === 0 && i >= 1 && rawCallArgs(u)?.has(i - 1) === true) {
+            rawCalls.push(u);
+            return true;
+          }
           if (i === 1 && leaf !== undefined && addressUse(u, v, size, off)) return true;
           if (i === 1 && leaf === "__ykFree" && off === 0) return true;
           if (u.kind === "loop" && u.loop !== undefined) {
@@ -1413,7 +1646,7 @@ function lowerFunction(
             const other = u.inputs[1 - i] as ValueId;
             const k = constantInt(other);
             if (k === undefined || !Number.isInteger(k) || resolve(other) === v) return false;
-            return blockUsesOk(u.outputs[0] as ValueId, size, off + k, depth + 1);
+            return blockUsesOk(u.outputs[0] as ValueId, size, off + k, depth + 1, rawCalls);
           }
           return false;
         }),
@@ -1434,11 +1667,24 @@ function lowerFunction(
       if (!Number.isInteger(align) || align < 1 || align > 16 || (align & (align - 1)) !== 0)
         continue;
       const v = n.outputs[0] as ValueId;
-      const ok = blockUsesOk(v, size, 0);
-      if (!ok) continue;
+      const rawCalls: DucNode[] = [];
+      if (!blockUsesOk(v, size, 0, 0, rawCalls)) continue;
+      candidates.set(v, { size, rawCalls });
+    }
+    // A block passed to a `.raw` variant is local only when every raw argument of that call is a
+    // block too (a local one, or this function's own raw argument).
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const [v, c] of candidates)
+        if (c.rawCalls.some((u) => rawCallBlocks(u, (x) => candidates.has(x)) === undefined)) {
+          candidates.delete(v);
+          changed = true;
+        }
+    }
+    for (const [v, c] of candidates) {
       const slot = `%lb${localBlocks.size}`;
-      entryAllocas.push(`  ${slot} = alloca [${size} x i8], align 16`);
-      localBlocks.set(v, { slot, size });
+      entryAllocas.push(`  ${slot} = alloca [${c.size} x i8], align 16`);
+      localBlocks.set(v, { slot, size: c.size });
     }
   }
   // Frames allocated on first use (#1369): an escaping block every use of which (but its frees and
@@ -1499,6 +1745,10 @@ function lowerFunction(
       readonly base: string;
       readonly off: number;
     },
+    /** A load whose every use reads the double's bits (rawNumbers): a NaN needs no canonical form. */
+    raw = false,
+    /** A store's value is proven below 2^63 in magnitude: its ToInt32 needs no check. */
+    bounded = false,
   ): string => {
     for (const d of MEM_CACHE_DECLS) m.intrinsics.add(d);
     m.intrinsics.add("declare double @llvm.fabs.f64(double)");
@@ -1523,7 +1773,7 @@ function lowerFunction(
       if (mem.store) {
         xd = fresh();
         emit(`${xd} = bitcast i64 ${value} to double`);
-        if (mem.kind === "u") {
+        if (mem.kind === "u" && !bounded) {
           const small = fresh();
           emit(`${small} = and i1 ${ok}, ${smallDouble(xd)}`);
           ok = small;
@@ -1571,7 +1821,7 @@ function lowerFunction(
       if (mem.store) {
         xd = fresh();
         emit(`${xd} = bitcast i64 ${value} to double`);
-        if (mem.kind === "u") {
+        if (mem.kind === "u" && !bounded) {
           // ToInt32 of the value inline needs it below 2^63 in magnitude.
           const small = fresh();
           emit(`${small} = and i1 ${ok}, ${smallDouble(xd)}`);
@@ -1701,11 +1951,11 @@ function lowerFunction(
         emit(`${f} = uitofp i64 ${z} to double`);
         r1 = fresh();
         emit(`${r1} = bitcast double ${f} to i64`);
-      } else if (mem.kind === "f64") r1 = boxDouble(v);
+      } else if (mem.kind === "f64") r1 = raw ? rawBits(v) : boxDouble(v);
       else {
         const f = fresh();
         emit(`${f} = fpext float ${v} to double`);
-        r1 = boxDouble(f);
+        r1 = raw ? rawBits(f) : boxDouble(f);
       }
     }
     const fastEnd = currentLabel();
@@ -1912,6 +2162,7 @@ function lowerFunction(
         const local = localAccess(ins[1] as ValueId, 8);
         if (local !== undefined) {
           const q = fresh();
+          blockBound(local, 8);
           emit(`${q} = getelementptr i8, ptr ${local.slot}, i64 ${local.off}`);
           const v = fresh();
           emit(`${v} = load i64, ptr ${q}, align 1`);
@@ -2601,6 +2852,7 @@ function lowerFunction(
         if (local64 !== undefined) {
           // Into a block whose address never escapes: the value's low 64 bits.
           const q = fresh();
+          blockBound(local64, 8);
           emit(`${q} = getelementptr i8, ptr ${local64.slot}, i64 ${local64.off}`);
           let bits: string;
           if (isTypedBig(ins[2] as ValueId)) {
@@ -2624,14 +2876,26 @@ function lowerFunction(
       if (mem !== undefined && local !== undefined) {
         // Inside a block whose address never escapes: the bytes themselves.
         const q = fresh();
+        blockBound(local, mem.size);
         emit(`${q} = getelementptr i8, ptr ${local.slot}, i64 ${local.off}`);
         if (mem.store) {
+          // A raw argument's store may be of any value: its number first (a local block's is one).
+          const num = allNumbers([ins[2] as ValueId])
+            ? (args[1] as string)
+            : call(UNARY["+"] as string, `i64 ${args[1]}`);
           const xd = fresh();
-          emit(`${xd} = bitcast i64 ${args[1]} to double`);
+          emit(`${xd} = bitcast i64 ${num} to double`);
           if (mem.kind === "u") {
-            m.intrinsics.add("declare i32 @yk_double_to_uint32(double)");
             const w = fresh();
-            emit(`${w} = call i32 @yk_double_to_uint32(double ${xd})`);
+            if (boundedInt64(ins[2] as ValueId)) {
+              // Below 2^63 in magnitude: its int64's low bits.
+              const w64 = fresh();
+              emit(`${w64} = fptosi double ${xd} to i64`);
+              emit(`${w} = trunc i64 ${w64} to i32`);
+            } else {
+              m.intrinsics.add("declare i32 @yk_double_to_uint32(double)");
+              emit(`${w} = call i32 @yk_double_to_uint32(double ${xd})`);
+            }
             let t = w;
             if (mem.ty !== "i32") {
               t = fresh();
@@ -2644,7 +2908,7 @@ function lowerFunction(
             emit(`${f} = fptrunc double ${xd} to float`);
             emit(`store float ${f}, ptr ${q}, align 1`);
           }
-          set(out, args[1] as string);
+          set(out, num);
         } else {
           const v = fresh();
           emit(`${v} = load ${mem.ty}, ptr ${q}, align 1`);
@@ -2656,11 +2920,11 @@ function lowerFunction(
             const r = fresh();
             emit(`${r} = bitcast double ${f} to i64`);
             set(out, r);
-          } else if (mem.kind === "f64") set(out, boxDouble(v));
+          } else if (mem.kind === "f64") set(out, numberResult(out, v));
           else {
             const f = fresh();
             emit(`${f} = fpext float ${v} to double`);
-            set(out, boxDouble(f));
+            set(out, numberResult(out, f));
           }
         }
         return;
@@ -2679,6 +2943,8 @@ function lowerFunction(
                 : call(fn, args.map((a) => `i64 ${a}`).join(", ")),
             ins.slice(1).map((v) => allNumbers([v as ValueId])),
             frameAccess(ins[1] as ValueId, mem.size),
+            !mem.store && rawNumbers.has(resolve(out as ValueId)),
+            mem.store && mem.kind === "u" && boundedInt64(ins[2] as ValueId),
           ),
         );
         return;
@@ -2834,9 +3100,48 @@ function lowerFunction(
         emit(`${addr} = and i64 ${fn}, 281474976710655`);
         const ptr = fresh();
         emit(`${ptr} = inttoptr i64 ${addr} to ptr`);
+        // Blocks passed where the callee takes raw arguments: its `.raw` variant, their bytes and
+        // lengths (#1369).
+        const blocks = rawCallBlocks(n, (x) => localBlocks.has(x));
+        if (blocks === undefined && ins.slice(1).some((x) => rawBlocks.has(resolve(x))))
+          throw new LlvmEmitError(
+            `a raw block argument passed to ${calleeName} with an argument it takes raw not a block`,
+          );
+        const rawPass =
+          blocks === undefined
+            ? ""
+            : blocks
+                .map((b) => {
+                  const r = rawBlocks.get(b);
+                  if (r !== undefined) return `, ptr ${r.slot}, i64 ${r.len}`;
+                  const l = localBlocks.get(b) as { slot: string; size: number };
+                  return `, ptr ${l.slot}, i64 ${l.size}`;
+                })
+                .join("");
+        // Every argument a number (but a raw block's, which a clone never speculates on), and every
+        // parameter given: the callee's number clone, directly (a thunk to it when it has none).
+        const target = `${direct}${blocks === undefined ? "" : ".raw"}`;
+        const arity = scope?.arity?.(calleeName as string);
+        const numbers =
+          arity !== undefined &&
+          args.length >= arity &&
+          ins.slice(1).every((x) => (blocks ?? []).includes(resolve(x)) || allNumbers([x]));
+        if (numbers)
+          m.numCalled.set(`${target}.num`, {
+            of: target,
+            rawBlocks: blocks?.length ?? 0,
+            regs: (arity as number) - (blocks?.length ?? 0),
+          });
+        const rawAt = blocks === undefined ? undefined : scope?.rawArgs?.(calleeName as string);
+        const regPass = numbers
+          ? Array.from({ length: arity as number }, (_, k) => k)
+              .filter((k) => rawAt?.has(k) !== true)
+              .map((k) => `, i64 ${args[k]}`)
+              .join("")
+          : "";
         const r1 = fresh();
         emit(
-          `${r1} = call i64 @${direct}(ptr ${ptr}, i64 ${superRecv}, i64 ${args.length}, ptr ${argv})`,
+          `${r1} = call i64 @${target}${numbers ? ".num" : ""}(ptr ${ptr}, i64 ${superRecv}, i64 ${args.length}, ptr ${argv}${rawPass}${regPass})`,
         );
         const yesEnd = currentLabel();
         emit(`br label %${join}`);
@@ -2898,8 +3203,16 @@ function lowerFunction(
         return;
       }
       if (bitwise !== undefined) {
-        const unrangedA = !numRange.has(resolve(ins[0] as ValueId));
-        const unrangedB = !numRange.has(resolve(ins[1] as ValueId));
+        const unrangedA = !boundedInt64(ins[0] as ValueId);
+        const unrangedB = !boundedInt64(ins[1] as ValueId);
+        // A raw operand (rawNumbers) reaches the runtime's operation canonical.
+        const canon = (v: ValueId, x: string): string =>
+          rawNumbers.has(resolve(v)) ? canonicalBits(x) : x;
+        const bitwiseSlow = (): string =>
+          call(
+            BINARY[lbl] as string,
+            `i64 ${canon(ins[0] as ValueId, a)}, i64 ${canon(ins[1] as ValueId, b)}`,
+          );
         set(
           out,
           numberFast(
@@ -2919,7 +3232,7 @@ function lowerFunction(
               emit(`${bits} = bitcast double ${d} to i64`);
               return bits;
             },
-            slow,
+            bitwiseSlow,
             // ToInt32 inline needs |x| < 2^63: known for a value the range inference holds.
             unrangedA && unrangedB
               ? ([x, y]) => {
@@ -3034,10 +3347,12 @@ function lowerFunction(
               emit(`${bits} = bitcast double ${f} to i64`);
               return bits;
             },
-            slow,
-            numRange.has(resolve(ins[0] as ValueId))
-              ? undefined
-              : ([d]) => smallDouble(d as string),
+            () =>
+              call(
+                UNARY[lbl] as string,
+                `i64 ${rawNumbers.has(resolve(ins[0] as ValueId)) ? canonicalBits(x) : x}`,
+              ),
+            boundedInt64(ins[0] as ValueId) ? undefined : ([d]) => smallDouble(d as string),
             allNumbers([ins[0] as ValueId]),
           ),
         );
@@ -3310,7 +3625,18 @@ function lowerFunction(
     else if (i < closure.captures) set(v, call("yk_capture", `ptr %closure, i64 ${i}`));
     else if ((p.label ?? "").endsWith("..."))
       set(v, call("yk_rest", `i64 %argc, ptr %argv, i64 ${i - closure.captures}`));
-    else {
+    else if (
+      numberParams !== undefined &&
+      numberParams.size > 0 &&
+      regList !== undefined &&
+      regList.includes(i - closure.captures)
+    )
+      set(v, `%n${i - closure.captures}`);
+    else if (rawParams?.has(i - closure.captures) === true) {
+      // A raw block argument: its bytes and length; its address is never read (0, as a local
+      // block's is, so a constant offset from it folds).
+      set(v, boxedNumber(0));
+    } else {
       // The argument, or undefined past argc: inline (#1369).
       const k = i - closure.captures;
       const has = fresh();
@@ -3378,10 +3704,13 @@ function lowerFunction(
       (p, i) =>
         i >= closure.captures &&
         !(p.label ?? "").endsWith("...") &&
+        rawParams?.has(i - closure.captures) !== true &&
         numericUse.has(p.outputs[0] as ValueId),
     );
     if (speculated.length > 0) {
-      const clone = m.closureName(`${name.replace(/"/g, "")}.num`);
+      // Named for its function, so a caller whose arguments are numbers calls it directly.
+      const clone = `${name.replace(/"/g, "")}.num`;
+      m.numClones.add(clone);
       lowerFunction(
         m,
         source,
@@ -3389,6 +3718,7 @@ function lowerFunction(
         closure,
         scope,
         new Set(speculated.map((p) => p.outputs[0] as ValueId)),
+        rawParams,
       );
       let ok = "true";
       for (const p of speculated) {
@@ -3403,9 +3733,22 @@ function lowerFunction(
       emit(`br i1 ${ok}, label %${spec}, label %${general}`);
       block(spec);
       const r = fresh();
-      emit(`${r} = tail call i64 @${clone}(ptr %closure, i64 %this, i64 %argc, ptr %argv)`);
+      emit(
+        `${r} = tail call i64 @${clone}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead}${(regList ?? []).map((k) => `, i64 ${operand(params[k + closure.captures]?.outputs[0] as ValueId)}`).join("")})`,
+      );
       emit(`ret i64 ${r}`);
       block(general);
+      // The general lowering, a function of its own: this entry, only the checks, stays small
+      // (no frame of its own to set up before the clone's tail call).
+      const gen = `${name.replace(/"/g, "")}.gen`;
+      lowerFunction(m, source, gen, closure, scope, new Set(), rawParams);
+      const r2 = fresh();
+      emit(
+        `${r2} = tail call i64 @${gen}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead})`,
+      );
+      emit(`ret i64 ${r2}`);
+      finish();
+      return;
     }
   }
   // Pointer parameters read or written at constant offsets (#1369): the span they reach is looked
@@ -3444,7 +3787,8 @@ function lowerFunction(
     }
     for (const [pv, sp] of spans) {
       const index = params.findIndex((p) => p.outputs[0] === pv);
-      if (index < closure.captures || sp.uses < 2) continue;
+      if (index < closure.captures || sp.uses < 2 || rawParams?.has(index - closure.captures))
+        continue;
       m.intrinsics.add("declare ptr @yk_span(i64, i64, i32, ptr, ptr)");
       const k = frames.size;
       const bytesSlot = `%fb${k}`;
@@ -3541,22 +3885,25 @@ function lowerFunction(
   } else if (g.obs.length === 0) emit(`ret i64 ${UNDEFINED}`);
   else emit(`ret i64 ${operand(g.obs[0] as ValueId)}`);
 
-  const head =
-    closure === undefined
-      ? `define i64 @${name}(${params.map((_, i) => `i64 %p${i}`).join(", ")}) {`
-      : `define internal i64 @${name}(ptr %closure, i64 %this, i64 %argc, ptr %argv) {`;
-  m.functions.push(
-    [
-      head,
-      "entry:",
-      ...[...slots.values()].map((s) => `  ${s} = alloca i64`),
-      ...[...bigSlots.values()].map((s) => `  ${s} = alloca i128`),
-      ...entryAllocas,
-      ...body,
-      "}",
-      "",
-    ].join("\n"),
-  );
+  finish();
+  function finish(): void {
+    const head =
+      closure === undefined
+        ? `define i64 @${name}(${params.map((_, i) => `i64 %p${i}`).join(", ")}) {`
+        : `define internal i64 @${name}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead}${numberParams !== undefined && numberParams.size > 0 ? (regList ?? []).map((k) => `, i64 %n${k}`).join("") : ""})${numberParams?.size === 0 ? " noinline" : ""} {`;
+    m.functions.push(
+      [
+        head,
+        "entry:",
+        ...[...slots.values()].map((s) => `  ${s} = alloca i64`),
+        ...[...bigSlots.values()].map((s) => `  ${s} = alloca i128`),
+        ...entryAllocas,
+        ...body,
+        "}",
+        "",
+      ].join("\n"),
+    );
+  }
 }
 
 /**
@@ -3620,6 +3967,11 @@ export function emitLlvmBoxed(input: DucGraph, symbol = "f"): LlvmModule {
 }
 
 /** One statement of a module (#1290): a function declaration, or a statement, and the names it declares. */
+/** The platform globals the native runtime gives (#1370's closure listing: hand-written). */
+export const NATIVE_GLOBALS: ReadonlySet<string> = GLOBALS;
+/** The leaves the native lowering calls the runtime for, by their reserved names. */
+export const NATIVE_LEAVES: ReadonlySet<string> = new Set(Object.keys(LEAVES));
+
 export interface NativeModuleStatement {
   readonly kind: "function" | "statement";
   readonly declares: readonly string[];
@@ -3759,6 +4111,58 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
       directBySlot.set(g(i, `b.${name}`), `m${i}_s${k}`);
     });
   });
+  const directOf = (i: number, name: string): string | undefined => {
+    const mod = modules[i] as NativeModule;
+    if (mod.statements.some((st) => st.declares.includes(name)))
+      return directBySlot.get(g(i, `b.${name}`));
+    const imp = mod.esm?.imports[name];
+    if (imp === undefined) return undefined;
+    const target = resolveImport(imp);
+    return target !== undefined && "slot" in target ? directBySlot.get(target.slot) : undefined;
+  };
+  // Raw block arguments (#1369): each direct function's, the greatest fixpoint of rawArgUses (an
+  // argument passed on must be one its callee takes raw).
+  const rawUses = new Map<string, { i: number; uses: Map<number, { deps: [string, number][] }> }>();
+  modules.forEach((mod, i) =>
+    mod.statements.forEach((st, k) => {
+      const fn = `m${i}_s${k}`;
+      const name = st.declares[0];
+      if (
+        st.kind !== "function" ||
+        name === undefined ||
+        directBySlot.get(g(i, `b.${name}`)) !== fn
+      )
+        return;
+      const uses = rawArgUses(st.graph);
+      if (uses.size > 0) rawUses.set(fn, { i, uses });
+    }),
+  );
+  const arities = new Map<string, number>();
+  modules.forEach((mod, i) =>
+    mod.statements.forEach((st, k) => {
+      const ps = st.graph.nodes.filter((n) => n.kind === "param-source");
+      if (st.kind === "function" && !ps.some((n) => (n.label ?? "").endsWith("...")))
+        arities.set(`m${i}_s${k}`, ps.length);
+    }),
+  );
+  const rawSets = new Map<string, Set<number>>();
+  for (const [fn, r] of rawUses) rawSets.set(fn, new Set(r.uses.keys()));
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [fn, r] of rawUses) {
+      const set = rawSets.get(fn) as Set<number>;
+      for (const j of [...set]) {
+        const ok = (r.uses.get(j)?.deps ?? []).every(([callee, pos]) => {
+          const t = directOf(r.i, callee);
+          return t !== undefined && rawSets.get(t)?.has(pos) === true;
+        });
+        if (!ok) {
+          set.delete(j);
+          changed = true;
+        }
+      }
+    }
+  }
   modules.forEach((mod, i) => {
     const names = new Set(mod.statements.flatMap((st) => st.declares));
     for (const what of ["module", "exports", "require"])
@@ -3804,12 +4208,15 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         emit(`store i64 ${value}, ptr ${g(i, `b.${name}`)}`);
         return true;
       },
-      direct: (name) => {
-        if (names.has(name)) return directBySlot.get(g(i, `b.${name}`));
-        const imp = mod.esm?.imports[name];
-        if (imp === undefined) return undefined;
-        const target = resolveImport(imp);
-        return target !== undefined && "slot" in target ? directBySlot.get(target.slot) : undefined;
+      direct: (name) => directOf(i, name),
+      arity: (name) => {
+        const fn = directOf(i, name);
+        return fn === undefined ? undefined : arities.get(fn);
+      },
+      rawArgs: (name) => {
+        const fn = directOf(i, name);
+        const set = fn === undefined ? undefined : rawSets.get(fn);
+        return set !== undefined && set.size > 0 ? set : undefined;
       },
       ...(outs !== undefined ? { outs } : {}),
     });
@@ -3821,6 +4228,17 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         const name = st.declares[0];
         if (name === undefined) throw new LlvmEmitError("a function statement with no name");
         lowerFunction(m, ecmaScriptView(st.graph), fn, { captures: 0 }, scope());
+        const raw = rawSets.get(fn);
+        if (raw !== undefined && raw.size > 0)
+          lowerFunction(
+            m,
+            ecmaScriptView(st.graph),
+            `${fn}.raw`,
+            { captures: 0 },
+            scope(),
+            undefined,
+            raw,
+          );
         m.used.add("yk_closure_new");
         init.push(`  %f${k} = call i64 @yk_closure_new(ptr @${fn}, i32 1, i64 0, ptr null)`);
         init.push(`  store i64 %f${k}, ptr ${g(i, `b.${name}`)}`);
@@ -3930,6 +4348,21 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
       `define i64 @${symbol}() {\nentry:\n  %r = call i64 ${g(i, "init")}()\n  ret i64 %r\n}\n`,
     );
   });
+  // A number clone a call names that its function has none of: the function itself.
+  for (const [clone, { of, rawBlocks, regs }] of m.numCalled) {
+    if (m.numClones.has(clone)) continue;
+    const ps = Array.from({ length: rawBlocks }, (_, j) => [`ptr %rb${j}`, `i64 %rl${j}`]).flat();
+    const ns = Array.from({ length: regs }, (_, j) => `, i64 %n${j}`).join("");
+    m.functions.push(
+      [
+        `define internal i64 @${clone}(ptr %closure, i64 %this, i64 %argc, ptr %argv${ps.map((p) => `, ${p}`).join("")}${ns}) {`,
+        `  %r = tail call i64 @${of}(ptr %closure, i64 %this, i64 %argc, ptr %argv${ps.map((p) => `, ${p}`).join("")})`,
+        "  ret i64 %r",
+        "}",
+        "",
+      ].join("\n"),
+    );
+  }
   const ir = [
     "; yakcc native lowering, a package's modules (#1292, #1290)",
     'source_filename = "modules"',

@@ -21,6 +21,11 @@
  * that round-trip), ToPrimitive for arrays (join), +, the arithmetic and relational operators, == and
  * ===, typeof, truthiness, `.length`, indexing, and the string and array methods listed below.
  */
+#ifdef YK_NOLIBC
+/* No C library: Linux's system calls and the runtime's own functions (#1361 P1). */
+#include "nolibc.h"
+#define YK_GC 1
+#else
 #define _GNU_SOURCE /* ucontext: an async function's or a generator's own stack (#1295) */
 #include <math.h>
 #include <setjmp.h>
@@ -38,6 +43,7 @@
 #define YK_GC 1
 #else
 #define YK_GC 0
+#endif
 #endif
 
 typedef uint64_t yk;
@@ -239,6 +245,13 @@ static void gc_setup(void) {
   const char *stress = getenv("YK_GC_STRESS");
   if (stress != NULL && stress[0] == '1') gc_threshold = gc_floor = (size_t)1 << 16;
   if (getenv("YK_GC_STATS") != NULL) atexit(gc_report);
+#ifdef YK_NOLIBC
+  /* The stack _start was entered with: every frame is below it. */
+  if (gc_state == 2 && yk_nolibc_stack_top != 0) {
+    gc_stack_top = yk_nolibc_stack_top;
+    gc_state = 1;
+  }
+#else
   pthread_attr_t at;
   void *addr;
   size_t size;
@@ -249,6 +262,7 @@ static void gc_setup(void) {
     }
     pthread_attr_destroy(&at);
   }
+#endif
 }
 
 /* k contiguous pages: a freed run that fits, else new ones. *fresh: never used (zero). */
@@ -393,6 +407,12 @@ static void gc_drain(void) {
     gc_scan(p, p + gc_work[gc_nwork].n);
   }
 }
+#ifdef YK_NOLIBC
+static void gc_scan_segment(uint8_t *lo, uint8_t *hi) {
+  gc_scan(lo, hi);
+  gc_drain();
+}
+#else
 static int gc_segment(struct dl_phdr_info *info, size_t size, void *data) {
   (void)size;
   (void)data;
@@ -405,6 +425,7 @@ static int gc_segment(struct dl_phdr_info *info, size_t size, void *data) {
   }
   return 0;
 }
+#endif
 static __attribute__((noinline)) void gc_mark_roots(void) {
   jmp_buf regs; /* the callee-saved registers, on this frame */
   setjmp(regs);
@@ -420,7 +441,11 @@ static __attribute__((noinline)) void gc_mark_roots(void) {
     gc_consider((uintptr_t)&probe);
     gc_drain();
   }
+#ifdef YK_NOLIBC
+  yk_writable_segments(gc_scan_segment);
+#else
   dl_iterate_phdr(gc_segment, NULL);
+#endif
   gc_drain();
 }
 static size_t gc_count = 0, gc_live_last = 0;
@@ -2977,21 +3002,26 @@ yk yk_arg(uint64_t argc, const yk *argv, uint64_t i) { return i < argc ? argv[i]
 /* A rest parameter (...xs): the arguments from i on, as an array. */
 yk yk_rest(uint64_t argc, const yk *argv, uint64_t i) { return yk_array_of(i < argc ? argc - i : 0, argv + (i < argc ? i : argc)); }
 
-static yk call_value(yk f, yk self, uint64_t argc, const yk *argv) {
-  if (!is_closure(f)) {
-    /* V8 names the callee's expression; the runtime names the value's kind. */
-    const char *what = f == YK_UNDEFINED ? "undefined" : f == YK_NULL ? "null" : is_string(f) ? "a string"
-                       : is_number(f) ? "a number" : is_array(f) ? "an array" : is_object(f) ? "an object"
-                       : "the value";
-    char msg[64];
-    snprintf(msg, sizeof msg, "%s is not a function", what);
-    type_error(msg);
-  }
-  yk_closure *c = (yk_closure *)PTR(f);
+static __attribute__((noinline, cold, noreturn)) void not_callable(yk f) {
+  /* V8 names the callee's expression; the runtime names the value's kind. */
+  const char *what = f == YK_UNDEFINED ? "undefined" : f == YK_NULL ? "null" : is_string(f) ? "a string"
+                     : is_number(f) ? "a number" : is_array(f) ? "an array" : is_object(f) ? "an object"
+                     : "the value";
+  char msg[64];
+  snprintf(msg, sizeof msg, "%s is not a function", what);
+  type_error(msg);
+  __builtin_unreachable();
+}
+static __attribute__((noinline)) yk call_special(yk_closure *c, yk self, uint64_t argc, const yk *argv) {
   if (c->is_class) type_error("Class constructor cannot be invoked without 'new'");
   if (c->mode == 1) return async_call(c, self, argc, argv);
   if (c->mode == 2) return generator_new(c, self, argc, argv);
-  if (c->mode == 3) return agen_new(c, self, argc, argv);
+  return agen_new(c, self, argc, argv);
+}
+static yk call_value(yk f, yk self, uint64_t argc, const yk *argv) {
+  if (__builtin_expect(!is_closure(f), 0)) not_callable(f);
+  yk_closure *c = (yk_closure *)PTR(f);
+  if (__builtin_expect(c->is_class || c->mode != 0, 0)) return call_special(c, self, argc, argv);
   return c->code(c, c->has_this ? self : YK_UNDEFINED, argc, argv);
 }
 yk yk_call(yk f, yk self, uint64_t argc, const yk *argv) { return call_value(f, self, argc, argv); }
@@ -7330,6 +7360,12 @@ uint32_t yk_double_to_uint32(double d) {
   double r = fmod(trunc(d), 4294967296.0);
   return (uint32_t)(r < 0 ? r + 4294967296.0 : r);
 }
+/* An access of a block passed as its bytes and length (a `.raw` variant's argument) past its end. */
+void yk_raw_trap(int64_t off, int64_t size) {
+  char msg[96];
+  snprintf(msg, sizeof msg, "%lld bytes at offset %lld of a block", (long long)size, (long long)off);
+  c_trap(ascii(msg));
+}
 /* __ykFree of a number (a frame's block, most often), with no boxing. */
 void yk_frame_free(uint64_t bits) {
   double a;
@@ -8344,6 +8380,28 @@ yk yk_math_minmax(int max, uint64_t argc, const yk *argv) {
  *   u  undefined   l  null   t  true   f  false   a<count> then the elements
  *   b<decimal digits>  a BigInt                                                         */
 
+/* The host form's numbers: whitespace, then up to max digits of a base (at least one). */
+static int read_digits(FILE *in, int base, int max, unsigned long long *out) {
+  int c;
+  do c = fgetc(in);
+  while (c == ' ' || c == '\n' || c == '\t' || c == '\r');
+  unsigned long long v = 0;
+  int n = 0;
+  for (; n < max; n++) {
+    int d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : 99;
+    if (d >= base) break;
+    v = v * (unsigned)base + (unsigned)d;
+    c = fgetc(in);
+  }
+  ungetc(c, in);
+  *out = v;
+  return n > 0;
+}
+static unsigned read_count(FILE *in) {
+  unsigned long long v;
+  if (!read_digits(in, 10, 10, &v)) exit(65);
+  return (unsigned)v;
+}
 yk yk_read(FILE *in) {
   int c;
   do c = fgetc(in);
@@ -8351,32 +8409,31 @@ yk yk_read(FILE *in) {
   if (c == EOF) exit(0);
   if (c == 'n') {
     unsigned long long bits;
-    if (fscanf(in, "%16llx", &bits) != 1) exit(65);
+    if (!read_digits(in, 16, 16, &bits)) exit(65);
     double d;
     memcpy(&d, &bits, 8);
     return yk_number(d);
   }
   if (c == 's') {
-    unsigned len;
-    if (fscanf(in, "%u:", &len) != 1) exit(65);
+    unsigned len = read_count(in);
+    int colon = fgetc(in);
+    if (colon != ':') ungetc(colon, in);
     yk_string *s = new_string(len);
     for (unsigned i = 0; i < len; i++) {
-      unsigned u;
-      if (fscanf(in, "%4x", &u) != 1) exit(65);
+      unsigned long long u;
+      if (!read_digits(in, 16, 4, &u)) exit(65);
       s->units[i] = (uint16_t)u;
     }
     return string_of(s);
   }
   if (c == 'a') {
-    unsigned len;
-    if (fscanf(in, "%u", &len) != 1) exit(65);
+    unsigned len = read_count(in);
     yk_array *a = new_array(len);
     for (unsigned i = 0; i < len; i++) push(a, yk_read(in));
     return BOX(T_ARRAY, a);
   }
   if (c == 'o') {
-    unsigned len;
-    if (fscanf(in, "%u", &len) != 1) exit(65);
+    unsigned len = read_count(in);
     yk_object *o = alloc(sizeof(yk_object));
     o->len = o->cap = 0;
     o->error = 0;
@@ -8390,7 +8447,12 @@ yk yk_read(FILE *in) {
   if (c == 'b') {
     /* A BigInt: its decimal digits, a minus first if negative. */
     char buf[4096];
-    if (fscanf(in, "%4095[-0-9]", buf) != 1) exit(65);
+    size_t bn = 0;
+    int ch;
+    while (bn < sizeof buf - 1 && ((ch = fgetc(in)) == '-' || (ch >= '0' && ch <= '9'))) buf[bn++] = (char)ch;
+    if (bn < sizeof buf - 1) ungetc(ch, in);
+    if (bn == 0) exit(65);
+    buf[bn] = 0;
     int neg = buf[0] == '-';
     size_t n = strlen(buf + neg);
     uint16_t *u = alloc(n * 2 + 2);

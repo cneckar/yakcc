@@ -192,6 +192,39 @@ describe.skipIf(!canRun("x86_64-linux"))("programs, natively (#1333)", () => {
     expect(bad.stderr.toString()).toMatch(/SyntaxError/);
   }, 600_000);
 
+  it("yakcc build --native with no C library: the acceptance command, static on system calls alone, prints what Node does", () => {
+    const exe = join(work, "bin", "contract-id-nolibc");
+    buildProgram(here("./__fixtures__/program/contract-id-cli.ts"), exe, {
+      root: here("../../.."),
+      noLibc: true,
+    });
+    // Static, no interpreter, and none of a C library's symbols.
+    const headers = spawnSync("readelf", ["-lW", exe]).stdout.toString();
+    expect(headers).not.toMatch(/INTERP|DYNAMIC/);
+    const symbols = spawnSync("nm", [exe]).stdout.toString();
+    expect(symbols).not.toMatch(/__libc_start_main|GLIBC|__libc_/);
+    const specs = fc.sample(spec, { numRuns: 40, seed: 1370 });
+    const run = spawnSync(
+      exe,
+      specs.map((s) => JSON.stringify(s)),
+      { maxBuffer: 1 << 24 },
+    );
+    expect([run.status, run.stderr.toString()]).toEqual([0, ""]);
+    const want = specs.map(
+      (s) => `${contractId(s as never)} ${canonicalizeText(s as never).length}`,
+    );
+    expect(run.stdout.toString().split("\n").slice(0, -1)).toEqual(want);
+    const none = spawnSync(exe, []);
+    expect([none.status, none.stdout.toString(), none.stderr.toString()]).toEqual([
+      2,
+      "",
+      "usage: contract-id <spec.json>...\n",
+    ]);
+    const bad = spawnSync(exe, ["{not json"]);
+    expect(bad.status).toBe(1);
+    expect(bad.stderr.toString()).toMatch(/SyntaxError/);
+  }, 600_000);
+
   // #1333's acceptance: the same command on AArch64, ARMv7 and RISC-V (run under QEMU).
   for (const [target, qemu] of [
     ["aarch64-linux", "qemu-aarch64"],
@@ -215,6 +248,19 @@ describe.skipIf(!canRun("x86_64-linux"))("programs, natively (#1333)", () => {
           (s) => `${contractId(s as never)} ${canonicalizeText(s as never).length}`,
         );
         expect(run.stdout.toString().split("\n").slice(0, -1)).toEqual(want);
+        // With no C library: static on the target's system calls alone, the same output.
+        const bare = join(work, "bin", `contract-id-${target}-nolibc`);
+        buildProgram(here("./__fixtures__/program/contract-id-cli.ts"), bare, {
+          root: here("../../.."),
+          target,
+          noLibc: true,
+        });
+        expect(spawnSync("readelf", ["-lW", bare]).stdout.toString()).not.toMatch(/INTERP|DYNAMIC/);
+        const nolibc = spawnSync(qemu, [bare, ...specs.map((s) => JSON.stringify(s))], {
+          maxBuffer: 1 << 24,
+        });
+        expect([nolibc.status, nolibc.stderr.toString()]).toEqual([0, ""]);
+        expect(nolibc.stdout.toString().split("\n").slice(0, -1)).toEqual(want);
       },
       900_000,
     );
