@@ -100,6 +100,11 @@ const PROGRAMS: [string, string, number][] = [
   // + with ToPrimitive, string concatenation and Number::toString's shortest digits.
   ["+ on every pair of kinds", "export function f(a, b) { return a + b; }", 2],
   [
+    "Date on fixed time values, the weak collections, WeakRef, the other error kinds, RegExp's copy (#1331)",
+    "export function f(a, b) { const t = (g) => { try { return g(); } catch (e) { return e.name; } }; const ms = typeof a === 'number' && Number.isFinite(a) ? Math.trunc(a * 1e9) % 8.64e15 : 1700000000123; const d = new Date(ms); const parsed = ['2024-02-29T13:45:30.123Z', '2024-02-29', '+012345-01-01T00:00:00Z', '2024-13-01', 'nope'].map((x) => Date.parse(x)); const s = new Date(Date.UTC(2020, 1, 29, 23, 59, 58, 7)); s.setUTCMonth(11, 31); const k = {}; const wm = new WeakMap([[k, 1]]); const ws = new WeakSet([k]); const r = new WeakRef(k); const ag = new AggregateError([new TypeError('x'), 2], 'many'); const re = new RegExp(/a(b)/g); return [d.getTime(), t(() => d.toISOString()), d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCDay(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds(), parsed, s.toISOString(), s.getTime(), new Date(NaN).getTime(), t(() => new Date(NaN).toISOString()), String(new Date(NaN)), Date.UTC(99, 0), wm.get(k), wm.has({}), ws.has(k), r.deref() === k, ag.name, ag.message, ag.errors.length, new EvalError('e').name, new ReferenceError('r').message, new URIError().name, re.source, re.flags, re.exec('xab')[1], typeof Date.now(), JSON.stringify(new Date(0).toJSON())]; }",
+    2,
+  ],
+  [
     "toUpperCase and toLowerCase: full Unicode mappings and final sigma, as Node (#1331)",
     "export function f(a, b) { const xs = [String(a), String(b), 'straße ŉ ﬀ İ ǅ', 'ΟΔΥΣΣΕΥΣ Σ ΑΣ. ΑΣ\\u0301 ΑΣΑ', 'Привет Ǆ ǈ', '\\ud801\\udc00\\ud801\\udc28 ᾳ ﬆ ΐ', 'Σ', 'aΣ', 'aΣb']; return xs.map((x) => [x.toUpperCase(), x.toLowerCase(), x.toLocaleUpperCase(), x.toLocaleLowerCase()]); }",
     2,
@@ -382,9 +387,6 @@ describe("what the boxed lowering refuses, for now (#1292)", () => {
   it("free names, new, array holes, approximated Math", () => {
     expect(refusal("export function f(x) { return helper(x); }")).toMatch(
       /"helper" is not in the native base set/,
-    );
-    expect(refusal("export function f(x) { return new Date(); }")).toMatch(
-      /not in the native base set|not in the subset/,
     );
     // Async generators lower (emit-llvm-async-gen.test.ts).
     expect(refusal("export function f(x) { async function* g() { yield x; } return g; }")).toBe(
