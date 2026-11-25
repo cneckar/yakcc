@@ -10,7 +10,7 @@
  *   the leaves' JavaScript definitions (which `raise-c.test.ts` shows equals the C compiled natively).
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -92,6 +92,7 @@ function nativeUnitWith(
   const { ir, symbols } = emitNativeModules([{ id: `${name}.js`, statements }]);
   const dir = join(work, name);
   mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "m.ll"), ir);
   writeFileSync(join(dir, "m.o"), compileObject({ ir, symbol: "", params: [], result: "i64" }));
   writeFileSync(join(dir, "yk.o"), compileRuntime());
   writeFileSync(join(dir, "h.c"), HARNESS);
@@ -389,12 +390,31 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
         "tLazy",
         "export function f(a: number, b: number, c: number): unknown { const t = __ykAlloc(24, 8); if (a > 0) { if (b > 0) { if (c > 0) { __ykStore32(t + 4, a + b + c); const r = readAt(t + 4); __ykFree(t); return [r, t > 0]; } } __ykFree(t); return [-1]; } __ykFree(t); return [-2]; }",
       ],
+      // Blocks passed whole to functions that only access them at constant offsets: an alloca, its
+      // bytes and length passed to the callees' raw variants, through two calls; past its length a
+      // trap (#1369).
+      [
+        "rawFill",
+        "export function f(p: number, x: number): unknown { __ykStoreF64(p, x); __ykStoreF64(p + 8, -x); return 0; }",
+      ],
+      [
+        "rawPass",
+        "export function f(p: number, x: number): unknown { rawFill(p, x * 2); return __ykLoadF64(p + 8) + __ykLoad8(p + 7); }",
+      ],
+      ["rawOver", "export function f(p: number): unknown { __ykStore32(p + 12, 1); return 0; }"],
+      [
+        "tRaw",
+        "export function f(x: number, n: number): unknown { const y = __ykAlloc(16, 8); const a = rawPass(y, x); const r = [a, __ykLoadF64(y), __ykLoadF64(y + 8)]; let t = false; const z = __ykAlloc(12, 4); try { if (n > 0) rawOver(z); } catch (e) { t = true; } __ykFree(z); __ykFree(y); return [r, t]; }",
+      ],
       [
         "tTrap",
         "export function f(n: number): unknown { const a = __ykAlloc(8, 8); __ykFree(a); try { return __ykLoad8(a + n); } catch (e) { return [(e as Error).name, (e as Error).message]; } }",
       ],
     ];
     const run = nativeUnitWith("musl", atoms, DRIVERS);
+    // tRaw's blocks reach rawPass's and rawOver's raw variants, and rawPass's its callee's.
+    const lowered = readFileSync(join(work, "musl", "m.ll"), "utf8");
+    expect(lowered.match(/call i64 @m0_s\d+\.raw\(/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
     // The reference: the raised sources and the drivers in Node, over createCMemory.
     const memory = createCMemory();
     const leaves = {
@@ -451,6 +471,9 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
       ["tFrame", [7, false]],
       ["tFrame", [-2.5, false]],
       ["tFrame", [3, true]],
+      ["tRaw", [1.25, 12]],
+      ["tRaw", [-3, 0]],
+      ["tRaw", [Number.NaN, 12]],
       ["tLazy", [1, 2, 3]],
       ["tLazy", [1, 2, -3]],
       ["tLazy", [1, -2, 3]],

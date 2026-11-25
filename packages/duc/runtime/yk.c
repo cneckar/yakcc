@@ -2977,21 +2977,26 @@ yk yk_arg(uint64_t argc, const yk *argv, uint64_t i) { return i < argc ? argv[i]
 /* A rest parameter (...xs): the arguments from i on, as an array. */
 yk yk_rest(uint64_t argc, const yk *argv, uint64_t i) { return yk_array_of(i < argc ? argc - i : 0, argv + (i < argc ? i : argc)); }
 
-static yk call_value(yk f, yk self, uint64_t argc, const yk *argv) {
-  if (!is_closure(f)) {
-    /* V8 names the callee's expression; the runtime names the value's kind. */
-    const char *what = f == YK_UNDEFINED ? "undefined" : f == YK_NULL ? "null" : is_string(f) ? "a string"
-                       : is_number(f) ? "a number" : is_array(f) ? "an array" : is_object(f) ? "an object"
-                       : "the value";
-    char msg[64];
-    snprintf(msg, sizeof msg, "%s is not a function", what);
-    type_error(msg);
-  }
-  yk_closure *c = (yk_closure *)PTR(f);
+static __attribute__((noinline, cold, noreturn)) void not_callable(yk f) {
+  /* V8 names the callee's expression; the runtime names the value's kind. */
+  const char *what = f == YK_UNDEFINED ? "undefined" : f == YK_NULL ? "null" : is_string(f) ? "a string"
+                     : is_number(f) ? "a number" : is_array(f) ? "an array" : is_object(f) ? "an object"
+                     : "the value";
+  char msg[64];
+  snprintf(msg, sizeof msg, "%s is not a function", what);
+  type_error(msg);
+  __builtin_unreachable();
+}
+static __attribute__((noinline)) yk call_special(yk_closure *c, yk self, uint64_t argc, const yk *argv) {
   if (c->is_class) type_error("Class constructor cannot be invoked without 'new'");
   if (c->mode == 1) return async_call(c, self, argc, argv);
   if (c->mode == 2) return generator_new(c, self, argc, argv);
-  if (c->mode == 3) return agen_new(c, self, argc, argv);
+  return agen_new(c, self, argc, argv);
+}
+static yk call_value(yk f, yk self, uint64_t argc, const yk *argv) {
+  if (__builtin_expect(!is_closure(f), 0)) not_callable(f);
+  yk_closure *c = (yk_closure *)PTR(f);
+  if (__builtin_expect(c->is_class || c->mode != 0, 0)) return call_special(c, self, argc, argv);
   return c->code(c, c->has_this ? self : YK_UNDEFINED, argc, argv);
 }
 yk yk_call(yk f, yk self, uint64_t argc, const yk *argv) { return call_value(f, self, argc, argv); }
@@ -7329,6 +7334,12 @@ uint32_t yk_double_to_uint32(double d) {
   if (d > -9.2e18 && d < 9.2e18) return (uint32_t)(int64_t)d;
   double r = fmod(trunc(d), 4294967296.0);
   return (uint32_t)(r < 0 ? r + 4294967296.0 : r);
+}
+/* An access of a block passed as its bytes and length (a `.raw` variant's argument) past its end. */
+void yk_raw_trap(int64_t off, int64_t size) {
+  char msg[96];
+  snprintf(msg, sizeof msg, "%lld bytes at offset %lld of a block", (long long)size, (long long)off);
+  c_trap(ascii(msg));
 }
 /* __ykFree of a number (a frame's block, most often), with no boxing. */
 void yk_frame_free(uint64_t bits) {
