@@ -109,6 +109,12 @@ const SYSTEM_LEAVES: readonly LeafFunction[] = [
     "the system call n with six arguments: its result, or -errno",
   ),
   leaf("__yk_tp", [], "i64", "the thread pointer: a block whose first word is its own address"),
+  leaf(
+    "__yk_cpuid",
+    ["f64", "f64", "f64"],
+    "f64",
+    "cpuid: register reg (0 eax, 1 ebx, 2 ecx, 3 edx) for the leaf and subleaf, the machine's",
+  ),
 ];
 
 /** Every leaf function, by name. */
