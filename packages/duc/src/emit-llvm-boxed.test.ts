@@ -275,6 +275,16 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "Array.prototype's methods on an array the lowering does not know: the copying ones, flat, splice, reverse and the rest (#1331)",
+    'export function f(a0, b0) { const t = (g) => { try { return g(); } catch (e) { return "THREW " + e.message; } }; const a = [3, 1, 2]; return [t(() => a.toSorted()), t(() => a.toSorted((x, y) => y - x)), t(() => a.toReversed()), t(() => a.with(1, 9)), t(() => a.with(-1, 7)), t(() => a.with(5, 0)), t(() => a.toSpliced(1, 1, "x", "y")), t(() => a.toSpliced(1)), a, t(() => a.findLast((x) => x > 1)), t(() => a.findLastIndex((x) => x > 5)), t(() => a.at(-1)), t(() => a.flat()), t(() => [[1, [2]], 3].flat(Infinity)), t(() => a.flatMap((x) => [x, x])), t(() => a.reduceRight((s, x) => s + x, "")), t(() => a.lastIndexOf(1)), t(() => a.copyWithin(0, 1)), t(() => [1, 2, 3].fill(0, 1)), t(() => [1, 2].concat([3], 4)), t(() => Array.of(1, 2))]; }',
+    2,
+  ],
+  [
+    "Array.prototype's core methods through the runtime: splice, reverse, sort, the callbacks (#1331)",
+    'export function f(a0, b0) { const t = (g) => { try { return g(); } catch (e) { return "THREW " + e.message; } }; const mk = () => [3, 1, 2]; return [t(() => { const a = mk(); return [a.splice(1, 1, 9, 8), a]; }), t(() => { const a = mk(); return [a.reverse(), a]; }), t(() => mk().sort()), t(() => mk().map((x) => x * 2)), t(() => mk().filter((x) => x > 1)), t(() => mk().every((x) => x > 0)), t(() => mk().some((x) => x > 2)), t(() => mk().includes(2)), t(() => mk().join("-")), t(() => mk().slice(1)), t(() => mk().indexOf(2)), t(() => mk().find((x) => x < 3)), t(() => mk().findIndex((x) => x === 2)), t(() => mk().forEach(() => 0)), t(() => mk().reduce((s, x) => s + x)), t(() => { const a = mk(); a.push(4); return a.pop(); }), t(() => { const a = mk(); return [a.shift(), a.unshift(0), a]; }), t(() => mk().toString()), t(() => mk().toLocaleString()), t(() => Array.isArray(mk())), t(() => Array.from({ length: 2 }, (_, i) => i))]; }',
+    2,
+  ],
+  [
     "arrays with holes: literals, new Array(n), delete, a write past the end, length; in, keys, the callbacks (#1330)",
     "export function f(a, b) { const x = [, a, , b]; const y = new Array(3); y[1] = a; const z = [1, 2, 3]; delete z[1]; const w = []; w[3] = b; const v = [a]; v.length = 3; const seen = []; x.forEach((e, i) => seen.push(i)); const m = x.map((e) => 1); return [x.length, 0 in x, 1 in x, Object.keys(x), x.hasOwnProperty(2), seen, m.length, 0 in m, 1 in m, Object.keys(y), y.filter(() => true).length, Object.keys(z), z.reduce((s, e) => s + e, 0), Object.keys(w), w.length, Object.keys(v), [, 5, , 6].reduce((s, e) => s + e), x.some((e) => e === undefined), x.indexOf(undefined), x.includes(undefined), x.slice(0, 2).length, 0 in x.slice(0, 2), JSON.stringify(x), String([, 1, , 2]), [...[, 7]], Array.from([, 8])]; }",
     2,

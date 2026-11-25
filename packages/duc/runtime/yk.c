@@ -592,6 +592,7 @@ static int own_get(yk_object *o, yk key, yk *out);
 static int chain_get(yk obj, yk key, yk *out);
 static yk resolve_slot(yk slot, yk receiver);
 static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
+static int array_more_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
 static int collection_method(yk_object *o, yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
 static int same_value_zero(yk a, yk b);
 static int string_pattern_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
@@ -1283,6 +1284,10 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
     if (key_is(key, "values") || key == symbol_iterator()) return builtin_iter_new(recv, 1, 0);
     if (key_is(key, "keys")) return builtin_iter_new(recv, 0, 0);
     if (key_is(key, "entries")) return builtin_iter_new(recv, 2, 0);
+  }
+  if (is_array(recv)) {
+    yk out;
+    if (array_more_method(recv, key, argc, argv, &out)) return out;
   }
   if (is_string(recv) && key == symbol_iterator()) return builtin_iter_new(recv, 1, 1);
   if (is_builtin_iter(recv) && key_is(key, "next")) {
@@ -2989,6 +2994,166 @@ static yk call_value(yk f, yk self, uint64_t argc, const yk *argv) {
 yk yk_call(yk f, yk self, uint64_t argc, const yk *argv) { return call_value(f, self, argc, argv); }
 
 /* A callback of an array builtin: (element, index, array). */
+static yk callback(yk f, yk_array *a, uint32_t i, yk recv);
+static void merge_sort(yk *items, yk *tmp, uint32_t n, yk cmp);
+/* The rest of Array.prototype's methods (ECMA-262 23.1.3): at, concat, copyWithin, fill, findLast,
+   findLastIndex, flat, flatMap, lastIndexOf, reduceRight, reverse, splice, and the copying ones
+   (toReversed, toSorted, toSpliced, with). Holes read as undefined. */
+static void flatten_into(yk_array *r, yk_array *src, double depth) {
+  for (uint32_t i = 0; i < src->len; i++) {
+    if (array_hole(src, i)) continue;
+    yk e = src->items[i];
+    if (depth > 0 && is_array(e)) flatten_into(r, arr(e), depth - 1);
+    else push(r, e);
+  }
+}
+static yk_array *array_copy(yk_array *a) {
+  yk_array *r = new_array(a->len);
+  for (uint32_t i = 0; i < a->len; i++) push(r, a->items[i]);
+  return r;
+}
+static int64_t integer_or_infinity(yk v) {
+  double d = to_number(v);
+  if (d != d) return 0;
+  if (d > 9e15) return INT64_MAX / 2;
+  if (d < -9e15) return -(INT64_MAX / 2);
+  return (int64_t)trunc(d);
+}
+static int array_more_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out) {
+  if (!is_string(key)) return 0;
+  yk_array *a = arr(recv);
+  yk arg0 = argc > 0 ? argv[0] : YK_UNDEFINED, arg1 = argc > 1 ? argv[1] : YK_UNDEFINED;
+  int64_t len = a->len;
+  if (key_is(key, "at")) {
+    int64_t k = integer_or_infinity(arg0);
+    if (k < 0) k += len;
+    return *out = k < 0 || k >= len ? YK_UNDEFINED : a->items[k], 1;
+  }
+  if (key_is(key, "concat")) {
+    yk_array *r = array_copy(a);
+    for (uint64_t i = 0; i < argc; i++) {
+      if (is_array(argv[i]))
+        for (uint32_t j = 0; j < arr(argv[i])->len; j++) push(r, arr(argv[i])->items[j]);
+      else push(r, argv[i]);
+    }
+    return *out = BOX(T_ARRAY, r), 1;
+  }
+  if (key_is(key, "copyWithin")) {
+    int64_t to = relative(arg0, len, 0), from = relative(arg1, len, 0);
+    int64_t fin = relative(argc > 2 ? argv[2] : YK_UNDEFINED, len, len);
+    int64_t count = fin - from < len - to ? fin - from : len - to;
+    if (count > 0) memmove(a->items + to, a->items + from, (size_t)count * sizeof(yk));
+    a->holes = NULL, a->holes_n = 0;
+    return *out = recv, 1;
+  }
+  if (key_is(key, "fill")) {
+    int64_t k = relative(arg1, len, 0), fin = relative(argc > 2 ? argv[2] : YK_UNDEFINED, len, len);
+    for (; k < fin; k++) {
+      a->items[k] = arg0;
+      if (a->holes != NULL) array_mark_hole(a, (uint32_t)k, 0);
+    }
+    return *out = recv, 1;
+  }
+  int find_last = key_is(key, "findLast"), find_last_index = key_is(key, "findLastIndex");
+  if (find_last || find_last_index) {
+    if (!is_closure(arg0)) type_error("the callback is not a function");
+    for (int64_t i = len - 1; i >= 0; i--)
+      if (i < a->len && yk_truthy(callback(arg0, a, (uint32_t)i, recv)))
+        return *out = find_last ? a->items[i] : yk_number((double)i), 1;
+    return *out = find_last ? YK_UNDEFINED : yk_number(-1), 1;
+  }
+  if (key_is(key, "flat")) {
+    double depth = arg0 == YK_UNDEFINED ? 1 : to_number(arg0);
+    if (depth != depth) depth = 0;
+    yk_array *r = new_array(a->len);
+    flatten_into(r, a, depth);
+    return *out = BOX(T_ARRAY, r), 1;
+  }
+  if (key_is(key, "flatMap")) {
+    if (!is_closure(arg0)) type_error("flatMap mapper function is not callable");
+    yk_array *r = new_array(a->len);
+    for (uint32_t i = 0; i < a->len; i++) {
+      if (array_hole(a, i)) continue;
+      yk args[3] = {a->items[i], yk_number(i), recv};
+      yk got = call_value(arg0, arg1, 3, args);
+      if (is_array(got)) flatten_into(r, arr(got), 0);
+      else push(r, got);
+    }
+    return *out = BOX(T_ARRAY, r), 1;
+  }
+  if (key_is(key, "lastIndexOf")) {
+    int64_t k = argc > 1 ? integer_or_infinity(arg1) : len - 1;
+    if (k < 0) k += len;
+    if (k >= len) k = len - 1;
+    for (; k >= 0; k--)
+      if (!array_hole(a, (uint32_t)k) && strict_equal(a->items[k], arg0)) return *out = yk_number((double)k), 1;
+    return *out = yk_number(-1), 1;
+  }
+  if (key_is(key, "reduceRight")) {
+    if (!is_closure(arg0)) type_error("the callback is not a function");
+    int64_t i = len - 1;
+    yk acc;
+    if (argc > 1) acc = arg1;
+    else {
+      while (i >= 0 && array_hole(a, (uint32_t)i)) i--;
+      if (i < 0) type_error("Reduce of empty array with no initial value");
+      acc = a->items[i--];
+    }
+    for (; i >= 0; i--) {
+      if (i >= a->len || array_hole(a, (uint32_t)i)) continue;
+      yk args[4] = {acc, a->items[i], yk_number((double)i), recv};
+      acc = call_value(arg0, YK_UNDEFINED, 4, args);
+    }
+    return *out = acc, 1;
+  }
+  if (key_is(key, "reverse") || key_is(key, "toReversed")) {
+    yk_array *r = key_is(key, "reverse") ? a : array_copy(a);
+    for (uint32_t i = 0, j = r->len; i + 1 < j; i++, j--) {
+      yk x = r->items[i];
+      r->items[i] = r->items[j - 1];
+      r->items[j - 1] = x;
+    }
+    r->holes = NULL, r->holes_n = 0;
+    return *out = r == a ? recv : BOX(T_ARRAY, r), 1;
+  }
+  if (key_is(key, "toSorted")) {
+    if (arg0 != YK_UNDEFINED && !is_closure(arg0)) type_error("The comparison function must be either a function or undefined");
+    yk_array *r = array_copy(a);
+    yk *tmp = alloc((size_t)(r->len + 1) * sizeof(yk));
+    merge_sort(r->items, tmp, r->len, arg0);
+    return *out = BOX(T_ARRAY, r), 1;
+  }
+  if (key_is(key, "with")) {
+    int64_t k = integer_or_infinity(arg0);
+    if (k < 0) k += len;
+    if (k < 0 || k >= len) {
+      char msg[64];
+      snprintf(msg, sizeof msg, "Invalid index : %g", to_number(arg0));
+      range_error(msg);
+    }
+    yk_array *r = array_copy(a);
+    r->items[k] = arg1;
+    return *out = BOX(T_ARRAY, r), 1;
+  }
+  int splice = key_is(key, "splice"), to_spliced = key_is(key, "toSpliced");
+  if (splice || to_spliced) {
+    int64_t start = relative(arg0, len, 0);
+    int64_t del = argc == 0 ? 0 : argc == 1 ? len - start : relative(arg1, len - start, 0);
+    if (argc > 1 && to_number(arg1) < 0) del = 0;
+    uint64_t nins = argc > 2 ? argc - 2 : 0;
+    yk_array *removed = new_array((uint32_t)del);
+    for (int64_t i = 0; i < del; i++) push(removed, a->items[start + i]);
+    yk_array *r = new_array((uint32_t)(len - del + (int64_t)nins));
+    for (int64_t i = 0; i < start; i++) push(r, a->items[i]);
+    for (uint64_t i = 0; i < nins; i++) push(r, argv[2 + i]);
+    for (int64_t i = start + del; i < len; i++) push(r, a->items[i]);
+    if (to_spliced) return *out = BOX(T_ARRAY, r), 1;
+    /* splice: the array becomes the result, in place. */
+    a->items = r->items, a->len = r->len, a->cap = r->cap, a->holes = NULL, a->holes_n = 0;
+    return *out = BOX(T_ARRAY, removed), 1;
+  }
+  return 0;
+}
 static yk callback(yk f, yk_array *a, uint32_t i, yk recv) {
   yk args[3] = {a->items[i], yk_number(i), recv};
   return call_value(f, YK_UNDEFINED, 3, args);
@@ -7788,6 +7953,11 @@ static yk builtin_define_global(void *c, yk s, uint64_t argc, const yk *argv) {
   own_set((yk_object *)PTR(global_this()), name, value);
   return value;
 }
+/* Array.of(...items). */
+static yk builtin_array_of(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return yk_array_of(argc, argv);
+}
 yk yk_global(const char *name, uint64_t n) {
   if (defined_globals != 0) {
     yk v;
@@ -7899,9 +8069,9 @@ static yk global_raw(const char *name, uint64_t n) {
         return fns[i] = with_methods(builtin_date, 3, m, k);
       }
       if (codes[i] == builtin_array) {
-        static const char *const m[2] = {"from", "isArray"};
-        static const yk_code k[2] = {builtin_array_from, builtin_array_is_array};
-        return fns[i] = with_methods(builtin_array, 2, m, k);
+        static const char *const m[3] = {"from", "isArray", "of"};
+        static const yk_code k[3] = {builtin_array_from, builtin_array_is_array, builtin_array_of};
+        return fns[i] = with_methods(builtin_array, 3, m, k);
       }
       if (codes[i] == builtin_number) {
         static const char *const m[6] = {"isFinite", "isInteger", "isSafeInteger", "isNaN", "parseFloat", "parseInt"};
