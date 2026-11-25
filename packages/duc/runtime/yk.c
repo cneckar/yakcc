@@ -768,6 +768,20 @@ static yk number_to_radix(double value, int radix) {
   static const char chars[] = "0123456789abcdefghijklmnopqrstuvwxyz";
   if (value != value) return ascii("NaN");
   if (isinf(value)) return ascii(value < 0 ? "-Infinity" : "Infinity");
+  /* An integer below 2^53 (a byte's hex, most often): its digits by integer division. */
+  if (value == (double)(int64_t)value && fabs(value) < 9007199254740992.0) {
+    char t[72];
+    int64_t v = (int64_t)value;
+    uint64_t u = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v;
+    int i = (int)sizeof t;
+    t[--i] = 0;
+    do {
+      t[--i] = chars[u % (uint64_t)radix];
+      u /= (uint64_t)radix;
+    } while (u != 0);
+    if (v < 0) t[--i] = '-';
+    return ascii(t + i);
+  }
   enum { kBufferSize = 2200 };
   char buffer[kBufferSize];
   int integer_cursor = kBufferSize / 2;
@@ -6707,6 +6721,8 @@ static uint32_t to_index(yk v, const char *what) {
 
 /* The bits of ToUint32 of a double (modulo 2^32). */
 static uint32_t double_to_u32(double d) {
+  /* Below 2^63 in magnitude: its int64's low 32 bits (ToUint32's modulo), with no fmod. */
+  if (fabs(d) < 9.2e18) return (uint32_t)(int64_t)d;
   if (d != d || isinf(d)) return 0;
   d = fmod(trunc(d), 4294967296.0);
   if (d < 0) d += 4294967296.0;
