@@ -791,15 +791,30 @@ function emitFunction(
     const bodyText = body.join("\n");
     const declaredInBody = (text: string): boolean =>
       new RegExp(`(?:const|let) ${text.replace(/\$/g, "\\$")}\\b`).test(bodyText);
+    const nextValues = rec.next.map((v) => ref(v));
     const early = rec.next.map((v, i) => {
       const name = carried[i] as string;
       const value = ref(v);
-      const read = new RegExp(`(?<![\\w$])${name.replace(/\$/g, "\\$")}(?![\\w$])`).test(bodyText);
+      const read =
+        new RegExp(`(?<![\\w$])${name.replace(/\$/g, "\\$")}(?![\\w$])`).test(bodyText) ||
+        nextValues.some((other, j) => j !== i && other === name);
       const outside = !/^[\w$]+$/.test(value) || /^\d/.test(value) || !declaredInBody(value);
       return !read && outside && value !== name;
     });
     body.unshift(...rec.next.flatMap((v, i) => (early[i] ? [`${carried[i]} = ${ref(v)};`] : [])));
-    const next = rec.next.flatMap((v, i) => (early[i] ? [] : [`${carried[i]} = ${ref(v)};`]));
+    // The carries take their next values together: a next value that is another carry's current
+    // value is read into a temporary first, before any carry is assigned (#1292).
+    const late = rec.next.flatMap((v, i) =>
+      early[i] ? [] : [[carried[i] as string, ref(v)] as const],
+    );
+    const lateNames = new Set(late.map(([name]) => name));
+    const held = late.filter(([, value]) => lateNames.has(value));
+    const next = [
+      ...held.map(([name, value]) => `const ${name}$next = ${value};`),
+      ...late.map(([name, value]) =>
+        lateNames.has(value) ? `${name} = ${name}$next;` : `${name} = ${value};`,
+      ),
+    ];
     // Tested again after the pass, on the carried values the next pass starts from, so a stop
     // leaves before the next element is pulled (#1330). Only a condition over the carried values
     // alone can be tested there.

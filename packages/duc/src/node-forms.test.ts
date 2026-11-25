@@ -1153,4 +1153,28 @@ ${Array.from({ length: rest }, (_, i) => `  log.push(x + ${i});`).join("\n")}
       ],
     );
   });
+
+  it("a loop's carries take their next values together: start = end reads the end before the pass's update (#1292)", () => {
+    agrees(
+      `export function f(items: number[], chunk: number) {
+  const out: number[][] = [];
+  let end = chunk;
+  if (end < items.length) {
+    let start = 0;
+    do {
+      out.push(items.slice(start, (start = end)));
+      end += chunk;
+    } while (end < items.length);
+    items = items.slice(start);
+  }
+  out.push(items);
+  return out;
+}`,
+      [
+        [[1, 2, 3, 4, 5, 6, 7], 2],
+        [[1, 2], 5],
+        [[1, 2, 3, 4], 1],
+      ],
+    );
+  });
 });
