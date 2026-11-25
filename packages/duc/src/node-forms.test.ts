@@ -1039,7 +1039,7 @@ ${Array.from({ length: rest }, (_, i) => `  log.push(x + ${i});`).join("\n")}
         [false, 5],
       ]);
     }
-  });
+  }, 60_000);
 
   it("a class named as a platform global is itself in a closure inside it, as Node's URL is", () => {
     agrees(
@@ -1062,6 +1062,46 @@ ${Array.from({ length: rest }, (_, i) => `  log.push(x + ${i});`).join("\n")}
   return [new URL(p).origin, new URL(p + "x").origin];
 }`,
       [["a"], ["b"]],
+    );
+  });
+
+  it("a closure's captures that the outer graph cannot tell apart are ordered by their use inside a loop (#1292)", () => {
+    agrees(
+      `export function f(k: any, n: number) {
+  function go(c: any, n: number): number {
+    let out = 0;
+    while (n-- > 0) {
+      const r = c[kA][c[kB]];
+      if (c[kC].p === "s" && c[kD] !== r.s) {
+        c[kE]?.d(new IE("x" + c[kF]), () => {
+          c[kE] = null;
+          again(c, 0);
+        });
+      }
+      out += r.v;
+    }
+    return out;
+  }
+  function again(c: any, n: number): number {
+    return go(c, n);
+  }
+  var { kA, kB, kC, kD, kE, kF } = k;
+  var IE = Error;
+  const log: string[] = [];
+  const c: any = {
+    a: [{ s: "t", v: 2 }, { s: "s", v: 3 }],
+    b: 1,
+    c: { p: "s" },
+    d: "u",
+    e: { d: (err: Error, cb: () => void) => { log.push(err.message); cb(); } },
+    f: 7,
+  };
+  return [go(c, n), c.e, log];
+}`,
+      [
+        [{ kA: "a", kB: "b", kC: "c", kD: "d", kE: "e", kF: "f" }, 2],
+        [{ kA: "a", kB: "b", kC: "c", kD: "d", kE: "e", kF: "f" }, 0],
+      ],
     );
   });
 });

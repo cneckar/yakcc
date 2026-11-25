@@ -123,6 +123,12 @@ function withCaptureOrder(closure: DucGraph, order: readonly number[]): DucGraph
   const key = order.join(",");
   const hit = byOrder.get(key);
   if (hit !== undefined) return hit;
+  // A canonical graph whose captures keep their order is its own renumbering: canonicalizing it
+  // again gives it back (lane:native's profile, #1331).
+  if (canonicalGraphs.has(closure) && order.every((old, pos) => old === pos)) {
+    byOrder.set(key, closure);
+    return closure;
+  }
   const position = new Map(order.map((old, pos) => [old, pos] as const));
   const nodes = closure.nodes.map((n) => {
     if (n.kind !== "param-source") return n;
@@ -144,6 +150,18 @@ function captureUseOf(closure: DucGraph, k: number): string {
   const param = closure.nodes.find((n) => n.kind === "param-source" && n.label === String(k));
   const value = param?.outputs[0];
   if (value === undefined) return "";
+  return valueUseOf(closure, value, CAPTURE_USE_DEPTH);
+}
+
+/**
+ * How many steps along its uses a capture's signature looks (#1292): a cell's capture is read with
+ * `.value` by every closure that has one, so cells are told apart by what is done with what they
+ * hold, a key here and a callee there.
+ */
+const CAPTURE_USE_DEPTH = 3;
+
+/** The operations that read a value, at which input, and (to `depth`) how their results are used. */
+function valueUseOf(closure: DucGraph, value: string, depth: number): string {
   const uses: string[] = [];
   for (const n of closure.nodes)
     n.inputs.forEach((v, i) => {
@@ -156,7 +174,25 @@ function captureUseOf(closure: DucGraph, k: number): string {
         (n.loop !== undefined && i >= invariantOffset(n))
           ? "*"
           : String(i);
-      uses.push(`${n.kind}:${n.label ?? ""}:${at}:${structuralDiamond(n.diamond)?.symbol ?? ""}`);
+      // A loop's input is its body's value (an invariant, or a carry's first value): how the body
+      // uses it, at the same depth, since passing it in is no operation.
+      const inner =
+        n.loop === undefined
+          ? undefined
+          : i >= invariantOffset(n)
+            ? n.loop.invariant[i - invariantOffset(n)]
+            : i < n.loop.carry.length
+              ? n.loop.carry[i]
+              : undefined;
+      const next =
+        inner !== undefined
+          ? `(${valueUseOf(closure, inner, depth)})`
+          : depth > 0 && n.outputs.length > 0 && n.closure === undefined && n.loop === undefined
+            ? `(${n.outputs.map((o) => valueUseOf(closure, o, depth - 1)).join(";")})`
+            : "";
+      uses.push(
+        `${n.kind}:${n.label ?? ""}:${at}:${structuralDiamond(n.diamond)?.symbol ?? ""}${next}`,
+      );
     });
   return uses.sort().join("|");
 }
@@ -823,12 +859,14 @@ export function canonicalizeGraph(
     })
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
-  return {
+  const graph: DucGraph = {
     nodes: canonicalNodes,
     values: canonicalNodes.flatMap((n) => n.outputs),
     obs: canonicalObs,
     ...(canonicalBranches.length > 0 ? { branches: canonicalBranches } : {}),
   };
+  canonicalGraphs.add(graph);
+  return graph;
 }
 
 /**
@@ -845,8 +883,15 @@ export function graphIdentity(g: DucGraph): string {
 }
 const identities = new WeakMap<DucGraph, string>();
 
+/**
+ * The graphs `canonicalizeGraph` made (#1331). Canonicalizing is idempotent, so one of these needs
+ * no second pass: each closure was canonicalized when its lifter finished, and again by each level
+ * around it, and again for its identity.
+ */
+const canonicalGraphs = new WeakSet<DucGraph>();
+
 function computeIdentity(g: DucGraph): string {
-  const canon = canonicalizeGraph(g.nodes, g.obs, g.branches ?? []);
+  const canon = canonicalGraphs.has(g) ? g : canonicalizeGraph(g.nodes, g.obs, g.branches ?? []);
   const structure = {
     nodes: canon.nodes.map((n) => ({
       kind: n.kind,
