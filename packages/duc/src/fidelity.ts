@@ -56,12 +56,51 @@ function isValueReference(id: ts.Identifier): boolean {
   return true;
 }
 
+/** The member whose computed name holds `id` (`[k]() {}`, `[k]: v`, `get [k]()`), if any. */
+function computedMemberOf(id: ts.Node): ts.Node | undefined {
+  for (let p = id.parent; p !== undefined; p = p.parent) {
+    if (ts.isComputedPropertyName(p)) return p.parent;
+    if (ts.isFunctionLike(p) || ts.isClassLike(p) || ts.isBlock(p)) return undefined;
+  }
+  return undefined;
+}
+
+/** Whether `node` lies within `ancestor`. */
+function isWithin(node: ts.Node, ancestor: ts.Node): boolean {
+  for (let p: ts.Node | undefined = node; p !== undefined; p = p.parent)
+    if (p === ancestor) return true;
+  return false;
+}
+
 /** The names an atom's source reads without declaring them, by TypeScript's binder. */
 export function sourceFreeNames(source: string): Set<string> {
   const { project, file } = parseAtomSource(source);
   const checker = project.getTypeChecker().compilerObject;
   const sf = file.compilerNode;
   const free = new Set<string>();
+  // TypeScript binds `globalThis` to its own symbol, which has no declarations, even where the
+  // source declares the name (Node's `const { globalThis } = primordials`): a declaration in the
+  // source declares it (#1331).
+  const bindsGlobalThis = (() => {
+    let found = false;
+    const find = (n: ts.Node): void => {
+      if (found) return;
+      if (
+        (ts.isBindingElement(n) ||
+          ts.isVariableDeclaration(n) ||
+          ts.isParameter(n) ||
+          ts.isFunctionDeclaration(n) ||
+          ts.isClassDeclaration(n)) &&
+        n.name !== undefined &&
+        ts.isIdentifier(n.name) &&
+        n.name.text === "globalThis"
+      )
+        found = true;
+      else ts.forEachChild(n, find);
+    };
+    find(sf);
+    return found;
+  })();
   const visit = (node: ts.Node): void => {
     // Types are not values: their names are never references in the graph.
     if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) return;
@@ -78,8 +117,18 @@ export function sourceFreeNames(source: string): Set<string> {
         : ts.isExportSpecifier(p)
           ? checker.getExportSpecifierLocalTargetSymbol(p)
           : checker.getSymbolAtLocation(node);
-      const declared = (symbol?.declarations ?? []).length > 0;
-      if (!declared && !notASourceName(node.text)) free.add(node.text);
+      // A computed member name is evaluated where the member is defined, outside it: a binding of
+      // the same name inside the member does not declare it (TypeScript's binder resolves it there).
+      const computed = computedMemberOf(node);
+      const declared = (symbol?.declarations ?? []).some(
+        (d) => computed === undefined || !isWithin(d, computed),
+      );
+      if (
+        !declared &&
+        !notASourceName(node.text) &&
+        !(node.text === "globalThis" && bindsGlobalThis)
+      )
+        free.add(node.text);
     }
     ts.forEachChild(node, visit);
   };

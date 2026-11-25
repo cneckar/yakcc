@@ -124,13 +124,15 @@ export const ECMASCRIPT: BaseSet = {
     // A try statement whose blocks yield: the same, over generator closures, delegated to (#1330).
     __yakccTryGen: {},
     __yakccTryAsyncGen: {},
+    // An object rest as the TypeScript lowering writes it (#1330).
+    __yakccObjectRest: {},
   },
 };
 
 /** Node.js: ECMAScript, plus the host's data APIs and its authority-bearing APIs, and its modules. */
 export const NODE: BaseSet = {
   target: "node",
-  version: 2,
+  version: 3,
   modules: {
     ...pure([
       "assert",
@@ -170,12 +172,15 @@ export const NODE: BaseSet = {
   primitives: {
     ...ECMASCRIPT.primitives,
     ...pure([
+      // Node's name for the global object, as `globalThis` is ECMAScript's (#1331).
+      "global",
       "Buffer",
       "TextEncoder",
       "TextDecoder",
       "URL",
       "URLSearchParams",
       "structuredClone",
+      "WebAssembly",
       "atob",
       "btoa",
       "AbortController",
@@ -225,6 +230,7 @@ export const WEB: BaseSet = {
       "URL",
       "URLSearchParams",
       "structuredClone",
+      "WebAssembly",
       "atob",
       "btoa",
       "AbortController",

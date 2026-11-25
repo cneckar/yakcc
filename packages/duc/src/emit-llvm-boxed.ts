@@ -214,6 +214,10 @@ const MEM_CACHE_DECLS = [
   "@yk_mcache_len = external global i64",
   "@yk_mcache_bytes = external global ptr",
   "@yk_mcache_writable = external global i64",
+  "@yk_mcache2_base = external global i64",
+  "@yk_mcache2_len = external global i64",
+  "@yk_mcache2_bytes = external global ptr",
+  "@yk_mcache2_writable = external global i64",
   "@yk_mcache_epoch = external global i64",
 ];
 /** The access sites' own caches: each is named once per process (`@yk.msite.N`). */
@@ -386,6 +390,8 @@ function lowerFunction(
   name: string,
   closure: { readonly captures: number } | undefined,
   scope?: ModuleScope,
+  /** The parameters (by value) this lowering may take as numbers: a speculated clone's (#1369). */
+  numberParams?: ReadonlySet<ValueId>,
 ): void {
   // An async function's or a generator's body is lowered as any function's: the runtime runs it as a
   // coroutine, which await and yield suspend (#1295). The closure carries the mode.
@@ -648,6 +654,8 @@ function lowerFunction(
   // operation throws first) needs no tag check. Carries, joins and loop results are assumed numbers
   // until one of their inputs is not (an optimistic fixpoint).
   const NUMBER_LEAVES = new Set([
+    "__ykAlloc",
+    "__ykData",
     "__ykBigToI32",
     "__ykBigToU32",
     "__ykBigToF64",
@@ -663,6 +671,51 @@ function lowerFunction(
     "__ykF64Make",
     "__ykF32",
   ]);
+  // Integer intervals (#1369): an index the graph bounds (`x & 1`, `x >>> 31`, …) reads a
+  // constant table in range, so the read is a number with no check.
+  const intervals = new Map<ValueId, readonly [number, number] | null>();
+  const intRange = (v0: ValueId): readonly [number, number] | undefined => {
+    const v = resolve(v0);
+    if (intervals.has(v)) return intervals.get(v) ?? undefined;
+    intervals.set(v, null); // a cycle bounds nothing
+    let r: readonly [number, number] | undefined;
+    const lit = literalNumber(v);
+    const p = producer.get(v);
+    if (lit !== undefined) r = Number.isInteger(lit) ? [lit, lit] : undefined;
+    else if (p?.kind === "op" && p.inputs.length === 2) {
+      const a = p.inputs[0] as ValueId;
+      const b = p.inputs[1] as ValueId;
+      const ra = intRange(a);
+      const rb = intRange(b);
+      const i32 = (x: readonly [number, number] | undefined) =>
+        x !== undefined && x[0] >= -(2 ** 31) && x[1] < 2 ** 31;
+      const u32 = (x: readonly [number, number] | undefined) =>
+        x !== undefined && x[0] >= 0 && x[1] < 2 ** 32;
+      // Each value an interval bounds is a Number (an operand with one is a Number, and a Number
+      // with a BigInt throws; `>>>` throws on a BigInt): the result is a Number or never made.
+      if (p.label === "&") {
+        // A non-negative mask bounds the result: ToInt32 of a mask in [0, 2^31) is itself.
+        const mask = (x: readonly [number, number] | undefined) =>
+          x !== undefined && x[0] >= 0 && x[1] < 2 ** 31 ? x[1] : undefined;
+        const m = mask(rb) ?? mask(ra);
+        if (m !== undefined) r = [0, m];
+      } else if (p.label === ">>>" && rb !== undefined && rb[0] === rb[1]) {
+        const k = (((rb[0] % 32) + 32) % 32) as number;
+        r = k === 0 ? (u32(ra) ? ra : [0, 2 ** 32 - 1]) : [0, 2 ** (32 - k) - 1];
+      } else if (p.label === "|" && rb !== undefined && rb[0] === 0 && rb[1] === 0 && i32(ra))
+        r = ra;
+      else if (p.label === "|" && ra !== undefined && ra[0] === 0 && ra[1] === 0 && i32(rb)) r = rb;
+    }
+    intervals.set(v, r ?? null);
+    return r;
+  };
+  /** A constant table read whose index the intervals keep in range: always an element. */
+  const tableInRange = (n: DucNode): boolean => {
+    if (n.kind !== "op" || n.label !== "ElementAccess" || n.inputs.length !== 2) return false;
+    const table = constTables.get(resolve(n.inputs[0] as ValueId));
+    const r = intRange(n.inputs[1] as ValueId);
+    return table !== undefined && r !== undefined && r[0] >= 0 && r[1] < table.n;
+  };
   const provenNumber = new Set<ValueId>();
   {
     const loopOf = new Map<ValueId, { loop: DucNode; i: number; carry: boolean }>();
@@ -690,7 +743,7 @@ function lowerFunction(
       const out = new Set<ValueId>();
       const num = (v0: ValueId): boolean => {
         const v = resolve(v0);
-        if (assumed.has(v)) return true;
+        if (assumed.has(v) || numberParams?.has(v) === true) return true;
         if (out.has(v)) return true;
         const p = producer.get(v);
         if (p === undefined) return false;
@@ -708,7 +761,7 @@ function lowerFunction(
           const leaf = leafOf(n);
           const callee = lbl === "CallExpression" ? memberOf(ins[0] as ValueId) : undefined;
           let yes = false;
-          if (numRange.has(o)) yes = true;
+          if (numRange.has(o) || tableInRange(n)) yes = true;
           else if (leaf !== undefined) yes = NUMBER_LEAVES.has(leaf);
           else if (callee !== undefined && isMath(callee.node.inputs[0] as ValueId)) yes = true;
           else if (ins.length === 2 && ["+", "-", "*", "/", "%"].includes(lbl))
@@ -728,7 +781,7 @@ function lowerFunction(
       const proven = compute();
       const holds = (v: ValueId): boolean => {
         const r = resolve(v);
-        if (assumed.has(r) || proven.has(r)) return true;
+        if (assumed.has(r) || proven.has(r) || numberParams?.has(r) === true) return true;
         const p = producer.get(r);
         return p?.kind === "literal-source" && isNumberLiteral(p);
       };
@@ -754,6 +807,7 @@ function lowerFunction(
         }
       }
       if (!removed) {
+        for (const v of numberParams ?? []) provenNumber.add(v);
         for (const v of proven) provenNumber.add(v);
         for (const v of assumed) provenNumber.add(v);
         break;
@@ -773,6 +827,46 @@ function lowerFunction(
           (t !== "" && !BIGINT_LITERAL.test(t) && !t.startsWith('"') && !Number.isNaN(Number(t))))
       );
     });
+  // Values whose every use is a proven-number arithmetic or comparison (#1369): such a consumer
+  // reads the double's bits, so a NaN result needs no canonical form. Anything that can reach boxed
+  // code (a result, a join, a carry, a call, a store) is canonical.
+  const rawNumbers = new Set<ValueId>();
+  {
+    const usesOf = new Map<ValueId, DucNode[]>();
+    const escapes = new Set<ValueId>([
+      ...g.obs.map((v) => resolve(v)),
+      ...(g.branches ?? []).map((b) => resolve(b.cond as ValueId)),
+    ]);
+    for (const n of g.nodes) {
+      for (const v of n.inputs) {
+        const r = resolve(v as ValueId);
+        usesOf.set(r, [...(usesOf.get(r) ?? []), n]);
+      }
+      if (n.kind === "loop" && n.loop !== undefined) {
+        for (const v of n.loop.next) escapes.add(resolve(v));
+        if (n.loop.cond !== undefined) escapes.add(resolve(n.loop.cond));
+      }
+    }
+    const numericUse = (n: DucNode): boolean =>
+      n.kind === "op" &&
+      ((n.inputs.length === 2 &&
+        (FAST_ARITH[n.label ?? ""] !== undefined || FAST_COMPARE[n.label ?? ""] !== undefined)) ||
+        (n.inputs.length === 1 && n.label === "-")) &&
+      allNumbers(n.inputs as readonly ValueId[]);
+    for (const n of g.nodes) {
+      const o = n.outputs[0] as ValueId | undefined;
+      if (o === undefined || escapes.has(o) || !provenNumber.has(o)) continue;
+      const us = usesOf.get(o) ?? [];
+      if (us.length > 0 && us.every(numericUse)) rawNumbers.add(o);
+    }
+  }
+  /** A double result for `out`: its bits as they are when only numeric operations read it. */
+  const numberResult = (out: ValueId, d: string): string => {
+    if (!rawNumbers.has(out)) return boxDouble(d);
+    const bits = fresh();
+    emit(`${bits} = bitcast double ${d} to i64`);
+    return bits;
+  };
   /** Whether a value is a typed BigInt: an i128 (a literal, or an operation the proof types). */
   const isTypedBig = (v: ValueId): boolean =>
     widthOf(v) !== undefined && (widthOf(v) as number) <= 127;
@@ -948,8 +1042,8 @@ function lowerFunction(
     const fastLabel = freshLabel("fast");
     const slowLabel = freshLabel("slow");
     const join = freshLabel("joined");
-    let all = "";
-    for (const a of args) {
+    let all = proven ? "true" : "";
+    for (const a of proven ? [] : args) {
       const n = fresh();
       emit(`${n} = icmp ult i64 ${a}, ${NUMBER_LIMIT}`);
       if (all === "") all = n;
@@ -1013,10 +1107,67 @@ function lowerFunction(
    * the address an integer inside the runtime's cached region (and it writable, for a store);
    * `slow` (the runtime's leaf) otherwise.
    */
+  /** An integer the graph fixes: a literal, or + - * of such (raise-c's `i * 8`). */
+  const constantInt = (c0: ValueId, depth = 0): number | undefined => {
+    const lit = literalNumber(c0);
+    if (lit !== undefined) return Number.isSafeInteger(lit) ? lit : undefined;
+    const q = producer.get(resolve(c0));
+    if (depth > 8 || q?.kind !== "op" || q.inputs.length !== 2) return undefined;
+    const a = constantInt(q.inputs[0] as ValueId, depth + 1);
+    const b = constantInt(q.inputs[1] as ValueId, depth + 1);
+    if (a === undefined || b === undefined) return undefined;
+    const r =
+      q.label === "+" ? a + b : q.label === "-" ? a - b : q.label === "*" ? a * b : undefined;
+    return r !== undefined && Number.isSafeInteger(r) ? r : undefined;
+  };
+  /**
+   * Known spans of memory (#1369): this function's frames (`__ykAlloc` of a constant size) and the
+   * pointer parameters it reads at constant offsets. Each: slots for the address's own byte, the
+   * region's header and the region's base (the header holds it while the region lives), and the
+   * span's length.
+   */
+  const frames = new Map<ValueId, { bytes: string; hdr: string; base: string; len: number }>();
+  /** An address that is a frame plus a constant inside it, its access of `size` bytes in bounds. */
+  const frameAccess = (
+    v0: ValueId,
+    size: number,
+  ): { bytes: string; hdr: string; base: string; off: number } | undefined => {
+    const v = resolve(v0);
+    let f = frames.get(v);
+    let off = 0;
+    if (f === undefined) {
+      const p = producer.get(v);
+      if (p?.kind !== "op" || p.label !== "+" || p.inputs.length !== 2) return undefined;
+      for (const [x, y] of [
+        [p.inputs[0], p.inputs[1]],
+        [p.inputs[1], p.inputs[0]],
+      ] as [ValueId, ValueId][]) {
+        const k = constantInt(y);
+        const g0 = frames.get(resolve(x));
+        if (g0 !== undefined && k !== undefined && Number.isInteger(k)) {
+          f = g0;
+          off = k;
+        }
+      }
+    }
+    // A frame's bytes up to 4096 stay the runtime's when it is freed (others go back to the C
+    // library), so reading its header after a free is defined.
+    if (f === undefined || f.len > 4096 || off < 0 || off + size > f.len) return undefined;
+    return { bytes: f.bytes, hdr: f.hdr, base: f.base, off };
+  };
   const memoryAccess = (
     mem: { size: number; ty: string; kind: "u" | "f64" | "f32"; store: boolean },
     args: readonly string[],
     slow: () => string,
+    /** Which operands (the address, a store's value) the number proof holds. */
+    proven: readonly boolean[] = [],
+    /** The address is this function's frame at a constant offset: its bytes' and base's slots. */
+    frame?: {
+      readonly bytes: string;
+      readonly hdr: string;
+      readonly base: string;
+      readonly off: number;
+    },
   ): string => {
     for (const d of MEM_CACHE_DECLS) m.intrinsics.add(d);
     m.intrinsics.add("declare double @llvm.fabs.f64(double)");
@@ -1027,127 +1178,173 @@ function lowerFunction(
     const join = freshLabel("mjoin");
     const addr = args[0] as string;
     const value = args[1];
-    let numbers = fresh();
-    emit(`${numbers} = icmp ult i64 ${addr}, ${NUMBER_LIMIT}`);
-    if (mem.store) {
-      const v = fresh();
-      emit(`${v} = icmp ult i64 ${value}, ${NUMBER_LIMIT}`);
-      const both = fresh();
-      emit(`${both} = and i1 ${numbers}, ${v}`);
-      numbers = both;
-    }
-    emit(`br i1 ${numbers}, label %${range}, label %${slowLabel}`);
-    block(range);
-    const d = fresh();
-    emit(`${d} = bitcast i64 ${addr} to double`);
-    const nonneg = fresh();
-    emit(`${nonneg} = fcmp oge double ${d}, 0.0`);
-    const below = fresh();
-    emit(`${below} = fcmp olt double ${d}, 9.2e18`);
-    let ok = fresh();
-    emit(`${ok} = and i1 ${nonneg}, ${below}`);
+    let p: string;
     let xd = "";
-    if (mem.store) {
-      xd = fresh();
-      emit(`${xd} = bitcast i64 ${value} to double`);
-      if (mem.kind === "u") {
-        // ToInt32 of the value inline needs it below 2^63 in magnitude.
-        const small = fresh();
-        emit(`${small} = and i1 ${ok}, ${smallDouble(xd)}`);
-        ok = small;
+    let siteField: ((k: number) => string) | undefined;
+    if (frame !== undefined) {
+      // An access at a constant offset inside this function's own frame: the frame's bytes, while
+      // the 16 bytes before them hold its base (it is not freed).
+      let ok = "true";
+      if (mem.store && proven[1] !== true) {
+        ok = fresh();
+        emit(`${ok} = icmp ult i64 ${value}, ${NUMBER_LIMIT}`);
       }
+      if (mem.store) {
+        xd = fresh();
+        emit(`${xd} = bitcast i64 ${value} to double`);
+        if (mem.kind === "u") {
+          const small = fresh();
+          emit(`${small} = and i1 ${ok}, ${smallDouble(xd)}`);
+          ok = small;
+        }
+      }
+      const bytes = fresh();
+      emit(`${bytes} = load ptr, ptr ${frame.bytes}`);
+      const header = fresh();
+      emit(`${header} = load ptr, ptr ${frame.hdr}`);
+      const owner = fresh();
+      emit(`${owner} = load i64, ptr ${header}`);
+      const base = fresh();
+      emit(`${base} = load i64, ptr ${frame.base}`);
+      const same = fresh();
+      emit(`${same} = icmp eq i64 ${owner}, ${base}`);
+      const all = fresh();
+      emit(`${all} = and i1 ${ok}, ${same}`);
+      emit(`br i1 ${all}, label %${fast}, label %${slowLabel}`);
+      block(fast);
+      p = fresh();
+      emit(`${p} = getelementptr i8, ptr ${bytes}, i64 ${frame.off}`);
+    } else {
+      let numbers = "true";
+      if (proven[0] !== true) {
+        numbers = fresh();
+        emit(`${numbers} = icmp ult i64 ${addr}, ${NUMBER_LIMIT}`);
+      }
+      if (mem.store && proven[1] !== true) {
+        const v = fresh();
+        emit(`${v} = icmp ult i64 ${value}, ${NUMBER_LIMIT}`);
+        const both = fresh();
+        emit(`${both} = and i1 ${numbers}, ${v}`);
+        numbers = both;
+      }
+      emit(`br i1 ${numbers}, label %${range}, label %${slowLabel}`);
+      block(range);
+      const d = fresh();
+      emit(`${d} = bitcast i64 ${addr} to double`);
+      const nonneg = fresh();
+      emit(`${nonneg} = fcmp oge double ${d}, 0.0`);
+      const below = fresh();
+      emit(`${below} = fcmp olt double ${d}, 9.2e18`);
+      let ok = fresh();
+      emit(`${ok} = and i1 ${nonneg}, ${below}`);
+      if (mem.store) {
+        xd = fresh();
+        emit(`${xd} = bitcast i64 ${value} to double`);
+        if (mem.kind === "u") {
+          // ToInt32 of the value inline needs it below 2^63 in magnitude.
+          const small = fresh();
+          emit(`${small} = and i1 ${ok}, ${smallDouble(xd)}`);
+          ok = small;
+        }
+      }
+      emit(`br i1 ${ok}, label %${conv}, label %${slowLabel}`);
+      block(conv);
+      const i = fresh();
+      emit(`${i} = fptosi double ${d} to i64`);
+      const back = fresh();
+      emit(`${back} = sitofp i64 ${i} to double`);
+      const integral = fresh();
+      emit(`${integral} = fcmp oeq double ${back}, ${d}`);
+      // Two caches, inline: the runtime's (the region last allocated or found: a new frame's) and
+      // this site's own (the region this access last hit: its base, length, bytes and the runtime's
+      // epoch then). A site's region is that region still while the 16 bytes before its bytes hold
+      // its base (a free clears them) and the epoch is the same (a large region's bytes going back to
+      // the C library changes it). A store site's cache is only ever filled by a store that
+      // succeeded, so its region is writable.
+      const within = (base: string, len: string): { off: string; ok: string } => {
+        const off = fresh();
+        emit(`${off} = sub i64 ${i}, ${base}`);
+        const room = fresh();
+        emit(`${room} = icmp uge i64 ${len}, ${mem.size}`);
+        const lim = fresh();
+        emit(`${lim} = sub i64 ${len}, ${mem.size}`);
+        const inside = fresh();
+        emit(`${inside} = icmp ule i64 ${off}, ${lim}`);
+        const a1 = fresh();
+        emit(`${a1} = and i1 ${integral}, ${room}`);
+        const ok = fresh();
+        emit(`${ok} = and i1 ${a1}, ${inside}`);
+        return { off, ok };
+      };
+      // The runtime's two entries: the region last allocated or found, and the one before it (a
+      // callee's frame, then its caller's).
+      const hits: [string, string][] = [];
+      for (const g0 of ["@yk_mcache", "@yk_mcache2"]) {
+        const gBase = fresh();
+        emit(`${gBase} = load i64, ptr ${g0}_base`);
+        const gLen = fresh();
+        emit(`${gLen} = load i64, ptr ${g0}_len`);
+        const g = within(gBase, gLen);
+        let gOk = g.ok;
+        if (mem.store) {
+          const w = fresh();
+          emit(`${w} = load i64, ptr ${g0}_writable`);
+          const wr = fresh();
+          emit(`${wr} = icmp ne i64 ${w}, 0`);
+          const both = fresh();
+          emit(`${both} = and i1 ${gOk}, ${wr}`);
+          gOk = both;
+        }
+        const gHit = freshLabel("mglobal");
+        const next = freshLabel("mnext");
+        emit(`br i1 ${gOk}, label %${gHit}, label %${next}`);
+        block(gHit);
+        const gBytes = fresh();
+        emit(`${gBytes} = load ptr, ptr ${g0}_bytes`);
+        const gP = fresh();
+        emit(`${gP} = getelementptr i8, ptr ${gBytes}, i64 ${g.off}`);
+        emit(`br label %${fast}`);
+        hits.push([gP, gHit]);
+        block(next);
+      }
+      const site = `@yk.msite.${memorySites++}`;
+      m.intrinsics.add(`${site} = internal global [4 x i64] zeroinitializer`);
+      siteField = (k: number): string => {
+        const q = fresh();
+        emit(`${q} = getelementptr [4 x i64], ptr ${site}, i64 0, i64 ${k}`);
+        return q;
+      };
+      const base = fresh();
+      emit(`${base} = load i64, ptr ${site}`);
+      const len = fresh();
+      emit(`${len} = load i64, ptr ${siteField(1)}`);
+      const siteEpoch = fresh();
+      emit(`${siteEpoch} = load i64, ptr ${siteField(3)}`);
+      const epoch = fresh();
+      emit(`${epoch} = load i64, ptr @yk_mcache_epoch`);
+      const current = fresh();
+      emit(`${current} = icmp eq i64 ${siteEpoch}, ${epoch}`);
+      const sc = within(base, len);
+      const all = fresh();
+      emit(`${all} = and i1 ${sc.ok}, ${current}`);
+      const live = freshLabel("mlive");
+      emit(`br i1 ${all}, label %${live}, label %${slowLabel}`);
+      block(live);
+      const bytes = fresh();
+      emit(`${bytes} = load ptr, ptr ${siteField(2)}`);
+      const header = fresh();
+      emit(`${header} = getelementptr i8, ptr ${bytes}, i64 -16`);
+      const owner = fresh();
+      emit(`${owner} = load i64, ptr ${header}`);
+      const same = fresh();
+      emit(`${same} = icmp eq i64 ${owner}, ${base}`);
+      const sP = fresh();
+      emit(`${sP} = getelementptr i8, ptr ${bytes}, i64 ${sc.off}`);
+      emit(`br i1 ${same}, label %${fast}, label %${slowLabel}`);
+      block(fast);
+      p = fresh();
+      emit(`${p} = phi ptr ${[...hits, [sP, live]].map(([v, l]) => `[ ${v}, %${l} ]`).join(", ")}`);
     }
-    emit(`br i1 ${ok}, label %${conv}, label %${slowLabel}`);
-    block(conv);
-    const i = fresh();
-    emit(`${i} = fptosi double ${d} to i64`);
-    const back = fresh();
-    emit(`${back} = sitofp i64 ${i} to double`);
-    const integral = fresh();
-    emit(`${integral} = fcmp oeq double ${back}, ${d}`);
-    // Two caches, inline: the runtime's (the region last allocated or found: a new frame's) and
-    // this site's own (the region this access last hit: its base, length, bytes and the runtime's
-    // epoch then). A site's region is that region still while the 16 bytes before its bytes hold
-    // its base (a free clears them) and the epoch is the same (a large region's bytes going back to
-    // the C library changes it). A store site's cache is only ever filled by a store that
-    // succeeded, so its region is writable.
-    const within = (base: string, len: string): { off: string; ok: string } => {
-      const off = fresh();
-      emit(`${off} = sub i64 ${i}, ${base}`);
-      const room = fresh();
-      emit(`${room} = icmp uge i64 ${len}, ${mem.size}`);
-      const lim = fresh();
-      emit(`${lim} = sub i64 ${len}, ${mem.size}`);
-      const inside = fresh();
-      emit(`${inside} = icmp ule i64 ${off}, ${lim}`);
-      const a1 = fresh();
-      emit(`${a1} = and i1 ${integral}, ${room}`);
-      const ok = fresh();
-      emit(`${ok} = and i1 ${a1}, ${inside}`);
-      return { off, ok };
-    };
-    const gBase = fresh();
-    emit(`${gBase} = load i64, ptr @yk_mcache_base`);
-    const gLen = fresh();
-    emit(`${gLen} = load i64, ptr @yk_mcache_len`);
-    const g = within(gBase, gLen);
-    let gOk = g.ok;
-    if (mem.store) {
-      const w = fresh();
-      emit(`${w} = load i64, ptr @yk_mcache_writable`);
-      const wr = fresh();
-      emit(`${wr} = icmp ne i64 ${w}, 0`);
-      const both = fresh();
-      emit(`${both} = and i1 ${gOk}, ${wr}`);
-      gOk = both;
-    }
-    const gHit = freshLabel("mglobal");
-    const siteCheck = freshLabel("msite");
-    emit(`br i1 ${gOk}, label %${gHit}, label %${siteCheck}`);
-    block(gHit);
-    const gBytes = fresh();
-    emit(`${gBytes} = load ptr, ptr @yk_mcache_bytes`);
-    const gP = fresh();
-    emit(`${gP} = getelementptr i8, ptr ${gBytes}, i64 ${g.off}`);
-    emit(`br label %${fast}`);
-    block(siteCheck);
-    const site = `@yk.msite.${memorySites++}`;
-    m.intrinsics.add(`${site} = internal global [4 x i64] zeroinitializer`);
-    const siteField = (k: number): string => {
-      const q = fresh();
-      emit(`${q} = getelementptr [4 x i64], ptr ${site}, i64 0, i64 ${k}`);
-      return q;
-    };
-    const base = fresh();
-    emit(`${base} = load i64, ptr ${site}`);
-    const len = fresh();
-    emit(`${len} = load i64, ptr ${siteField(1)}`);
-    const siteEpoch = fresh();
-    emit(`${siteEpoch} = load i64, ptr ${siteField(3)}`);
-    const epoch = fresh();
-    emit(`${epoch} = load i64, ptr @yk_mcache_epoch`);
-    const current = fresh();
-    emit(`${current} = icmp eq i64 ${siteEpoch}, ${epoch}`);
-    const sc = within(base, len);
-    const all = fresh();
-    emit(`${all} = and i1 ${sc.ok}, ${current}`);
-    const live = freshLabel("mlive");
-    emit(`br i1 ${all}, label %${live}, label %${slowLabel}`);
-    block(live);
-    const bytes = fresh();
-    emit(`${bytes} = load ptr, ptr ${siteField(2)}`);
-    const header = fresh();
-    emit(`${header} = getelementptr i8, ptr ${bytes}, i64 -16`);
-    const owner = fresh();
-    emit(`${owner} = load i64, ptr ${header}`);
-    const same = fresh();
-    emit(`${same} = icmp eq i64 ${owner}, ${base}`);
-    const sP = fresh();
-    emit(`${sP} = getelementptr i8, ptr ${bytes}, i64 ${sc.off}`);
-    emit(`br i1 ${same}, label %${fast}, label %${slowLabel}`);
-    block(fast);
-    const p = fresh();
-    emit(`${p} = phi ptr [ ${gP}, %${gHit} ], [ ${sP}, %${live} ]`);
     let r1: string;
     if (mem.store) {
       if (mem.kind === "u") {
@@ -1185,15 +1382,17 @@ function lowerFunction(
     block(slowLabel);
     const r2 = slow();
     // The runtime found the region (or trapped) and cached it: this site's cache is it now.
-    for (const [k, from, ty] of [
-      [0, "@yk_mcache_base", "i64"],
-      [1, "@yk_mcache_len", "i64"],
-      [2, "@yk_mcache_bytes", "ptr"],
-      [3, "@yk_mcache_epoch", "i64"],
-    ] as const) {
+    for (const [k, from, ty] of siteField === undefined
+      ? []
+      : ([
+          [0, "@yk_mcache_base", "i64"],
+          [1, "@yk_mcache_len", "i64"],
+          [2, "@yk_mcache_bytes", "ptr"],
+          [3, "@yk_mcache_epoch", "i64"],
+        ] as const)) {
       const q = fresh();
       emit(`${q} = load ${ty}, ptr ${from}`);
-      emit(`store ${ty} ${q}, ptr ${siteField(k)}`);
+      emit(`store ${ty} ${q}, ptr ${(siteField as (k: number) => string)(k)}`);
     }
     const slowEnd = currentLabel();
     emit(`br label %${join}`);
@@ -1771,6 +1970,20 @@ function lowerFunction(
     }
     if (lbl === "ElementAccess" && ins.length === 2) {
       const table = constTables.get(resolve(ins[0] as ValueId));
+      if (table !== undefined && tableInRange(n)) {
+        // An index the intervals keep in range: the load alone.
+        const idx = operand(ins[1] as ValueId);
+        const d = fresh();
+        emit(`${d} = bitcast i64 ${idx} to double`);
+        const i = fresh();
+        emit(`${i} = fptosi double ${d} to i64`);
+        const p = fresh();
+        emit(`${p} = getelementptr [${table.n} x i64], ptr ${table.global}, i64 0, i64 ${i}`);
+        const r = fresh();
+        emit(`${r} = load i64, ptr ${p}`);
+        set(out, r);
+        return;
+      }
       if (table !== undefined) {
         // A constant table's element at an integer index in range: a load; else the array's read.
         const idx = operand(ins[1] as ValueId);
@@ -1798,9 +2011,11 @@ function lowerFunction(
               emit(`${below} = fcmp olt double ${d}, ${table.n}.0`);
               const inRange = fresh();
               emit(`${inRange} = and i1 ${nonneg}, ${below}`);
+              // In range, so fptosi is defined: an integer when converting back gives it again.
+              const w = fresh();
+              emit(`${w} = fptosi double ${d} to i64`);
               const t = fresh();
-              emit(`${t} = call double @llvm.trunc.f64(double ${d})`);
-              m.intrinsics.add("declare double @llvm.trunc.f64(double)");
+              emit(`${t} = sitofp i64 ${w} to double`);
               const integral = fresh();
               emit(`${integral} = fcmp oeq double ${t}, ${d}`);
               const ok = fresh();
@@ -1851,6 +2066,62 @@ function lowerFunction(
       const [fn, arity] = LEAVES[leafName] as [string, number];
       if (ins.length - 1 !== arity)
         throw new LlvmEmitError(`the leaf ${fn} takes ${arity} arguments`);
+      if (leafName === "__ykAlloc") {
+        // A frame's block: a constant integral size and power-of-two alignment, with no boxing.
+        const size = literalNumber(ins[1] as ValueId);
+        const align = literalNumber(ins[2] as ValueId);
+        if (
+          size !== undefined &&
+          align !== undefined &&
+          Number.isInteger(size) &&
+          size >= 0 &&
+          size < 2 ** 31 &&
+          Number.isInteger(align) &&
+          align >= 1 &&
+          align <= 4096 &&
+          (align & (align - 1)) === 0
+        ) {
+          m.intrinsics.add("declare i64 @yk_frame_alloc(i64, i64)");
+          m.intrinsics.add("@yk_frame_bytes = external global ptr");
+          const r = fresh();
+          emit(`${r} = call i64 @yk_frame_alloc(i64 ${size}, i64 ${align})`);
+          set(out, r);
+          // Its bytes and base, for the accesses at constant offsets inside it.
+          const k = frames.size;
+          const bytesSlot = `%fb${k}`;
+          const hdrSlot = `%fh${k}`;
+          const baseSlot = `%fa${k}`;
+          entryAllocas.push(
+            `  ${bytesSlot} = alloca ptr`,
+            `  ${hdrSlot} = alloca ptr`,
+            `  ${baseSlot} = alloca i64`,
+          );
+          const bytes = fresh();
+          emit(`${bytes} = load ptr, ptr @yk_frame_bytes`);
+          emit(`store ptr ${bytes}, ptr ${bytesSlot}`);
+          const hdr = fresh();
+          emit(`${hdr} = getelementptr i8, ptr ${bytes}, i64 -16`);
+          emit(`store ptr ${hdr}, ptr ${hdrSlot}`);
+          const d = fresh();
+          emit(`${d} = bitcast i64 ${r} to double`);
+          const base = fresh();
+          emit(`${base} = fptoui double ${d} to i64`);
+          emit(`store i64 ${base}, ptr ${baseSlot}`);
+          frames.set(out as ValueId, {
+            bytes: bytesSlot,
+            hdr: hdrSlot,
+            base: baseSlot,
+            len: size <= 16 ? 16 : Math.ceil(size / 16) * 16,
+          });
+          return;
+        }
+      }
+      if (leafName === "__ykFree" && allNumbers([ins[1] as ValueId])) {
+        m.intrinsics.add("declare void @yk_frame_free(i64)");
+        emit(`call void @yk_frame_free(i64 ${operand(ins[1] as ValueId)})`);
+        set(out, UNDEFINED);
+        return;
+      }
       const data = leafName === "__ykData" ? dataTables.get(resolve(ins[2] as ValueId)) : undefined;
       if (data !== undefined) {
         // Constant data of literal elements: laid out at the first call, its address kept.
@@ -1882,7 +2153,13 @@ function lowerFunction(
       if (mem !== undefined) {
         set(
           out,
-          memoryAccess(mem, args, () => call(fn, args.map((a) => `i64 ${a}`).join(", "))),
+          memoryAccess(
+            mem,
+            args,
+            () => call(fn, args.map((a) => `i64 ${a}`).join(", ")),
+            ins.slice(1).map((v) => allNumbers([v as ValueId])),
+            frameAccess(ins[1] as ValueId, mem.size),
+          ),
         );
         return;
       }
@@ -1915,7 +2192,7 @@ function lowerFunction(
                 ([d]) => {
                   const r = fresh();
                   emit(`${r} = call double @${intrinsic}(double ${d})`);
-                  return boxDouble(r);
+                  return numberResult(out, r);
                 },
                 slow,
                 undefined,
@@ -2054,7 +2331,7 @@ function lowerFunction(
             ([x, y]) => {
               const r = fresh();
               emit(`${r} = ${arith} double ${x}, ${y}`);
-              return boxDouble(r);
+              return numberResult(out, r);
             },
             slow,
             undefined,
@@ -2081,6 +2358,8 @@ function lowerFunction(
         return;
       }
       if (bitwise !== undefined) {
+        const unrangedA = !numRange.has(resolve(ins[0] as ValueId));
+        const unrangedB = !numRange.has(resolve(ins[1] as ValueId));
         set(
           out,
           numberFast(
@@ -2101,11 +2380,19 @@ function lowerFunction(
               return bits;
             },
             slow,
-            ([x, y]) => {
-              const both = fresh();
-              emit(`${both} = and i1 ${smallDouble(x as string)}, ${smallDouble(y as string)}`);
-              return both;
-            },
+            // ToInt32 inline needs |x| < 2^63: known for a value the range inference holds.
+            unrangedA && unrangedB
+              ? ([x, y]) => {
+                  const both = fresh();
+                  emit(`${both} = and i1 ${smallDouble(x as string)}, ${smallDouble(y as string)}`);
+                  return both;
+                }
+              : unrangedA
+                ? ([x]) => smallDouble(x as string)
+                : unrangedB
+                  ? ([, y]) => smallDouble(y as string)
+                  : undefined,
+            allNumbers(ins as readonly ValueId[]),
           ),
         );
         return;
@@ -2142,7 +2429,7 @@ function lowerFunction(
               if (lbl === "+") return x;
               const r = fresh();
               emit(`${r} = fneg double ${d}`);
-              return boxDouble(r);
+              return numberResult(out, r);
             },
             slow,
             undefined,
@@ -2167,7 +2454,10 @@ function lowerFunction(
               return bits;
             },
             slow,
-            ([d]) => smallDouble(d as string),
+            numRange.has(resolve(ins[0] as ValueId))
+              ? undefined
+              : ([d]) => smallDouble(d as string),
+            allNumbers([ins[0] as ValueId]),
           ),
         );
         return;
@@ -2419,6 +2709,204 @@ function lowerFunction(
       set(v, r);
     }
   });
+  // Parameter speculation (#1369): a function whose arguments feed numeric operations is also
+  // lowered taking them as numbers. Called with numbers, it runs that clone; with anything else,
+  // the lowering below, which checks each operation.
+  if (
+    numberParams === undefined &&
+    closure !== undefined &&
+    source.mode === undefined &&
+    scope?.outs === undefined &&
+    !g.nodes.some(
+      (n) =>
+        n.closure !== undefined ||
+        (n.kind === "loop" && n.loop?.iterate !== undefined) ||
+        (n.kind === "literal-source" && (n.label ?? "").startsWith("/")),
+    )
+  ) {
+    const NUMERIC = new Set([
+      "+",
+      "-",
+      "*",
+      "/",
+      "%",
+      "<",
+      ">",
+      "<=",
+      ">=",
+      "&",
+      "|",
+      "^",
+      "<<",
+      ">>",
+      ">>>",
+      "~",
+    ]);
+    const numericUse = new Set<ValueId>();
+    for (const n of g.nodes) {
+      if (n.kind !== "op") continue;
+      const leaf = leafOf(n);
+      const callee = n.label === "CallExpression" ? memberOf(n.inputs[0] as ValueId) : undefined;
+      if (NUMERIC.has(n.label ?? "") || (leaf !== undefined && MEM_INLINE[leaf] !== undefined))
+        for (const v of n.inputs) numericUse.add(resolve(v as ValueId));
+      else if (callee !== undefined && isMath(callee.node.inputs[0] as ValueId))
+        for (const v of n.inputs.slice(1)) numericUse.add(resolve(v as ValueId));
+    }
+    const speculated = params.filter(
+      (p, i) =>
+        i >= closure.captures &&
+        !(p.label ?? "").endsWith("...") &&
+        numericUse.has(p.outputs[0] as ValueId),
+    );
+    if (speculated.length > 0) {
+      const clone = m.closureName(`${name.replace(/"/g, "")}.num`);
+      lowerFunction(
+        m,
+        source,
+        clone,
+        closure,
+        scope,
+        new Set(speculated.map((p) => p.outputs[0] as ValueId)),
+      );
+      let ok = "true";
+      for (const p of speculated) {
+        const c = fresh();
+        emit(`${c} = icmp ult i64 ${operand(p.outputs[0] as ValueId)}, ${NUMBER_LIMIT}`);
+        const both = fresh();
+        emit(`${both} = and i1 ${ok}, ${c}`);
+        ok = both;
+      }
+      const spec = freshLabel("numbers");
+      const general = freshLabel("general");
+      emit(`br i1 ${ok}, label %${spec}, label %${general}`);
+      block(spec);
+      const r = fresh();
+      emit(`${r} = musttail call i64 @${clone}(ptr %closure, i64 %this, i64 %argc, ptr %argv)`);
+      emit(`ret i64 ${r}`);
+      block(general);
+    }
+  }
+  // Pointer parameters read or written at constant offsets (#1369): the span they reach is looked
+  // up once, here; each access then checks only that its region still lives.
+  if (closure !== undefined) {
+    const spans = new Map<ValueId, { len: number; write: boolean; uses: number }>();
+    for (const n of g.nodes) {
+      const leaf = leafOf(n);
+      const mem = leaf === undefined ? undefined : MEM_INLINE[leaf];
+      if (mem === undefined || n.inputs.length < 2) continue;
+      const addr = resolve(n.inputs[1] as ValueId);
+      const pa = producer.get(addr);
+      let base: ValueId | undefined;
+      let off: number | undefined;
+      if (pa?.kind === "param-source") {
+        base = addr;
+        off = 0;
+      } else if (pa?.kind === "op" && pa.label === "+" && pa.inputs.length === 2)
+        for (const [x, y] of [
+          [pa.inputs[0], pa.inputs[1]],
+          [pa.inputs[1], pa.inputs[0]],
+        ] as [ValueId, ValueId][]) {
+          const k = constantInt(y);
+          if (producer.get(resolve(x))?.kind === "param-source" && k !== undefined) {
+            base = resolve(x);
+            off = k;
+          }
+        }
+      if (base === undefined || off === undefined || off < 0 || off + mem.size > 4096) continue;
+      const sp = spans.get(base) ?? { len: 0, write: false, uses: 0 };
+      spans.set(base, {
+        len: Math.max(sp.len, off + mem.size),
+        write: sp.write || mem.store,
+        uses: sp.uses + 1,
+      });
+    }
+    for (const [pv, sp] of spans) {
+      const index = params.findIndex((p) => p.outputs[0] === pv);
+      if (index < closure.captures || sp.uses < 2) continue;
+      m.intrinsics.add("declare ptr @yk_span(i64, i64, i32, ptr, ptr)");
+      const k = frames.size;
+      const bytesSlot = `%fb${k}`;
+      const hdrSlot = `%fh${k}`;
+      const baseSlot = `%fa${k}`;
+      entryAllocas.push(
+        `  ${bytesSlot} = alloca ptr`,
+        `  ${hdrSlot} = alloca ptr`,
+        `  ${baseSlot} = alloca i64`,
+      );
+      // The runtime's cached region first (a caller's frame, most often), inline; else yk_span.
+      for (const d0 of MEM_CACHE_DECLS) m.intrinsics.add(d0);
+      const pbits = operand(pv);
+      const isNum = fresh();
+      emit(`${isNum} = icmp ult i64 ${pbits}, ${NUMBER_LIMIT}`);
+      const pd = fresh();
+      emit(`${pd} = bitcast i64 ${pbits} to double`);
+      const inRange = fresh();
+      emit(`${inRange} = fcmp olt double ${pd}, 9.0e15`);
+      const nonneg = fresh();
+      emit(`${nonneg} = fcmp oge double ${pd}, 0.0`);
+      const u = fresh();
+      emit(`${u} = fptoui double ${pd} to i64`);
+      const back = fresh();
+      emit(`${back} = uitofp i64 ${u} to double`);
+      const integral = fresh();
+      emit(`${integral} = fcmp oeq double ${back}, ${pd}`);
+      const cBase = fresh();
+      emit(`${cBase} = load i64, ptr @yk_mcache_base`);
+      const cLen = fresh();
+      emit(`${cLen} = load i64, ptr @yk_mcache_len`);
+      const off = fresh();
+      emit(`${off} = sub i64 ${u}, ${cBase}`);
+      const end = fresh();
+      emit(`${end} = add i64 ${off}, ${sp.len}`);
+      const fits = fresh();
+      emit(`${fits} = icmp ule i64 ${end}, ${cLen}`);
+      const after = fresh();
+      emit(`${after} = icmp ule i64 ${cBase}, ${u}`);
+      const small = fresh();
+      emit(`${small} = icmp ule i64 ${cLen}, 4096`);
+      let ok = "true";
+      for (const c of [isNum, inRange, nonneg, integral, fits, after, small]) {
+        const both = fresh();
+        emit(`${both} = and i1 ${ok}, ${c}`);
+        ok = both;
+      }
+      if (sp.write) {
+        const w = fresh();
+        emit(`${w} = load i64, ptr @yk_mcache_writable`);
+        const wr = fresh();
+        emit(`${wr} = icmp ne i64 ${w}, 0`);
+        const both = fresh();
+        emit(`${both} = and i1 ${ok}, ${wr}`);
+        ok = both;
+      }
+      const hit = freshLabel("spanhit");
+      const miss = freshLabel("spanmiss");
+      const joined = freshLabel("spanjoin");
+      emit(`br i1 ${ok}, label %${hit}, label %${miss}`);
+      block(hit);
+      const cBytes = fresh();
+      emit(`${cBytes} = load ptr, ptr @yk_mcache_bytes`);
+      const atHit = fresh();
+      emit(`${atHit} = getelementptr i8, ptr ${cBytes}, i64 ${off}`);
+      const hdrHit = fresh();
+      emit(`${hdrHit} = getelementptr i8, ptr ${cBytes}, i64 -16`);
+      emit(`store ptr ${hdrHit}, ptr ${hdrSlot}`);
+      emit(`store i64 ${cBase}, ptr ${baseSlot}`);
+      emit(`br label %${joined}`);
+      block(miss);
+      const atMiss = fresh();
+      emit(
+        `${atMiss} = call ptr @yk_span(i64 ${pbits}, i64 ${sp.len}, i32 ${sp.write ? 1 : 0}, ptr ${hdrSlot}, ptr ${baseSlot})`,
+      );
+      const missEnd = currentLabel();
+      emit(`br label %${joined}`);
+      block(joined);
+      const at = fresh();
+      emit(`${at} = phi ptr [ ${atHit}, %${hit} ], [ ${atMiss}, %${missEnd} ]`);
+      emit(`store ptr ${at}, ptr ${bytesSlot}`);
+      frames.set(pv, { bytes: bytesSlot, hdr: hdrSlot, base: baseSlot, len: sp.len });
+    }
+  }
   emitScope(undefined);
   if (scope?.outs !== undefined) {
     // A statement: the values of the names it declares, from its one result.

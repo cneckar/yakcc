@@ -4644,7 +4644,18 @@ uint64_t yk_mcache_writable = 0;
    bytes are reused), so a site that hit a freed region misses. Bytes handed back to the C library
    (a large region's) change this epoch instead, which every site's cache holds. */
 uint64_t yk_mcache_epoch = 1;
+/* The region cached before the last: a callee's accesses to its caller's frame hit it. */
+uint64_t yk_mcache2_base = 0;
+uint64_t yk_mcache2_len = 0;
+uint8_t *yk_mcache2_bytes = NULL;
+uint64_t yk_mcache2_writable = 0;
 static void c_cache(c_region *r) {
+  if (yk_mcache_bytes != r->bytes) {
+    yk_mcache2_base = yk_mcache_base;
+    yk_mcache2_len = yk_mcache_len;
+    yk_mcache2_bytes = yk_mcache_bytes;
+    yk_mcache2_writable = yk_mcache_writable;
+  }
   yk_mcache_base = r->base;
   yk_mcache_len = r->len;
   yk_mcache_bytes = r->bytes;
@@ -4692,9 +4703,17 @@ static void c_release(uint8_t *p, uint32_t len) {
 static uint64_t c_alloc(double size, double align, int constant) {
   double a = align > 16 ? align : 16;
   uint64_t al = (uint64_t)a;
-  uint64_t base = (c_next + al - 1) / al * al;
-  double n = ceil(size / 16) * 16;
-  uint32_t len = (uint32_t)(n > 16 ? n : 16);
+  /* A power-of-two alignment (every C type's) is a mask; an integral size below 2^32 rounds as an
+     integer. Anything else takes the general arithmetic, with the same results. */
+  uint64_t base = (al & (al - 1)) == 0 ? (c_next + al - 1) & ~(al - 1) : (c_next + al - 1) / al * al;
+  uint32_t len;
+  if (size >= 0 && size < 4294967280.0 && (double)(uint64_t)size == size) {
+    uint64_t n = ((uint64_t)size + 15) & ~(uint64_t)15;
+    len = (uint32_t)(n > 16 ? n : 16);
+  } else {
+    double n = ceil(size / 16) * 16;
+    len = (uint32_t)(n > 16 ? n : 16);
+  }
   if (c_nregions == c_capregions) {
     c_capregions = c_capregions == 0 ? 64 : c_capregions * 2;
     c_region *grown = alloc((size_t)c_capregions * sizeof(c_region));
@@ -4711,41 +4730,49 @@ static uint64_t c_alloc(double size, double align, int constant) {
   return base;
 }
 static c_region *c_region_of(double a, uint32_t n, int write) {
-  /* The last two regions found: a function alternating between two arrays hits one of them. */
-  uint32_t recent[2] = {c_last, c_prev};
-  for (int k = 0; k < 2; k++) {
-    if (recent[k] >= c_nregions) continue;
-    c_region *r = &c_regions[recent[k]];
-    if (a >= (double)r->base && a + n <= (double)(r->base + r->len) && r->live && trunc(a) == a &&
-        !(write && r->constant)) {
-      if (k == 1) {
-        c_prev = c_last;
-        c_last = recent[1];
+  /* An integral address below 2^53 is compared as an integer; anything else is no region's. */
+  if (a >= 0 && a < 9007199254740992.0) {
+    uint64_t u = (uint64_t)a;
+    if ((double)u == a) {
+      /* The last two regions found: a function alternating between two arrays hits one of them. */
+      uint32_t recent[2] = {c_last, c_prev};
+      for (int k = 0; k < 2; k++) {
+        if (recent[k] >= c_nregions) continue;
+        c_region *r = &c_regions[recent[k]];
+        if (u - r->base < r->len && u - r->base + n <= r->len && r->live && !(write && r->constant)) {
+          if (k == 1) {
+            c_prev = c_last;
+            c_last = recent[1];
+          }
+          c_cache(r);
+          return r;
+        }
       }
-      c_cache(r);
-      return r;
+      uint32_t lo = 0, hi = c_nregions;
+      while (lo < hi) {
+        uint32_t mid = (lo + hi) / 2;
+        c_region *r = &c_regions[mid];
+        if (u < r->base) hi = mid;
+        else if (u - r->base >= r->len) lo = mid + 1;
+        else {
+          if (!r->live || u - r->base + n > r->len || (write && r->constant)) break;
+          c_prev = c_last;
+          c_last = mid;
+          c_cache(r);
+          return r;
+        }
+      }
     }
   }
   if (!(a == a && !isinf(a) && trunc(a) == a)) c_trap(concat(str(ascii("address ")), str(number_to_string(a))));
-  uint32_t lo = 0, hi = c_nregions;
-  while (lo < hi) {
-    uint32_t mid = (lo + hi) / 2;
-    c_region *r = &c_regions[mid];
-    if (a < (double)r->base) hi = mid;
-    else if (a >= (double)(r->base + r->len)) lo = mid + 1;
-    else {
-      if (!r->live || a + n > (double)(r->base + r->len) || (write && r->constant)) break;
-      c_prev = c_last;
-      c_last = mid;
-      c_cache(r);
-      return r;
-    }
-  }
   char what[48];
   snprintf(what, sizeof what, "%s of %u at 0x", write ? "store" : "load", n);
   c_trap(concat(str(ascii(what)), str(hex_of(a))));
 }
 static uint8_t *c_at(yk addr, uint32_t n, int write) {
+  /* An address is a number as it is (Number.isInteger, no conversion): anything else traps with
+     its string, as the definition's template does. */
+  if (addr >= ((yk)T_SPECIAL << 48)) c_trap(concat(str(ascii("address ")), str(to_string(addr))));
   double a = to_number(addr);
   c_region *r = c_region_of(a, n, write);
   return r->bytes + (uint64_t)(a - (double)r->base);
@@ -4778,19 +4805,110 @@ yk yk_leaf_fn_at(yk a) {
   type_error("memory trap: a call through a pointer that is no function's");
   return YK_UNDEFINED;
 }
+static void c_free(double a);
 yk yk_leaf_free(yk addr) {
-  double a = to_number(addr);
-  if (a == 0) return YK_UNDEFINED;
-  c_region *r = c_region_of(a, 1, 0);
+  c_free(to_number(addr));
+  return YK_UNDEFINED;
+}
+/* A frame's block, as the lowered code allocates it (#1369): __ykAlloc of a constant integral size
+   and alignment, with no boxing; the address is a number's bits. */
+/* A span a function reads or writes through a pointer parameter (#1369): the bytes of
+   [p, p + n) if one live region (writable, for `write`) of at most 4096 bytes holds them, with its
+   header's address and its base, which the lowered code checks before each access; else NULL, with
+   a header that never matches. Never traps: an access that would is the leaf's. */
+static uint64_t c_no_header = 0;
+uint8_t *yk_span(uint64_t pbits, uint64_t n, int32_t write, uint8_t **hdr, uint64_t *base) {
+  *hdr = (uint8_t *)&c_no_header;
+  *base = 1;
+  if (pbits >= ((uint64_t)T_SPECIAL << 48)) return NULL;
+  double a;
+  memcpy(&a, &pbits, 8);
+  if (!(a >= 0 && a < 9007199254740992.0)) return NULL;
+  uint64_t u = (uint64_t)a;
+  if ((double)u != a) return NULL;
+  /* The caller's frame, most often: among the last regions made or found. */
+  uint32_t recent[3] = {c_nregions - 1, c_last, c_prev};
+  for (int k = 0; k < 3; k++) {
+    if (recent[k] >= c_nregions) continue;
+    c_region *r = &c_regions[recent[k]];
+    if (u - r->base < r->len) {
+      if (!r->live || u - r->base + n > r->len || (write && r->constant) || r->len > 4096) return NULL;
+      *hdr = r->bytes - 16;
+      *base = r->base;
+      return r->bytes + (u - r->base);
+    }
+  }
+  uint32_t lo = 0, hi = c_nregions;
+  while (lo < hi) {
+    uint32_t mid = (lo + hi) / 2;
+    c_region *r = &c_regions[mid];
+    if (u < r->base) hi = mid;
+    else if (u - r->base >= r->len) lo = mid + 1;
+    else {
+      if (!r->live || u - r->base + n > r->len || (write && r->constant) || r->len > 4096) return NULL;
+      *hdr = r->bytes - 16;
+      *base = r->base;
+      return r->bytes + (u - r->base);
+    }
+  }
+  return NULL;
+}
+/* The bytes of the frame yk_frame_alloc made last: the lowered code's accesses inside it. */
+uint8_t *yk_frame_bytes = NULL;
+uint64_t yk_frame_alloc(uint64_t size, uint64_t align) {
+  /* A small frame with freed bytes of its size at hand: c_alloc's steps, on integers, the bytes
+     zeroed inline. Anything else is c_alloc's. */
+  uint64_t al = align > 16 ? align : 16;
+  uint32_t len = size <= 16 ? 16 : (uint32_t)((size + 15) & ~(uint64_t)15);
+  if (len <= 64 && c_nregions < c_capregions && c_free_bytes[len / 16] != NULL) {
+    uint64_t base = (c_next + al - 1) & ~(al - 1);
+    uint8_t *p = c_free_bytes[len / 16];
+    c_free_bytes[len / 16] = *(uint8_t **)p;
+    uint64_t *w = (uint64_t *)p;
+    switch (len) { /* 16, 32, 48 or 64 bytes: stores, not a call */
+    case 64: w[6] = 0; w[7] = 0; /* fall through */
+    case 48: w[4] = 0; w[5] = 0; /* fall through */
+    case 32: w[2] = 0; w[3] = 0; /* fall through */
+    default: w[0] = 0; w[1] = 0;
+    }
+    ((uint64_t *)p)[-2] = base;
+    c_regions[c_nregions++] = (c_region){base, len, 0, 1, p};
+    c_next = base + len + 16;
+    c_prev = c_last;
+    c_last = c_nregions - 1;
+    c_cache(&c_regions[c_last]);
+    yk_frame_bytes = p;
+    double d = (double)base;
+    uint64_t bits;
+    memcpy(&bits, &d, 8);
+    return bits;
+  }
+  double a = (double)c_alloc((double)size, (double)align, 0);
+  yk_frame_bytes = c_regions[c_nregions - 1].bytes;
+  uint64_t bits;
+  memcpy(&bits, &a, 8);
+  return bits;
+}
+/* __ykFree of a number (a frame's block, most often), with no boxing. */
+void yk_frame_free(uint64_t bits) {
+  double a;
+  memcpy(&a, &bits, 8);
+  c_free(a);
+}
+static void c_free(double a) {
+  if (a == 0) return;
+  /* Frames are freed last-in, first-out: the last region, most often. */
+  c_region *last = c_nregions > 0 ? &c_regions[c_nregions - 1] : NULL;
+  c_region *r = last != NULL && last->live && (double)last->base == a ? last : c_region_of(a, 1, 0);
   if ((double)r->base != a || r->constant) c_trap(concat(str(ascii("free of 0x")), str(hex_of(a))));
   r->live = 0;
   if (yk_mcache_bytes == r->bytes) yk_mcache_len = 0;
+  if (yk_mcache2_bytes == r->bytes) yk_mcache2_len = 0;
   c_release(r->bytes, r->len);
   r->bytes = NULL;
   /* A dead region traps as no region does, so the dead ones at the end leave the table (frames are
      freed last-in, first-out: the table stays as deep as the live ones). */
   while (c_nregions > 0 && !c_regions[c_nregions - 1].live) c_nregions--;
-  return YK_UNDEFINED;
 }
 yk yk_leaf_load8(yk a) { return yk_number(*c_at(a, 1, 0)); }
 yk yk_leaf_load16(yk a) {
