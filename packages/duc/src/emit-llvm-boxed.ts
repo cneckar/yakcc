@@ -3077,8 +3077,9 @@ function lowerFunction(
           );
           return;
         }
-        if (callee.name === "random" && args.length === 0) {
+        if (callee.name === "random") {
           // An implementation-chosen pseudo-random number in [0, 1) (21.3.2.27): the runtime's.
+          // Arguments are evaluated (as operands, above) and ignored, as the function's are.
           m.intrinsics.add("declare i64 @yk_math_random()");
           const r = fresh();
           emit(`${r} = call i64 @yk_math_random()`);
@@ -3524,6 +3525,23 @@ function lowerFunction(
         // A function made here is named by its key (NamedEvaluation), unless its code named it.
         const made = producer.get(resolve(v))?.closure !== undefined;
         values.push(made ? call("yk_name_method", `i64 ${operand(v)}, i64 ${key}`) : operand(v));
+      }
+      // Every key a name, none twice: the runtime fills the object at once (no key looked for).
+      const names = slots.map((x) =>
+        x.kind === "computed" ? undefined : (x as { name: string }).name,
+      );
+      if (
+        names.every((nm) => nm !== undefined) &&
+        new Set(names).size === names.length &&
+        keys.length > 0
+      ) {
+        m.intrinsics.add("declare i64 @yk_object_of_distinct(i64, ptr, ptr)");
+        const r = fresh();
+        emit(
+          `${r} = call i64 @yk_object_of_distinct(i64 ${keys.length}, ptr ${list(keys)}, ptr ${list(values)})`,
+        );
+        set(out, r);
+        return;
       }
       set(out, call("yk_object_of", `i64 ${keys.length}, ptr ${list(keys)}, ptr ${list(values)}`));
       return;

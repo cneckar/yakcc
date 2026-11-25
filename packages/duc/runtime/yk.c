@@ -1167,7 +1167,22 @@ static inline __attribute__((always_inline)) int key_is(yk key, const char *name
   return 1;
 }
 
+static int typed_fast_get(yk obj, uint32_t i, yk *out);
 yk yk_get(yk obj, yk key) {
+  /* An element by an integer index: an array's (not a hole), a typed array's, in range. */
+  if (is_number(key)) {
+    double d = num(key);
+    if (d >= 0 && d < 4294967295.0 && d == (double)(uint32_t)d) {
+      uint32_t i = (uint32_t)d;
+      if (is_array(obj)) {
+        yk_array *a = arr(obj);
+        if (i < a->len && !array_hole(a, i)) return a->items[i];
+      } else if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 7) {
+        yk r;
+        if (typed_fast_get(obj, i, &r)) return r;
+      }
+    }
+  }
   /* A plain object's own property by the very key (names are made once, so a read by name finds the
      key the object was made with): its value, before anything else is asked. */
   if (is_object(obj)) {
@@ -2173,6 +2188,18 @@ yk yk_delete(yk obj, yk key) {
 }
 yk yk_delete_named(yk obj, const char *name, uint64_t n) { return yk_delete(obj, yk_string_utf8(name, n)); }
 
+/* An object literal whose keys the lowering knows are distinct strings: its arrays filled at once. */
+yk yk_object_of_distinct(uint64_t n, const yk *keys, const yk *values) {
+  yk_object *o = alloc(sizeof(yk_object));
+  uint32_t cap = n < 4 ? 4 : (uint32_t)n;
+  o->keys = alloc((size_t)cap * sizeof(yk));
+  o->values = alloc((size_t)cap * sizeof(yk));
+  memcpy(o->keys, keys, (size_t)n * sizeof(yk));
+  memcpy(o->values, values, (size_t)n * sizeof(yk));
+  o->len = (uint32_t)n;
+  o->cap = cap;
+  return BOX(T_OBJECT, o);
+}
 /* An object literal: its keys (by ToPropertyKey) and values, in source order. */
 yk yk_object_of(uint64_t n, const yk *keys, const yk *values) {
   yk_object *o = alloc(sizeof(yk_object));
@@ -6662,6 +6689,12 @@ static yk builtin_text_encoder(void *c, yk s, uint64_t argc, const yk *argv) {
 }
 
 /* A property of a buffer or a view: its element, or its own accessors' values; 0 if none. */
+static int typed_fast_get(yk obj, uint32_t i, yk *out) {
+  yk_view *t = typed_of(obj);
+  if (t == NULL || i >= t->length) return 0;
+  *out = ta_get(t, i);
+  return 1;
+}
 static int buffer_get(yk obj, yk key, yk *out) {
   yk_view *t = typed_of(obj);
   if (t != NULL) {
@@ -8159,20 +8192,57 @@ static yk error_capture_stack_trace(void *c, yk s, uint64_t argc, const yk *argv
 /* Globals a program defines for the runtime (__yakccDefineGlobal): Math as the boot module makes it. */
 static yk defined_globals;
 static yk global_this(void);
+/* __yakccDefineGlobal(name, value, lazy): a global the boot defines; lazy, value is a function the
+   first read calls, its result the global's value from then on (Node's lazily loaded globals, such
+   as Buffer). */
+static yk lazy_globals = 0;
 static yk builtin_define_global(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
   if (defined_globals == 0) defined_globals = yk_object_of(0, NULL, NULL);
   yk name = to_string(arg_or_undefined(argc, argv, 0)), value = arg_or_undefined(argc, argv, 1);
+  if (argc > 2 && yk_truthy(argv[2])) {
+    if (lazy_globals == 0) lazy_globals = yk_object_of(0, NULL, NULL);
+    own_set((yk_object *)PTR(lazy_globals), name, value);
+    own_set((yk_object *)PTR(defined_globals), name, value);
+    return YK_UNDEFINED;
+  }
+  if (lazy_globals != 0) yk_delete(lazy_globals, name);
   own_set((yk_object *)PTR(defined_globals), name, value);
   own_set((yk_object *)PTR(global_this()), name, value);
   return value;
+}
+/* A defined global's value: a lazy one's made now, once. */
+static yk defined_value(yk name, yk v) {
+  yk f;
+  if (lazy_globals == 0 || !own_get((yk_object *)PTR(lazy_globals), name, &f)) return v;
+  yk_delete(lazy_globals, name);
+  yk made = call_value(f, YK_UNDEFINED, 0, NULL);
+  own_set((yk_object *)PTR(defined_globals), name, made);
+  own_set((yk_object *)PTR(global_this()), name, made);
+  return made;
 }
 /* Array.of(...items). */
 static yk builtin_array_of(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
   return yk_array_of(argc, argv);
 }
+static yk global_uncached(const char *name, uint64_t n);
+/* A global's value: a defined global's (__yakccDefineGlobal) as it is now; anything else (the
+   runtime's own, fixed once made) from a cache by name, so a read in a loop makes nothing again. */
+static yk global_cache = 0;
 yk yk_global(const char *name, uint64_t n) {
+  if (defined_globals != 0) {
+    yk v, key = interned(name, n);
+    if (own_get((yk_object *)PTR(defined_globals), key, &v)) return defined_value(key, v);
+  }
+  if (global_cache == 0) global_cache = yk_object_of(0, NULL, NULL);
+  yk key = interned(name, n), v;
+  if (own_get((yk_object *)PTR(global_cache), key, &v)) return v;
+  v = global_uncached(name, n);
+  own_set((yk_object *)PTR(global_cache), key, v);
+  return v;
+}
+static yk global_uncached(const char *name, uint64_t n) {
   if (defined_globals != 0) {
     yk v;
     if (own_get((yk_object *)PTR(defined_globals), interned(name, n), &v)) return v;

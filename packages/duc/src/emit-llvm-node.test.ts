@@ -111,6 +111,7 @@ console.log(util.inspect(new Point(1, 2)), util.inspect(Promise.resolve(4)), uti
 console.log(util.isDeepStrictEqual({ a: [1, 2] }, { a: [1, 2] }), util.types.isMap(new Map()));
 try { path.join(1); } catch (e) { console.log(e.code, e.name, e.message); }
 console.log({ a: 1, b: [2, { c: 3 }] }, new Map([[1, "x"]]), [undefined, null], "%s!", "fmt");
+console.log(typeof Buffer, Buffer.isBuffer(new Uint8Array(1)), Buffer.isEncoding("hex"), Buffer.isEncoding("nope"));
 console.error("to stderr %d", 5);
 const EventEmitter = require("events");
 const em = new EventEmitter();
