@@ -1961,18 +1961,32 @@ static void own_index_build(yk_object *o) {
   for (uint32_t i = 0; i < o->len; i++) own_index_put(o, i);
 }
 /* A key's position among an object's own, or -1: by its index once it has 8 keys or more. */
+/* The positions own_find last found in objects of 8 keys or more, by object and key (#1369): a hit
+   is that key still at that position (an object holds a key once), so no hash is computed. */
+static struct {
+  yk_object *o;
+  yk key;
+  uint32_t at;
+} own_found[512];
 static int64_t own_find(yk_object *o, yk key) {
   if (o->len < 8) {
     for (uint32_t i = 0; i < o->len; i++)
       if (key_equal(o->keys[i], key)) return i;
     return -1;
   }
+  uint32_t slot = (uint32_t)((((uintptr_t)o >> 4) ^ (key >> 3) ^ (key >> 13)) & 511);
+  if (own_found[slot].o == o && own_found[slot].key == key && own_found[slot].at < o->len &&
+      o->keys[own_found[slot].at] == key)
+    return own_found[slot].at;
   if (o->index == NULL) own_index_build(o);
   uint32_t mask = o->index_cap - 1;
   for (uint32_t j = key_hash(key) & mask;; j = (j + 1) & mask) {
     uint32_t at = o->index[j];
     if (at == 0) return -1;
-    if (key_equal(o->keys[at - 1], key)) return at - 1;
+    if (key_equal(o->keys[at - 1], key)) {
+      own_found[slot].o = o, own_found[slot].key = key, own_found[slot].at = at - 1;
+      return at - 1;
+    }
   }
 }
 /* A key given as its characters (an integer's digits): its position among an object's own, or -1. */

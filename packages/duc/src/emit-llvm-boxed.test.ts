@@ -365,6 +365,11 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "reads of objects with many keys across deletes, re-adds and overwrites; a prototype with many methods (#1369)",
+    "export function f(a, b) { const o = {}; for (let i = 0; i < 20; i++) o['k' + i] = i; const r = []; for (let pass = 0; pass < 3; pass++) { for (let i = 0; i < 20; i += 3) r.push(o['k' + i]); delete o['k' + (pass * 2)]; o['k' + (pass * 2)] = 'again' + pass; o.k19 = pass; } class P { m0() { return 0; } m1() { return 1; } m2() { return 2; } m3() { return 3; } m4() { return 4; } m5() { return 5; } m6() { return 6; } m7() { return 7; } m8() { return 8; } m9() { return 9; } } const x = new P(); const calls = []; for (let i = 0; i < 3; i++) { calls.push(x.m9(), x.m0(), x.m5()); if (i === 1) P.prototype.m5 = () => 'swapped'; } return [r, Object.keys(o).length, o.k0, o.k2, o.k4, calls, a, b]; }",
+    2,
+  ],
+  [
     "Math.random, with arguments it ignores (undici's random(max)): a number in [0, 1) (#1331)",
     "export function f(a, b) { const r = Math.random(a); const q = Math.random(); return [typeof r, r >= 0 && r < 1, q >= 0 && q < 1, r !== q || r === q]; }",
     2,
