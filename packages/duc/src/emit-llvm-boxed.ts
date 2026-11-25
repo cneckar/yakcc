@@ -1287,6 +1287,24 @@ function lowerFunction(
     const b = magnitude(v);
     return b !== undefined && b < 9.2e18;
   };
+  /** A value proven a non-negative integer below 2^53: a uint32's, a literal's, or a sum of them. */
+  const naturalInt = (v0: ValueId, depth = 0): boolean => {
+    const v = resolve(v0);
+    if (numRange.get(v) === "u32") return true;
+    const p = producer.get(v);
+    if (p?.kind === "literal-source") {
+      const x = Number((p.label ?? "").replace(/_/g, ""));
+      return Number.isSafeInteger(x) && x >= 0 && !Object.is(x, -0);
+    }
+    if (depth > 8 || p?.kind !== "op" || p.label !== "+" || p.inputs.length !== 2) return false;
+    const b = magnitude(v);
+    return (
+      b !== undefined &&
+      b < 2 ** 53 &&
+      naturalInt(p.inputs[0] as ValueId, depth + 1) &&
+      naturalInt(p.inputs[1] as ValueId, depth + 1)
+    );
+  };
   /** A raw double's bits made canonical (a NaN as the one NaN boxed values use). */
   const canonicalBits = (bits: string): string => {
     const d = fresh();
@@ -1965,6 +1983,8 @@ function lowerFunction(
     raw = false,
     /** A store's value is proven below 2^63 in magnitude: its ToInt32 needs no check. */
     bounded = false,
+    /** The address is proven a non-negative integer below 2^53: no range or integer check. */
+    natural = false,
   ): string => {
     for (const d of MEM_CACHE_DECLS) m.intrinsics.add(d);
     m.intrinsics.add("declare double @llvm.fabs.f64(double)");
@@ -2028,12 +2048,15 @@ function lowerFunction(
       block(range);
       const d = fresh();
       emit(`${d} = bitcast i64 ${addr} to double`);
-      const nonneg = fresh();
-      emit(`${nonneg} = fcmp oge double ${d}, 0.0`);
-      const below = fresh();
-      emit(`${below} = fcmp olt double ${d}, 9.2e18`);
-      let ok = fresh();
-      emit(`${ok} = and i1 ${nonneg}, ${below}`);
+      let ok = "true";
+      if (!natural) {
+        const nonneg = fresh();
+        emit(`${nonneg} = fcmp oge double ${d}, 0.0`);
+        const below = fresh();
+        emit(`${below} = fcmp olt double ${d}, 9.2e18`);
+        ok = fresh();
+        emit(`${ok} = and i1 ${nonneg}, ${below}`);
+      }
       if (mem.store) {
         xd = fresh();
         emit(`${xd} = bitcast i64 ${value} to double`);
@@ -2048,10 +2071,13 @@ function lowerFunction(
       block(conv);
       const i = fresh();
       emit(`${i} = fptosi double ${d} to i64`);
-      const back = fresh();
-      emit(`${back} = sitofp i64 ${i} to double`);
-      const integral = fresh();
-      emit(`${integral} = fcmp oeq double ${back}, ${d}`);
+      let integral = "true";
+      if (!natural) {
+        const back = fresh();
+        emit(`${back} = sitofp i64 ${i} to double`);
+        integral = fresh();
+        emit(`${integral} = fcmp oeq double ${back}, ${d}`);
+      }
       // Two caches, inline: the runtime's (the region last allocated or found: a new frame's) and
       // this site's own (the region this access last hit: its base, length, bytes and the runtime's
       // epoch then). A site's region is that region still while the 16 bytes before its bytes hold
@@ -3502,6 +3528,7 @@ function lowerFunction(
             frameAccess(ins[1] as ValueId, mem.size),
             !mem.store && rawNumbers.has(resolve(out as ValueId)),
             mem.store && mem.kind === "u" && boundedInt64(ins[2] as ValueId),
+            naturalInt(ins[1] as ValueId),
           ),
         );
         return;
@@ -4573,6 +4600,27 @@ function lowerFunction(
         if (ranged.has(init) && ranged.get(init) !== r) clash.add(init);
         ranged.set(init, r);
       });
+    }
+    // A parameter a memory access's address is made from (p + i): its addresses are below 2^32
+    // while the program's C memory is.
+    const addressParts = (v0: ValueId, depth: number, into: ValueId[]): void => {
+      const v = resolve(v0);
+      if (numberParams.has(v)) into.push(v);
+      const p = producer.get(v);
+      if (depth < 8 && p?.kind === "op" && p.label === "+" && p.inputs.length === 2)
+        for (const x of p.inputs) addressParts(x as ValueId, depth + 1, into);
+    };
+    // (Only where a loop is: a third lowering of a function pays for itself there.)
+    const looped = g.nodes.some((n) => n.kind === "loop");
+    for (const n of looped ? g.nodes : []) {
+      const leaf = leafOf(n);
+      if (leaf === undefined || MEM_INLINE[leaf] === undefined) continue;
+      const parts: ValueId[] = [];
+      addressParts(n.inputs[1] as ValueId, 0, parts);
+      for (const v of parts) {
+        if (ranged.has(v) && ranged.get(v) !== "u32") clash.add(v);
+        ranged.set(v, "u32");
+      }
     }
     for (const v of clash) ranged.delete(v);
     const regOf = (v: ValueId): number | undefined => {
