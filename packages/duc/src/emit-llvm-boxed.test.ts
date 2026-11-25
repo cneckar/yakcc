@@ -100,6 +100,16 @@ const PROGRAMS: [string, string, number][] = [
   // + with ToPrimitive, string concatenation and Number::toString's shortest digits.
   ["+ on every pair of kinds", "export function f(a, b) { return a + b; }", 2],
   [
+    "symbols: identity, description, Symbol.for, symbol keys, typeof, ToString throwing (#1331)",
+    "export function f(a, b) { const t = (g) => { try { return g(); } catch (e) { return e.name; } }; const s1 = Symbol(String(a)), s2 = Symbol(String(a)), s3 = Symbol(); const o = { [s1]: 1, plain: 2 }; o[s2] = b; const copy = { ...o }; return [s1 === s2, s1.description, s3.description, s1.toString(), String(s2), typeof s1, Symbol.for('k') === Symbol.for('k'), Symbol.keyFor(Symbol.for('k')), Symbol.keyFor(s1), o[s1], o[s2], Object.keys(o), JSON.stringify(o), copy[s1], s1 in o, t(() => '' + s1), t(() => `${s1}`), typeof Symbol.iterator, Symbol.iterator.description, t(() => new Symbol())]; }",
+    2,
+  ],
+  [
+    "the iteration protocol: an object's [Symbol.iterator] in for...of, spread, Array.from; return() on break (#1331)",
+    "export function f(a, b) { const log = []; const n = typeof a === 'number' && a > 0 && a < 6 ? Math.floor(a) : 3; const range = { [Symbol.iterator]() { let i = 0; return { next: () => (i < n ? { value: i++ * 2, done: false } : { value: 'end', done: true }), return: () => { log.push('closed'); return { done: true }; } }; } }; const seen = []; for (const x of range) seen.push(x); for (const x of range) { if (x >= 2) break; } class Bag { constructor() { this.items = ['x', b]; } *[Symbol.iterator]() { yield* this.items; } } return [seen, [...range], log, [...new Bag()], Array.from(range)]; }",
+    2,
+  ],
+  [
     "super(...spread) and Math.random (#1331)",
     "export function f(a, b) { class A { constructor(...xs) { this.n = xs.length; this.s = xs.join('-'); } } class B extends A { constructor(...ys) { super(...ys, 'end'); this.k = 'b'; } } const o = new B(a, b); const rs = [Math.random(), Math.random(), Math.random()]; return [o.n, o.s, o.k, rs.every((r) => typeof r === 'number' && r >= 0 && r < 1), rs[0] !== rs[1] || rs[1] !== rs[2]]; }",
     2,

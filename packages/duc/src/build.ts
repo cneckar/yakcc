@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { emitNativeModules } from "./emit-llvm-boxed.js";
 import { NATIVE_TARGETS, NativeToolError, compileObject, compileRuntime } from "./native.js";
-import { programRecord } from "./program.js";
+import { type ProgramRecord, programRecord } from "./program.js";
 
 export interface BuildOptions {
   /** The target (a key of NATIVE_TARGETS). Default: x86_64-linux. */
@@ -75,9 +75,17 @@ function linker(target: string): { cc: string; flags: string[] } {
 
 /** Build an entry module into an executable at `out`. */
 export function buildProgram(entry: string, out: string, options: BuildOptions = {}): BuildResult {
+  return buildRecord(programRecord(resolve(entry), options.root ?? process.cwd()), out, options);
+}
+
+/** Build a program record (an entry and its modules) into an executable at `out`. */
+export function buildRecord(
+  program: ProgramRecord,
+  out: string,
+  options: BuildOptions = {},
+): BuildResult {
   const target = options.target ?? "x86_64-linux";
   if (NATIVE_TARGETS[target] === undefined) throw new NativeToolError(`unknown target ${target}`);
-  const program = programRecord(resolve(entry), options.root ?? process.cwd());
   const { ir, symbols } = emitNativeModules(program.modules);
   const entrySymbol = symbols[program.entry];
   if (entrySymbol === undefined) throw new NativeToolError("the entry module was not lowered");
