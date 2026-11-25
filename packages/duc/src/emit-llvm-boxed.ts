@@ -1970,6 +1970,34 @@ function lowerFunction(
       const [fn, arity] = LEAVES[leafName] as [string, number];
       if (ins.length - 1 !== arity)
         throw new LlvmEmitError(`the leaf ${fn} takes ${arity} arguments`);
+      if (leafName === "__ykAlloc") {
+        // A frame's block: a constant integral size and power-of-two alignment, with no boxing.
+        const size = literalNumber(ins[1] as ValueId);
+        const align = literalNumber(ins[2] as ValueId);
+        if (
+          size !== undefined &&
+          align !== undefined &&
+          Number.isInteger(size) &&
+          size >= 0 &&
+          size < 2 ** 31 &&
+          Number.isInteger(align) &&
+          align >= 1 &&
+          align <= 4096 &&
+          (align & (align - 1)) === 0
+        ) {
+          m.intrinsics.add("declare i64 @yk_frame_alloc(i64, i64)");
+          const r = fresh();
+          emit(`${r} = call i64 @yk_frame_alloc(i64 ${size}, i64 ${align})`);
+          set(out, r);
+          return;
+        }
+      }
+      if (leafName === "__ykFree" && allNumbers([ins[1] as ValueId])) {
+        m.intrinsics.add("declare void @yk_frame_free(i64)");
+        emit(`call void @yk_frame_free(i64 ${operand(ins[1] as ValueId)})`);
+        set(out, UNDEFINED);
+        return;
+      }
       const data = leafName === "__ykData" ? dataTables.get(resolve(ins[2] as ValueId)) : undefined;
       if (data !== undefined) {
         // Constant data of literal elements: laid out at the first call, its address kept.

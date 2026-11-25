@@ -4776,9 +4776,48 @@ static uint8_t *c_at(yk addr, uint32_t n, int write) {
 }
 
 yk yk_leaf_alloc(yk size, yk align) { return yk_number((double)c_alloc(to_number(size), to_number(align), 0)); }
+static void c_free(double a);
 yk yk_leaf_free(yk addr) {
-  double a = to_number(addr);
-  if (a == 0) return YK_UNDEFINED;
+  c_free(to_number(addr));
+  return YK_UNDEFINED;
+}
+/* A frame's block, as the lowered code allocates it (#1369): __ykAlloc of a constant integral size
+   and alignment, with no boxing; the address is a number's bits. */
+uint64_t yk_frame_alloc(uint64_t size, uint64_t align) {
+  /* A small frame with freed bytes of its size at hand: c_alloc's steps, on integers, the bytes
+     zeroed inline. Anything else is c_alloc's. */
+  uint64_t al = align > 16 ? align : 16;
+  uint32_t len = size <= 16 ? 16 : (uint32_t)((size + 15) & ~(uint64_t)15);
+  if (len <= 64 && c_nregions < c_capregions && c_free_bytes[len / 16] != NULL) {
+    uint64_t base = (c_next + al - 1) & ~(al - 1);
+    uint8_t *p = c_free_bytes[len / 16];
+    c_free_bytes[len / 16] = *(uint8_t **)p;
+    uint64_t *w = (uint64_t *)p;
+    for (uint32_t k = 0; k < len / 8; k++) w[k] = 0;
+    ((uint64_t *)p)[-2] = base;
+    c_regions[c_nregions++] = (c_region){base, len, 0, 1, p};
+    c_next = base + len + 16;
+    c_prev = c_last;
+    c_last = c_nregions - 1;
+    c_cache(&c_regions[c_last]);
+    double d = (double)base;
+    uint64_t bits;
+    memcpy(&bits, &d, 8);
+    return bits;
+  }
+  double a = (double)c_alloc((double)size, (double)align, 0);
+  uint64_t bits;
+  memcpy(&bits, &a, 8);
+  return bits;
+}
+/* __ykFree of a number (a frame's block, most often), with no boxing. */
+void yk_frame_free(uint64_t bits) {
+  double a;
+  memcpy(&a, &bits, 8);
+  c_free(a);
+}
+static void c_free(double a) {
+  if (a == 0) return;
   /* Frames are freed last-in, first-out: the last region, most often. */
   c_region *last = c_nregions > 0 ? &c_regions[c_nregions - 1] : NULL;
   c_region *r = last != NULL && last->live && (double)last->base == a ? last : c_region_of(a, 1, 0);
@@ -4791,7 +4830,6 @@ yk yk_leaf_free(yk addr) {
   /* A dead region traps as no region does, so the dead ones at the end leave the table (frames are
      freed last-in, first-out: the table stays as deep as the live ones). */
   while (c_nregions > 0 && !c_regions[c_nregions - 1].live) c_nregions--;
-  return YK_UNDEFINED;
 }
 yk yk_leaf_load8(yk a) { return yk_number(*c_at(a, 1, 0)); }
 yk yk_leaf_load16(yk a) {
