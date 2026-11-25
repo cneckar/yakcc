@@ -6758,6 +6758,12 @@ export interface StaticDef {
   readonly size: number;
   readonly align: number;
   readonly init: readonly StaticItem[];
+  /**
+   * Where it is, when a link puts it there rather than in memory of its own: a weak symbol no
+   * object defines is at 0 (musl's `__fini_array_start` and `_end` in a program without
+   * destructors in `.fini_array`).
+   */
+  readonly at?: number;
 }
 
 export function createCMemory() {
@@ -6848,6 +6854,10 @@ export function createCMemory() {
     if (known !== undefined) return known;
     const def = statics.get(key);
     if (def === undefined) throw new CMemoryTrap(`memory trap: no definition of the static ${key}`);
+    if (def.at !== undefined) {
+      staticAddrs.set(key, def.at);
+      return def.at;
+    }
     const a = alloc(def.size, def.align);
     staticAddrs.set(key, a); // before its initializer, which may point at itself
     const r = regions[regions.length - 1] as Region;

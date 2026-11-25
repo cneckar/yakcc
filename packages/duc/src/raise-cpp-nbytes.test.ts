@@ -116,12 +116,19 @@ describe.skipIf(!hasClang)("Node's nbytes, shaved from C++", () => {
           fc.array(fc.constantFrom(0x61, 0x62, 0x3b1), { minLength: 1, maxLength: 8 }),
           fc.nat(200),
           fc.boolean(),
+          fc.boolean(),
         ),
         { numRuns: 80, seed: 1368 },
       )
+      .map(([h, other, s, f, cut]) => {
+        // (A needle cut from the haystack, or not.)
+        const at = h.length > 0 ? s % h.length : 0;
+        const n = cut && h.length > 0 ? h.slice(at, at + 1 + (s % 6)) : other;
+        return [h, n, s % (h.length + 1), f] as const;
+      })
       .map(([h, n, s, f]) => ({
         op: "wsearch",
-        a: Math.min(s, h.length),
+        a: s,
         b: f ? 1 : 0,
         x: [...Buffer.from(Uint16Array.from(h).buffer)],
         y: [...Buffer.from(Uint16Array.from(n).buffer)],
