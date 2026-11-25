@@ -16,10 +16,11 @@
  *
  * Refused, with the reason: dynamic `import()`, `import.meta`, and a specifier that does not resolve.
  */
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { Node, Project, type SourceFile, type Statement } from "ts-morph";
 import type {
   NativeEsm,
@@ -254,6 +255,249 @@ export function nodeLibraryProgram(
   visit(entry.id);
   for (const id of include) visit(id);
   return { entry: entry.id, modules: [...modules.values()] };
+}
+
+/** The table of Node's library modules a boot program holds: id → its compiled wrapper function. */
+export const NODE_BUILTINS = "yakcc:builtins";
+/** The bindings a boot program is given beyond the runtime's (a module exporting name → binding). */
+export const NODE_BINDINGS = "yakcc:bindings";
+
+/**
+ * Each wrapper's parameters, as Node's BuiltinLoader::LookupAndCompile gives them: the per-context
+ * scripts', the realm bootstrapper's, and every other module's.
+ */
+function wrapperParameters(id: string): string {
+  if (id.startsWith("internal/per_context/"))
+    return "exports, primordials, privateSymbols, perIsolateSymbols";
+  if (id === "internal/bootstrap/realm")
+    return "process, getLinkedBinding, getInternalBinding, primordials";
+  if (id.startsWith("internal/main/") || id.startsWith("internal/bootstrap/"))
+    return "process, require, internalBinding, primordials";
+  return "exports, require, module, process, internalBinding, primordials";
+}
+
+/** The specifiers a module's text requires outside any function: what loading it loads. */
+function topLevelRequires(project: Project, text: string, id: string): string[] {
+  const sf = project.createSourceFile(`/scan/${id.replace(/[^A-Za-z0-9]/g, "_")}.js`, text, {
+    overwrite: true,
+  });
+  const out: string[] = [];
+  sf.forEachDescendant((n) => {
+    if (!Node.isCallExpression(n)) return;
+    const callee = n.getExpression();
+    const arg = n.getArguments()[0];
+    if (!Node.isIdentifier(callee) || !["require", "requireBuiltin"].includes(callee.getText()))
+      return;
+    if (arg === undefined || !Node.isStringLiteral(arg)) return;
+    const inFunction = n.getAncestors().some((a) => Node.isFunctionLikeDeclaration(a));
+    if (!inFunction && !out.includes(arg.getLiteralValue())) out.push(arg.getLiteralValue());
+  });
+  return out;
+}
+
+/**
+ * Node's library booted as Node boots it (#1331, #1361 P2), in a program record:
+ * - each library module is its wrapper function, the module text as its body, with the
+ *   parameters Node's loader gives it (`wrapperParameters`);
+ * - `yakcc:builtins` holds them, by id: the `builtins` binding's module table (`compileFunction`);
+ * - the entry, `yakcc:node-boot`, runs the per-context scripts on a fresh primordials object, then
+ *   `internal/bootstrap/realm` with the bindings (the runtime's own, `builtins`, and those of
+ *   `yakcc:bindings` when given), then loads `main` through realm's `requireBuiltin`.
+ *
+ * The modules are `main` (given as source, loaded as a library module is) and every module loading
+ * it loads, transitively, plus `include` (modules required only inside functions) and theirs.
+ * A module outside the table fails when it is required: realm's "Missing internal module".
+ */
+export function nodeBootProgram(
+  lib: string,
+  main: SourceModule,
+  options: {
+    readonly bindings?: SourceModule;
+    readonly include?: readonly string[];
+    /** A directory of lifted modules by their source's hash, for repeated builds while the lifter is unchanged. */
+    readonly liftCache?: string;
+  } = {},
+): ProgramRecord {
+  const project = new Project({ useInMemoryFileSystem: true, compilerOptions: { allowJs: true } });
+  const texts = new Map<string, string>();
+  const visit = (id: string, given?: string): void => {
+    if (texts.has(id)) return;
+    let text = given;
+    if (text === undefined) {
+      const file = resolve(lib, `${id}.js`);
+      if (!existsSync(file)) throw new ProgramError(`no module ${id} in ${lib}`);
+      text = readFileSync(file, "utf8");
+    }
+    texts.set(id, text);
+    for (const dep of topLevelRequires(project, text, id)) visit(dep);
+  };
+  for (const id of [
+    "internal/per_context/primordials",
+    "internal/per_context/domexception",
+    "internal/per_context/messageport",
+    "internal/bootstrap/realm",
+    // realm's setupPrepareStackTrace loads it while realm runs.
+    "internal/errors",
+  ])
+    visit(id);
+  visit(main.id, main.source);
+  for (const id of options.include ?? []) visit(id);
+
+  const modules: NativeModule[] = [];
+  const lifted = (id: string, source: string): NativeModule => {
+    const cache = options.liftCache;
+    const file =
+      cache === undefined
+        ? undefined
+        : join(
+            cache,
+            `${createHash("sha256").update(id).update("\0").update(source).digest("hex")}.json`,
+          );
+    if (file !== undefined && existsSync(file))
+      return JSON.parse(readFileSync(file, "utf8")) as NativeModule;
+    const parsed = commonJsModuleOf(project, source, id);
+    if (file !== undefined) {
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, JSON.stringify(parsed.module));
+    }
+    return parsed.module;
+  };
+  for (const [id, text] of texts)
+    modules.push(lifted(id, `module.exports = function (${wrapperParameters(id)}) {\n${text}\n};`));
+  const ids = [...texts.keys()];
+  modules.push(
+    lifted(
+      NODE_BUILTINS,
+      `module.exports = new Map([\n${ids.map((id) => `  [${JSON.stringify(id)}, require(${JSON.stringify(id)})],`).join("\n")}\n]);`,
+    ),
+  );
+  if (options.bindings !== undefined)
+    modules.push(lifted(options.bindings.id, options.bindings.source));
+  modules.unshift(lifted(NODE_BOOT, nodeBootSource(main.id, options.bindings?.id)));
+  return { entry: NODE_BOOT, modules };
+}
+
+/** The boot program's entry module. */
+export const NODE_BOOT = "yakcc:node-boot";
+
+/** The boot module's source: Node's realm set up over the table, then `main` loaded. */
+function nodeBootSource(main: string, bindings: string | undefined): string {
+  return `const table = require(${JSON.stringify(NODE_BUILTINS)});
+const given = ${bindings !== undefined ? `require(${JSON.stringify(bindings)})` : "{}"};
+const primordials = { __proto__: null };
+const privateSymbols = {
+  arrow_message_private_symbol: Symbol("node:arrowMessage"),
+  contextify_context_private_symbol: Symbol("node:contextify:context"),
+  decorated_private_symbol: Symbol("node:decorated"),
+  transfer_mode_private_symbol: Symbol("node:transfer_mode"),
+  host_defined_option_symbol: Symbol("node:host_defined_option_symbol"),
+  js_transferable_wrapper_private_symbol: Symbol("node:js_transferable_wrapper"),
+  entry_point_module_private_symbol: Symbol("node:entry_point_module"),
+  entry_point_promise_private_symbol: Symbol("node:entry_point_promise"),
+  module_source_private_symbol: Symbol("node:module_source"),
+  module_export_names_private_symbol: Symbol("node:module_export_names"),
+  module_circular_visited_private_symbol: Symbol("node:module_circular_visited"),
+  module_export_private_symbol: Symbol("node:module_export"),
+  module_parent_private_symbol: Symbol("node:module_parent"),
+  module_first_parent_private_symbol: Symbol("node:module_first_parent"),
+  napi_type_tag: Symbol("node:napi:type_tag"),
+  napi_wrapper: Symbol("node:napi:wrapper"),
+  untransferable_object_private_symbol: Symbol("node:untransferableObject"),
+  exit_info_private_symbol: Symbol("node:exit_info_private_symbol"),
+  promise_trace_id: Symbol("node:promise_trace_id"),
+  source_map_data_private_symbol: Symbol("node:source_map_data_private_symbol"),
+};
+const perIsolateSymbols = {
+  fs_use_promises_symbol: Symbol("fs_use_promises_symbol"),
+  async_id_symbol: Symbol("async_id_symbol"),
+  handle_onclose_symbol: Symbol("handle_onclose"),
+  no_message_symbol: Symbol("no_message_symbol"),
+  messaging_deserialize_symbol: Symbol("messaging_deserialize_symbol"),
+  messaging_transfer_symbol: Symbol("messaging_transfer_symbol"),
+  messaging_clone_symbol: Symbol("messaging_clone_symbol"),
+  messaging_transfer_list_symbol: Symbol("messaging_transfer_list_symbol"),
+  oninit_symbol: Symbol("oninit"),
+  owner_symbol: Symbol("owner_symbol"),
+  onpskexchange_symbol: Symbol("onpskexchange"),
+  resource_symbol: Symbol("resource_symbol"),
+  trigger_async_id_symbol: Symbol("trigger_async_id_symbol"),
+  vm_dynamic_import_default_internal: Symbol("vm_dynamic_import_default_internal"),
+  vm_dynamic_import_main_context_default: Symbol("vm_dynamic_import_main_context_default"),
+  vm_dynamic_import_missing_flag: Symbol("vm_dynamic_import_missing_flag"),
+  vm_dynamic_import_no_callback: Symbol("vm_dynamic_import_no_callback"),
+  vm_context_no_contextify: Symbol("vm_context_no_contextify"),
+  entry_point_module_private_symbol: Symbol("entry_point_module"),
+  entry_point_promise_private_symbol: Symbol("entry_point_promise"),
+};
+const exportsOfContext = {};
+for (const id of ["internal/per_context/primordials", "internal/per_context/domexception", "internal/per_context/messageport"])
+  table.get(id)(exportsOfContext, primordials, privateSymbols, perIsolateSymbols);
+let loaders;
+const runtime = {
+  // The module table: the program's library modules, each its wrapper function.
+  builtins: {
+    builtinIds: [...table.keys()],
+    compileFunction: (id) => table.get(id),
+    setInternalLoaders: (internalBinding, requireBuiltin) => { loaders = { internalBinding, requireBuiltin }; },
+    hasCachedBuiltins: () => true,
+    natives: {},
+  },
+  // This binary's build configuration: no ICU and no OpenSSL in it yet.
+  config: {
+    hasIntl: false,
+    hasSmallICU: false,
+    hasInspector: false,
+    hasOpenSSL: false,
+    openSSLIsBoringSSL: false,
+    fipsMode: false,
+    hasNodeOptions: true,
+    noBrowserGlobals: false,
+    isDebugBuild: false,
+    bits: 64,
+  },
+  // Tracing is out of scope (#1361 "later"): every category off.
+  trace_events: {
+    getCategoryEnabledBuffer: () => new Uint8Array(1),
+    trace: () => {},
+    isTraceCategoryEnabled: () => false,
+    setTraceCategoryStateUpdateHandler: () => {},
+    getEnabledCategories: () => "",
+  },
+  // ES module linking: not yet (#1361 P2).
+  module_wrap: { ModuleWrap: class ModuleWrap {}, kInstantiated: 2, kEvaluated: 4, kErrored: 5 },
+  // Stack traces: the runtime keeps none yet; the callbacks are kept.
+  errors: {
+    setPrepareStackTraceCallback: () => {},
+    setEnhanceStackForFatalException: () => {},
+    setGetSourceMapErrorSource: () => {},
+    setSourceMapsEnabled: () => {},
+    setMaybeCacheGeneratedSourceMap: () => {},
+    noSideEffectsToString: (v) => String(v),
+    triggerUncaughtException: (e) => { throw e; },
+    exitCodes: { kNoFailure: 0, kGenericUserError: 1 },
+  },
+};
+// env_properties.h's symbols: the util binding's private ones, and the symbols binding.
+runtime.symbols = perIsolateSymbols;
+runtime.util = { privateSymbols };
+// A binding is the runtime's members (V8's role, and the boot's own) with the given ones (node/src's,
+// shaved) beside them.
+const made = { __proto__: null };
+function getInternalBinding(name) {
+  if (made[name] !== undefined) return made[name];
+  const parts = [given[name], runtime[name], __yakccRuntimeBinding(name)].filter((p) => p !== undefined);
+  if (parts.length === 0) throw new Error("No such binding: " + name);
+  if (parts.length === 1) return (made[name] = parts[0]);
+  const b = {};
+  for (const p of parts) for (const k of Reflect.ownKeys(p)) b[k] = k === "constants" && b.constants !== undefined ? { ...b.constants, ...p.constants } : p[k];
+  return (made[name] = b);
+}
+function getLinkedBinding(name) {
+  throw new Error("No such binding: " + name);
+}
+table.get("internal/bootstrap/realm")(process, getLinkedBinding, getInternalBinding, primordials);
+loaders.requireBuiltin(${JSON.stringify(main)});
+`;
 }
 
 /** A CommonJS module's statements, and its requires: every one, and those its top level makes. */

@@ -51,6 +51,8 @@ typedef struct {
   uint32_t len, cap;
   yk *items;
   yk props; /* its non-index properties (an object: an exec result's index, input, groups), or 0 */
+  uint8_t *holes;    /* a bit per index it does not have ([, a], new Array(n), delete), or NULL */
+  uint32_t holes_n;  /* bytes in holes */
 } yk_array;
 
 typedef struct {
@@ -529,10 +531,36 @@ static yk_array *new_array(uint32_t cap) {
   a->cap = cap < 4 ? 4 : cap;
   a->items = alloc((size_t)a->cap * sizeof(yk));
   a->props = 0;
+  a->holes = NULL;
+  a->holes_n = 0;
   return a;
+}
+/* Holes (#1330): an index below the length the array does not have. Its item is undefined, so
+   whatever reads items without asking sees undefined; HasProperty, the keys and the callback
+   methods ask. */
+static int array_hole(const yk_array *a, uint32_t i) {
+  return a->holes != NULL && (i >> 3) < a->holes_n && ((a->holes[i >> 3] >> (i & 7)) & 1);
+}
+static void array_mark_hole(yk_array *a, uint32_t i, int on) {
+  if ((i >> 3) >= a->holes_n) {
+    if (!on) return;
+    uint32_t n = (i >> 3) + 1;
+    n = n < 8 ? 8 : n * 2;
+    uint8_t *h = alloc(n);
+    if (a->holes != NULL) memcpy(h, a->holes, a->holes_n);
+    a->holes = h;
+    a->holes_n = n;
+  }
+  if (on) a->holes[i >> 3] |= (uint8_t)(1u << (i & 7));
+  else a->holes[i >> 3] &= (uint8_t)~(1u << (i & 7));
+}
+yk yk_array_hole(yk v, int64_t i) {
+  array_mark_hole(arr(v), (uint32_t)i, 1);
+  return v;
 }
 
 static void push(yk_array *a, yk v) {
+  if (a->holes != NULL) array_mark_hole(a, a->len, 0);
   if (a->len == a->cap) {
     a->cap *= 2;
     yk *items = alloc((size_t)a->cap * sizeof(yk));
@@ -810,6 +838,17 @@ static yk to_primitive(yk v) {
   if (is_closure(v)) return ascii("function () { [native code] }");
   if (!is_object(v)) return v;
   yk_object *self = (yk_object *)PTR(v);
+  if (self->kind != 0 && is_object(self->proto)) {
+    /* A subclass's (or the program's) own valueOf / toString first (a Buffer's toString). */
+    static const char *own_names[2] = {"valueOf", "toString"};
+    for (int i = 0; i < 2; i++) {
+      yk f;
+      if (chain_get(v, ascii(own_names[i]), &f) && is_closure(f = resolve_slot(f, v)) && !is_thunk(f)) {
+        yk r = call_value(f, v, 0, NULL);
+        if (!is_reference(r)) return r;
+      }
+    }
+  }
   /* A typed array's toString is its join; a buffer's and a view's, their tag. */
   if (self->kind == 7) return buffer_primitive(v);
   if (self->kind == 6) return ascii("[object ArrayBuffer]");
@@ -1207,6 +1246,8 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
     }
     if (o->kind >= 6 && o->kind <= 8) {
       yk out;
+      if (o->proto != 0 && chain_get(recv, key, &f) && !is_thunk(f = resolve_slot(f, recv)))
+        return call_value(f, recv, argc, argv); /* a subclass's own method (Buffer's toString) */
       if (buffer_method(recv, key, argc, argv, &out)) return out;
     }
     if (o->kind == 1 || o->kind == 2) {
@@ -1395,6 +1436,7 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
     }
     if (key_is(key, "pop")) return a->len == 0 ? YK_UNDEFINED : a->items[--a->len];
     if (key_is(key, "shift")) {
+      a->holes = NULL, a->holes_n = 0;
       if (a->len == 0) return YK_UNDEFINED;
       yk first = a->items[0];
       memmove(a->items, a->items + 1, (size_t)(a->len - 1) * sizeof(yk));
@@ -1402,6 +1444,7 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
       return first;
     }
     if (key_is(key, "unshift")) {
+      a->holes = NULL, a->holes_n = 0;
       for (uint64_t i = 0; i < argc; i++) push(a, YK_UNDEFINED);
       memmove(a->items + argc, a->items, (size_t)(a->len - argc) * sizeof(yk));
       for (uint64_t i = 0; i < argc; i++) a->items[i] = argv[i];
@@ -1409,13 +1452,16 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
     }
     if (key_is(key, "indexOf")) {
       for (int64_t i = relative(arg1, a->len, 0); i < a->len; i++)
-        if (strict_equal(a->items[i], arg0)) return yk_number((double)i);
+        if (strict_equal(a->items[i], arg0) && !array_hole(a, (uint32_t)i)) return yk_number((double)i);
       return yk_number(-1);
     }
     if (key_is(key, "slice")) {
       int64_t s0 = relative(arg0, a->len, 0), s1 = relative(arg1, a->len, a->len);
       yk_array *r = new_array(s1 > s0 ? (uint32_t)(s1 - s0) : 0);
-      for (int64_t i = s0; i < s1; i++) push(r, a->items[i]);
+      for (int64_t i = s0; i < s1; i++) {
+        push(r, a->items[i]);
+        if (array_hole(a, (uint32_t)i)) array_mark_hole(r, (uint32_t)(i - s0), 1);
+      }
       return BOX(T_ARRAY, r);
     }
     if (key_is(key, "join"))
@@ -1923,7 +1969,7 @@ yk yk_delete(yk obj, yk key) {
       }
   } else if (is_array(obj)) {
     int64_t i = index_of_key(key);
-    if (i >= 0 && i < arr(obj)->len) arr(obj)->items[i] = YK_UNDEFINED;
+    if (i >= 0 && i < arr(obj)->len) arr(obj)->items[i] = YK_UNDEFINED, array_mark_hole(arr(obj), (uint32_t)i, 1);
   }
   return YK_TRUE;
 }
@@ -2014,15 +2060,20 @@ yk yk_set(yk obj, yk key, yk value) {
       if (key_is(to_string(key), "length")) {
         double n = to_number(value);
         if (n < 0 || n != floor(n) || n > 4294967295.0) yk_throw(make_error("RangeError", ascii("Invalid array length")));
+        uint32_t was = a->len;
         while (a->len < n) push(a, YK_UNDEFINED);
         a->len = (uint32_t)n;
+        for (uint32_t j = was; j < a->len; j++) array_mark_hole(a, j, 1);
         return obj;
       }
       if (a->props == 0) a->props = yk_object_of(0, NULL, NULL);
       own_set((yk_object *)PTR(a->props), to_property_key(key), value);
       return obj;
     }
+    uint32_t was = a->len;
     while (a->len <= i) push(a, YK_UNDEFINED);
+    for (uint32_t j = was; j < (uint32_t)i; j++) array_mark_hole(a, j, 1);
+    if (a->holes != NULL) array_mark_hole(a, (uint32_t)i, 0);
     a->items[i] = value;
     return obj;
   }
@@ -2047,7 +2098,8 @@ yk yk_set_named(yk obj, const char *name, uint64_t n, yk value) {
 enum { I_OBJECT, I_FUNCTION, I_ARRAY, I_STRING, I_NUMBER, I_BOOLEAN, I_SYMBOL, I_BIGINT, I_MAP, I_SET,
        I_PROMISE, I_REGEXP, I_ERROR, I_WEAKMAP, I_WEAKSET, I_WEAKREF, I_FINREG, I_DATE, I_ITERATOR,
        I_ARRAY_ITERATOR, I_STRING_ITERATOR, I_MAP_ITERATOR, I_SET_ITERATOR, I_GENERATOR, I_ASYNC_ITERATOR,
-       I_ASYNC_GENERATOR, I_ASYNC_FUNCTION, I_GENERATOR_FUNCTION, I_ASYNC_GENERATOR_FUNCTION, N_INTRINSIC };
+       I_ASYNC_GENERATOR, I_ASYNC_FUNCTION, I_GENERATOR_FUNCTION, I_ASYNC_GENERATOR_FUNCTION,
+       I_TYPED_ARRAY, I_ARRAY_BUFFER, I_DATA_VIEW, I_TA_BASE, N_INTRINSIC = I_TA_BASE + 11 };
 static const struct {
   const char *name;
   const char *const *methods;
@@ -2082,8 +2134,25 @@ static const struct {
   {"AsyncFunction", (const char *const[]){NULL}, (const char *const[]){NULL}},
   {"GeneratorFunction", (const char *const[]){NULL}, (const char *const[]){NULL}},
   {"AsyncGeneratorFunction", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"TypedArray", (const char *const[]){"entries", "keys", "values", "at", "copyWithin", "every", "fill", "filter", "find", "findIndex", "findLast", "findLastIndex", "forEach", "includes", "indexOf", "join", "lastIndexOf", "map", "reverse", "reduce", "reduceRight", "set", "slice", "some", "sort", "subarray", "toReversed", "toSorted", "with", "toLocaleString", "toString", NULL}, (const char *const[]){"buffer", "byteLength", "byteOffset", "length", NULL}},
+  {"ArrayBuffer", (const char *const[]){"slice", "resize", "transfer", "transferToFixedLength", NULL}, (const char *const[]){"byteLength", "maxByteLength", "resizable", "detached", NULL}},
+  {"DataView", (const char *const[]){"getInt8", "setInt8", "getUint8", "setUint8", "getInt16", "setInt16", "getUint16", "setUint16", "getInt32", "setInt32", "getUint32", "setUint32", "getFloat32", "setFloat32", "getFloat64", "setFloat64", "getBigInt64", "setBigInt64", "getBigUint64", "setBigUint64", NULL}, (const char *const[]){"buffer", "byteLength", "byteOffset", NULL}},
+  {"Int8Array", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"Uint8Array", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"Uint8ClampedArray", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"Int16Array", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"Uint16Array", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"Int32Array", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"Uint32Array", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"Float32Array", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"Float64Array", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"BigInt64Array", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"BigUint64Array", (const char *const[]){NULL}, (const char *const[]){NULL}},
 };
 static yk intrinsic_protos[N_INTRINSIC];
+static int view_type(yk v);
+static uint32_t ta_bytes(int type);
+static const char *ta_name(int type);
 /* An array, string, Map or Set iterator (object kind 13; ECMA-262 23.1.5, 22.1.5, 24.1.5, 24.2.6). */
 typedef struct {
   yk src;       /* what it iterates: an array or array-like, a string, a Map, a Set; 0 when done */
@@ -2154,6 +2223,11 @@ static yk method_thunk_code(void *c, yk self, uint64_t argc, const yk *argv) {
     yk out;
     if (collection_method((yk_object *)PTR(self), self, ((yk_closure *)c)->captures[0], argc, argv, &out)) return out;
   }
+  if (is_object(self) && ((yk_object *)PTR(self))->kind >= 6 && ((yk_object *)PTR(self))->kind <= 8) {
+    /* TypedArray.prototype.slice and the like on a Buffer: the built-in's, not Buffer's own. */
+    yk out;
+    if (buffer_method(self, ((yk_closure *)c)->captures[0], argc, argv, &out)) return out;
+  }
   return call_method_key(self, ((yk_closure *)c)->captures[0], argc, argv);
 }
 /* Object.prototype's own methods: its semantics on any receiver (not the receiver's type's). */
@@ -2177,6 +2251,8 @@ static yk intrinsic_proto(int which) {
   intrinsic_protos[which] = p;
   yk_object *o = (yk_object *)PTR(p);
   o->proto = which == I_OBJECT                ? YK_NULL
+             : which >= I_TA_BASE             ? intrinsic_proto(I_TYPED_ARRAY)
+             : which >= I_TYPED_ARRAY         ? intrinsic_proto(I_OBJECT)
              : which == I_ASYNC_GENERATOR     ? intrinsic_proto(I_ASYNC_ITERATOR)
              : which == I_ASYNC_ITERATOR      ? intrinsic_proto(I_OBJECT)
              : which >= I_ASYNC_FUNCTION      ? intrinsic_proto(I_FUNCTION)
@@ -2194,9 +2270,17 @@ static yk intrinsic_proto(int which) {
   /* The iterator method each iterable type has. */
   if (which == I_ARRAY || which == I_SET) own_set(o, symbol_iterator(), yk_get(p, ascii("values")));
   if (which == I_MAP) own_set(o, symbol_iterator(), yk_get(p, ascii("entries")));
-  if ((which > I_ITERATOR && which != I_ASYNC_ITERATOR) || (which >= I_MAP && which <= I_PROMISE) || (which >= I_WEAKMAP && which <= I_FINREG) ||
+  if ((which > I_ITERATOR && which != I_ASYNC_ITERATOR && which != I_TYPED_ARRAY && which < I_TA_BASE) || (which >= I_MAP && which <= I_PROMISE) || (which >= I_WEAKMAP && which <= I_FINREG) ||
       which == I_SYMBOL || which == I_BIGINT)
     own_set(o, well_known_symbol(11), ascii(intrinsic_table[which].name));
+  if (which == I_TYPED_ARRAY) {
+    /* %TypedArray.prototype%: [Symbol.iterator] is values; [Symbol.toStringTag] a getter (the type's
+       name on a typed array, undefined on anything else). */
+    own_set(o, symbol_iterator(), yk_get(p, ascii("values")));
+    yk tag = well_known_symbol(11);
+    define_accessor(o, tag, yk_closure_new(getter_thunk_code, 1, 1, &tag), 0);
+  }
+  if (which >= I_TA_BASE) own_set(o, ascii("BYTES_PER_ELEMENT"), yk_number(ta_bytes(which - I_TA_BASE)));
   if (which == I_GENERATOR_FUNCTION || which == I_ASYNC_GENERATOR_FUNCTION) {
     /* %GeneratorFunction.prototype%.prototype: %GeneratorPrototype%, whose constructor it is. */
     yk g = intrinsic_proto(which == I_GENERATOR_FUNCTION ? I_GENERATOR : I_ASYNC_GENERATOR);
@@ -2237,6 +2321,9 @@ static yk tail_proto(yk v) {
     case 10: return intrinsic_proto(I_DATE);
     case 11: return intrinsic_proto(I_WEAKREF);
     case 12: return intrinsic_proto(I_FINREG);
+    case 6: return intrinsic_proto(I_ARRAY_BUFFER);
+    case 7: return intrinsic_proto(I_TA_BASE + view_type(x));
+    case 8: return intrinsic_proto(I_DATA_VIEW);
     case 13: return intrinsic_proto(I_ARRAY_ITERATOR + ((builtin_iter *)o->ext)->type);
     default: return intrinsic_proto(o->error ? I_ERROR : I_OBJECT);
     }
@@ -2266,7 +2353,15 @@ static yk native_getter(yk self, yk key) {
     yk_object *o = (yk_object *)PTR(self);
     if ((o->kind == 1 || o->kind == 2) && key_is(key, "size")) return yk_number(o->entries->len);
     if (o->kind == 3) return yk_get(self, key); /* RegExp: its own branch reads source and flags */
+    if (o->kind >= 6 && o->kind <= 8) {
+      if (key == well_known_symbol(11)) return o->kind == 7 ? ascii(ta_name(view_type(self))) : YK_UNDEFINED;
+      yk got;
+      if (o->kind == 6 && key_is(key, "maxByteLength")) return yk_get(self, ascii("byteLength"));
+      if (o->kind == 6 && (key_is(key, "resizable") || key_is(key, "detached"))) return YK_FALSE;
+      if (buffer_get(self, key, &got)) return got;
+    }
   }
+  if (key == well_known_symbol(11)) return YK_UNDEFINED; /* %TypedArray.prototype%'s tag on a non-view */
   type_error("Method called on an incompatible receiver");
   return YK_UNDEFINED;
 }
@@ -2283,7 +2378,7 @@ static int has_own(yk v, yk key) {
     yk_array *a = arr(v);
     if (key_is(key, "length")) return 1;
     int64_t i = index_of_key(key);
-    if (i >= 0) return i < a->len;
+    if (i >= 0) return i < a->len && !array_hole(a, (uint32_t)i);
     return a->props != 0 && own_get((yk_object *)PTR(a->props), key, &slot);
   }
   if (is_string(v)) {
@@ -2359,7 +2454,8 @@ static yk reflect_set_prototype_of(void *c, yk s, uint64_t argc, const yk *argv)
 static yk_array *own_keys_of(yk v) {
   yk_array *r = new_array(4);
   if (is_array(v)) {
-    for (uint32_t i = 0; i < arr(v)->len; i++) push(r, to_string(yk_number(i)));
+    for (uint32_t i = 0; i < arr(v)->len; i++)
+      if (!array_hole(arr(v), i)) push(r, to_string(yk_number(i)));
     push(r, ascii("length"));
     v = arr(v)->props;
     if (v == 0) return r;
@@ -2696,7 +2792,8 @@ yk yk_iter_new(yk v, int32_t keys) {
     else {
       it->keys = new_array(4);
       uint32_t n = is_array(v) ? arr(v)->len : is_string(v) ? str(v)->len : 0;
-      for (uint32_t i = 0; i < n; i++) push(it->keys, to_string(yk_number(i)));
+      for (uint32_t i = 0; i < n; i++)
+        if (!(is_array(v) && array_hole(arr(v), i))) push(it->keys, to_string(yk_number(i)));
     }
   } else if (is_object(v) && ((yk_object *)PTR(v))->kind == 5) {
     it->gen = v; /* a generator: drawn from one next() at a time */
@@ -2876,10 +2973,12 @@ static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv,
     if (argc > 1)
       acc = argv[1];
     else {
-      if (len == 0) type_error("Reduce of empty array with no initial value");
+      while (i < len && array_hole(a, i)) i++; /* the first index it has */
+      if (i >= len) type_error("Reduce of empty array with no initial value");
       acc = a->items[i++];
     }
     for (; i < len && i < a->len; i++) {
+      if (array_hole(a, i)) continue;
       yk args[4] = {acc, a->items[i], yk_number(i), recv};
       acc = call_value(f, YK_UNDEFINED, 4, args);
     }
@@ -2888,6 +2987,10 @@ static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv,
   yk_array *r = new_array(len);
   for (uint32_t i = 0; i < len && i < a->len; i++) {
     yk v = a->items[i];
+    if (!find && !find_index && array_hole(a, i)) {
+      if (map) push(r, YK_UNDEFINED), array_mark_hole(r, i, 1); /* map keeps the hole */
+      continue;
+    }
     yk got = callback(f, a, i, recv);
     if (map) push(r, got);
     if (filter && yk_truthy(got)) push(r, v);
@@ -3741,6 +3844,7 @@ static yk object_parts(yk v, int which) {
   } else if (is_array(v) || is_string(v)) {
     uint32_t n = is_array(v) ? arr(v)->len : str(v)->len;
     for (uint32_t i = 0; i < n; i++) {
+      if (is_array(v) && array_hole(arr(v), i)) continue;
       yk k = to_string(yk_number(i)), value = yk_get(v, yk_number(i));
       yk pair[2] = {k, value};
       push(r, which == 0 ? k : which == 1 ? value : yk_array_of(2, pair));
@@ -4439,17 +4543,23 @@ static yk builtin_date(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s, (void)argc, (void)argv;
   return date_string(date_now(), 0);
 }
-/* RegExp(pattern, flags): a RegExp's copy (its source, flags and matcher). A pattern given as a string
-   would be compiled at run time, which the native runtime does not do. */
+#include "rx.h"
+/* RegExp(pattern, flags): a RegExp's copy (its source, flags and matcher); a pattern given as a string
+   (or a RegExp with other flags) compiled at run time (rx.h). */
 static yk builtin_regexp(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
   yk p = argc > 0 ? argv[0] : YK_UNDEFINED;
-  if (is_regexp(p) && (argc < 2 || argv[1] == YK_UNDEFINED)) {
+  yk fl = argc > 1 ? argv[1] : YK_UNDEFINED;
+  if (is_regexp(p) && fl == YK_UNDEFINED) {
     yk_object *o = (yk_object *)PTR(p);
     return yk_regexp_new(o->regex[0], o->regex[1], o->regex[2], o->regex[3]);
   }
-  type_error("RegExp: compiling a pattern at run time is not in the native runtime");
-  return YK_UNDEFINED;
+  yk source = is_regexp(p) ? ((yk_object *)PTR(p))->regex[0] : p == YK_UNDEFINED ? ascii("(?:)") : to_string(p);
+  yk flags = fl == YK_UNDEFINED ? (is_regexp(p) ? ((yk_object *)PTR(p))->regex[1] : ascii("")) : to_string(fl);
+  if (str(source)->len == 0) source = ascii("(?:)");
+  yk matcher, names;
+  rx_compile(source, flags, &matcher, &names);
+  return yk_regexp_new(source, flags, matcher, names);
 }
 
 /* parseFloat: the longest prefix that is a StrDecimalLiteral, after leading white space. */
@@ -4581,6 +4691,7 @@ static yk builtin_array(void *c, yk self, uint64_t argc, const yk *argv) {
     }
     yk_array *a = new_array((uint32_t)d);
     for (uint32_t i = 0; i < (uint32_t)d; i++) push(a, YK_UNDEFINED);
+    for (uint32_t i = 0; i < (uint32_t)d; i++) array_mark_hole(a, i, 1);
     return BOX(T_ARRAY, a);
   }
   return yk_array_of(argc, argv);
@@ -6000,6 +6111,9 @@ static const yk_code ta_of_codes[TA_COUNT] = {builtin_ta_of_0, builtin_ta_of_1, 
                                               builtin_ta_of_3, builtin_ta_of_4, builtin_ta_of_5,
                                               builtin_ta_of_6, builtin_ta_of_7, builtin_ta_of_8,
                                               builtin_ta_of_9, builtin_ta_of_10};
+static int view_type(yk v) { return typed_of(v)->type; }
+static uint32_t ta_bytes(int type) { return ta_size[type]; }
+static const char *ta_name(int type) { return ta_names[type]; }
 static int32_t type_of_code(yk_code code) {
   for (int32_t k = 0; k < TA_COUNT; k++)
     if (ta_codes[k] == code) return k;
@@ -7191,6 +7305,21 @@ static yk builtin_bigint_as_int_n(void *c, yk s, uint64_t argc, const yk *argv) 
 }
 
 /* The constructors of the buffers and views, and TextEncoder, as global values; 0 if none. */
+/* %TypedArray%: the typed array constructors' parent, not itself constructible. */
+static yk typed_array_abstract(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s, (void)argc, (void)argv;
+  type_error("Abstract class TypedArray not directly constructable");
+  return YK_UNDEFINED;
+}
+static yk typed_array_constructor(void) {
+  static yk f;
+  if (f != 0) return f;
+  f = named(yk_closure_new(typed_array_abstract, 0, 0, NULL), ascii("TypedArray"));
+  yk p = intrinsic_proto(I_TYPED_ARRAY);
+  own_set(own_props(f), ascii("prototype"), p);
+  own_set((yk_object *)PTR(p), ascii("constructor"), f);
+  return f;
+}
 static yk buffer_global(const char *name, uint64_t n) {
   static yk fns[TA_COUNT + 3];
   for (int32_t k = 0; k < TA_COUNT; k++)
@@ -7200,6 +7329,11 @@ static yk buffer_global(const char *name, uint64_t n) {
       const yk_code codes[2] = {ta_from_codes[k], ta_of_codes[k]};
       yk f = with_methods(ta_codes[k], 2, names, codes);
       yk_set(f, ascii("BYTES_PER_ELEMENT"), yk_number(ta_size[k]));
+      /* Its prototype inherits %TypedArray.prototype%; it inherits %TypedArray%. */
+      yk p = intrinsic_proto(I_TA_BASE + k);
+      own_set(own_props(f), ascii("prototype"), p);
+      own_set((yk_object *)PTR(p), ascii("constructor"), f);
+      ((yk_closure *)PTR(f))->parent = typed_array_constructor();
       return fns[k] = f;
     }
   if (n == 11 && memcmp(name, "ArrayBuffer", 11) == 0) {
@@ -7207,6 +7341,9 @@ static yk buffer_global(const char *name, uint64_t n) {
       static const char *const names[1] = {"isView"};
       static const yk_code codes[1] = {builtin_array_buffer_is_view};
       fns[TA_COUNT] = with_methods(builtin_array_buffer, 1, names, codes);
+      yk p = intrinsic_proto(I_ARRAY_BUFFER);
+      own_set(own_props(fns[TA_COUNT]), ascii("prototype"), p);
+      own_set((yk_object *)PTR(p), ascii("constructor"), fns[TA_COUNT]);
     }
     return fns[TA_COUNT];
   }
@@ -7219,8 +7356,15 @@ static yk buffer_global(const char *name, uint64_t n) {
     }
     return bigint_fn;
   }
-  if (n == 8 && memcmp(name, "DataView", 8) == 0)
-    return fns[TA_COUNT + 1] != 0 ? fns[TA_COUNT + 1] : (fns[TA_COUNT + 1] = yk_closure_new(builtin_data_view, 0, 0, NULL));
+  if (n == 8 && memcmp(name, "DataView", 8) == 0) {
+    if (fns[TA_COUNT + 1] == 0) {
+      fns[TA_COUNT + 1] = yk_closure_new(builtin_data_view, 0, 0, NULL);
+      yk p = intrinsic_proto(I_DATA_VIEW);
+      own_set(own_props(fns[TA_COUNT + 1]), ascii("prototype"), p);
+      own_set((yk_object *)PTR(p), ascii("constructor"), fns[TA_COUNT + 1]);
+    }
+    return fns[TA_COUNT + 1];
+  }
   if (n == 11 && memcmp(name, "TextEncoder", 11) == 0)
     return fns[TA_COUNT + 2] != 0 ? fns[TA_COUNT + 2] : (fns[TA_COUNT + 2] = yk_closure_new(builtin_text_encoder, 0, 0, NULL));
   return 0;
@@ -7341,10 +7485,119 @@ static yk type_predicate(void *c, yk self, uint64_t argc, const yk *argv) {
   /* No arguments objects, primitive wrappers, externals, proxies or shared memory in the runtime. */
   return yk_bool(r);
 }
+/* internalBinding('util')'s members that are V8's object model (the rest are node_util.cc's, shaved). */
+static int canonical_index(yk_string *s, uint32_t *out);
+static yk util_get_own_non_index_properties(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  yk v = arg_or_undefined(argc, argv, 0);
+  int filter = (int)to_number(arg_or_undefined(argc, argv, 1));
+  yk_array *r = new_array(4);
+  yk_object *o = NULL;
+  if (is_array(v)) o = arr(v)->props != 0 ? (yk_object *)PTR(arr(v)->props) : NULL;
+  else if (is_object(v)) o = (yk_object *)PTR(v);
+  else if (is_closure(v) && ((yk_closure *)PTR(v))->props != 0) o = (yk_object *)PTR(((yk_closure *)PTR(v))->props);
+  if (o == NULL) return BOX(T_ARRAY, r);
+  /* V8's PropertyFilter: 8 skips strings, 16 symbols; enumerability is not tracked (all are). */
+  if (!(filter & 8)) {
+    yk_array *keys = ordered_keys(o);
+    for (uint32_t i = 0; i < keys->len; i++) {
+      uint32_t k;
+      yk key = keys->items[i];
+      if (canonical_index(str(key), &k)) continue;
+      if (is_closure(v) && (key_is(key, "prototype") || key_is(key, "name") || key_is(key, "length"))) continue;
+      push(r, key);
+    }
+  }
+  if (!(filter & 16)) {
+    yk_array *syms = symbol_keys(o);
+    for (uint32_t i = 0; i < syms->len; i++) push(r, syms->items[i]);
+  }
+  return BOX(T_ARRAY, r);
+}
+static yk util_get_promise_details(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  yk p = arg_or_undefined(argc, argv, 0);
+  if (!is_promise(p)) return YK_UNDEFINED;
+  promise_state *st = (promise_state *)((yk_object *)PTR(p))->ext;
+  yk items[2] = {yk_number(st->state), st->value};
+  return yk_array_of(st->state == 0 ? 1 : 2, items);
+}
+static yk util_get_proxy_details(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self, (void)argc, (void)argv;
+  return YK_UNDEFINED; /* no proxies in the runtime */
+}
+/* previewEntries(value, isIterator): a Map's, Set's, weak collection's or their iterator's entries
+   (flattened [k, v, …] for a Map's), with whether they are pairs when asked. */
+static yk util_preview_entries(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  yk v = arg_or_undefined(argc, argv, 0);
+  int pairs_wanted = argc > 1 && yk_truthy(argv[1]);
+  if (!is_object(v)) return YK_UNDEFINED;
+  yk_object *o = (yk_object *)PTR(v);
+  yk_array *r = new_array(4);
+  int is_pairs = 0;
+  if (o->kind == 1 || o->kind == 2) {
+    is_pairs = o->kind == 1;
+    for (uint32_t j = 0; j < o->entries->len; j++) {
+      yk e = o->entries->items[j];
+      if (o->kind == 1) push(r, arr(e)->items[0]), push(r, arr(e)->items[1]);
+      else push(r, e);
+    }
+  } else if (o->kind == 13) {
+    builtin_iter *b = o->ext;
+    if (b->src != 0 && b->type >= 2) {
+      yk_array *es = ((yk_object *)PTR(b->src))->entries;
+      is_pairs = b->type == 2 && b->mode == 2;
+      for (uint32_t j = b->i; j < es->len; j++) {
+        yk e = es->items[j];
+        if (b->type == 3) push(r, e);
+        else if (b->mode == 2) push(r, arr(e)->items[0]), push(r, arr(e)->items[1]);
+        else push(r, arr(e)->items[b->mode == 0 ? 0 : 1]);
+      }
+    }
+  } else
+    return YK_UNDEFINED;
+  if (!pairs_wanted) return BOX(T_ARRAY, r);
+  yk items[2] = {BOX(T_ARRAY, r), yk_bool(is_pairs)};
+  return yk_array_of(2, items);
+}
+/* V8's GetConstructorName: the name of the constructor along the value's chain, else "Object". */
+static yk util_get_constructor_name(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  yk v = arg_or_undefined(argc, argv, 0);
+  for (yk p = v; is_object(p) || is_closure(p) || is_array(p); p = prototype_of(p)) {
+    yk ctor;
+    if (has_own(p, ascii("constructor")) && is_closure(ctor = yk_get(p, ascii("constructor")))) {
+      yk name = yk_get(ctor, ascii("name"));
+      if (is_string(name) && str(name)->len > 0) return name;
+    }
+  }
+  return ascii("Object");
+}
+static yk util_get_external_value(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self, (void)argc, (void)argv;
+  return big_from_i64(0);
+}
 static yk builtin_runtime_binding(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
-  static yk types;
+  static yk types, util;
   yk name = arg_or_undefined(argc, argv, 0);
+  if (is_string(name) && key_is(name, "util")) {
+    if (util != 0) return util;
+    static const char *const m[6] = {"getOwnNonIndexProperties", "getPromiseDetails", "getProxyDetails",
+                                     "previewEntries", "getConstructorName", "getExternalValue"};
+    static const yk_code k[6] = {util_get_own_non_index_properties, util_get_promise_details, util_get_proxy_details,
+                                 util_preview_entries, util_get_constructor_name, util_get_external_value};
+    util = with_methods(NULL, 6, m, k);
+    /* node_util.cc's constants: V8's PropertyFilter and Promise states. */
+    static const char *const cn[9] = {"kPending", "kFulfilled", "kRejected", "ALL_PROPERTIES", "ONLY_WRITABLE",
+                                      "ONLY_ENUMERABLE", "ONLY_CONFIGURABLE", "SKIP_STRINGS", "SKIP_SYMBOLS"};
+    static const int cv[9] = {0, 1, 2, 0, 1, 2, 4, 8, 16};
+    yk consts = yk_object_of(0, NULL, NULL);
+    for (int i = 0; i < 9; i++) own_set((yk_object *)PTR(consts), ascii(cn[i]), yk_number(cv[i]));
+    own_set((yk_object *)PTR(util), ascii("constants"), consts);
+    return util;
+  }
   if (is_string(name) && key_is(name, "types")) {
     if (types != 0) return types;
     types = yk_object_of(0, NULL, NULL);
@@ -7524,7 +7777,7 @@ static int is_adoptable_builtin(yk f) {
   yk_code code = ((yk_closure *)PTR(f))->code;
   return code == builtin_map || code == builtin_set || code == builtin_weak_map || code == builtin_weak_set ||
          code == builtin_weak_ref || code == builtin_finalization_registry || code == builtin_promise ||
-         code == builtin_date || code == builtin_regexp;
+         code == builtin_date || code == builtin_regexp || is_buffer_code(code);
 }
 /* a instanceof F, for the constructors the runtime has: Array, and the Error family. */
 yk yk_instanceof(yk v, yk f) {
@@ -7636,7 +7889,7 @@ yk yk_in(yk key, yk obj) {
   if (is_array(obj)) {
     if (key_is(to_string(key), "length")) return YK_TRUE;
     int64_t i = index_of_key(key);
-    return yk_bool(i >= 0 && i < arr(obj)->len);
+    return yk_bool(i >= 0 && i < arr(obj)->len && !array_hole(arr(obj), (uint32_t)i));
   }
   if (is_closure(obj)) return YK_FALSE;
   type_error("Cannot use 'in' operator to search for a key in a primitive");

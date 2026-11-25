@@ -307,6 +307,7 @@ const RUNTIME_DECLS: Readonly<Record<string, string>> = {
   yk_private_set: "declare i64 @yk_private_set(i64, i64, i64)",
   yk_private_has: "declare i64 @yk_private_has(i64, i64)",
   yk_super_construct: "declare i64 @yk_super_construct(ptr, i64, i64, ptr)",
+  yk_array_hole: "declare i64 @yk_array_hole(i64, i64)",
   yk_await: "declare i64 @yk_await(i64)",
   yk_yield: "declare i64 @yk_yield(i64)",
   yk_yield_star: "declare i64 @yk_yield_star(i64)",
@@ -1810,10 +1811,22 @@ function lowerFunction(
       block(end);
       return;
     }
-    if (lbl.startsWith("array-with-holes:"))
-      throw new LlvmEmitError(
-        "an array with holes is not in the native subset yet: the runtime's arrays have no holes (#1330)",
-      );
+    if (lbl.startsWith("array-with-holes:")) {
+      // [, a, , b]: the elements at their positions, each hole an index the array does not have.
+      const holes = JSON.parse(lbl.slice("array-with-holes:".length)) as number[];
+      if (ins.some(isSpread))
+        throw new LlvmEmitError(
+          "an array with both holes and spread elements is not in the subset yet",
+        );
+      const elems: string[] = [];
+      let k = 0;
+      for (let i = 0; i < ins.length + holes.length; i++)
+        elems.push(holes.includes(i) ? UNDEFINED : operand(ins[k++] as ValueId));
+      const made = call("yk_array_of", `i64 ${elems.length}, ptr ${list(elems)}`);
+      for (const h of holes) call("yk_array_hole", `i64 ${made}, i64 ${h}`);
+      set(out, made);
+      return;
+    }
     // A private name (#1330): its key is the nearest class around this function that declares it,
     // and the member is in the object's private table.
     const privateKey = (name: string): string => {
@@ -2170,6 +2183,24 @@ function lowerFunction(
       return;
     }
     if (lbl === "NewExpression") {
+      // new RegExp(pattern, flags) of constant strings: compiled as its literal would be.
+      if (
+        globalValue.get(resolve(ins[0] as ValueId)) === "RegExp" &&
+        (ins.length === 2 || ins.length === 3) &&
+        !ins.some(isSpread)
+      ) {
+        const pattern = constantString(ins[1] as ValueId);
+        const flags = ins.length === 3 ? constantString(ins[2] as ValueId) : "";
+        if (
+          pattern !== undefined &&
+          flags !== undefined &&
+          /^[dgimsuy]*$/.test(flags) &&
+          pattern !== ""
+        ) {
+          set(out, regexObject(`/${pattern}/${flags}`));
+          return;
+        }
+      }
       const callee = operand(ins[0] as ValueId);
       if (ins.slice(1).some(isSpread)) {
         set(out, call("yk_new_spread", `i64 ${callee}, i64 ${spreadList(ins.slice(1))}`));
@@ -2848,11 +2879,8 @@ function lowerFunction(
     loop.outputs.forEach((v, i) => set(v, operand(rec.carry[i] as ValueId)));
   };
 
-  // Each regex literal: its matcher compiled from the pattern and lowered (once per module), and
-  // its object made here (DEC-DUC-REGEX-GRAPH-001).
-  for (const n of g.nodes) {
-    const text = n.label ?? "";
-    if (n.kind !== "literal-source" || !text.startsWith("/")) continue;
+  /** A regex object of `/pattern/flags`: its matcher compiled and lowered once per module. */
+  function regexObject(text: string): string {
     let compiled: ReturnType<typeof regexMatcherGraph>;
     try {
       compiled = regexMatcherGraph(text);
@@ -2872,13 +2900,30 @@ function lowerFunction(
     emit(`${matcher} = call i64 @yk_closure_new(ptr @${fn}, i32 0, i64 0, ptr null)`);
     const names = compiled.parsed.names.map((nm) => (nm === undefined ? UNDEFINED : str(nm)));
     const namesArray = call("yk_array_of", `i64 ${names.length}, ptr ${list(names)}`);
-    set(
-      n.outputs[0] as ValueId,
-      call(
-        "yk_regexp_new",
-        `i64 ${str(compiled.pattern)}, i64 ${str(compiled.flags)}, i64 ${matcher}, i64 ${namesArray}`,
-      ),
+    return call(
+      "yk_regexp_new",
+      `i64 ${str(compiled.pattern)}, i64 ${str(compiled.flags)}, i64 ${matcher}, i64 ${namesArray}`,
     );
+  }
+  /** A string the graph computes from literals alone (`"a" + "b"`), or undefined. */
+  const constantString = (v0: ValueId, depth = 0): string | undefined => {
+    const p = producer.get(resolve(v0));
+    if (p === undefined || depth > 256) return undefined;
+    const text = p.label ?? "";
+    if (p.kind === "literal-source" && text.startsWith('"')) return JSON.parse(text) as string;
+    if (p.kind === "op" && text === "+" && p.inputs.length === 2) {
+      const a = constantString(p.inputs[0] as ValueId, depth + 1);
+      const b = a === undefined ? undefined : constantString(p.inputs[1] as ValueId, depth + 1);
+      return a === undefined || b === undefined ? undefined : a + b;
+    }
+    return undefined;
+  };
+  // Each regex literal: its matcher compiled from the pattern and lowered (once per module), and
+  // its object made here (DEC-DUC-REGEX-GRAPH-001).
+  for (const n of g.nodes) {
+    const text = n.label ?? "";
+    if (n.kind !== "literal-source" || !text.startsWith("/")) continue;
+    set(n.outputs[0] as ValueId, regexObject(text));
   }
   // Parameters: the entry function's own; a closure's captures, then its arguments.
   params.forEach((p, i) => {

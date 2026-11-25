@@ -265,6 +265,21 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "%TypedArray% and its prototype, ArrayBuffer's and DataView's; a class extending Uint8Array (#1331)",
+    "export function f(a, b) { const TA = Object.getPrototypeOf(Uint8Array); const u = new Uint8Array([1, 2, typeof a === 'number' ? a : 3]); const len = Object.getOwnPropertyDescriptor(TA.prototype, 'length').get; const tag = Object.getOwnPropertyDescriptor(TA.prototype, Symbol.toStringTag).get; class FB extends Uint8Array { hello() { return 'hi' + this.length; } toString() { return 'FB:' + this.join('-'); } } const fb = new FB(4); fb[1] = 9; const sub = TA.prototype.slice.call(fb, 1, 3); let abstract = ''; try { new TA(); } catch (e) { abstract = e.name; } return [typeof TA, TA.name, Object.getPrototypeOf(Uint8Array.prototype) === TA.prototype, len.call(u), tag.call(u), tag.call({}), Object.prototype.toString.call(u), fb.hello(), String(fb), fb instanceof Uint8Array, fb instanceof FB, sub.length, sub[0], abstract, Uint8Array.prototype.BYTES_PER_ELEMENT, Object.getPrototypeOf(new ArrayBuffer(2)) === ArrayBuffer.prototype, Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get.call(new ArrayBuffer(5)), Object.prototype.toString.call(new DataView(new ArrayBuffer(2))), [...u.values()], TA.prototype[Symbol.iterator] === TA.prototype.values, u.constructor === Uint8Array, Object.getPrototypeOf(Float64Array) === TA]; }",
+    2,
+  ],
+  [
+    "arrays with holes: literals, new Array(n), delete, a write past the end, length; in, keys, the callbacks (#1330)",
+    "export function f(a, b) { const x = [, a, , b]; const y = new Array(3); y[1] = a; const z = [1, 2, 3]; delete z[1]; const w = []; w[3] = b; const v = [a]; v.length = 3; const seen = []; x.forEach((e, i) => seen.push(i)); const m = x.map((e) => 1); return [x.length, 0 in x, 1 in x, Object.keys(x), x.hasOwnProperty(2), seen, m.length, 0 in m, 1 in m, Object.keys(y), y.filter(() => true).length, Object.keys(z), z.reduce((s, e) => s + e, 0), Object.keys(w), w.length, Object.keys(v), [, 5, , 6].reduce((s, e) => s + e), x.some((e) => e === undefined), x.indexOf(undefined), x.includes(undefined), x.slice(0, 2).length, 0 in x.slice(0, 2), JSON.stringify(x), String([, 1, , 2]), [...[, 7]], Array.from([, 8])]; }",
+    2,
+  ],
+  [
+    "new RegExp of constant strings, lookbehind (#1331)",
+    "export function f(a, b) { const ansi = new RegExp('[\\\\u001B\\\\u009B][[\\\\]()#;?]*' + '(?:\\\\d{1,4}(?:;\\\\d{0,4})*)?' + '[\\\\dA-PR-TZcf-nq-uy=><~]', 'g'); const s = '\\u001b[31mred\\u001b[0m ' + String(a); const price = /(?<=\\$)\\d+(?:\\.\\d\\d)?/g; const not = /(?<!-)\\b\\d+/g; const t = 'pay $12.50 or $3, -4 and 5 ' + String(b); return [s.replace(ansi, ''), ansi.flags, ansi.global, t.match(price), t.match(not), new RegExp('(?<y>\\\\d{4})-(?<m>\\\\d\\\\d)').exec('on 2024-05 ' + a)?.groups?.m]; }",
+    2,
+  ],
+  [
     "generator and async generator functions: their prototype objects, %GeneratorPrototype%, %AsyncIteratorPrototype% (#1331)",
     "export function f(a, b) { function* g() { yield a; yield b; } async function* ag() { yield a; } const GP = Object.getPrototypeOf(g.prototype); const AGP = Object.getPrototypeOf(ag.prototype); const AIP = Object.getPrototypeOf(AGP); const it = g(); const IP = Object.getPrototypeOf(GP); const AGF = Object.getPrototypeOf(ag); return [Object.getPrototypeOf(it) === g.prototype, Object.getPrototypeOf(ag()) === ag.prototype, typeof GP.next, typeof GP.return, IP === Object.getPrototypeOf(Object.getPrototypeOf([].values())), it[Symbol.iterator]() === it, typeof AIP[Symbol.asyncIterator], AIP[Symbol.asyncIterator].call(it) === it, Object.getPrototypeOf(AIP) === Object.prototype, Object.prototype.toString.call(it), Object.prototype.toString.call(ag()), AGF.prototype === AGP, Object.getPrototypeOf(g) === Object.getPrototypeOf(function* () {}), Object.getPrototypeOf(async () => 1) === Object.getPrototypeOf(async function () {}), Object.getPrototypeOf(AGF) === Function.prototype, [...it], Object.hasOwn(g.prototype, 'constructor')]; }",
     2,
@@ -399,7 +414,7 @@ describe("what the boxed lowering refuses, for now (#1292)", () => {
     }
     return "lowered";
   };
-  it("free names, new, array holes, approximated Math", () => {
+  it("free names, new, approximated Math", () => {
     expect(refusal("export function f(x) { return helper(x); }")).toMatch(
       /"helper" is not in the native base set/,
     );
@@ -407,7 +422,9 @@ describe("what the boxed lowering refuses, for now (#1292)", () => {
     expect(refusal("export function f(x) { async function* g() { yield x; } return g; }")).toBe(
       "lowered",
     );
-    expect(refusal("export function f(x) { return [, x]; }")).toMatch(/an array with holes/);
+    // Holes lower (#1330); with a spread beside them they are refused.
+    expect(refusal("export function f(x) { return [, x]; }")).toBe("lowered");
+    expect(refusal("export function f(x) { return [, ...x]; }")).toMatch(/holes and spread/);
     // Math.sin is a reference to V8's shaved atom (#1362), lowered with it.
     expect(refusal("export function f(x) { return Math.sin(x); }")).toBe("lowered");
   });
