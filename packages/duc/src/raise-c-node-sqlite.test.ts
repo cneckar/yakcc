@@ -184,9 +184,16 @@ const SCRIPTS: readonly (readonly string[])[] = [
 
 describe.skipIf(!hasClang)("Node's SQLite, shaved from C, against node:sqlite", () => {
   const unit = shaveCUnit(FIXTURE, ["yk_node_sqlite"], ARGS, "clang", "node-sqlite.c");
-  const externals = [...new Set([...unit.atoms.values()].flatMap((a) => a.externals))].filter(
-    (x) => !unit.atoms.has(x),
-  );
+  // (The C library's functions the engine calls, and those its tables name: the unix VFS's
+  // system calls, the math functions.)
+  const externals = [
+    ...new Set([
+      ...[...unit.atoms.values()].flatMap((a) => a.externals),
+      ...[...unit.statics.values()].flatMap((d) =>
+        d.init.flatMap((i) => ("fn" in i ? [i.fn] : [])),
+      ),
+    ]),
+  ].filter((x) => !unit.atoms.has(x));
   const musl = withMuslInit(shaveMusl(externals));
 
   it("the engine shaves with no refusal, its C library down to the leaves", () => {

@@ -83,11 +83,18 @@ export function definingFile(name: string, variable = false): string | undefined
   const o = OVERRIDES[name];
   if (o !== undefined) return `${MUSL}${o}`;
   const all = allSources();
-  if (!variable) {
-    const byName = all.find((f) => f.endsWith(`/${name}.c`));
-    if (byName !== undefined) return byName;
-  }
   const esc = name.replace(/\$/g, "\\$");
+  if (!variable) {
+    // The file of its name, when it defines it (qsort.c defines __qsort_r; qsort is qsort_nr.c's).
+    const byName = all.find((f) => f.endsWith(`/${name}.c`));
+    if (
+      byName !== undefined &&
+      new RegExp(`\\b${esc}\\s*\\([^;]*\\)\\s*\\{|_alias\\(\\w+,\\s*${esc}\\)`).test(
+        readFileSync(byName, "utf8"),
+      )
+    )
+      return byName;
+  }
   const re = variable
     ? new RegExp(`^(?!extern)[A-Za-z_][\\w \\t\\*]*\\b${esc}\\s*(\\[[^\\]]*\\])?\\s*(=|;)`, "m")
     : new RegExp(

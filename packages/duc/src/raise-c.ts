@@ -444,6 +444,9 @@ type CType =
   | { readonly k: "u32" }
   | { readonly k: "i64" }
   | { readonly k: "u64" }
+  // (GCC's and clang's 128-bit integers, `__int128`: SQLite's 64x64 multiplications.)
+  | { readonly k: "i128" }
+  | { readonly k: "u128" }
   | { readonly k: "bool" }
   | { readonly k: "void" }
   | { readonly k: "fn" }
@@ -567,6 +570,10 @@ const BUILTIN: Readonly<Record<string, CType>> = {
   "unsigned long int": { k: "u64" },
   "unsigned long long": { k: "u64" },
   "unsigned long long int": { k: "u64" },
+  __int128: { k: "i128" },
+  __int128_t: { k: "i128" },
+  "unsigned __int128": { k: "u128" },
+  __uint128_t: { k: "u128" },
   double: F64,
   float: { k: "f32" },
   bool: { k: "bool" },
@@ -646,10 +653,14 @@ function parseType(spelled: string, depth = 0): CType {
   if (toArr !== null)
     return { k: "ptr", to: parseType(`${toArr[1] as string} ${toArr[3] as string}`, depth + 1) };
   // An array, of arrays: `T [8000][2]` is 8000 arrays of 2 (the first dimension outermost).
-  const arr = /^(.*?)\s*((?:\[\d*\])+)$/.exec(raw);
+  // (A variable-length array's bound, `char[buf ? 1 : 4096]`, is not a number: an array of unknown
+  // size, as `T[]` is; its declaration allocates it, see vlaBound.)
+  const arr = /^(.*?)\s*((?:\[[^[\]]*\])+)$/.exec(raw);
   if (arr !== null) {
     let t = parseType(arr[1] as string, depth + 1);
-    const dims = [...(arr[2] as string).matchAll(/\[(\d*)\]/g)].map((m) => m[1] as string);
+    const dims = [...(arr[2] as string).matchAll(/\[([^[\]]*)\]/g)].map((m) =>
+      /^\d*$/.test((m[1] as string).trim()) ? (m[1] as string).trim() : "",
+    );
     for (const d of dims.reverse())
       t = d === "" ? { k: "arr", of: t } : { k: "arr", of: t, size: Number(d) };
     return t;
@@ -748,6 +759,9 @@ function sizeOf(t: CType): number {
     case "f64":
     case "ptr":
       return 8;
+    case "i128":
+    case "u128":
+      return 16;
     case "arr":
       if (t.size === undefined) throw new RaiseCError("the size of an array of unknown length");
       return t.size * sizeOf(t.of);
@@ -760,7 +774,14 @@ function sizeOf(t: CType): number {
 const alignOf = (t: CType): number =>
   t.k === "arr" ? alignOf(t.of) : t.k === "rec" ? layoutOf(t).align : sizeOf(t);
 
-const wide = (t: CType): boolean => t.k === "i64" || t.k === "u64";
+const wide = (t: CType): boolean =>
+  t.k === "i64" || t.k === "u64" || t.k === "i128" || t.k === "u128";
+/** A bigint wrapped to 128 bits, unsigned or signed (two's complement), by JavaScript's own &. */
+const M128 = "0xffffffffffffffffffffffffffffffffn";
+const wrap128 = (e: string, signed: boolean): string =>
+  signed
+    ? `((((${e}) + 0x80000000000000000000000000000000n) & ${M128}) - 0x80000000000000000000000000000000n)`
+    : `((${e}) & ${M128})`;
 const narrow = (t: CType): boolean =>
   t.k === "i8" || t.k === "u8" || t.k === "i16" || t.k === "u16";
 const integral = (t: CType): boolean =>
@@ -830,6 +851,9 @@ function convert(e: string, from: CType, to: CType): string {
   }
   if (narrow(to)) return toNarrow(wide(from) ? `__ykBigToI32(${e})` : e, to);
   switch (to.k) {
+    case "i128":
+    case "u128":
+      return wrap128(wide(from) ? e : `__ykNumToBig(${e})`, to.k === "i128");
     case "i32":
       return wide(from) ? `__ykBigToI32(${e})` : `(${e} | 0)`;
     case "u32":
@@ -886,7 +910,12 @@ function arith(op: string, a: string, b: string, t: CType, rhs: CType): string {
     }
   }
   if (wide(t)) {
-    const fix = t.k === "i64" ? (x: string) => `__ykI64(${x})` : (x: string) => `__ykU64(${x})`;
+    const fix =
+      t.k === "i128" || t.k === "u128"
+        ? (x: string) => wrap128(x, t.k === "i128")
+        : t.k === "i64"
+          ? (x: string) => `__ykI64(${x})`
+          : (x: string) => `__ykU64(${x})`;
     // A shift's count is its own type: as a bigint here.
     const count = wide(rhs) ? b : `__ykNumToBig(${b})`;
     switch (op) {
@@ -937,6 +966,8 @@ const LEAF_CALLS: Readonly<Record<string, (args: readonly string[]) => string>> 
   __builtin_is_constant_evaluated: () => "false",
   __builtin_constant_p: () => "0",
   __builtin_unreachable: () => "undefined",
+  // A full memory barrier: nothing to order in one thread of the leaves' memory.
+  __sync_synchronize: () => "undefined",
   // (Its size is a size_t: a bigint.)
   __builtin_operator_new: (a) => `__ykAlloc(__ykBigToF64(${a[0]}), 16)`,
   __builtin_operator_delete: (a) => `__ykFree(${a[0]})`,
@@ -1858,6 +1889,34 @@ function raiseBody(
   const isMem = (d: ClangNode, t: CType): boolean =>
     inMemory.has(d.id ?? "") || t.k === "rec" || (t.k === "arr" && t.of.k === "rec");
 
+  /**
+   * A variable-length array's element count (a number), from its bound as its type spells it
+   * (clang's JSON has no node for it): the C expression parsed, its names the function's own
+   * declarations before it, raised as a long. Undefined when it is not one of these.
+   */
+  const vlaBytes = new Map<string, string>(); // a variable-length array's id -> its bytes' variable
+  const vlaBound = (d: ClangNode): string | undefined => {
+    const m = /\[([^[\]]*)\]/.exec(d.type?.qualType ?? "");
+    const text = m?.[1]?.trim();
+    if (text === undefined || text === "") return undefined;
+    // The declarations before it, by name (the last one: the one in scope, for C's usual code).
+    const named = new Map<string, ClangNode>();
+    let reached = false;
+    const walk = (x: ClangNode): void => {
+      if (reached) return;
+      if (x === d || (x.id !== undefined && x.id === d.id)) {
+        reached = true;
+        return;
+      }
+      if ((x.kind === "ParmVarDecl" || x.kind === "VarDecl") && x.name !== undefined)
+        named.set(x.name, x);
+      for (const k of x.inner ?? []) walk(k);
+    };
+    walk(fn);
+    const node = parseBound(text, named);
+    return node === undefined ? undefined : `__ykBigToF64(${expr(node)})`;
+  };
+
   // Temporaries for read-modify-write of memory (`*p += 1`, `s[i]++`): declared at the top.
   let temps = 0;
   const temp = (t: CType): string => {
@@ -2024,6 +2083,8 @@ function raiseBody(
         return { k: "reg", e: declName(d), t };
       }
       case "UnaryOperator": {
+        // (GNU's `__extension__ x` is x.)
+        if (e.opcode === "__extension__") return place(k0);
         // (C++: `++x` is x itself, after the increment; an object in memory, its address.)
         if ((e.opcode === "++" || e.opcode === "--") && e.isPostfix !== true) {
           const p = place(k0);
@@ -2265,6 +2326,12 @@ function raiseBody(
         return zeroOf(typeOf(e));
       case "UnaryExprOrTypeTraitExpr": {
         const arg = (e as { argType?: { qualType: string; desugaredQualType?: string } }).argType;
+        // (A variable-length array's size: its bytes, fixed when it was declared.)
+        const named = arg === undefined && k0 !== undefined ? stripParens(k0) : undefined;
+        const vla =
+          named?.kind === "DeclRefExpr" ? vlaBytes.get(named.referencedDecl?.id ?? "") : undefined;
+        if (e.name === "sizeof" && vla !== undefined)
+          return wide(typeOf(e)) ? `__ykNumToBig(${vla})` : vla;
         const t = arg !== undefined ? ctype(arg) : typeOf(k0);
         const v = e.name === "sizeof" ? sizeOf(t) : alignOf(t);
         return wide(typeOf(e)) ? `${v}n` : String(v);
@@ -2428,6 +2495,8 @@ function raiseBody(
             ? `(-${expr(k0)})`
             : arith("-", wide(t) ? "0n" : "0", expr(k0), t, t);
         if (op === "+") return expr(k0);
+        // GNU's marker on an extension (glibc's assert under -std=gnu11): the operand.
+        if (op === "__extension__") return expr(k0);
         if (op === "~")
           return t.k === "i32"
             ? `(~${expr(k0)})`
@@ -3973,6 +4042,22 @@ function raiseBody(
             mems.set(d.id ?? "", { k: "mem", addr, t });
             continue;
           }
+          // A variable-length array: memory of its bound's elements, allocated here (the last
+          // one freed first, in a loop; freed when the function returns).
+          if (t.k === "arr" && t.size === undefined && d.storageClass !== "extern") {
+            const n = vlaBound(d);
+            if (n !== undefined) {
+              const name = `${declName(d)}_vla`;
+              top.push(`let ${name} = 0;`, `let ${name}_n = 0;`);
+              frame.push(name);
+              push(`__ykFree(${name});`);
+              push(`${name}_n = ${n} * ${sizeOf(t.of)};`);
+              push(`${name} = __ykAlloc(Math.max(1, ${name}_n), ${alignOf(t.of)});`);
+              vlaBytes.set(d.id ?? "", `${name}_n`);
+              mems.set(d.id ?? "", { k: "mem", addr: name, t });
+              continue;
+            }
+          }
           // A reference (C++): the address of what it binds to (itself never in memory).
           if (init !== undefined && isReferenceType(d.type?.qualType ?? "")) {
             push(`let ${declName(d)} = ${argOf(init)};`);
@@ -4226,6 +4311,26 @@ function raiseBody(
           s.kind.endsWith("Expr") ||
           s.kind === "ExprWithCleanups"
         ) {
+          // A GNU statement expression whose value is not used (glibc's assert under -std=gnu11:
+          // `(__extension__ ({ if (e) ; else __assert_fail(..); }))`): its block.
+          let bare: ClangNode = s;
+          while (
+            bare.kind === "ParenExpr" ||
+            (bare.kind === "UnaryOperator" && bare.opcode === "__extension__") ||
+            ((bare.kind === "CStyleCastExpr" || bare.kind === "ImplicitCastExpr") &&
+              (bare.castKind === "ToVoid" || bare.castKind === "NoOp"))
+          )
+            bare = (bare.inner ?? [])[0] as ClangNode;
+          if (bare.kind === "StmtExpr") {
+            stmt((bare.inner ?? [])[0] as ClangNode);
+            return;
+          }
+          // (A comma's value not used: each side a statement, in order; glibc's assert is
+          // `((void) sizeof (e ? 1 : 0), __extension__ ({ .. }))`.)
+          if (bare.kind === "BinaryOperator" && bare.opcode === "," && bare !== s) {
+            for (const side of bare.inner ?? []) stmt(side);
+            return;
+          }
           // (An object named and not used, C++'s `*this;` after an assignment: its address,
           // evaluated for what computing it does.)
           const st = typeOf(s);
@@ -5565,10 +5670,28 @@ export function shaveCUnit(
       .filter((f) => f.kind === "FieldDecl")
       .map((f) => f.name ?? "");
     layout(""); // the layouts, read
-    for (const [key, l] of layouts ?? [])
-      if (/\(unnamed at /.test(key) && [...l.fields.keys()].join(",") === fields.join(","))
-        return key;
-    return undefined;
+    const same = [...(layouts ?? [])]
+      .filter(
+        ([key, l]) =>
+          /\(unnamed at /.test(key) && [...l.fields.keys()].join(",") === fields.join(","),
+      )
+      .map(([key]) => key);
+    // (Several with these fields, musl's `struct { union { .. } __u; }` typedefs: the one declared
+    // where this record is, by its line and column.)
+    if (same.length > 1) {
+      const loc = (
+        node as {
+          loc?: { line?: number; col?: number; spellingLoc?: { line?: number; col?: number } };
+        }
+      ).loc;
+      const line = loc?.line ?? loc?.spellingLoc?.line;
+      const col = loc?.col ?? loc?.spellingLoc?.col;
+      const at = same.filter((k) =>
+        line !== undefined ? k.endsWith(`:${line}:${col})`) : k.endsWith(`:${col})`),
+      );
+      if (at.length === 1) return at[0];
+    }
+    return same[0];
   };
   let layouts: Map<string, RecordLayout> | undefined;
   const layout: LayoutResolver = (name) => {
@@ -6246,6 +6369,139 @@ function staticDefinition(
   return { size: sizeOf(t), align: alignOf(t), init };
 }
 
+/**
+ * A variable-length array's bound (C, as its type spells it) as clang's nodes would be: names of
+ * the declarations given, integers, sizeof of a type, parentheses, and C's unary, binary and
+ * conditional operators, each value a long (a pointer only as a condition). Undefined otherwise.
+ */
+function parseBound(text: string, named: ReadonlyMap<string, ClangNode>): ClangNode | undefined {
+  const LONG = { qualType: "long" };
+  const INT = { qualType: "int" };
+  const toks = text.match(
+    /sizeof\s*\([^()]*\)|0[xX][0-9a-fA-F]+[uUlL]*|\d+[uUlL]*|[A-Za-z_]\w*|<<|>>|<=|>=|==|!=|&&|\|\||[-+*\/%<>&|^!~?:()]/g,
+  );
+  if (toks === null || toks.join("").replace(/\s/g, "") !== text.replace(/\s/g, ""))
+    return undefined;
+  let i = 0;
+  const peek = (): string | undefined => toks[i];
+  const lit = (v: bigint): ClangNode =>
+    ({
+      kind: "IntegerLiteral",
+      type: LONG,
+      valueCategory: "prvalue",
+      value: String(v),
+    }) as unknown as ClangNode;
+  const asLong = (x: ClangNode): ClangNode =>
+    x.type?.qualType === "long"
+      ? x
+      : ({
+          kind: "ImplicitCastExpr",
+          type: LONG,
+          valueCategory: "prvalue",
+          castKind: "IntegralCast",
+          inner: [x],
+        } as unknown as ClangNode);
+  const isPtr = (x: ClangNode): boolean => /\*\s*$/.test(x.type?.qualType ?? "");
+  const bin = (op: string, a: ClangNode, b: ClangNode): ClangNode => {
+    const cmp = ["<", ">", "<=", ">=", "==", "!=", "&&", "||"].includes(op);
+    const logic = op === "&&" || op === "||";
+    return {
+      kind: "BinaryOperator",
+      opcode: op,
+      type: cmp ? INT : LONG,
+      valueCategory: "prvalue",
+      inner: logic ? [a, b] : [asLong(a), asLong(b)],
+    } as unknown as ClangNode;
+  };
+  const primary = (): ClangNode | undefined => {
+    const t = toks[i++];
+    if (t === undefined) return undefined;
+    if (t === "(") {
+      const e = ternary();
+      if (toks[i++] !== ")") return undefined;
+      return e;
+    }
+    if (t === "-" || t === "!" || t === "~" || t === "+") {
+      const e = primary();
+      if (e === undefined) return undefined;
+      if (t === "+") return asLong(e);
+      return {
+        kind: "UnaryOperator",
+        opcode: t,
+        type: t === "!" ? INT : LONG,
+        valueCategory: "prvalue",
+        inner: [t === "!" ? e : asLong(e)],
+      } as unknown as ClangNode;
+    }
+    if (/^sizeof/.test(t)) {
+      try {
+        return lit(BigInt(sizeOf(parseType((/\(([^()]*)\)/.exec(t)?.[1] ?? "").trim()))));
+      } catch {
+        return undefined;
+      }
+    }
+    if (/^\d|^0[xX]/.test(t)) return lit(BigInt(t.replace(/[uUlL]+$/, "")));
+    const d = named.get(t);
+    if (d === undefined) return undefined;
+    const type = d.type ?? LONG;
+    return {
+      kind: "ImplicitCastExpr",
+      type,
+      valueCategory: "prvalue",
+      castKind: "LValueToRValue",
+      inner: [
+        {
+          kind: "DeclRefExpr",
+          type,
+          valueCategory: "lvalue",
+          referencedDecl: { id: d.id, kind: d.kind, name: d.name, type },
+        },
+      ],
+    } as unknown as ClangNode;
+  };
+  const LEVELS = [
+    ["||"],
+    ["&&"],
+    ["|"],
+    ["^"],
+    ["&"],
+    ["==", "!="],
+    ["<", ">", "<=", ">="],
+    ["<<", ">>"],
+    ["+", "-"],
+    ["*", "/", "%"],
+  ];
+  const level = (k: number): ClangNode | undefined => {
+    if (k === LEVELS.length) return primary();
+    let a = level(k + 1);
+    while (a !== undefined && (LEVELS[k] as string[]).includes(peek() ?? "")) {
+      const op = toks[i++] as string;
+      const b = level(k + 1);
+      if (b === undefined) return undefined;
+      if ((isPtr(a) || isPtr(b)) && !["&&", "||"].includes(op)) return undefined;
+      a = bin(op, a, b);
+    }
+    return a;
+  };
+  const ternary = (): ClangNode | undefined => {
+    const c = level(0);
+    if (c === undefined || peek() !== "?") return c === undefined || isPtr(c) ? undefined : c;
+    i++;
+    const a = ternary();
+    if (toks[i++] !== ":") return undefined;
+    const b = ternary();
+    if (a === undefined || b === undefined || isPtr(a) || isPtr(b)) return undefined;
+    return {
+      kind: "ConditionalOperator",
+      type: LONG,
+      valueCategory: "prvalue",
+      inner: [c, asLong(a), asLong(b)],
+    } as unknown as ClangNode;
+  };
+  const e = ternary();
+  return e === undefined || i !== toks.length ? undefined : asLong(e);
+}
+
 let cpuidHeader: string | undefined;
 /**
  * Whether an asm statement is clang's `cpuid` (`__cpuid(leaf, a, b, c, d)`, `__cpuid_count(leaf,
@@ -6475,12 +6731,7 @@ function flattenEnteredSwitches(n: ClangNode): ClangNode {
     const out: ClangNode[] = [];
     kids.forEach((k, i) => {
       const others = [...kids.slice(0, i), ...kids.slice(i + 1)];
-      const flat =
-        k.kind === "SwitchStmt"
-          ? flattenSwitch(k, others)
-          : k.kind === "WhileStmt"
-            ? peelEnteredLoop(k, kids.slice(0, i))
-            : undefined;
+      const flat = k.kind === "SwitchStmt" ? flattenSwitch(k, others) : undefined;
       if (flat === undefined) out.push(k);
       else {
         out.push(...flat);
@@ -6488,56 +6739,210 @@ function flattenEnteredSwitches(n: ClangNode): ClangNode {
       }
     });
     kids = out;
+    // A while loop the statements before it enter (see enterLoop), each in turn.
+    for (let i = 0; i < kids.length; i++) {
+      if (kids[i]?.kind !== "WhileStmt") continue;
+      const entered = enterLoop(kids, i);
+      if (entered === undefined) continue;
+      kids = entered.kids;
+      i = entered.at;
+      changed = true;
+    }
   }
   return changed ? ({ ...n, inner: kids } as ClangNode) : n;
 }
 
+let entries = 0;
 /**
- * A while loop a goto before it enters at a label of its body (brotli's ShannonEntropy: `if (odd)
- * goto L; while (c) { a; L: b; }`): the rest of the body from the label, entered only by the
- * goto, before the loop (`if (0) { L: b; }`, see enterIf), then the loop, its label dropped. The
- * rest may not break, continue, declare or have a label.
+ * A while loop that gotos in the statements before it enter at labels of its body (brotli's
+ * ShannonEntropy: `if (odd) goto L; while (c) { a; L: b; }`; SQLite's FTS5 tokenizer, from inside
+ * an earlier loop, at labels in the branches of an if): an entry variable `e`, declared first in
+ * the block; each such goto sets `e` to its label's number and goes to the loop (labelled `P`), and
+ * the loop runs while `e || c`. In its body a statement on the way to a label runs only when `e`
+ * is 0, an if on the way takes the branch the entry is in while `e` is set, and the label sets `e`
+ * to 0. (Only ifs and blocks on the way, and no initialized declaration before a label in its
+ * block.) The
+ * block's statements, and where the loop is now, or undefined.
  */
-function peelEnteredLoop(loop: ClangNode, before: readonly ClangNode[]): ClangNode[] | undefined {
+function enterLoop(
+  kids: readonly ClangNode[],
+  at: number,
+): { kids: ClangNode[]; at: number } | undefined {
+  const loop = kids[at] as ClangNode;
   const [c, body, ...more] = loop.inner ?? [];
-  if (c === undefined || body?.kind !== "CompoundStmt" || more.length > 0) return undefined;
-  const items = body.inner ?? [];
-  const at = items.findIndex((x) => x.kind === "LabelStmt");
-  if (at < 0) return undefined;
-  const label = items[at] as ClangNode;
-  const id = (label as { declId?: string }).declId ?? "";
-  const gotos = (x: ClangNode): boolean =>
-    (x.kind === "GotoStmt" && (x as { targetLabelDeclId?: string }).targetLabelDeclId === id) ||
-    (x.inner ?? []).some(gotos);
-  if (!before.some(gotos) || gotos(body)) return undefined;
-  const rest = [(label.inner ?? [])[0] as ClangNode, ...items.slice(at + 1)];
-  const plain = (x: ClangNode, inLoop: boolean): boolean =>
-    !["LabelStmt", "DeclStmt"].includes(x.kind) &&
-    !(!inLoop && (x.kind === "BreakStmt" || x.kind === "ContinueStmt")) &&
-    (x.inner ?? []).every((k) =>
-      plain(k, inLoop || ["ForStmt", "WhileStmt", "DoStmt", "SwitchStmt"].includes(x.kind)),
-    );
-  if (!rest.every((x) => plain(x, false))) return undefined;
-  const zero = {
-    kind: "IntegerLiteral",
-    value: "0",
-    type: { qualType: "int" },
-    valueCategory: "prvalue",
-  } as unknown as ClangNode;
-  const peeled = {
-    kind: "IfStmt",
-    inner: [
-      zero,
-      {
+  if (c === undefined || body === undefined || more.length > 0) return undefined;
+  // The labels of the body (not inside a loop or switch of it) the statements before name.
+  const before = kids.slice(0, at);
+  const named = new Set<string>();
+  const gotos = (x: ClangNode): void => {
+    if (x.kind === "GotoStmt")
+      named.add((x as { targetLabelDeclId?: string }).targetLabelDeclId ?? "");
+    for (const k of x.inner ?? []) gotos(k);
+  };
+  before.forEach(gotos);
+  const labels = new Map<string, number>();
+  const find = (x: ClangNode): void => {
+    if (["ForStmt", "WhileStmt", "DoStmt", "SwitchStmt"].includes(x.kind)) return;
+    const id = (x as { declId?: string }).declId;
+    if (x.kind === "LabelStmt" && id !== undefined && named.has(id))
+      labels.set(id, labels.size + 1);
+    for (const k of x.inner ?? []) find(k);
+  };
+  find(body);
+  if (labels.size === 0) return undefined;
+  // (Gotos to them only before the loop.)
+  const into = (x: ClangNode): boolean =>
+    (x.kind === "GotoStmt" &&
+      labels.has((x as { targetLabelDeclId?: string }).targetLabelDeclId ?? "")) ||
+    (x.inner ?? []).some(into);
+  if (into(body) || kids.slice(at + 1).some(into)) return undefined;
+  const n = entries++;
+  const INT = { qualType: "int" };
+  const varId = `yk-entry-var-${n}`;
+  const ref = (): ClangNode =>
+    ({
+      kind: "DeclRefExpr",
+      type: INT,
+      valueCategory: "lvalue",
+      referencedDecl: { id: varId, kind: "VarDecl", name: `__entry${n}`, type: INT },
+    }) as unknown as ClangNode;
+  const read = (): ClangNode =>
+    ({
+      kind: "ImplicitCastExpr",
+      type: INT,
+      valueCategory: "prvalue",
+      castKind: "LValueToRValue",
+      inner: [ref()],
+    }) as unknown as ClangNode;
+  const lit = (v: number): ClangNode =>
+    ({
+      kind: "IntegerLiteral",
+      type: INT,
+      valueCategory: "prvalue",
+      value: String(v),
+    }) as unknown as ClangNode;
+  const bin = (opcode: string, a: ClangNode, b: ClangNode): ClangNode =>
+    ({
+      kind: "BinaryOperator",
+      type: INT,
+      valueCategory: "prvalue",
+      opcode,
+      inner: [a, b],
+    }) as unknown as ClangNode;
+  const set = (v: number): ClangNode => bin("=", ref(), lit(v));
+  const zero = (): ClangNode => bin("==", read(), lit(0));
+  const has = (x: ClangNode): boolean =>
+    (x.kind === "LabelStmt" && labels.has((x as { declId?: string }).declId ?? "")) ||
+    (!["ForStmt", "WhileStmt", "DoStmt", "SwitchStmt"].includes(x.kind) &&
+      (x.inner ?? []).some(has));
+  const nums = (x: ClangNode): number[] => {
+    const out: number[] = [];
+    const walk = (y: ClangNode): void => {
+      const k = labels.get((y as { declId?: string }).declId ?? "");
+      if (y.kind === "LabelStmt" && k !== undefined) out.push(k);
+      if (!["ForStmt", "WhileStmt", "DoStmt", "SwitchStmt"].includes(y.kind))
+        for (const z of y.inner ?? []) walk(z);
+    };
+    walk(x);
+    return out;
+  };
+  // A statement on the way to an entry, rewritten; another, run only when e is 0.
+  const guard = (x: ClangNode): ClangNode =>
+    ({ kind: "IfStmt", inner: [zero(), x] }) as unknown as ClangNode;
+  let ok = true;
+  const way = (x: ClangNode): ClangNode => {
+    if (!has(x)) return guard(x);
+    if (x.kind === "LabelStmt") {
+      const sub = (x.inner ?? [])[0] as ClangNode;
+      const k = labels.get((x as { declId?: string }).declId ?? "");
+      if (k === undefined) return { ...x, inner: [way(sub)] } as ClangNode;
+      // Reached: e is 0 from here, the rest of the statement runs as it is.
+      return {
         kind: "CompoundStmt",
-        inner: [{ ...label, inner: [{ kind: "CompoundStmt", inner: rest }] }],
-      },
+        inner: [set(0), has(sub) ? way(sub) : sub],
+      } as unknown as ClangNode;
+    }
+    if (x.kind === "CompoundStmt") {
+      const items = x.inner ?? [];
+      let last = -1;
+      items.forEach((y, j) => {
+        if (has(y)) last = j;
+      });
+      // (A declaration with no initializer runs nothing: kept; one with, before a label, is not.)
+      const runs = (y: ClangNode): boolean =>
+        y.kind === "DeclStmt" &&
+        (y.inner ?? []).some((d) => (d as { init?: string }).init !== undefined);
+      if (items.slice(0, last).some(runs)) ok = false;
+      return { ...x, inner: items.map((y) => (y.kind === "DeclStmt" ? y : way(y))) } as ClangNode;
+    }
+    if (x.kind === "IfStmt") {
+      const [cond, then, otherwise] = (x.inner ?? []) as [ClangNode, ClangNode, ClangNode?];
+      if ((x.inner ?? []).length > 3 || has(cond)) {
+        ok = false;
+        return x;
+      }
+      const inThen = nums(then);
+      const pick =
+        inThen.length === 0
+          ? lit(0)
+          : inThen.map((k) => bin("==", read(), lit(k))).reduce((a, b) => bin("||", a, b));
+      const test = bin("||", bin("&&", zero(), cond), bin("&&", bin("!=", read(), lit(0)), pick));
+      return {
+        ...x,
+        inner: [
+          test,
+          has(then) ? way(then) : then,
+          ...(otherwise === undefined ? [] : [has(otherwise) ? way(otherwise) : otherwise]),
+        ],
+      } as ClangNode;
+    }
+    ok = false;
+    return x;
+  };
+  const newBody = way(
+    body.kind === "CompoundStmt"
+      ? body
+      : ({ kind: "CompoundStmt", inner: [body] } as unknown as ClangNode),
+  );
+  if (!ok) return undefined;
+  // (A then branch taken while e is set must not run its statements before the label: way guards
+  // them; an else branch is not on the way and is not taken.)
+  const enter = `yk-entry-${n}`;
+  const retarget = (x: ClangNode): ClangNode => {
+    if (x.kind === "GotoStmt") {
+      const k = labels.get((x as { targetLabelDeclId?: string }).targetLabelDeclId ?? "");
+      if (k === undefined) return x;
+      return {
+        kind: "CompoundStmt",
+        inner: [set(k), { kind: "GotoStmt", targetLabelDeclId: enter }],
+      } as unknown as ClangNode;
+    }
+    if (x.inner === undefined) return x;
+    let changed = false;
+    const inner = x.inner.map((y) => {
+      const z = retarget(y);
+      if (z !== y) changed = true;
+      return z;
+    });
+    return changed ? ({ ...x, inner } as ClangNode) : x;
+  };
+  const decl = {
+    kind: "DeclStmt",
+    inner: [
+      { kind: "VarDecl", id: varId, name: `__entry${n}`, type: INT, init: "c", inner: [lit(0)] },
     ],
   } as unknown as ClangNode;
-  const kept = items.map((x, j) => (j === at ? ((x.inner ?? [])[0] as ClangNode) : x));
-  return [peeled, { ...loop, inner: [c, { ...body, inner: kept }] } as ClangNode];
+  const newLoop = {
+    kind: "LabelStmt",
+    name: `__enter${n}`,
+    declId: enter,
+    inner: [{ ...loop, inner: [bin("||", bin("!=", read(), lit(0)), c), newBody] }],
+  } as unknown as ClangNode;
+  return {
+    kids: [decl, ...before.map(retarget), newLoop, ...kids.slice(at + 1)],
+    at: at + 1,
+  };
 }
-
 function flattenSwitch(sw: ClangNode, siblings: readonly ClangNode[]): ClangNode[] | undefined {
   const [c, body, ...rest] = sw.inner ?? [];
   if (c === undefined || body?.kind !== "CompoundStmt" || rest.length > 0) return undefined;

@@ -23,6 +23,8 @@ These files are not musl's own sources:
 - `yakcc/atomic_arch.h` has no architecture code, so `src/internal/atomic.h` uses musl's portable
   C (no inline assembly); its two definitions, single-threaded `a_cas` and `a_cas_p`, only let
   `atomic.h` parse. It is found before `arch/x86_64/atomic_arch.h`.
+- `yakcc/reloc.h` is x86-64's with no inline assembly: `CRTJMP` (which `__unmapself` uses to leave
+  a thread's stack) calls the function on the one stack a shaved program has.
 
 Parse with musl's own include order (as its Makefile), the yakcc header first:
 `-std=c99 -nostdinc -ffreestanding -D_XOPEN_SOURCE=700 -Iyakcc -Iarch/x86_64 -Iarch/generic -Isrc/include -Isrc/internal -Iobj/include -Iinclude`.
