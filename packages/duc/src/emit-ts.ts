@@ -392,6 +392,14 @@ function emitFunction(
     // An operation that is a reference to an atom, written as the source writes it (#1362).
     if (operationReference(label) !== undefined)
       return `${label}(${ins.map((v) => ref(v)).join(", ")})`;
+    // An object rest, as the runtime's call the lifter reads back (#1330).
+    if (label.startsWith("ObjectRest:")) {
+      imports.set(
+        RUNTIME_MODULE,
+        new Set([...(imports.get(RUNTIME_MODULE) ?? []), "__yakccObjectRest"]),
+      );
+      return `__yakccObjectRest(${arg(0)}, ${label.slice("ObjectRest:".length)})`;
+    }
     if (label === "AwaitExpression") return `(await ${arg(0)})`;
     if (label === "YieldExpression") return ins.length === 0 ? "(yield)" : `(yield ${arg(0)})`;
     if (label === "YieldExpression*") return `(yield* ${arg(0)})`;

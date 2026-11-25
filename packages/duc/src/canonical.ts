@@ -281,16 +281,33 @@ function hoistLiterals(
     changed = false;
     // A select on c inside an arm of a select on the same c takes the same arm: sel(c, a, sel(c, b, x))
     // is sel(c, a, x), and sel(c, sel(c, x, b), a) is sel(c, x, a).
+    // Only when the arm taken is visible where the inner select is: one made on a side of a branch
+    // inside it is not, and the outer select could not read it (#1330).
     const selOf = new Map<ValueId, DucNode>();
-    for (const n of out)
+    const regionOf = new Map<ValueId, string | undefined>();
+    for (const n of out) {
       if (n.kind === "sel" && n.inputs.length === 3) selOf.set(n.outputs[0] as ValueId, n);
+      for (const v of n.outputs) regionOf.set(v, n.region);
+    }
+    const visibleAt = (v: ValueId, region: string | undefined): boolean => {
+      const r = regionOf.get(v);
+      return (
+        r === undefined || (region !== undefined && (r === region || region.startsWith(`${r}/`)))
+      );
+    };
     out = out.map((n) => {
       if (n.kind !== "sel" || n.inputs.length !== 3) return n;
       const [c, t, e] = n.inputs as [ValueId, ValueId, ValueId];
       const inT = selOf.get(t);
       const inE = selOf.get(e);
-      const t2 = inT !== undefined && inT.inputs[0] === c ? (inT.inputs[1] as ValueId) : t;
-      const e2 = inE !== undefined && inE.inputs[0] === c ? (inE.inputs[2] as ValueId) : e;
+      const t2 =
+        inT !== undefined && inT.inputs[0] === c && visibleAt(inT.inputs[1] as ValueId, inT.region)
+          ? (inT.inputs[1] as ValueId)
+          : t;
+      const e2 =
+        inE !== undefined && inE.inputs[0] === c && visibleAt(inE.inputs[2] as ValueId, inE.region)
+          ? (inE.inputs[2] as ValueId)
+          : e;
       if (t2 === t && e2 === e) return n;
       changed = true;
       return { ...n, inputs: [c, t2, e2] };

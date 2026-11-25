@@ -15,6 +15,7 @@ import { describe, expect, it } from "vitest";
 import { runnable } from "./__fixtures__/runnable.js";
 import { graphIdentity } from "./canonical.js";
 import { emitTypeScript } from "./emit-ts.js";
+import { liftFidelity } from "./fidelity.js";
 import { liftAtom } from "./lift.js";
 import type { DucGraph } from "./types.js";
 
@@ -185,6 +186,106 @@ describe("hoisting over a let or const (#1330)", () => {
   return log;
 }`,
       [[true], [false]],
+    );
+  });
+});
+
+describe("a write to an outer name that a function expression of the same name shadows (#1330)", () => {
+  it("`transcode = function transcode(..) {..}` keeps the write", () => {
+    for (const source of [
+      "transcode = function transcode(x) { return x; };",
+      "if (c) { transcode = function transcode(x) { return transcode; }; }",
+    ]) {
+      const g = liftAtom(source);
+      expect(liftFidelity(source, g), source).toEqual({ holds: true, missing: [], extra: [] });
+      const code = emitTypeScript(g);
+      expect(code, source).toMatch(/\btranscode = /);
+      expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    }
+  });
+});
+
+describe("a switch that yields, in a generator's loop (#1330)", () => {
+  it("each case's yield is the generator's", () => {
+    agrees(
+      `export function f(items: string[]) {
+  function* report(xs: string[]) {
+    yield 'start';
+    for (const x of xs) {
+      switch (x) {
+        case 'a': { yield 'A'; yield 'a2'; break; }
+        case 'skip': continue;
+        default: yield x.toUpperCase();
+      }
+      yield '-';
+    }
+  }
+  return [...report(items)];
+}`,
+      [[[]], [["a", "b"]], [["skip", "a", "c"]]],
+    );
+  });
+});
+
+describe("a function declared in a block after a statement that may throw (#1330)", () => {
+  it("is bound on the side the rest is lifted on", () => {
+    agrees(
+      `export function f(i: boolean, t: boolean) {
+  const out: number[] = [];
+  if (i) { if (!t) { throw new RangeError('no'); } }
+  if (t) { out.push(1); } else { function g() { return 7; } out.push(g()); }
+  return out;
+}`,
+      [
+        [false, false],
+        [false, true],
+        [true, true],
+        [true, false],
+      ],
+    );
+  });
+});
+
+describe("a function declaration reading a class declared in its scope (#1330)", () => {
+  it("reads the class, whichever is written first", () => {
+    agrees(
+      `export function f(n: number) {
+  class P { static make(k: number) { return new P(k); } v: number; constructor(k: number) { this.v = k * 2; } }
+  function init(k: number) { return () => P.make(k).v; }
+  function later(k: number) { return Q.twice(k); }
+  class Q { static twice(k: number) { return k * 2; } }
+  return [init(n)(), later(n)];
+}`,
+      [[1], [5]],
+    );
+  });
+});
+
+describe("an object rest (#1330)", () => {
+  it("lowers to the runtime's call and lifts back to the same operation", () => {
+    agrees(
+      `export function f(o: any) {
+  const { prototype, a, ...rest } = o;
+  return [Object.keys(rest), rest.b, prototype === undefined, a];
+}`,
+      [[{ prototype: 1, a: 2, b: 3, c: 4 }], [{ b: 9 }], [null]],
+    );
+  });
+});
+
+describe("a join of two equal arms, one on a side of a branch (#1330)", () => {
+  it("emits, runs and round-trips", () => {
+    agrees(
+      `export function f(p: any, a: number) {
+  if (p) { if (!(p.s > 0)) { throw new RangeError('s'); } }
+  if (p) { return [a, p.s]; }
+  return [a];
+}`,
+      [
+        [null, 1],
+        [{ s: 2 }, 3],
+        [{ s: -1 }, 4],
+      ],
     );
   });
 });

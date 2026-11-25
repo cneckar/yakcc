@@ -741,7 +741,8 @@ class Lifter {
         for (const decl of stmt.getDeclarations()) {
           for (const name of patternNames(decl.getNameNode())) declared.add(name);
         }
-      } else if (Node.isFunctionDeclaration(stmt)) {
+      } else if (Node.isFunctionDeclaration(stmt) || Node.isClassDeclaration(stmt)) {
+        // A class too (#1330): a function hoisted over it reads it through a cell.
         const name = stmt.getName();
         if (name !== undefined) declared.add(name);
       }
@@ -772,8 +773,9 @@ class Lifter {
         if (!Node.isFunctionDeclaration(stmt)) continue;
         const name = stmt.getName();
         if (name === undefined || hoistedNames.has(name)) continue;
-        // Already bound by the list it was hoisted in (a tail lifted again on a side).
-        if (this.hoisted.has(stmt.compilerNode)) {
+        // Already bound by the list it was hoisted in (a tail lifted again on a side), when this
+        // side still has the binding; a side that does not is bound again (#1330).
+        if (this.hoisted.has(stmt.compilerNode) && this.env.has(name)) {
           hoistedNames.add(name);
           progress = true;
           continue;
@@ -992,7 +994,7 @@ class Lifter {
       // An arm that is also the default runs when nothing else matches, so it is the else too.
       text = `if (${arm.tests.length > 0 ? test(arm.tests) : "false"}) {\n${arm.body}\n}${text !== "" ? ` else ${text}` : ""}`;
     }
-    const source = `function __switch() {\n{\nconst ${tmp} = (${sw.getExpression().getText()});\n${text}\n}\n}`;
+    const source = `${syntheticFunction(sw)} __switch() {\n{\nconst ${tmp} = (${sw.getExpression().getText()});\n${text}\n}\n}`;
     const file = sw
       .getSourceFile()
       .getProject()
@@ -1451,7 +1453,7 @@ class Lifter {
     const before = continues.length > 0 ? `let ${cont} = false;\n` : "";
     const after = continues.length > 0 ? `\nif (${cont}) continue;` : "";
     const loop = continues.length > 0 ? "while (true) {\n" : "";
-    const source = `function __switch() {\n${loop}{\n${before}const ${tmp} = (${sw.getExpression().getText()});\nconst ${at} = ${chain};\ndo {\n${bodies}\n} while (false);${after}\n}\n${continues.length > 0 ? "}\n" : ""}}`;
+    const source = `${syntheticFunction(sw)} __switch() {\n${loop}{\n${before}const ${tmp} = (${sw.getExpression().getText()});\nconst ${at} = ${chain};\ndo {\n${bodies}\n} while (false);${after}\n}\n${continues.length > 0 ? "}\n" : ""}}`;
     const file = sw
       .getSourceFile()
       .getProject()
@@ -2005,11 +2007,14 @@ class Lifter {
 
   private readNamesOfUncached(node: Node): string[] {
     const locals = collectRegionLocals(node);
+    // In a function, a read is of an outer name when no scope inside it declares the name where it
+    // is read: a nested loop's own `m` does not hide the function's read of the outer one (#1330).
+    const fn = isFunctionLikeNode(node);
     const names = new Set<string>();
     for (const id of node.getDescendantsOfKind(SyntaxKind.Identifier)) {
       if (!isValueRead(id)) continue;
       const name = id.getText();
-      if (!locals.has(name)) names.add(name);
+      if (fn ? !declaredWithin(id, node) : !locals.has(name)) names.add(name);
     }
     return [...names];
   }
@@ -2069,7 +2074,10 @@ class Lifter {
           origin: { kind: "Class", text: truncate(name) },
           label: this.opaqueLabel("Class", node, new Set([name])),
         })[0] as ValueId);
-      this.env.set(name, value);
+      // A function hoisted over it reads it through a cell, which the declaration writes (#1330).
+      if (this.hoistedCells.has(name) && this.cells.has(name) && this.env.has(name))
+        this.writeCell(name, value);
+      else this.env.set(name, value);
       return;
     }
     if (Node.isFunctionDeclaration(node)) {
@@ -2460,9 +2468,13 @@ class Lifter {
     const file = node
       .getSourceFile()
       .getProject()
-      .createSourceFile(`__tested${n}_${node.getStart()}.ts`, `function __tested() {\n${text}\n}`, {
-        overwrite: true,
-      });
+      .createSourceFile(
+        `__tested${n}_${node.getStart()}.ts`,
+        `${syntheticFunction(node)} __tested() {\n${text}\n}`,
+        {
+          overwrite: true,
+        },
+      );
     const loop = file.getFunctions()[0]?.getBody()?.asKind(SyntaxKind.Block)?.getStatements()[0];
     return loop !== undefined &&
       (Node.isWhileStatement(loop) || Node.isForStatement(loop) || Node.isDoStatement(loop))
@@ -3350,6 +3362,29 @@ class Lifter {
       if (this.cells.has(THIS) && this.env.has(THIS)) this.writeCell(THIS, made as ValueId);
       else this.env.set(THIS, made as ValueId);
       return made as ValueId;
+    }
+    if (Node.isCallExpression(node) && !this.optional(node)) {
+      // `__yakccObjectRest(o, ["a", ..])`, the runtime's, as the TypeScript lowering writes an
+      // object rest: the `ObjectRest` operation it stands for (#1330).
+      const callee = node.getExpression();
+      const [restOf, takenList] = node.getArguments();
+      if (
+        Node.isIdentifier(callee) &&
+        callee.getText() === OBJECT_REST_PRIMITIVE &&
+        this.isPlatformName(OBJECT_REST_PRIMITIVE) &&
+        node.getArguments().length === 2 &&
+        restOf !== undefined &&
+        Node.isArrayLiteralExpression(takenList) &&
+        takenList.getElements().every((e) => Node.isStringLiteral(e))
+      ) {
+        const taken = takenList
+          .getElements()
+          .map((e) => (e as import("ts-morph").StringLiteral).getLiteralValue());
+        return this.emit("op", [this.liftExpr(restOf)], 1, {
+          origin: { kind: "Destructure", text: truncate(node.getText()) },
+          label: `ObjectRest:${JSON.stringify(taken)}`,
+        })[0] as ValueId;
+      }
     }
     if (Node.isCallExpression(node) && !this.optional(node)) {
       // `Math.sin(x)`, with `Math` the platform's: the operation `Math.sin`, a reference to the atom
@@ -4445,26 +4480,20 @@ function assignmentTargets(node: Node): Node[] {
  * anywhere in the atom is not one, though a shadowed declaration may be another binding.
  */
 function writtenFreeNames(file: Node): string[] {
-  const declared = new Set<string>();
-  for (const d of file.getDescendantsOfKind(SyntaxKind.VariableDeclaration))
-    for (const name of patternNames(d.getNameNode())) declared.add(name);
-  for (const p of file.getDescendantsOfKind(SyntaxKind.Parameter))
-    for (const name of patternNames(p.getNameNode())) declared.add(name);
-  for (const kind of [
-    SyntaxKind.FunctionDeclaration,
-    SyntaxKind.FunctionExpression,
-    SyntaxKind.ClassDeclaration,
-    SyntaxKind.ClassExpression,
-  ]) {
-    for (const d of file.getDescendantsOfKind(kind)) {
-      const name = (d as import("ts-morph").FunctionDeclaration).getName();
-      if (name !== undefined) declared.add(name);
-    }
-  }
+  // A name is free where it is written when no scope around the write, up to `file`, declares it: a
+  // function or class expression's own name, or a parameter, binds only inside it (#1330).
   const written: string[] = [];
   for (const t of assignmentTargets(file)) {
-    for (const name of assignedNames(t))
-      if (!declared.has(name) && !written.includes(name)) written.push(name);
+    const names = assignedNames(t);
+    const ids = Node.isIdentifier(t)
+      ? [t]
+      : t
+          .getDescendantsOfKind(SyntaxKind.Identifier)
+          .filter((id) => names.includes(id.getText()) && !isPropertyKey(id));
+    for (const id of ids) {
+      const name = id.getText();
+      if (!declaredWithin(id, file) && !written.includes(name)) written.push(name);
+    }
   }
   return written;
 }
@@ -5213,6 +5242,19 @@ function iterateGuard(loop: Node): Node | undefined {
   return c;
 }
 
+/**
+ * The function a construct rewritten as source is re-parsed in (a switch's pass, a tested loop): a
+ * generator, or async, as the construct's own `yield` and `await` need, so they parse as written.
+ */
+function syntheticFunction(node: Node): string {
+  const own = (n: Node): boolean => !isInsideNestedFunction(n, node);
+  const yields = node.getDescendantsOfKind(SyntaxKind.YieldExpression).some(own);
+  const awaits =
+    node.getDescendantsOfKind(SyntaxKind.AwaitExpression).some(own) ||
+    node.getDescendantsOfKind(SyntaxKind.ForOfStatement).some((f) => own(f) && f.isAwaited());
+  return `${awaits ? "async " : ""}function${yields ? "*" : ""}`;
+}
+
 /** Whether a constructor's `super(..)` call is in a try statement's block. */
 function superInTry(ctor: Node): boolean {
   return ctor
@@ -5478,7 +5520,9 @@ const TRY_PRIMITIVE = "__yakccTry";
 const ASYNC_TRY_PRIMITIVE = "__yakccTryAsync";
 const GEN_TRY_PRIMITIVE = "__yakccTryGen";
 const ASYNC_GEN_TRY_PRIMITIVE = "__yakccTryAsyncGen";
+const OBJECT_REST_PRIMITIVE = "__yakccObjectRest";
 const RUNTIME_PRIMITIVES = new Set([
+  OBJECT_REST_PRIMITIVE,
   TRY_PRIMITIVE,
   ASYNC_TRY_PRIMITIVE,
   GEN_TRY_PRIMITIVE,
