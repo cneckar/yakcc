@@ -40,3 +40,17 @@ the C/C++ front end to shave (#1367):
 - `deps/histogram/` (HdrHistogram_c, public domain/BSD-2, `deps/histogram/LICENSE.txt`):
   `perf_hooks.createHistogram`'s histogram. The fixture `src/__fixtures__/c/node-histogram.c` runs it
   as Node's `src/histogram-inl.h` does.
+- `deps/openssl/` (OpenSSL 3.5.9, Apache-2.0, `deps/openssl/openssl/LICENSE.txt`), in Node's
+  layout: of `openssl/`, the files (sources, headers and `.inc` fragments) that Node's
+  linux-x86_64 `no-asm` build compiles, by the arch's `openssl.gypi` and clang's dependencies;
+  Node's stub headers and `config/` wrappers; and that arch's generated files
+  (`config/archs/linux-x86_64/no-asm/`), here regenerated from the 3.5.9 release with Node's
+  `Configure` options and equal to Node's. The fixture `src/__fixtures__/c/node-openssl.c` calls
+  the EVP functions behind Node's `crypto` module.
+- `deps/uv/` (libuv 1.51.0, MIT, `deps/uv/LICENSE` and `LICENSE-extra`): Node's event loop library,
+  `include/` and `src/`. The fixture `src/__fixtures__/c/node-uv.c` runs its computing parts: the
+  error names and messages, IDNA, and address text.
+- `deps/simdjson/` (simdjson 4.5.0, Apache-2.0, `deps/simdjson/LICENSE`): the parser Node's module
+  loader reads `package.json` with. The fixture `src/__fixtures__/c/node-simdjson.cpp` reads a
+  document as `src/node_modules.cc` does, through the on-demand API; the test builds its portable
+  kernel.
