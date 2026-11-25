@@ -909,6 +909,34 @@ function lowerFunction(
         changed = true;
       }
     }
+    // A loop's carry: its initial value or an iteration's next one, so in a range when both are
+    // (an integer literal is in the ranges it fits).
+    const litRange = (v: ValueId): "i32" | "u32" | "both" | undefined => {
+      const r = numRange.get(resolve(v));
+      if (r !== undefined) return r;
+      const p = producer.get(resolve(v));
+      if (p?.kind !== "literal-source") return undefined;
+      const t = (p.label ?? "").replace(/_/g, "");
+      if (!/^(0|[1-9][0-9]*)$/.test(t)) return undefined;
+      const x = Number(t);
+      return x < 2 ** 31 ? "both" : x < 2 ** 32 ? "u32" : undefined;
+    };
+    for (const n of g.nodes) {
+      const rec = n.loop;
+      if (n.kind !== "loop" || rec === undefined) continue;
+      rec.carry.forEach((c, j) => {
+        const v = resolve(c);
+        if (numRange.has(v)) return;
+        const a = litRange(n.inputs[j] as ValueId);
+        const b = litRange(rec.next[j] as ValueId);
+        if (a === undefined || b === undefined) return;
+        const r =
+          a === "both" ? (b === "both" ? "i32" : b) : b === "both" || a === b ? a : undefined;
+        if (r === undefined) return;
+        numRange.set(v, r);
+        changed = true;
+      });
+    }
   }
   // --- Constant tables (#1369): an array literal of number literals whose every use reads an element
   // (never written, returned, passed or captured) is one constant array, read in place.
@@ -1569,6 +1597,37 @@ function lowerFunction(
     const i = fresh();
     emit(`${i} = trunc i64 ${w} to i32`);
     return i;
+  };
+  /** Math.imul (raise-c's __ykI32Mul): the low 32 bits of the product of two numbers' ToInt32s,
+   * inline; anything else the runtime's leaf (#1369). */
+  const imul = (pa: string, pb: string, va?: ValueId, vb?: ValueId): string => {
+    const ua = va === undefined || !boundedInt64(va);
+    const ub = vb === undefined || !boundedInt64(vb);
+    return numberFast(
+      [pa, pb],
+      ([x, y]) => {
+        const r = fresh();
+        emit(`${r} = mul i32 ${toInt32(x as string)}, ${toInt32(y as string)}`);
+        const d = fresh();
+        emit(`${d} = sitofp i32 ${r} to double`);
+        const bits = fresh();
+        emit(`${bits} = bitcast double ${d} to i64`);
+        return bits;
+      },
+      () => call("yk_leaf_i32mul", `i64 ${pa}, i64 ${pb}`),
+      ua && ub
+        ? ([x, y]) => {
+            const both = fresh();
+            emit(`${both} = and i1 ${smallDouble(x as string)}, ${smallDouble(y as string)}`);
+            return both;
+          }
+        : ua
+          ? ([x]) => smallDouble(x as string)
+          : ub
+            ? ([, y]) => smallDouble(y as string)
+            : undefined,
+      va !== undefined && vb !== undefined && allNumbers([va, vb]),
+    );
   };
   /**
    * A load or store of the memory leaves, inline when its address (and a store's value) is a number,
@@ -3351,6 +3410,10 @@ function lowerFunction(
         }
       }
       const args = ins.slice(1).map(operand);
+      if (leafName === "__ykI32Mul") {
+        set(out, imul(args[0] as string, args[1] as string, ins[1] as ValueId, ins[2] as ValueId));
+        return;
+      }
       const mem = MEM_INLINE[leafName];
       const local = mem === undefined ? undefined : localAccess(ins[1] as ValueId, mem.size);
       if (mem !== undefined && local !== undefined) {
@@ -3493,6 +3556,18 @@ function lowerFunction(
             call(
               "yk_math_minmax",
               `i32 ${callee.name === "max" ? 1 : 0}, i64 ${args.length}, ptr ${list(args)}`,
+            ),
+          );
+          return;
+        }
+        if (callee.name === "imul") {
+          set(
+            out,
+            imul(
+              args[0] ?? UNDEFINED,
+              args[1] ?? UNDEFINED,
+              ins[1] as ValueId | undefined,
+              ins[2] as ValueId | undefined,
             ),
           );
           return;
