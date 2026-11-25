@@ -50,22 +50,41 @@ export interface ClangNode {
  * headers'.
  */
 /**
- * A large unit's AST (an amalgamation: SQLite's is 725 MB of JSON), dumped once to a file: its
- * top-level declarations indexed by kind and name with their byte ranges, each parsed when it is
- * asked for. A filtered dump per name would parse the whole unit each time.
+ * A unit's AST, dumped once to a file (SQLite's is 725 MB of JSON) and indexed: each declaration,
+ * at any depth, by id (one dump, so a reference's id is its declaration's), and the top-level ones
+ * in order and by name. A declaration is parsed when it is asked for.
  */
 interface UnitIndex {
   readonly path: string;
-  readonly decls: readonly {
-    readonly kind: string;
-    readonly name: string;
-    readonly start: number;
-    readonly end: number;
-  }[];
-  readonly byName: ReadonlyMap<string, readonly number[]>;
+  /** The top-level declarations, in order. */
+  readonly decls: readonly IndexedDecl[];
+  readonly byName: ReadonlyMap<string, readonly IndexedDecl[]>;
+  readonly byId: ReadonlyMap<string, IndexedDecl>;
+  readonly byMangled: ReadonlyMap<string, IndexedDecl>;
+  /** A redeclaration's later declaration (`previousDecl` read backward): toward the definition. */
+  readonly next: ReadonlyMap<string, string>;
+  readonly previous: ReadonlyMap<string, string>;
+}
+interface IndexedDecl {
+  readonly id: string;
+  readonly kind: string;
+  readonly name: string;
+  readonly start: number;
+  readonly end: number;
+  /** A function with a body (a definition). */
+  readonly body: boolean;
+  readonly mangled?: string | undefined;
 }
 
-/** Dump a unit's AST to a file and index its top-level declarations. */
+const FUNCTION_KINDS = new Set([
+  "FunctionDecl",
+  "CXXMethodDecl",
+  "CXXConstructorDecl",
+  "CXXDestructorDecl",
+  "CXXConversionDecl",
+]);
+
+/** Dump a unit's AST to a file and index its declarations. */
 function indexUnit(clang: string, args: readonly string[], file: string): UnitIndex {
   const dir = mkdtempSync(join(tmpdir(), "yakcc-ast-"));
   const path = join(dir, "ast.json");
@@ -78,46 +97,112 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
   } finally {
     closeSync(out);
   }
-  const decls: { kind: string; name: string; start: number; end: number }[] = [];
-  const byName = new Map<string, number[]>();
+  const decls: IndexedDecl[] = [];
+  const byName = new Map<string, IndexedDecl[]>();
+  const byId = new Map<string, IndexedDecl>();
+  const byMangled = new Map<string, IndexedDecl>();
+  const next = new Map<string, string>();
+  const previous = new Map<string, string>();
+  // The open containers: an object's start, its id, kind, name and previous declaration as they
+  // are read, whether a child of it is a body; an array is null.
+  interface Frame {
+    start: number;
+    key: string | undefined;
+    expectKey: boolean;
+    id?: string;
+    kind?: string;
+    name?: string;
+    previous?: string;
+    mangled?: string;
+    body: boolean;
+  }
+  const stack: (Frame | null)[] = [];
+  let functions = 0; // open function declarations: their locals are not indexed
   const fd = openSync(path, "r");
   try {
     const size = statSync(path).size;
     const chunk = Buffer.alloc(1 << 24);
-    let depth = 0;
     let inString = false;
     let escaped = false;
-    let start = -1;
-    let head: number[] = [];
+    let text: number[] | undefined; // a string's bytes, when it may be a key or a wanted value
     for (let at = 0; at < size; ) {
       const n = readSync(fd, chunk, 0, chunk.length, at);
       for (let i = 0; i < n; i++) {
         const c = chunk[i] as number;
-        if (start >= 0 && head.length < 2048) head.push(c);
         if (inString) {
           if (escaped) escaped = false;
           else if (c === 0x5c) escaped = true;
-          else if (c === 0x22) inString = false;
+          else if (c === 0x22) {
+            inString = false;
+            const top = stack[stack.length - 1];
+            if (top !== null && top !== undefined && text !== undefined) {
+              const value = Buffer.from(text).toString("utf8");
+              if (top.expectKey) top.key = value;
+              else if (top.key === "id" && top.id === undefined) top.id = value;
+              else if (top.key === "kind" && top.kind === undefined) {
+                top.kind = value;
+                if (FUNCTION_KINDS.has(value)) functions++;
+              } else if (top.key === "name" && top.name === undefined) top.name = value;
+              else if (top.key === "previousDecl" && top.previous === undefined)
+                top.previous = value;
+              else if (top.key === "mangledName" && top.mangled === undefined) top.mangled = value;
+            }
+            text = undefined;
+            continue;
+          }
+          if (text !== undefined && text.length < 4096) text.push(c);
           continue;
         }
-        if (c === 0x22) inString = true;
-        else if (c === 0x7b || c === 0x5b) {
-          // A declaration: an object in the translation unit's `inner` array (depth 2).
-          if (depth === 2 && c === 0x7b) {
-            start = at + i;
-            head = [c];
+        if (c === 0x22) {
+          inString = true;
+          const top = stack[stack.length - 1];
+          text =
+            top !== null &&
+            top !== undefined &&
+            (top.expectKey ||
+              ["id", "kind", "name", "previousDecl", "mangledName"].includes(top.key ?? ""))
+              ? []
+              : undefined;
+        } else if (c === 0x3a) {
+          const top = stack[stack.length - 1];
+          if (top !== null && top !== undefined) top.expectKey = false;
+        } else if (c === 0x2c) {
+          const top = stack[stack.length - 1];
+          if (top !== null && top !== undefined) {
+            top.expectKey = true;
+            top.key = undefined;
           }
-          depth++;
-        } else if (c === 0x7d || c === 0x5d) {
-          depth--;
-          if (depth === 2 && start >= 0) {
-            const text = Buffer.from(head).toString("latin1");
-            const kind = /"kind":\s*"(\w+)"/.exec(text)?.[1] ?? "";
-            const name = /"name":\s*"([^"]*)"/.exec(text)?.[1] ?? "";
-            byName.set(name, [...(byName.get(name) ?? []), decls.length]);
-            decls.push({ kind, name, start, end: at + i + 1 });
-            start = -1;
+        } else if (c === 0x7b)
+          stack.push({ start: at + i, key: undefined, expectKey: true, body: false });
+        else if (c === 0x5b) stack.push(null);
+        else if (c === 0x7d || c === 0x5d) {
+          const f = stack.pop();
+          if (f === null || f === undefined) continue;
+          if (FUNCTION_KINDS.has(f.kind ?? "")) functions--;
+          // The body of the function whose `inner` this object is in.
+          const parent = stack[stack.length - 2];
+          if (f.kind === "CompoundStmt" && parent !== null && parent !== undefined)
+            parent.body = true;
+          if (f.id === undefined || f.kind === undefined || !/Decl$/.test(f.kind)) continue;
+          const top = stack.length === 2;
+          if (!top && functions > 0) continue; // a local
+          const d: IndexedDecl = {
+            id: f.id,
+            kind: f.kind,
+            name: f.name ?? "",
+            start: f.start,
+            end: at + i + 1,
+            body: f.body,
+            mangled: f.mangled,
+          };
+          byId.set(d.id, d);
+          if (d.mangled !== undefined && d.body) byMangled.set(d.mangled, d);
+          if (f.previous !== undefined) {
+            next.set(f.previous, d.id);
+            previous.set(d.id, f.previous);
           }
+          if (top) decls.push(d);
+          byName.set(d.name, [...(byName.get(d.name) ?? []), d]);
         }
       }
       at += n;
@@ -126,12 +211,11 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
     closeSync(fd);
   }
   process.once("exit", () => rmSync(dir, { recursive: true, force: true }));
-  return { path, decls, byName };
+  return { path, decls, byName, byId, byMangled, next, previous };
 }
 
 /** One indexed declaration, parsed. */
-function readDecl(ix: UnitIndex, i: number): ClangNode {
-  const d = ix.decls[i] as UnitIndex["decls"][number];
+function readDecl(ix: UnitIndex, d: IndexedDecl): ClangNode {
   const fd = openSync(ix.path, "r");
   try {
     const b = Buffer.alloc(d.end - d.start);
@@ -140,6 +224,20 @@ function readDecl(ix: UnitIndex, i: number): ClangNode {
   } finally {
     closeSync(fd);
   }
+}
+
+/** A declaration's definition (its body), through its redeclarations, by id. */
+function definitionIn(ix: UnitIndex, id: string): IndexedDecl | undefined {
+  // Back to the first declaration, then forward through every later one.
+  let first = id;
+  for (let guard = 0; ix.previous.has(first) && guard < 1000; guard++)
+    first = ix.previous.get(first) as string;
+  for (let at: string | undefined = first, guard = 0; at !== undefined && guard < 1000; guard++) {
+    const d = ix.byId.get(at);
+    if (d?.body) return d;
+    at = ix.next.get(at);
+  }
+  return undefined;
 }
 
 /** clang's output for `args` (an AST dump). */
@@ -176,13 +274,7 @@ export function clangFunctions(
       const [node, next] = readJsonValue(json, i);
       i = next;
       const n = node as ClangNode;
-      // The filter is a substring of a qualified name: the function it names.
-      if (
-        n.kind === "FunctionDecl" &&
-        n.name !== undefined &&
-        body(n) !== undefined &&
-        (n.name === filter || filter.includes("::"))
-      )
+      if (n.kind === "FunctionDecl" && n.name !== undefined && body(n) !== undefined)
         out.set(n.name, n);
     }
   }
@@ -670,6 +762,8 @@ export interface Callee {
    * instance each call calls.
    */
   readonly at?: { readonly caller: string; readonly index: number } | undefined;
+  /** The declaration's id in the unit's dump (an indexed unit's: one dump, so it is exact). */
+  readonly id?: string | undefined;
 }
 
 /**
@@ -1410,6 +1504,7 @@ function raiseBody(
             name: d.name ?? "",
             kind: d.kind,
             type: normType(d.type?.qualType ?? ""),
+            id: d.id,
           });
           if (key !== undefined) return `__ykFnAddr(${key})`;
           externals.add(d.name ?? "");
@@ -1646,6 +1741,7 @@ function raiseBody(
           kind: d.kind,
           type: normType(d.type?.qualType ?? ""),
           at: index === undefined ? undefined : { caller: symbolOf(fn), index },
+          id: d.id,
         });
         const target = key ?? ident(name);
         if (key === undefined) externals.add(name);
@@ -2554,16 +2650,38 @@ export function shaveCUnit(
   /** Globals to define as statics even if no function here uses them (another unit's state). */
   defineStatics: readonly string[] = [],
 ): ShavedUnit {
+  // A large unit (an amalgamation), and any C++ one, is dumped once and indexed by declaration id;
+  // a small C one, filtered per name.
+  const large =
+    /\+\+$/.test(clang) ||
+    statSync(file).size > 2_000_000 ||
+    execFileSync(clang, [...args, "-E", file], {
+      encoding: "utf8",
+      maxBuffer: 1 << 30,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).length > 3_000_000;
+  const indexed = large ? indexUnit(clang, args, file) : undefined;
+  // The roots, as the filters name them; in an indexed unit, the index's own nodes (its ids).
   const roots = clangFunctions(file, filters, args, clang);
+  if (indexed !== undefined)
+    for (const [name, fn] of roots) {
+      const m = (fn as { mangledName?: string }).mangledName;
+      const def =
+        (m !== undefined ? indexed.byMangled.get(m) : undefined) ??
+        (indexed.byName.get(name) ?? []).find((d) => d.body && FUNCTION_KINDS.has(d.kind));
+      if (def !== undefined) roots.set(name, readDecl(indexed, def));
+    }
   const dumps = new Map<string, ClangNode[]>();
   const found = new Map<string, ClangNode>(); // key -> declaration
   const keyOf = new Map<string, string>(); // name + type -> key
   const sig = (name: string, type: string): string => `${name} :: ${normType(type)}`;
   const keyBySymbol = new Map<string, string>(); // mangled name -> key (template instances)
+  const keyById = new Map<string, string>(); // declaration id (an indexed unit's) -> key
   for (const [name, fn] of roots) {
     found.set(name, fn);
     keyOf.set(sig(name, fn.type?.qualType ?? ""), name);
     keyBySymbol.set(symbolOf(fn), name);
+    if (fn.id !== undefined) keyById.set(fn.id, name);
   }
   // The unit's calls by caller, as code generation emits them (no inlining): each callee's symbol.
   let calls: Map<string, string[]> | undefined;
@@ -2590,15 +2708,6 @@ export function shaveCUnit(
     }
     return calls.get(caller) ?? [];
   };
-  // A large unit (an amalgamation) is dumped once and indexed; a small one, filtered per name.
-  const large =
-    statSync(file).size > 2_000_000 ||
-    execFileSync(clang, [...args, "-E", file], {
-      encoding: "utf8",
-      maxBuffer: 1 << 30,
-      stdio: ["ignore", "pipe", "ignore"],
-    }).length > 3_000_000;
-  const indexed = large ? indexUnit(clang, args, file) : undefined;
   /** The unit's top-level declarations in order, each parsed in turn (an indexed unit's). */
   const eachDecl = function* (kinds?: ReadonlySet<string>): Generator<ClangNode> {
     if (indexed === undefined) {
@@ -2606,13 +2715,13 @@ export function shaveCUnit(
       return;
     }
     for (let i = 0; i < indexed.decls.length; i++)
-      if (kinds === undefined || kinds.has((indexed.decls[i] as { kind: string }).kind))
-        yield readDecl(indexed, i);
+      if (kinds === undefined || kinds.has((indexed.decls[i] as IndexedDecl).kind))
+        yield readDecl(indexed, indexed.decls[i] as IndexedDecl);
   };
   const dumpOf = (name: string): ClangNode[] => {
     let nodes = dumps.get(name);
     if (nodes === undefined && indexed !== undefined) {
-      nodes = (indexed.byName.get(name) ?? []).map((i) => readDecl(indexed, i));
+      nodes = (indexed.byName.get(name) ?? []).map((d) => readDecl(indexed, d));
       dumps.set(name, nodes);
     }
     if (nodes === undefined) {
@@ -2672,6 +2781,31 @@ export function shaveCUnit(
     return { decl, ambiguous: true };
   };
   const resolve: CalleeResolver = (c) => {
+    // An indexed unit: the declaration the reference names, through its redeclarations.
+    if (indexed !== undefined && c.id !== undefined) {
+      const byId = keyById.get(c.id);
+      if (byId !== undefined) return byId;
+      const def = definitionIn(indexed, c.id);
+      if (def !== undefined) {
+        const already = keyById.get(def.id);
+        if (already !== undefined) {
+          keyById.set(c.id, already);
+          return already;
+        }
+        const decl = readDecl(indexed, def);
+        const base =
+          decl.kind === "FunctionDecl" && decl.storageClass === "static"
+            ? `${ident(c.name)}__${(unit.split("/").pop() ?? unit).replace(/\.\w+$/, "").replace(/\W/g, "_")}`
+            : ident(c.name);
+        let key = base;
+        for (let n = 2; found.has(key); n++) key = `${base}_${n}`;
+        found.set(key, decl);
+        keyById.set(c.id, key);
+        keyById.set(def.id, key);
+        keyBySymbol.set(symbolOf(decl), key);
+        return key;
+      }
+    }
     const known = keyOf.get(sig(c.name, c.type));
     const { decl, ambiguous } = lookup(c);
     if (!ambiguous && known !== undefined) return known;
@@ -2884,6 +3018,7 @@ export function shaveCUnit(
                 name: f.name ?? "",
                 kind: f.kind,
                 type: normType(f.type?.qualType ?? ""),
+                id: f.id,
               }) ??
               f.name ??
               "",
