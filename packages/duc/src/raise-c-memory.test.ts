@@ -50,6 +50,7 @@ const FIXTURE_FNS = [
   "yk_local_struct",
   "yk_string_sum",
   "yk_local_array",
+  "yk_static_table",
   "yk_ptr_diff",
   "yk_swap",
   "yk_char_array",
@@ -99,6 +100,12 @@ describe.skipIf(!hasClang)("C's memory: musl's string functions and qsort, and a
       "memcpy",
     ]);
     expect(units[5]?.atoms.get("qsort")?.externals).toEqual(["__qsort_r"]);
+  });
+
+  it("a static constant table is constant memory, laid out once, not a frame filled each call", () => {
+    const source = atoms.get("yk_static_table")?.source ?? "";
+    expect(source).toContain('__ykData("i32"');
+    expect(source).not.toContain("__ykAlloc");
   });
 
   it("clang's record layouts are read: sizes, alignments and field offsets", () => {
@@ -189,7 +196,7 @@ struct pt;
 int yk_cmp_int(const void *, const void *);
 int yk_cmp_bytes(const void *, const void *, void *);
 double yk_struct_walk(struct pt *, int);
-${["yk_local_struct", "yk_string_sum", "yk_local_array", "yk_swap", "yk_char_array"].map((n) => `int ${n}(int${n === "yk_swap" ? ", int" : ""});`).join("\n")}
+${["yk_local_struct", "yk_string_sum", "yk_local_array", "yk_static_table", "yk_swap", "yk_char_array"].map((n) => `int ${n}(int${n === "yk_swap" ? ", int" : ""});`).join("\n")}
 long yk_ptr_diff(int);
 int yk_goto(int, int);
 int yk_switch(int, int);
@@ -232,6 +239,7 @@ int main(void) {
       if (!strcmp(op, "yk_local_struct")) r = yk_local_struct(a);
       if (!strcmp(op, "yk_string_sum")) r = yk_string_sum(a);
       if (!strcmp(op, "yk_local_array")) r = yk_local_array(a);
+      if (!strcmp(op, "yk_static_table")) r = yk_static_table(a);
       if (!strcmp(op, "yk_ptr_diff")) r = yk_ptr_diff(a);
       if (!strcmp(op, "yk_swap")) r = yk_swap(a, b);
       if (!strcmp(op, "yk_char_array")) r = yk_char_array(a);
@@ -363,6 +371,7 @@ int main(void) {
       "yk_local_struct",
       "yk_string_sum",
       "yk_local_array",
+      "yk_static_table",
       "yk_ptr_diff",
       "yk_swap",
       "yk_char_array",

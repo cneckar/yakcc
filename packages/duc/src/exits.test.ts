@@ -341,7 +341,7 @@ describe("switch (#1276)", () => {
     expect([run("a"), run("b"), run("z")]).toEqual([2, 1, 0]);
   });
 
-  it("a switch with a continue inside (and so its loop), or clauses sharing a name, stays opaque", () => {
+  it("a switch with a continue of its loop lifts (#1330); clauses sharing a name stay opaque", () => {
     const opaque = (body: string): boolean =>
       liftAtom(src(body)).nodes.some((n) =>
         /^(SwitchStatement|ForOfStatement)#/.test(n.label ?? ""),
@@ -350,7 +350,7 @@ describe("switch (#1276)", () => {
       opaque(
         "let r = 0; for (const c of [k]) { switch (c) { case 'a': if (x) continue; r = 1; case 'b': r = r + 2; } } return r;",
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       opaque("switch (k) { case 'a': const y = 1; case 'b': return y; default: return x; }"),
     ).toBe(true);
