@@ -370,6 +370,11 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "integers on their int64s: shifts by 32 and more, signed and unsigned, wrapping sums, sums past 2^32 into bitwise, compares (#1369)",
+    "export function f(a, b) { let h = 0; let u = 4294967295; let s = -2147483648; const out = []; for (let i = 0; i < 40; i = (i + 1) | 0) { h = (h + (i << i)) | 0; u = (u + i) >>> 0; s = (s - i) | 0; const big = (u >>> 0) + (u >>> 0); out.push([h, u, s, big | 0, big >>> 3, s >> (i + 1), s >>> i, (u ^ s) | 0, u < s, u >= (s >>> 0), (i % 7) === 3, h !== s]); } return [out.slice(28), typeof a === 'number' ? ((a | 0) + (b | 0)) | 0 : 0]; }",
+    2,
+  ],
+  [
     "Math.random, with arguments it ignores (undici's random(max)): a number in [0, 1) (#1331)",
     "export function f(a, b) { const r = Math.random(a); const q = Math.random(); return [typeof r, r >= 0 && r < 1, q >= 0 && q < 1, r !== q || r === q]; }",
     2,

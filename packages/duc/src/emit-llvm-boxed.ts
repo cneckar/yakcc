@@ -753,6 +753,37 @@ export function resultRanges(
   return out;
 }
 
+/** The operations on two proven integers lowered on their int64s (#1369). */
+const INT_DOMAIN = new Set([
+  "+",
+  "-",
+  "%",
+  "|",
+  "&",
+  "^",
+  "<<",
+  ">>",
+  ">>>",
+  "<",
+  ">",
+  "<=",
+  ">=",
+  "===",
+  "!==",
+  "==",
+  "!=",
+]);
+const INT_COMPARE: Readonly<Record<string, string>> = {
+  "<": "slt",
+  ">": "sgt",
+  "<=": "sle",
+  ">=": "sge",
+  "===": "eq",
+  "!==": "ne",
+  "==": "eq",
+  "!=": "ne",
+};
+
 /** A number clone this small (its graph's nodes) is a hint to inline into its callers (#1369). */
 const SMALL_CLONE = 200;
 
@@ -1632,6 +1663,59 @@ function lowerFunction(
     return r;
   };
   const set = (v: ValueId, r: string): void => emit(`store i64 ${r}, ptr ${slotOf(v)}`);
+  // Integers' own slots (#1369, DEC-DUC-TYPED-NATIVE-001): a value proven in an integer range keeps
+  // its int64 beside its box, written where it is made (integer operations, loop carries), so a
+  // chain of integer operations is not converted to doubles and back between them.
+  const intSlots = new Map<ValueId, string>();
+  const setInt = (v0: ValueId, r: string): void => {
+    const v = resolve(v0);
+    let s0 = intSlots.get(v);
+    if (s0 === undefined) {
+      s0 = `%i${intSlots.size}`;
+      intSlots.set(v, s0);
+    }
+    emit(`store i64 ${r}, ptr ${s0}`);
+  };
+  /** An integer literal in [-2^31, 2^32) (not -0), or undefined. */
+  const intLiteral = (v: ValueId): number | undefined => {
+    const x = literalNumber(v);
+    return x !== undefined &&
+      Number.isInteger(x) &&
+      x >= -(2 ** 31) &&
+      x < 2 ** 32 &&
+      !Object.is(x, -0)
+      ? x
+      : undefined;
+  };
+  /** Whether a value is proven an integer (a number, not -0): in a range, a literal, or one an
+   * integer operation made (exact, below 2^53). */
+  const intKnown = (v: ValueId): boolean =>
+    numRange.has(resolve(v)) || intLiteral(v) !== undefined || intSlots.has(resolve(v));
+  /** A proven integer's int64: its own slot's, a literal's, else its box converted. */
+  const intOperand = (v0: ValueId): string => {
+    const v = resolve(v0);
+    const lit = intLiteral(v);
+    if (lit !== undefined) return String(lit);
+    const own = intSlots.get(v);
+    if (own !== undefined) {
+      const r = fresh();
+      emit(`${r} = load i64, ptr ${own}`);
+      return r;
+    }
+    const d = fresh();
+    emit(`${d} = bitcast i64 ${operand(v)} to double`);
+    const r = fresh();
+    emit(`${r} = fptosi double ${d} to i64`);
+    return r;
+  };
+  /** An integer's box: its double's bits (never NaN). */
+  const intBox = (r: string): string => {
+    const d = fresh();
+    emit(`${d} = sitofp i64 ${r} to double`);
+    const b = fresh();
+    emit(`${b} = bitcast double ${d} to i64`);
+    return b;
+  };
   /** A typed BigInt's i128: a literal's constant, or the value's own slot. */
   const bigOperand = (v0: ValueId): string => {
     const v = resolve(v0);
@@ -2115,6 +2199,8 @@ function lowerFunction(
         lazyFrames.set(v, { size, align });
     }
   }
+  /** The int64 of the integer load memoryAccess made last (#1369), or undefined. */
+  let loadInt: string | undefined;
   const memoryAccess = (
     mem: { size: number; ty: string; kind: "u" | "f64" | "f32"; store: boolean },
     args: readonly string[],
@@ -2134,9 +2220,13 @@ function lowerFunction(
     bounded = false,
     /** The address is proven a non-negative integer below 2^53: no range or integer check. */
     natural = false,
+    /** Such an address's int64, when the lowering has it. */
+    addrInt?: string,
   ): string => {
     for (const d of MEM_CACHE_DECLS) m.intrinsics.add(d);
     m.intrinsics.add("declare double @llvm.fabs.f64(double)");
+    let intFast: string | undefined;
+    loadInt = undefined;
     const range = freshLabel("mrange");
     const conv = freshLabel("mconv");
     const fast = freshLabel("mfast");
@@ -2218,8 +2308,11 @@ function lowerFunction(
       }
       emit(`br i1 ${ok}, label %${conv}, label %${slowLabel}`);
       block(conv);
-      const i = fresh();
-      emit(`${i} = fptosi double ${d} to i64`);
+      let i = addrInt as string;
+      if (!natural || addrInt === undefined) {
+        i = fresh();
+        emit(`${i} = fptosi double ${d} to i64`);
+      }
       let integral = "true";
       if (!natural) {
         const back = fresh();
@@ -2338,6 +2431,7 @@ function lowerFunction(
       if (mem.kind === "u") {
         const z = fresh();
         emit(`${z} = zext ${mem.ty} ${v} to i64`);
+        intFast = z;
         const f = fresh();
         emit(`${f} = uitofp i64 ${z} to double`);
         r1 = fresh();
@@ -2366,11 +2460,24 @@ function lowerFunction(
       emit(`${q} = load ${ty}, ptr ${from}`);
       emit(`store ${ty} ${q}, ptr ${(siteField as (k: number) => string)(k)}`);
     }
+    // An integer load's int64 from the runtime's number too (a load gives one or traps).
+    let intSlow: string | undefined;
+    if (intFast !== undefined) {
+      const d = fresh();
+      emit(`${d} = bitcast i64 ${r2} to double`);
+      intSlow = fresh();
+      emit(`${intSlow} = fptoui double ${d} to i64`);
+    }
     const slowEnd = currentLabel();
     emit(`br label %${join}`);
     block(join);
     const r = fresh();
     emit(`${r} = phi i64 [ ${r1}, %${fastEnd} ], [ ${r2}, %${slowEnd} ]`);
+    if (intFast !== undefined) {
+      const ri = fresh();
+      emit(`${ri} = phi i64 [ ${intFast}, %${fastEnd} ], [ ${intSlow}, %${slowEnd} ]`);
+      loadInt = ri;
+    }
     return r;
   };
   // The runtime's layouts the lowering reads itself (#1369): yk.c asserts its structs match these.
@@ -3678,8 +3785,13 @@ function lowerFunction(
             !mem.store && rawNumbers.has(resolve(out as ValueId)),
             mem.store && mem.kind === "u" && boundedInt64(ins[2] as ValueId),
             naturalInt(ins[1] as ValueId),
+            naturalInt(ins[1] as ValueId) && intKnown(ins[1] as ValueId)
+              ? intOperand(ins[1] as ValueId)
+              : undefined,
           ),
         );
+        if (loadInt !== undefined && numRange.has(resolve(out as ValueId)))
+          setInt(out as ValueId, loadInt);
         return;
       }
       set(out, call(fn, args.map((a) => `i64 ${a}`).join(", ")));
@@ -4060,6 +4172,66 @@ function lowerFunction(
         const c = fresh();
         emit(`${c} = icmp ${lbl === "===" ? "eq" : "ne"} i64 ${operand(other as ValueId)}, ${k}`);
         set(out, boolBox(c));
+        return;
+      }
+    }
+    if (
+      ins.length === 2 &&
+      intKnown(ins[0] as ValueId) &&
+      intKnown(ins[1] as ValueId) &&
+      INT_DOMAIN.has(lbl)
+    ) {
+      const [a0, b0] = ins as [ValueId, ValueId];
+      const nonNeg = (v: ValueId): boolean =>
+        numRange.get(resolve(v)) === "u32" || (intLiteral(v) ?? -1) >= 0;
+      const mag = magnitude(out);
+      const ok =
+        lbl === "+" || lbl === "-"
+          ? mag !== undefined && mag < 2 ** 53
+          : lbl === "%"
+            ? nonNeg(a0) && (intLiteral(b0) ?? 0) > 0
+            : true;
+      if (ok) {
+        // Two integers: their int64s (an int32's operations on their low 32 bits), the result's
+        // int64 kept and its box made from it.
+        const x = intOperand(a0);
+        const y = intOperand(b0);
+        const cmp = INT_COMPARE[lbl];
+        if (cmp !== undefined) {
+          const c = fresh();
+          emit(`${c} = icmp ${cmp} i64 ${x}, ${y}`);
+          set(out, boolBox(c));
+          return;
+        }
+        let r: string;
+        if (lbl === "+" || lbl === "-" || lbl === "%") {
+          r = fresh();
+          emit(`${r} = ${lbl === "+" ? "add" : lbl === "-" ? "sub" : "urem"} i64 ${x}, ${y}`);
+        } else {
+          const x32 = fresh();
+          emit(`${x32} = trunc i64 ${x} to i32`);
+          const y32 = fresh();
+          emit(`${y32} = trunc i64 ${y} to i32`);
+          let count = y32;
+          if (lbl === "<<" || lbl === ">>" || lbl === ">>>") {
+            count = fresh();
+            emit(`${count} = and i32 ${y32}, 31`);
+          }
+          const op = {
+            "|": "or",
+            "&": "and",
+            "^": "xor",
+            "<<": "shl",
+            ">>": "ashr",
+            ">>>": "lshr",
+          }[lbl] as string;
+          const r32 = fresh();
+          emit(`${r32} = ${op} i32 ${x32}, ${count}`);
+          r = fresh();
+          emit(`${r} = ${lbl === ">>>" ? "zext" : "sext"} i32 ${r32} to i64`);
+        }
+        setInt(out, r);
+        set(out, intBox(r));
         return;
       }
     }
@@ -4482,6 +4654,8 @@ function lowerFunction(
     const builders = builderCarries.get(loop);
     rec.carry.forEach((c, i) => {
       const init = operand(loop.inputs[i] as ValueId);
+      if (numRange.has(resolve(c)) && intKnown(loop.inputs[i] as ValueId))
+        setInt(c, intOperand(loop.inputs[i] as ValueId));
       if (builders?.has(i) !== true) set(c, init);
       else {
         m.intrinsics.add("declare i64 @yk_sb_new(i64)");
@@ -4553,7 +4727,16 @@ function lowerFunction(
     block(inner);
     emitItems(items.filter((it) => !forCond.has(it)));
     const next = rec.next.map((nv) => operand(nv));
+    // A carry in an integer range: its next value's int64 too (all read before any is written).
+    const intNext = rec.carry.map((c, i) =>
+      numRange.has(resolve(c)) && intKnown(rec.next[i] as ValueId)
+        ? intOperand(rec.next[i] as ValueId)
+        : undefined,
+    );
     next.forEach((r, i) => set(rec.carry[i] as ValueId, r));
+    intNext.forEach((r, i) => {
+      if (r !== undefined) setInt(rec.carry[i] as ValueId, r);
+    });
     emit(`br label %${head}`);
     block(exit);
     // Left early (a break, or a return carried out of the loop), a generator is closed: its
@@ -5208,6 +5391,7 @@ function lowerFunction(
         "entry:",
         ...[...slots.values()].map((s) => `  ${s} = alloca i64`),
         ...[...bigSlots.values()].map((s) => `  ${s} = alloca i128`),
+        ...[...intSlots.values()].map((s) => `  ${s} = alloca i64`),
         ...entryAllocas,
         ...body,
         "}",
