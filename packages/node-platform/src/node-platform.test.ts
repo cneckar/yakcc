@@ -4,7 +4,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BINDINGS, memberLayer } from "./bindings.js";
-import { NODE_LIB, nodeModuleIds, shaveNodeModule } from "./shave-node.js";
+import {
+  NODE_LIB,
+  WRAPPER_PARAMS,
+  boundNames,
+  nodeModuleIds,
+  shaveNodeModule,
+} from "./shave-node.js";
 
 const manifest = JSON.parse(readFileSync(join(NODE_LIB, "..", "manifest.json"), "utf8")) as {
   node: string;
@@ -39,9 +45,30 @@ describe("internalBinding, classified", () => {
   });
 });
 
+describe("the names a module runs with bound", () => {
+  it("V8's profiling tools run in the context v8_prof_processor makes and v8_prof_polyfill fills", () => {
+    const tools = boundNames("internal/deps/v8/tools/profile");
+    for (const name of ["print", "printErr", "read", "write", "quit", "os", "arguments"])
+      expect(tools.has(name), name).toBe(true);
+    expect(boundNames("path")).toBe(WRAPPER_PARAMS);
+  });
+});
+
 describe("milestone modules shave through the real pipeline, every atom passing the gate", () => {
-  // #1331's acceptance: path, util, url, events, buffer, string_decoder.
-  for (const id of ["path", "util", "url", "events", "buffer", "string_decoder"])
+  // #1331's acceptance: path, util, url, events, buffer, string_decoder; and modules that found a
+  // gap in the measurement of the whole library: `globalThis` destructured from primordials
+  // (internal/test/binding), and a function hoisted over its own block's const in two blocks
+  // (stream).
+  for (const id of [
+    "path",
+    "util",
+    "url",
+    "events",
+    "buffer",
+    "string_decoder",
+    "internal/test/binding",
+    "stream",
+  ])
     it(id, async () => {
       const r = await shaveNodeModule(id);
       expect(r.atoms, id).toBeGreaterThan(0);

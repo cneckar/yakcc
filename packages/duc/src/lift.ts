@@ -760,6 +760,8 @@ class Lifter {
       }
     }
     const hoistedNames = new Set<string>();
+    // The names made cells ahead of their declarations in this scope.
+    const cellsHere = new Set<string>();
     // Names declared in the list by `var`: hoisted as undefined, as JavaScript hoists them. A `let`,
     // `const` or class read before its declaration throws, so a function reading one is not hoisted
     // over it: it is bound where it stands, and the name stays reported.
@@ -796,7 +798,7 @@ class Lifter {
           (read) => read !== name && declared.has(read) && !hoistedNames.has(read),
         );
         if (reads.some((read) => !declaredValues.has(read))) continue;
-        for (const read of reads) this.hoistCell(read);
+        for (const read of reads) this.hoistCell(read, cellsHere);
         this.bindFunctionDeclaration(stmt, name);
         this.hoisted.add(stmt.compilerNode);
         hoistedNames.add(name);
@@ -831,8 +833,8 @@ class Lifter {
     }
     if (blockers.size > 0) {
       for (const [name, reads] of blockers) {
-        this.hoistCell(name);
-        for (const read of reads) if (!blockers.has(read)) this.hoistCell(read);
+        this.hoistCell(name, cellsHere);
+        for (const read of reads) if (!blockers.has(read)) this.hoistCell(read, cellsHere);
       }
       for (const [name] of blockers) {
         const stmt = waiting.get(name) as import("ts-morph").FunctionDeclaration;
@@ -870,7 +872,7 @@ class Lifter {
             functionsWithin(stmt).some((fn) =>
               assignmentTargets(fn).some((t) => Node.isIdentifier(t) && t.getText() === name),
             );
-          if (readEarlier || writtenByOwn) this.hoistCell(name);
+          if (readEarlier || writtenByOwn) this.hoistCell(name, cellsHere);
         }
     }
     for (const [i, written] of stmts.entries()) {
@@ -1933,9 +1935,11 @@ class Lifter {
   /**
    * Makes a later-declared `var` a cell from here, holding undefined until its declaration writes
    * it (#1173), so a closure made before the declaration reads the value it has when it runs.
+   * Once per name in a scope: another scope's declaration of the name is its own cell (#1331).
    */
-  private hoistCell(name: string): void {
-    if (this.hoistedCells.has(name)) return;
+  private hoistCell(name: string, scope: Set<string>): void {
+    if (scope.has(name)) return;
+    scope.add(name);
     if (this.env.has(name) && !this.cells.has(name)) return;
     this.cells.add(name);
     this.hoistedCells.add(name);
@@ -5064,15 +5068,37 @@ function switchPassShape(sw: import("ts-morph").SwitchStatement):
             ? [st.getName() ?? ""]
             : [],
       );
+    // A property's name (`declaration.type`) is not the name `type` (#1368).
     const elsewhere = clauses
       .filter((c) => c !== clause)
-      .flatMap((c) => c.getDescendantsOfKind(SyntaxKind.Identifier).map((id) => id.getText()));
+      .flatMap((c) =>
+        c
+          .getDescendantsOfKind(SyntaxKind.Identifier)
+          .filter((id) => isValueRead(id))
+          .map((id) => id.getText()),
+      );
     if (declared.some((name) => elsewhere.includes(name))) return undefined;
   }
   const returns = sw
     .getDescendantsOfKind(SyntaxKind.ReturnStatement)
     .filter((r) => own(r) && nearestBreakable(r)?.compilerNode === sw.compilerNode);
   return { continues, returns };
+}
+
+const passShapeCache = new WeakMap<object, ReturnType<typeof switchPassShape> | null>();
+
+/**
+ * Whether a switch is lifted as one opaque region: neither a chain of ifs (switchArms) nor a pass
+ * (switchPassShape). An exit inside one that lowers is an exit of the statement it is in (#1368).
+ */
+function opaqueSwitch(sw: import("ts-morph").SwitchStatement): boolean {
+  if (switchArms(sw) !== undefined) return false;
+  let shape = passShapeCache.get(sw.compilerNode);
+  if (shape === undefined) {
+    shape = switchPassShape(sw) ?? null;
+    passShapeCache.set(sw.compilerNode, shape);
+  }
+  return shape === null;
 }
 
 interface SwitchArm {
@@ -5699,7 +5725,7 @@ function insideOpaqueNonLoop(n: Node, root: Node): boolean {
   ) {
     if (
       isFunctionLikeNode(p) ||
-      (Node.isSwitchStatement(p) && switchArms(p) === undefined) ||
+      (Node.isSwitchStatement(p) && opaqueSwitch(p)) ||
       Node.isTryStatement(p)
     )
       return true;
@@ -5727,7 +5753,7 @@ function insideOpaque(ret: Node, root: Node): boolean {
       Node.isForInStatement(p) ||
       Node.isWhileStatement(p) ||
       Node.isDoStatement(p) ||
-      (Node.isSwitchStatement(p) && switchArms(p) === undefined) ||
+      (Node.isSwitchStatement(p) && opaqueSwitch(p)) ||
       Node.isTryStatement(p)
     ) {
       return true;

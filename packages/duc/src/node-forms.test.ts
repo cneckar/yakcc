@@ -511,3 +511,99 @@ describe("a return from a loop in a clause that falls through (#1368)", () => {
     );
   });
 });
+
+describe("two blocks, each a function hoisted over its own const of the same name (#1331)", () => {
+  it("each function reads its own block's const", () => {
+    agrees(
+      `export function f(a: number[], b: number[]) {
+  const out: unknown[] = [];
+  for (let i = 0; i < a.length; i++) {
+    const op = a[i] * 2;
+    function fn() { return op + 1; }
+    out.push(fn());
+  }
+  for (let i = 0; i < b.length; i++) {
+    const op = b[i] * 3;
+    function fn() { return [op]; }
+    out.push(fn());
+  }
+  return out;
+}`,
+      [
+        [[1, 2], [3]],
+        [[], [1, 2]],
+      ],
+    );
+  });
+});
+
+describe("a switch on property reads whose clause declares a name another clause reads as a property (#1368)", () => {
+  it("the property's name is not the binding", () => {
+    agrees(
+      `export function f(codes: any, code: number, decl: any) {
+  switch (code) {
+    case codes.a.code:
+      if (!decl.type) return 0;
+      return [decl.type];
+    case codes.b.code:
+      const type = decl.other;
+      if (!type) return -1;
+      return [type, "b"];
+  }
+  return undefined;
+}`,
+      [
+        [{ a: { code: 1 }, b: { code: 2 } }, 1, { type: 5 }],
+        [{ a: { code: 1 }, b: { code: 2 } }, 1, {}],
+        [{ a: { code: 1 }, b: { code: 2 } }, 2, { other: 7 }],
+        [{ a: { code: 1 }, b: { code: 2 } }, 2, {}],
+        [{ a: { code: 1 }, b: { code: 2 } }, 3, {}],
+      ],
+    );
+  });
+});
+
+describe("a switch lowered to a pass, inside an if, returning from an inner switch (#1368)", () => {
+  it("the if takes the rest of the function", () => {
+    agrees(
+      `export function f(node: any) {
+  if (node) {
+    switch (node.kind) {
+      case 1:
+        if (node.skip) {
+          return "skipped";
+        }
+      default:
+        switch (node.parent) {
+          case 2:
+            if (node.name) {
+              return ["named", node.name];
+            }
+            break;
+          case 3: {
+            const { init } = node;
+            if (init) {
+              return ["init", init];
+            }
+            break;
+          }
+          default:
+            if (node.parent > 5) {
+              return "big";
+            }
+        }
+    }
+  }
+}`,
+      [
+        [null],
+        [{ kind: 1, skip: true }],
+        [{ kind: 1, parent: 2, name: "n" }],
+        [{ kind: 0, parent: 3, init: 4 }],
+        [{ kind: 0, parent: 3 }],
+        [{ kind: 0, parent: 9 }],
+        [{ kind: 0, parent: 4 }],
+      ],
+    );
+  });
+});

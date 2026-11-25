@@ -17,6 +17,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   collectForestSlicePlans,
+  enclosingBindingsOf,
   forestGateContext,
   runDucConservationGate,
   shavePackage,
@@ -50,6 +51,33 @@ export const WRAPPER_PARAMS: ReadonlySet<string> = new Set([
   "__filename",
   "__dirname",
 ]);
+
+/**
+ * The globals of the context V8's profiling tools run in (`internal/deps/v8/tools/*`):
+ * `internal/v8_prof_processor` makes a context of `arguments`, `write`, `printErr`, `console`,
+ * `process` and `Buffer`, and `internal/v8_prof_polyfill` adds `os`, `print`, `read`, `quit` and
+ * `readline` to it, standing in for d8's shell.
+ */
+export const D8_TOOL_GLOBALS: ReadonlySet<string> = new Set([
+  "arguments",
+  "write",
+  "printErr",
+  "console",
+  "process",
+  "Buffer",
+  "os",
+  "print",
+  "read",
+  "quit",
+  "readline",
+]);
+
+/** The names a module of the library runs with bound: its wrapper's, and its context's. */
+export function boundNames(id: string): ReadonlySet<string> {
+  return id.startsWith("internal/deps/v8/tools/")
+    ? new Set([...WRAPPER_PARAMS, ...D8_TOOL_GLOBALS])
+    : WRAPPER_PARAMS;
+}
 
 /** Every builtin id of the vendored library, sorted. */
 export function nodeModuleIds(): string[] {
@@ -99,21 +127,25 @@ export async function shaveNodeModule(id: string): Promise<NodeModuleReport> {
     (tree, _registry, options) => slice(tree, registry, options),
     registry,
   );
+  const bound = boundNames(id);
   let atoms = 0;
   let clean = 0;
-  const unexplained: Record<string, number> = {};
+  const unexplained: Record<string, number> = Object.create(null);
   const unfaithful: string[] = [];
   const liftErrors: string[] = [];
   for (const p of plans) {
     const ctx = forestGateContext(plans, p.filePath);
+    const text = readFileSync(p.filePath, "utf8");
     for (const e of p.slicePlan.entries) {
       if (e.kind !== "novel-glue" || typeof e.source !== "string") continue;
       atoms++;
+      // An atom cut from inside a function reads that function's names (#1297), as the pipeline's
+      // persist step passes them.
       const r = runDucConservationGate(
         e.source,
         ctx.internalSymbols,
         ctx.moduleBindings,
-        WRAPPER_PARAMS,
+        new Set([...bound, ...enclosingBindingsOf(text, e.sourceRange)]),
       );
       if (r.liftError !== undefined) {
         liftErrors.push(r.liftError);
