@@ -459,6 +459,13 @@ const runtime = {
     isDebugBuild: false,
     bits: 64,
   },
+  // Startup snapshots are out of scope (#1361 "later"): this program is never building one.
+  mksnapshot: {
+    setSerializeCallback: () => {},
+    setDeserializeCallback: () => {},
+    setDeserializeMainFunction: () => {},
+    isBuildingSnapshotBuffer: new Uint8Array(1),
+  },
   // Tracing is out of scope (#1361 "later"): every category off.
   trace_events: {
     getCategoryEnabledBuffer: () => new Uint8Array(1),
