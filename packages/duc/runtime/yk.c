@@ -8159,20 +8159,57 @@ static yk error_capture_stack_trace(void *c, yk s, uint64_t argc, const yk *argv
 /* Globals a program defines for the runtime (__yakccDefineGlobal): Math as the boot module makes it. */
 static yk defined_globals;
 static yk global_this(void);
+/* __yakccDefineGlobal(name, value, lazy): a global the boot defines; lazy, value is a function the
+   first read calls, its result the global's value from then on (Node's lazily loaded globals, such
+   as Buffer). */
+static yk lazy_globals = 0;
 static yk builtin_define_global(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
   if (defined_globals == 0) defined_globals = yk_object_of(0, NULL, NULL);
   yk name = to_string(arg_or_undefined(argc, argv, 0)), value = arg_or_undefined(argc, argv, 1);
+  if (argc > 2 && yk_truthy(argv[2])) {
+    if (lazy_globals == 0) lazy_globals = yk_object_of(0, NULL, NULL);
+    own_set((yk_object *)PTR(lazy_globals), name, value);
+    own_set((yk_object *)PTR(defined_globals), name, value);
+    return YK_UNDEFINED;
+  }
+  if (lazy_globals != 0) yk_delete(lazy_globals, name);
   own_set((yk_object *)PTR(defined_globals), name, value);
   own_set((yk_object *)PTR(global_this()), name, value);
   return value;
+}
+/* A defined global's value: a lazy one's made now, once. */
+static yk defined_value(yk name, yk v) {
+  yk f;
+  if (lazy_globals == 0 || !own_get((yk_object *)PTR(lazy_globals), name, &f)) return v;
+  yk_delete(lazy_globals, name);
+  yk made = call_value(f, YK_UNDEFINED, 0, NULL);
+  own_set((yk_object *)PTR(defined_globals), name, made);
+  own_set((yk_object *)PTR(global_this()), name, made);
+  return made;
 }
 /* Array.of(...items). */
 static yk builtin_array_of(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
   return yk_array_of(argc, argv);
 }
+static yk global_uncached(const char *name, uint64_t n);
+/* A global's value: a defined global's (__yakccDefineGlobal) as it is now; anything else (the
+   runtime's own, fixed once made) from a cache by name, so a read in a loop makes nothing again. */
+static yk global_cache = 0;
 yk yk_global(const char *name, uint64_t n) {
+  if (defined_globals != 0) {
+    yk v, key = interned(name, n);
+    if (own_get((yk_object *)PTR(defined_globals), key, &v)) return defined_value(key, v);
+  }
+  if (global_cache == 0) global_cache = yk_object_of(0, NULL, NULL);
+  yk key = interned(name, n), v;
+  if (own_get((yk_object *)PTR(global_cache), key, &v)) return v;
+  v = global_uncached(name, n);
+  own_set((yk_object *)PTR(global_cache), key, v);
+  return v;
+}
+static yk global_uncached(const char *name, uint64_t n) {
   if (defined_globals != 0) {
     yk v;
     if (own_get((yk_object *)PTR(defined_globals), interned(name, n), &v)) return v;

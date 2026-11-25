@@ -342,6 +342,11 @@ export function nodeBootProgram(
     visit(id);
   visit(main.id, main.source);
   for (const id of options.include ?? []) visit(id);
+  // Node's lazily loaded globals (bootstrap/node.js): the module that gives one, when a module names it.
+  const lazyGlobals = LAZY_GLOBALS.filter(([name]) =>
+    [...texts.values()].some((t) => new RegExp(`\\b${name}\\b`).test(t)),
+  );
+  for (const [, id] of lazyGlobals) visit(id);
 
   const modules: NativeModule[] = [];
   const lifted = (id: string, source: string): NativeModule => {
@@ -373,7 +378,7 @@ export function nodeBootProgram(
   );
   if (options.bindings !== undefined)
     modules.push(lifted(options.bindings.id, options.bindings.source));
-  modules.unshift(lifted(NODE_BOOT, nodeBootSource(main.id, options.bindings?.id)));
+  modules.unshift(lifted(NODE_BOOT, nodeBootSource(main.id, options.bindings?.id, lazyGlobals)));
   return { entry: NODE_BOOT, modules };
 }
 
@@ -385,7 +390,16 @@ const MATH_VALUE =
   '// Math as a value (primordials copies its members): each member Math\'s own operation, the\n// approximated ones V8\'s shaved atoms (#1362); hypot, approximated with no atom yet, is absent.\nconst MathObject = {\n  E: Math.E,\n  LN10: Math.LN10,\n  LN2: Math.LN2,\n  LOG10E: Math.LOG10E,\n  LOG2E: Math.LOG2E,\n  PI: Math.PI,\n  SQRT1_2: Math.SQRT1_2,\n  SQRT2: Math.SQRT2,\n  abs: (a0) => Math.abs(a0),\n  acos: (a0) => Math.acos(a0),\n  acosh: (a0) => Math.acosh(a0),\n  asin: (a0) => Math.asin(a0),\n  asinh: (a0) => Math.asinh(a0),\n  atan: (a0) => Math.atan(a0),\n  atanh: (a0) => Math.atanh(a0),\n  atan2: (a0, a1) => Math.atan2(a0, a1),\n  ceil: (a0) => Math.ceil(a0),\n  cbrt: (a0) => Math.cbrt(a0),\n  expm1: (a0) => Math.expm1(a0),\n  cos: (a0) => Math.cos(a0),\n  cosh: (a0) => Math.cosh(a0),\n  exp: (a0) => Math.exp(a0),\n  floor: (a0) => Math.floor(a0),\n  log: (a0) => Math.log(a0),\n  log1p: (a0) => Math.log1p(a0),\n  log2: (a0) => Math.log2(a0),\n  log10: (a0) => Math.log10(a0),\n  max: (...a) => Math.max(...a),\n  min: (...a) => Math.min(...a),\n  pow: (a0, a1) => Math.pow(a0, a1),\n  random: () => Math.random(),\n  round: (a0) => Math.round(a0),\n  sign: (a0) => Math.sign(a0),\n  sin: (a0) => Math.sin(a0),\n  sinh: (a0) => Math.sinh(a0),\n  sqrt: (a0) => Math.sqrt(a0),\n  tan: (a0) => Math.tan(a0),\n  tanh: (a0) => Math.tanh(a0),\n  trunc: (a0) => Math.trunc(a0),\n  // Exact, so given here: ToUint32\'s leading zeros; Int32 multiplication; the nearest float32.\n  clz32: (x) => {\n    let v = x >>> 0;\n    if (v === 0) return 32;\n    let n = 0;\n    while ((v & 0x80000000) === 0) {\n      v = v << 1;\n      n++;\n    }\n    return n;\n  },\n  imul: (a, b) => {\n    const ah = (a >>> 16) & 0xffff;\n    const al = a & 0xffff;\n    const bh = (b >>> 16) & 0xffff;\n    const bl = b & 0xffff;\n    return (al * bl + (((ah * bl + al * bh) << 16) >>> 0)) | 0;\n  },\n  fround: (x) => new Float32Array([x])[0],\n};\nObject.defineProperty(MathObject, Symbol.toStringTag, { value: "Math", configurable: true });\n__yakccDefineGlobal("Math", MathObject);\n';
 
 /** The boot module's source: Node's realm set up over the table, then `main` loaded. */
-function nodeBootSource(main: string, bindings: string | undefined): string {
+/** Globals Node's bootstrap/node.js defines lazily: each its name, its module, and the export. */
+const LAZY_GLOBALS: readonly (readonly [string, string, string])[] = [
+  ["Buffer", "buffer", "Buffer"],
+];
+
+function nodeBootSource(
+  main: string,
+  bindings: string | undefined,
+  lazyGlobals: readonly (readonly [string, string, string])[] = [],
+): string {
   return `${MATH_VALUE}const table = require(${JSON.stringify(NODE_BUILTINS)});
 const given = ${bindings !== undefined ? `require(${JSON.stringify(bindings)})` : "{}"};
 const primordials = { __proto__: null };
@@ -530,7 +544,7 @@ __yakccDefineGlobal("console", {
     process.stdout.write(inspectModule.inspect(value, { customInspect: false, ...options }) + "\\n");
   },
 });
-loaders.requireBuiltin(${JSON.stringify(main)});
+${lazyGlobals.map(([name, id, key]) => `__yakccDefineGlobal(${JSON.stringify(name)}, () => loaders.requireBuiltin(${JSON.stringify(id)})[${JSON.stringify(key)}], true);\n`).join("")}loaders.requireBuiltin(${JSON.stringify(main)});
 `;
 }
 

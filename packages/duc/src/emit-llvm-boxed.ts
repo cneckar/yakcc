@@ -3077,8 +3077,9 @@ function lowerFunction(
           );
           return;
         }
-        if (callee.name === "random" && args.length === 0) {
+        if (callee.name === "random") {
           // An implementation-chosen pseudo-random number in [0, 1) (21.3.2.27): the runtime's.
+          // Arguments are evaluated (as operands, above) and ignored, as the function's are.
           m.intrinsics.add("declare i64 @yk_math_random()");
           const r = fresh();
           emit(`${r} = call i64 @yk_math_random()`);

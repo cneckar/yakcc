@@ -300,6 +300,11 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "Math.random, with arguments it ignores (undici's random(max)): a number in [0, 1) (#1331)",
+    "export function f(a, b) { const r = Math.random(a); const q = Math.random(); return [typeof r, r >= 0 && r < 1, q >= 0 && q < 1, r !== q || r === q]; }",
+    2,
+  ],
+  [
     "in along a built-in value's intrinsic prototype, and on functions (#1331)",
     'export function f(a, b) { const fn = function g() { return this; }; fn.extra = 1; return [Symbol.iterator in new Map(), "get" in new Map(), "size" in new Set(), "then" in Promise.resolve(1), "toString" in {}, "nope" in {}, "call" in fn, "extra" in fn, "name" in fn, "prototype" in fn, "nope" in fn, Symbol.iterator in new Uint8Array(1), "getTime" in new Date(0), Symbol.iterator in [a], "length" in [b]]; }',
     2,
