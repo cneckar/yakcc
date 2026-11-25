@@ -1217,4 +1217,36 @@ export function f(xs: number[]) {
     expect(names).toContain("WeakMap");
     expect(names).toContain("asyncIterator");
   });
+  it("statements after a throw never run: a write there does not make its name one the atom writes (#1292)", () => {
+    const dead = `export function f(ch: number) {
+  while (pos++ < end) {
+    switch (ch) {
+      case 125:
+        throw new Error("unexpected }");
+        if (depth-- === 0) {
+        }
+    }
+  }
+  if (depth) throw new Error("unterminated");
+}`;
+    const live = dead.replace(/\n\s*if \(depth-- === 0\) \{\n\s*\}/, "");
+    const g = liftAtom(dead);
+    expect(graphIdentity(g)).toBe(graphIdentity(liftAtom(live)));
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+  });
+
+  it("after a return, a function declaration is still hoisted and a var still binds its name (#1292)", () => {
+    agrees(
+      `export function f(n: number) {
+  if (n > 2) {
+    return twice(n);
+    var label = "big";
+  }
+  label = "small";
+  return [twice(n), label];
+  function twice(x: number) { return 2 * x; }
+}`,
+      [[1], [3]],
+    );
+  });
 });

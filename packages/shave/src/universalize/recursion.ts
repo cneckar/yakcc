@@ -803,7 +803,8 @@ function unwrapCalleeToDecomposable(callee: Node): Node | undefined {
  * - SourceFile → its top-level statements.
  * - Block → its statements.
  * - FunctionDeclaration / FunctionExpression / ArrowFunction /
- *   MethodDeclaration / Constructor / GetAccessor / SetAccessor →
+ *   MethodDeclaration / Constructor / GetAccessor / SetAccessor /
+ *   ClassStaticBlockDeclaration →
  *   if the body is a Block, its statements; else [] (expression body).
  * - IfStatement → [thenStatement, elseStatement?].
  * - ForStatement / WhileStatement / DoStatement → [statement (body)],
@@ -837,7 +838,9 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
     kind === SyntaxKind.MethodDeclaration ||
     kind === SyntaxKind.Constructor ||
     kind === SyntaxKind.GetAccessor ||
-    kind === SyntaxKind.SetAccessor
+    kind === SyntaxKind.SetAccessor ||
+    // A class's static block runs once, with the class as `this`: its statements, as a method's (#1368).
+    kind === SyntaxKind.ClassStaticBlockDeclaration
   ) {
     const fnNode = node as Node & { getBody?(): Node | undefined };
     const body = fnNode.getBody?.();
@@ -1064,6 +1067,26 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
   ) {
     const wrapped = node as Node & { getExpression(): Node };
     return [wrapped.getExpression()];
+  }
+
+  // A unary operation computes its operand, then applies itself: `!!f(..)`, `-x`, `typeof f(..)`,
+  // `void f(..)`, `delete o[f(..)]`, `await f(..)`, `...f(..)` and `yield f(..)` descend into the
+  // operand, as a wrapper does. TypeScript's own `!!findAncestor(node, (n) => ..)` was a non-atomic
+  // prefix operation with no children, and its whole module failed to decompose (#1368).
+  if (kind === SyntaxKind.PrefixUnaryExpression || kind === SyntaxKind.PostfixUnaryExpression) {
+    const unary = node as Node & { getOperand(): Node };
+    return [unary.getOperand()];
+  }
+  if (
+    kind === SyntaxKind.TypeOfExpression ||
+    kind === SyntaxKind.VoidExpression ||
+    kind === SyntaxKind.DeleteExpression ||
+    kind === SyntaxKind.AwaitExpression ||
+    kind === SyntaxKind.SpreadElement ||
+    kind === SyntaxKind.YieldExpression
+  ) {
+    const operand = (node as Node & { getExpression(): Node | undefined }).getExpression();
+    return operand !== undefined ? [operand] : [];
   }
 
   // A member read computes its object, then reads it: `f(..).x` and `f(..)[k]` descend into the
