@@ -29,6 +29,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ucontext.h>
+#if defined(__linux__)
+#include <link.h>
+#include <pthread.h>
+#include <sys/mman.h>
+#define YK_GC 1
+#else
+#define YK_GC 0
+#endif
 
 typedef uint64_t yk;
 
@@ -133,7 +141,17 @@ yk yk_bool(int b) { return b ? YK_TRUE : YK_FALSE; }
 
 /* Memory the runtime never frees (there is no collector yet): bumped out of zeroed chunks, 16-byte
    aligned. A large request has a chunk of its own. */
-static void *alloc(size_t n) {
+/* --- The heap and its collector (#1361 P1) ---------------------------------------------------
+ *
+ * Every value the runtime makes is allocated here, zeroed. On Linux it is a conservative mark-sweep
+ * collector: blocks of size classes in 64 KiB pages of one reserved range (a block of more than
+ * half a page takes whole pages); the roots are the native stack (and a suspended main stack while
+ * a coroutine runs), the registers, and the writable segments of the program; each marked block is
+ * scanned whole. A word is a pointer when it is an address in the heap, or a boxed value (a tag
+ * at or above T_STRING) whose payload is one; any address inside a block keeps it (one past its end
+ * too: a block is a byte longer than asked). Nothing moves. Elsewhere, memory is never freed.
+ */
+static void *bump(size_t n) {
   static uint8_t *chunk = NULL;
   static size_t left = 0;
   n = (n + 15) & ~(size_t)15;
@@ -152,11 +170,317 @@ static void *alloc(size_t n) {
   left -= n;
   return p;
 }
-/* Memory that is freed (scratch buffers, coroutine stacks): the C library's. */
+#if YK_GC
+#define GC_PAGE_SHIFT 16
+#define GC_PAGE ((size_t)1 << GC_PAGE_SHIFT)
+#define GC_LARGE (GC_PAGE / 2)
+static const uint32_t gc_sizes[] = {16,   32,   48,   64,   80,   96,    112,   128,   160,  192,
+                                    224,  256,  320,  384,  448,  512,   640,   768,   896,  1024,
+                                    1280, 1536, 1792, 2048, 2560, 3072,  3584,  4096,  5120, 6144,
+                                    7168, 8192, 10240, 12288, 16384, 20480, 24576, 32768};
+#define GC_NCLASS (sizeof gc_sizes / sizeof gc_sizes[0])
+typedef struct {
+  uint8_t kind; /* 0 free, 1 a page of small blocks, 2 a large block's first page, 3 its others */
+  uint8_t cls;
+  uint32_t n;   /* small: its blocks; large, first: its pages; large, other: back to the first */
+  uint64_t used[64], mark[64];
+} gc_page;
+typedef struct {
+  size_t start, len;
+} gc_run;
+static uint8_t *gc_heap = NULL;
+static gc_page *gc_pages = NULL;
+static size_t gc_npages = 0, gc_top = 0;
+static gc_run *gc_runs = NULL;
+static size_t gc_nruns = 0, gc_capruns = 0;
+static void *gc_free[GC_NCLASS];
+static size_t gc_since = 0, gc_threshold = (size_t)16 << 20, gc_floor = (size_t)16 << 20;
+static int gc_state = 0; /* 0 not yet set up, 1 collecting, 2 allocating only, 3 never (no heap) */
+static uintptr_t gc_stack_top = 0;
+/* While a coroutine runs, where the main stack was left (its frames above are live). */
+static uintptr_t gc_main_sp = 0;
+static int gc_in_coroutine(void);
+static void gc_report(void);
+static uint8_t gc_class_of[GC_LARGE / 16 + 1];
+
+static void gc_setup(void) {
+  gc_state = 3;
+  size_t sizes[] = {sizeof(void *) == 8 ? (size_t)1 << 36 : (size_t)1 << 30, (size_t)1 << 32,
+                    (size_t)1 << 30, (size_t)1 << 28};
+  for (int i = 0; i < 4; i++) {
+    size_t sz = sizes[i];
+    if (sizeof(void *) == 4 && sz > ((size_t)1 << 30)) continue;
+    void *h = mmap(NULL, sz, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (h == MAP_FAILED) continue;
+    size_t np = sz >> GC_PAGE_SHIFT;
+    void *d = mmap(NULL, np * sizeof(gc_page), PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (d == MAP_FAILED) {
+      munmap(h, sz);
+      continue;
+    }
+    gc_heap = h;
+    gc_pages = d;
+    gc_npages = np;
+    gc_state = 2;
+    break;
+  }
+  for (uint32_t c = 0, sz = 16; sz <= GC_LARGE; sz += 16) {
+    while (gc_sizes[c] < sz) c++;
+    gc_class_of[sz / 16] = (uint8_t)c;
+  }
+  /* YK_GC_STRESS: collect every 64 KiB, so a value the roots miss is found by the tests. */
+  const char *stress = getenv("YK_GC_STRESS");
+  if (stress != NULL && stress[0] == '1') gc_threshold = gc_floor = (size_t)1 << 16;
+  if (getenv("YK_GC_STATS") != NULL) atexit(gc_report);
+  pthread_attr_t at;
+  void *addr;
+  size_t size;
+  if (gc_state == 2 && pthread_getattr_np(pthread_self(), &at) == 0) {
+    if (pthread_attr_getstack(&at, &addr, &size) == 0) {
+      gc_stack_top = (uintptr_t)addr + size;
+      gc_state = 1;
+    }
+    pthread_attr_destroy(&at);
+  }
+}
+
+/* k contiguous pages: a freed run that fits, else new ones. *fresh: never used (zero). */
+static size_t gc_get_pages(size_t k, int *fresh) {
+  for (size_t i = 0; i < gc_nruns; i++)
+    if (gc_runs[i].len >= k) {
+      size_t at = gc_runs[i].start;
+      gc_runs[i].start += k;
+      gc_runs[i].len -= k;
+      if (gc_runs[i].len == 0) gc_runs[i] = gc_runs[--gc_nruns];
+      *fresh = 0;
+      return at;
+    }
+  if (gc_top + k > gc_npages) {
+    fputs("out of memory\n", stderr);
+    exit(71);
+  }
+  size_t at = gc_top;
+  gc_top += k;
+  *fresh = 1;
+  return at;
+}
+static void gc_put_pages(size_t start, size_t k) {
+  for (size_t i = 0; i < k; i++) gc_pages[start + i].kind = 0;
+  if (gc_nruns == gc_capruns) {
+    gc_capruns = gc_capruns == 0 ? 64 : gc_capruns * 2;
+    gc_runs = realloc(gc_runs, gc_capruns * sizeof(gc_run));
+    if (gc_runs == NULL) abort();
+  }
+  gc_runs[gc_nruns++] = (gc_run){start, k};
+}
+static void gc_collect(void);
+static void gc_report(void);
+
+static void *alloc(size_t n) {
+  if (gc_state == 0) gc_setup();
+  if (gc_state == 3) return bump(n);
+  if (gc_state == 1 && gc_since >= gc_threshold) gc_collect();
+  n += 1; /* one past the end is inside */
+  if (n > GC_LARGE) {
+    size_t k = (n + GC_PAGE - 1) >> GC_PAGE_SHIFT;
+    int fresh;
+    size_t at = gc_get_pages(k, &fresh);
+    gc_page *g = &gc_pages[at];
+    g->kind = 2;
+    g->n = (uint32_t)k;
+    g->used[0] = 1;
+    for (size_t i = 1; i < k; i++) {
+      gc_pages[at + i].kind = 3;
+      gc_pages[at + i].n = (uint32_t)i;
+    }
+    uint8_t *p = gc_heap + (at << GC_PAGE_SHIFT);
+    if (!fresh) memset(p, 0, k << GC_PAGE_SHIFT);
+    gc_since += k << GC_PAGE_SHIFT;
+    return p;
+  }
+  uint32_t c = gc_class_of[(n + 15) / 16];
+  uint32_t size = gc_sizes[c];
+  void *p = gc_free[c];
+  if (p == NULL) {
+    int fresh;
+    size_t at = gc_get_pages(1, &fresh);
+    gc_page *g = &gc_pages[at];
+    g->kind = 1;
+    g->cls = (uint8_t)c;
+    g->n = (uint32_t)(GC_PAGE / size);
+    memset(g->used, 0, sizeof g->used);
+    uint8_t *base = gc_heap + (at << GC_PAGE_SHIFT);
+    for (uint32_t b = g->n; b-- > 0;) {
+      *(void **)(base + (size_t)b * size) = gc_free[c];
+      gc_free[c] = base + (size_t)b * size;
+    }
+    p = gc_free[c];
+  }
+  gc_free[c] = *(void **)p;
+  size_t off = (uint8_t *)p - gc_heap;
+  gc_page *g = &gc_pages[off >> GC_PAGE_SHIFT];
+  uint32_t b = (uint32_t)((off & (GC_PAGE - 1)) / size);
+  g->used[b >> 6] |= (uint64_t)1 << (b & 63);
+  memset(p, 0, size);
+  gc_since += size;
+  return p;
+}
+
+/* Marking: an explicit stack of blocks to scan. */
+static struct {
+  uint8_t *p;
+  size_t n;
+} *gc_work = NULL;
+static size_t gc_nwork = 0, gc_capwork = 0;
+static void gc_consider(uintptr_t x) {
+  if (x < (uintptr_t)gc_heap || x >= (uintptr_t)gc_heap + (gc_top << GC_PAGE_SHIFT)) return;
+  size_t off = x - (uintptr_t)gc_heap;
+  size_t pi = off >> GC_PAGE_SHIFT;
+  gc_page *g = &gc_pages[pi];
+  uint8_t *p;
+  size_t n;
+  if (g->kind == 3) {
+    pi -= g->n;
+    g = &gc_pages[pi];
+  }
+  if (g->kind == 2) {
+    if (g->mark[0] & 1) return;
+    g->mark[0] |= 1;
+    p = gc_heap + (pi << GC_PAGE_SHIFT);
+    n = (size_t)g->n << GC_PAGE_SHIFT;
+  } else if (g->kind == 1) {
+    uint32_t size = gc_sizes[g->cls];
+    uint32_t b = (uint32_t)((off & (GC_PAGE - 1)) / size);
+    if (b >= g->n) return;
+    uint64_t bit = (uint64_t)1 << (b & 63);
+    if (!(g->used[b >> 6] & bit) || (g->mark[b >> 6] & bit)) return;
+    g->mark[b >> 6] |= bit;
+    p = gc_heap + (pi << GC_PAGE_SHIFT) + (size_t)b * size;
+    n = size;
+  } else
+    return;
+  if (gc_nwork == gc_capwork) {
+    gc_capwork = gc_capwork == 0 ? 4096 : gc_capwork * 2;
+    gc_work = realloc(gc_work, gc_capwork * sizeof *gc_work);
+    if (gc_work == NULL) abort();
+  }
+  gc_work[gc_nwork].p = p;
+  gc_work[gc_nwork++].n = n;
+}
+static void gc_scan(const void *lo, const void *hi) {
+  uintptr_t a = ((uintptr_t)lo + sizeof(uintptr_t) - 1) & ~(uintptr_t)(sizeof(uintptr_t) - 1);
+  for (const uintptr_t *w = (const uintptr_t *)a; (const void *)(w + 1) <= hi; w++) {
+    uintptr_t x = *w;
+#if UINTPTR_MAX > 0xFFFFFFFFu
+    uint64_t top = (uint64_t)x >> 48;
+    if (top >= 0xFFFA) x &= 0x0000FFFFFFFFFFFFull;
+    else if (top != 0) continue;
+#endif
+    gc_consider(x);
+  }
+}
+static void gc_drain(void) {
+  while (gc_nwork > 0) {
+    gc_nwork--;
+    uint8_t *p = gc_work[gc_nwork].p;
+    gc_scan(p, p + gc_work[gc_nwork].n);
+  }
+}
+static int gc_segment(struct dl_phdr_info *info, size_t size, void *data) {
+  (void)size;
+  (void)data;
+  for (int i = 0; i < info->dlpi_phnum; i++) {
+    const ElfW(Phdr) *ph = &info->dlpi_phdr[i];
+    if (ph->p_type != PT_LOAD || !(ph->p_flags & PF_W)) continue;
+    uint8_t *lo = (uint8_t *)(info->dlpi_addr + ph->p_vaddr);
+    gc_scan(lo, lo + ph->p_memsz);
+    gc_drain();
+  }
+  return 0;
+}
+static __attribute__((noinline)) void gc_mark_roots(void) {
+  jmp_buf regs; /* the callee-saved registers, on this frame */
+  setjmp(regs);
+  gc_scan(&regs, (uint8_t *)&regs + sizeof regs);
+  uintptr_t sp = (uintptr_t)__builtin_frame_address(0);
+  uintptr_t from = gc_in_coroutine() ? gc_main_sp : sp;
+  if (from != 0 && from < gc_stack_top) gc_scan((void *)from, (void *)gc_stack_top);
+  gc_drain();
+  /* On a coroutine's stack: its block is reached through current_coro (a writable global), but
+     this frame's part of it is scanned here too, so registers spilled below it are seen. */
+  if (gc_in_coroutine()) {
+    uint8_t probe;
+    gc_consider((uintptr_t)&probe);
+    gc_drain();
+  }
+  dl_iterate_phdr(gc_segment, NULL);
+  gc_drain();
+}
+static size_t gc_count = 0, gc_live_last = 0;
+static void gc_report(void) {
+  fprintf(stderr, "yk gc: %zu collections, %zu bytes live after the last, %zu pages in use\n",
+          gc_count, gc_live_last, gc_top);
+}
+static void gc_collect(void) {
+  gc_count++;
+  gc_mark_roots();
+  for (size_t c = 0; c < GC_NCLASS; c++) gc_free[c] = NULL;
+  size_t live = 0;
+  for (size_t pi = 0; pi < gc_top; pi++) {
+    gc_page *g = &gc_pages[pi];
+    if (g->kind == 2) {
+      size_t k = g->n;
+      if (g->mark[0] & 1) {
+        g->mark[0] = 0;
+        live += k << GC_PAGE_SHIFT;
+      } else {
+        g->used[0] = 0;
+        gc_put_pages(pi, k);
+      }
+      pi += k - 1;
+    } else if (g->kind == 1) {
+      uint32_t size = gc_sizes[g->cls];
+      int any = 0;
+      for (int w = 0; w < 64; w++) {
+        g->used[w] &= g->mark[w];
+        g->mark[w] = 0;
+        if (g->used[w]) any = 1;
+      }
+      if (!any) {
+        gc_put_pages(pi, 1);
+        continue;
+      }
+      uint8_t *base = gc_heap + (pi << GC_PAGE_SHIFT);
+      for (uint32_t b = g->n; b-- > 0;) {
+        if (g->used[b >> 6] & ((uint64_t)1 << (b & 63))) {
+          live += size;
+          continue;
+        }
+        *(void **)(base + (size_t)b * size) = gc_free[g->cls];
+        gc_free[g->cls] = base + (size_t)b * size;
+      }
+    }
+  }
+  gc_since = 0;
+  gc_live_last = live;
+  gc_threshold = live > gc_floor ? live : gc_floor;
+}
+#else
+static void *alloc(size_t n) { return bump(n); }
+static uintptr_t gc_main_sp = 0;
+#endif
+/* Memory that is freed and holds no values (scratch buffers): the C library's. */
 static void *scratch(size_t n) {
   void *p = calloc(1, n);
   if (p == NULL) abort();
   return p;
+}
+/* A heap block grown from `old` bytes to `n`: a new block with the old one's bytes. */
+static void *grow(void *p, size_t old, size_t n) {
+  void *q = alloc(n);
+  if (p != NULL && old > 0) memcpy(q, p, old < n ? old : n);
+  return q;
 }
 
 static yk_string *new_string(uint32_t len) {
@@ -1251,10 +1575,9 @@ yk yk_super_get(void *closure, yk self, const char *name, uint64_t n) {
   return resolve_slot(slot, self);
 }
 static void add_field(yk_closure *c, uint8_t kind, yk key, yk member) {
-  c->field_keys = realloc(c->field_keys, (c->nfields + 1) * sizeof(yk));
-  c->field_inits = realloc(c->field_inits, (c->nfields + 1) * sizeof(yk));
-  c->field_kind = realloc(c->field_kind, (c->nfields + 1) * sizeof(uint8_t));
-  if (c->field_keys == NULL || c->field_inits == NULL || c->field_kind == NULL) abort();
+  c->field_keys = grow(c->field_keys, c->nfields * sizeof(yk), (c->nfields + 1) * sizeof(yk));
+  c->field_inits = grow(c->field_inits, c->nfields * sizeof(yk), (c->nfields + 1) * sizeof(yk));
+  c->field_kind = grow(c->field_kind, c->nfields, c->nfields + 1u);
   c->field_keys[c->nfields] = key;
   c->field_inits[c->nfields] = member;
   c->field_kind[c->nfields++] = kind;
@@ -1268,9 +1591,8 @@ static yk private_key_of(yk_closure *c, yk cls, yk name) {
   yk_string *nm = str(name), *k = new_string(nm->len + (uint32_t)len);
   memcpy(k->units, nm->units, (size_t)nm->len * 2);
   for (int j = 0; j < len; j++) k->units[nm->len + (uint32_t)j] = (uint16_t)suffix[j];
-  c->priv_names = realloc(c->priv_names, (c->npriv + 1) * sizeof(yk));
-  c->priv_keys = realloc(c->priv_keys, (c->npriv + 1) * sizeof(yk));
-  if (c->priv_names == NULL || c->priv_keys == NULL) abort();
+  c->priv_names = grow(c->priv_names, c->npriv * sizeof(yk), (c->npriv + 1) * sizeof(yk));
+  c->priv_keys = grow(c->priv_keys, c->npriv * sizeof(yk), (c->npriv + 1) * sizeof(yk));
   c->priv_names[c->npriv] = name;
   c->priv_keys[c->npriv] = string_of(k);
   return c->priv_keys[c->npriv++];
@@ -1493,7 +1815,7 @@ static int canonical_index(yk_string *s, uint32_t *out) {
 static yk_array *ordered_keys(yk_object *o) {
   yk_array *r = new_array(o->len);
   uint32_t *idx = scratch((size_t)o->len * sizeof(uint32_t) + 4);
-  yk *ik = scratch((size_t)o->len * sizeof(yk) + 8);
+  yk *ik = alloc((size_t)o->len * sizeof(yk) + 8);
   uint32_t n = 0;
   for (uint32_t i = 0; i < o->len; i++) {
     uint32_t k;
@@ -1510,7 +1832,6 @@ static yk_array *ordered_keys(yk_object *o) {
     if (!canonical_index(str(o->keys[i]), &k)) push(r, o->keys[i]);
   }
   free(idx);
-  free(ik);
   return r;
 }
 
@@ -1656,9 +1977,8 @@ static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv,
   }
   if (key_is(key, "sort")) {
     if (f != YK_UNDEFINED && !is_closure(f)) type_error("the comparator is not a function");
-    yk *tmp = scratch((size_t)(a->len + 1) * sizeof(yk));
+    yk *tmp = alloc((size_t)(a->len + 1) * sizeof(yk)); /* values: the collector's, not freed */
     merge_sort(a->items, tmp, a->len, f);
-    free(tmp);
     return *out = recv, 1;
   }
   int map = key_is(key, "map"), each = key_is(key, "forEach"), filter = key_is(key, "filter"),
@@ -3053,6 +3373,9 @@ typedef struct coro {
 
 #define CORO_STACK (256 * 1024)
 static coro *current_coro, *starting_coro;
+#if YK_GC
+static int gc_in_coroutine(void) { return current_coro != NULL; }
+#endif
 /* A generator's return() unwinds its body as a throw no catch sees, and finally blocks do. */
 static yk generator_return_token;
 static int is_generator_return(yk v) { return generator_return_token != 0 && v == generator_return_token; }
@@ -3083,9 +3406,9 @@ static void enqueue(job j) {
       jobs_tail -= jobs_head;
       jobs_head = 0;
     } else {
+      size_t old = jobs_cap;
       jobs_cap = jobs_cap == 0 ? 64 : jobs_cap * 2;
-      jobs = realloc(jobs, jobs_cap * sizeof(job));
-      if (jobs == NULL) abort();
+      jobs = grow(jobs, old * sizeof(job), jobs_cap * sizeof(job));
     }
   }
   jobs[jobs_tail++] = j;
@@ -3168,9 +3491,10 @@ static void perform_then(yk p, yk on_fulfil, yk on_reject, yk derived, coro *res
   promise_state *s = pstate(p);
   if (s->state == 0) {
     if (s->n == s->cap) {
+      uint32_t old = s->cap;
       s->cap = s->cap == 0 ? 2 : s->cap * 2;
-      s->on_fulfil = realloc(s->on_fulfil, s->cap * sizeof(reaction *));
-      s->on_reject = realloc(s->on_reject, s->cap * sizeof(reaction *));
+      s->on_fulfil = grow(s->on_fulfil, old * sizeof(reaction *), s->cap * sizeof(reaction *));
+      s->on_reject = grow(s->on_reject, old * sizeof(reaction *), s->cap * sizeof(reaction *));
     }
     s->on_fulfil[s->n] = f;
     s->on_reject[s->n++] = r;
@@ -3256,7 +3580,7 @@ static void coro_resume(coro *co, yk value, int mode) {
   co->mode = mode;
   current_coro = co;
   if (co->state == 0) {
-    co->stack = scratch(CORO_STACK);
+    co->stack = alloc(CORO_STACK); /* on the heap: a suspended coroutine's frames are scanned */
     getcontext(&co->ctx);
     co->ctx.uc_stack.ss_sp = co->stack;
     co->ctx.uc_stack.ss_size = CORO_STACK;
@@ -3266,13 +3590,14 @@ static void coro_resume(coro *co, yk value, int mode) {
   } else
     handlers = co->handlers;
   co->state = 2;
+  /* Leaving the main stack: the collector scans it from here up while the coroutine runs. */
+  uintptr_t main_sp = gc_main_sp;
+  if (prev == NULL) gc_main_sp = (uintptr_t)__builtin_frame_address(0);
   swapcontext(&co->back, &co->ctx);
+  gc_main_sp = main_sp;
   current_coro = prev;
   handlers = saved;
-  if (co->state == 3 && co->stack != NULL) {
-    free(co->stack);
-    co->stack = NULL;
-  }
+  if (co->state == 3) co->stack = NULL; /* the collector takes it */
 }
 
 /* Suspends the running coroutine; what it is resumed with, and how (0 next, 1 throw, 2 return). */
