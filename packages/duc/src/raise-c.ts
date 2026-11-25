@@ -33,24 +33,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export class RaiseCError extends Error {
-  constructor(m: string) {
-    super(
-      process.env.YK_TRACE
-        ? `${m} @@ ${new Error().stack
-            ?.split("\n")
-            .slice(2, 9)
-            .map((l) =>
-              l
-                .trim()
-                .replace(/^at /, "")
-                .replace(/ \(.*:(\d+):\d+\)/, ":$1"),
-            )
-            .join(" < ")}`
-        : m,
-    );
-  }
-}
+export class RaiseCError extends Error {}
 
 /** A node of clang's JSON AST: the fields the raiser reads. */
 export interface ClangNode {
@@ -497,7 +480,7 @@ let unitLayout: LayoutResolver = () => undefined;
 // Whether the unit is parsed with -mlong-double-64 (long double is IEEE double).
 let unitLongDouble64 = false;
 /** The unit's enumeration constants, by name (UnitTypes.enumValue). */
-let unitEnumValue: (name: string) => bigint | undefined = () => undefined;
+let unitEnumValue: (name: string, id?: string) => bigint | undefined = () => undefined;
 /** The unit's classes (UnitTypes.cxx). */
 let unitCxx: CxxUnit | undefined;
 /** The unit's offsetof values (UnitTypes.offsetOf). */
@@ -661,10 +644,14 @@ function parseType(spelled: string, depth = 0): CType {
   const toArr = /^(.*?)\s*\((&&?|\*)\)\s*((?:\[\d*\])+)$/.exec(raw);
   if (toArr !== null)
     return { k: "ptr", to: parseType(`${toArr[1] as string} ${toArr[3] as string}`, depth + 1) };
-  const arr = /^(.*?)\s*\[(\d*)\]$/.exec(raw);
+  // An array, of arrays: `T [8000][2]` is 8000 arrays of 2 (the first dimension outermost).
+  const arr = /^(.*?)\s*((?:\[\d*\])+)$/.exec(raw);
   if (arr !== null) {
-    const of = parseType(arr[1] as string, depth + 1);
-    return arr[2] === "" ? { k: "arr", of } : { k: "arr", of, size: Number(arr[2]) };
+    let t = parseType(arr[1] as string, depth + 1);
+    const dims = [...(arr[2] as string).matchAll(/\[(\d*)\]/g)].map((m) => m[1] as string);
+    for (const d of dims.reverse())
+      t = d === "" ? { k: "arr", of: t } : { k: "arr", of: t, size: Number(d) };
+    return t;
   }
   const ptr = /^(.*?)\s*\*$/.exec(raw);
   if (ptr !== null) return { k: "ptr", to: parseType(ptr[1] as string, depth + 1) };
@@ -1137,7 +1124,9 @@ export interface UnitTypes {
   /** The unit is parsed with clang's -mlong-double-64: long double is double. */
   readonly longDouble64?: boolean;
   /** An enumeration constant's value, by its name (one scope in C; ids differ between dumps). */
-  readonly enumValue?: (name: string) => bigint | undefined;
+  /** An enumeration constant's value, by its declaration's id when known (C++'s scoped
+   * enumerations reuse names: `state::FILE`, `scheme::FILE`), else by its name. */
+  readonly enumValue?: (name: string, id?: string) => bigint | undefined;
   /** An offsetof expression's value (clang's JSON does not say which member). */
   readonly offsetOf?: (e: ClangNode) => number | undefined;
   /** C++: a unit's classes (an indexed unit's). */
@@ -1188,6 +1177,8 @@ export interface CxxUnit {
   ) => { readonly id: string; readonly body: boolean } | undefined;
   /** Whether a function of the unit has this name (a local of the name would hide it). */
   readonly isFunctionName: (name: string) => boolean;
+  /** Whether a class's copy and move assignments are trivial (an assignment is its bytes). */
+  readonly trivialAssign: (record: string) => boolean;
   /** Whether a class's copy and move constructors are trivial (a copy is its bytes). */
   readonly trivialCopy: (record: string) => boolean;
   /** A member's default initializer, by its class's name and its own. */
@@ -1753,7 +1744,12 @@ function raiseBody(
           target = stripParens(base);
         else break;
       }
-      if (target.kind === "DeclRefExpr") inMemory.add(target.referencedDecl?.id ?? "");
+      // (A reference's address is what it binds to: the reference itself stays an address.)
+      if (
+        target.kind === "DeclRefExpr" &&
+        !isReferenceType(target.referencedDecl?.type?.qualType ?? "")
+      )
+        inMemory.add(target.referencedDecl?.id ?? "");
     }
     const writes =
       (n.kind === "BinaryOperator" && n.opcode === "=") ||
@@ -1766,7 +1762,12 @@ function raiseBody(
     if (n.kind === "ImplicitCastExpr" && n.castKind === "ArrayToPointerDecay") {
       const target = stripParens((n.inner ?? [])[0] as ClangNode);
       const indexed = parent?.kind === "ArraySubscriptExpr" && (parent.inner ?? [])[0] === n;
-      if (target.kind === "DeclRefExpr" && !indexed) inMemory.add(target.referencedDecl?.id ?? "");
+      if (
+        target.kind === "DeclRefExpr" &&
+        !indexed &&
+        !isReferenceType(target.referencedDecl?.type?.qualType ?? "")
+      )
+        inMemory.add(target.referencedDecl?.id ?? "");
     }
     const passThrough =
       derefOfAddr ||
@@ -2263,7 +2264,7 @@ function raiseBody(
           return `__ykFnAddr(${ident(d.name ?? "")})`;
         }
         if (d.kind === "EnumConstantDecl") {
-          const v = unitEnumValue(d.name ?? "");
+          const v = unitEnumValue(d.name ?? "", d.id);
           if (v === undefined)
             throw new RaiseCError(`the enumeration constant ${d.name} has no value`);
           return wide(typeOf(e)) ? `${v}n` : String(v);
@@ -2286,6 +2287,11 @@ function raiseBody(
             const d = target.referencedDecl as ClangNode;
             const mem = mems.get(d.id ?? "");
             if (mem !== undefined) return mem.addr;
+            // (A reference to an array, C++'s `T (&a)[N]`: the address it holds.)
+            if (isReferenceType(d.type?.qualType ?? "")) {
+              const p = place(target);
+              if (p.k === "mem") return p.addr;
+            }
             const global = isGlobal(d);
             // A global that is state, or a constant whose initializer this unit lacks (an extern
             // declaration): static memory.
@@ -2892,7 +2898,7 @@ function raiseBody(
       // that is not trivially copyable moved or copied in turn; a union's bytes alone.)
       if (!/^union /.test(t.name)) {
         const l = layoutOf(t);
-        const out = copyBytes(to, from, sizeOf(t));
+        const out = copyBytes(to, from, copiedSize(t));
         const at = (b: string, o: number): string => (o === 0 ? b : `(${b} + ${o})`);
         for (const [b, o] of l.bases ?? [])
           out.push(...relocate(at(to, o), at(from, o), { k: "rec", name: b }, move));
@@ -2901,10 +2907,12 @@ function raiseBody(
           if (ft?.k === "rec")
             out.push(...relocate(at(to, f.offset), at(from, f.offset), ft, move));
         }
-        return out;
+        return out.length > 0 ? out : ["undefined"];
       }
     }
-    return copyBytes(to, from, sizeOf(t));
+    // (Nothing to copy, an empty class: one step that does nothing.)
+    const bytes = copyBytes(to, from, copiedSize(t));
+    return bytes.length > 0 ? bytes : ["undefined"];
   };
   const copyFrom = (to: string, t: CType, src: ClangNode): string[] => {
     const made = constructed(src);
@@ -3037,7 +3045,7 @@ function raiseBody(
     ) {
       const to = temp({ k: "f64" });
       const from = temp({ k: "f64" });
-      return `((${to} = ${addr}), (${from} = ${argOf(args[0] as ClangNode)}), ${copyBytes(to, from, sizeOf(t)).join(", ")}, undefined)`;
+      return `(${[`(${to} = ${addr})`, `(${from} = ${argOf(args[0] as ClangNode)})`, ...copyBytes(to, from, copiedSize(t)), "undefined"].join(", ")})`;
     }
     if (ctor === undefined) throw new RaiseCError(`the constructor ${t.name}(${ctorType})`);
     const to = temp({ k: "f64" });
@@ -3077,7 +3085,7 @@ function raiseBody(
         const from = temp({ k: "f64" });
         const a0 = args[0] as ClangNode;
         const move = /&&\s*\)/.test(ctorType) || (a0.valueCategory ?? "prvalue") !== "lvalue";
-        return `((${to} = ${addr}), (${from} = ${argOf(a0)}), ${relocate(to, from, t, move).join(", ")}, undefined)`;
+        return `(${[`(${to} = ${addr})`, `(${from} = ${argOf(a0)})`, ...relocate(to, from, t, move), "undefined"].join(", ")})`;
       }
       throw new RaiseCError(`the implicit constructor ${t.name}(${ctorType})`);
     }
@@ -3192,6 +3200,25 @@ function raiseBody(
       return steps.length === 0
         ? `(${self}, undefined)`
         : `((${o} = ${self}), ${steps.join(", ")}, undefined)`;
+    }
+    // A trivial assignment (C++: a union's, std::optional<int>'s): the object's bytes, as code
+    // generation copies them (the body clang writes for it copies nothing).
+    if (name === "operator=" && args.length === 1 && id !== undefined) {
+      const cls = unitCxx?.classOf(id);
+      const at = typeOf(args[0] as ClangNode);
+      // (A copy or move: the argument of the class; `optional = 2` converts, it is not one.)
+      if (
+        cls !== undefined &&
+        at.k === "rec" &&
+        recordKey(at.name) === recordKey(cls) &&
+        unitCxx?.trivialAssign(cls) === true
+      ) {
+        const t: CType = { k: "rec", name: cls };
+        const o = temp({ k: "f64" });
+        const f = temp({ k: "f64" });
+        const steps = copyBytes(o, f, copiedSize(t));
+        return `((${o} = ${self}), (${f} = ${argOf(args[0] as ClangNode)}), ${steps.length > 0 ? `${steps.join(", ")}, ` : ""}${o})`;
+      }
     }
     // A virtual call (not one a qualifier names): the function in the object's vtable.
     const qualified = (member.inner ?? []).some((k) => k.kind === "NestedNameSpecifier");
@@ -4973,6 +5000,19 @@ export function shaveCUnit(
           },
           isFunctionName: (name) =>
             (indexed.byName.get(name) ?? []).some((d) => FUNCTION_KINDS.has(d.kind)),
+          trivialAssign: (record) => {
+            const dd = (
+              findRecord(record) as
+                | {
+                    definitionData?: {
+                      copyAssign?: { trivial?: boolean };
+                      moveAssign?: { trivial?: boolean };
+                    };
+                  }
+                | undefined
+            )?.definitionData;
+            return dd?.copyAssign?.trivial === true && dd.moveAssign?.trivial !== false;
+          },
           trivialCopy: (record) => {
             const dd = (
               findRecord(record) as
@@ -5215,7 +5255,26 @@ export function shaveCUnit(
   };
   // Enumeration constants, from the whole unit's declarations.
   let enums: Map<string, bigint> | undefined;
-  const enumValue = (name: string): bigint | undefined => {
+  const enumValue = (name: string, id?: string): bigint | undefined => {
+    // (By id: the constant's own enumeration, in an indexed unit.)
+    if (id !== undefined && indexed !== undefined) {
+      const known = enumsById.get(id);
+      if (known !== undefined) return known;
+      const c = indexed.byId.get(id);
+      const owner = c === undefined ? undefined : enumOf(c);
+      if (owner !== undefined) {
+        let next = 0n;
+        for (const k of readDecl(indexed, owner).inner ?? []) {
+          if (k.kind !== "EnumConstantDecl") continue;
+          const v = enumInitValue(k);
+          if (v !== undefined) next = BigInt(v);
+          enumsById.set(k.id ?? "", next);
+          next += 1n;
+        }
+        const v = enumsById.get(id);
+        if (v !== undefined) return v;
+      }
+    }
     if (enums === undefined) {
       const values = new Map<string, bigint>();
       const walk = (n: ClangNode): void => {
@@ -5223,7 +5282,7 @@ export function shaveCUnit(
           let next = 0n;
           for (const c of n.inner ?? []) {
             if (c.kind !== "EnumConstantDecl") continue;
-            const v = (c.inner ?? []).find((k) => k.kind === "ConstantExpr")?.value;
+            const v = enumInitValue(c);
             if (v !== undefined) next = BigInt(v);
             values.set(c.name ?? "", next);
             next += 1n;
@@ -5238,6 +5297,19 @@ export function shaveCUnit(
       enums = values;
     }
     return enums.get(name);
+  };
+  const enumsById = new Map<string, bigint>();
+  // An enumeration constant's enumeration: the EnumDecl whose extent holds it.
+  const enumOf = (c: IndexedDecl): IndexedDecl | undefined => {
+    if (indexed === undefined) return undefined;
+    let best: IndexedDecl | undefined;
+    for (const e of enumDecls()) if (e.start < c.start && c.end <= e.end) best = e;
+    return best;
+  };
+  let enumList: IndexedDecl[] | undefined;
+  const enumDecls = (): IndexedDecl[] => {
+    enumList ??= [...(indexed as UnitIndex).byId.values()].filter((d) => d.kind === "EnumDecl");
+    return enumList;
   };
   const typedef: TypedefResolver = (name) => {
     let hit: string | undefined;
@@ -5901,7 +5973,7 @@ function staticDefinition(
         return { k: "v", v: BigInt(e.value ?? "0") };
       case "DeclRefExpr": {
         const d = e.referencedDecl as ClangNode;
-        const v = d.kind === "EnumConstantDecl" ? unitEnumValue(d.name ?? "") : undefined;
+        const v = d.kind === "EnumConstantDecl" ? unitEnumValue(d.name ?? "", d.id) : undefined;
         if (v !== undefined) return { k: "v", v };
         // Another constant's value (its initializer, folded the same way).
         if (d.kind === "VarDecl" && /\bconst\b/.test(d.type?.qualType ?? "")) {
@@ -6198,9 +6270,37 @@ function className(record: string): string {
   return bare.slice(last).replace(/<.*$/, "");
 }
 
+/**
+ * The bytes a copy of an object of this type copies: none for an empty class (C++: it shares
+ * its address with what follows it, as a base, `std::string`'s allocator and its pointer).
+ */
+function copiedSize(t: CType): number {
+  if (t.k !== "rec") return sizeOf(t);
+  const l = layoutOf(t);
+  const empty =
+    l.fields.size === 0 &&
+    l.vptr === undefined &&
+    l.size <= 1 &&
+    [...(l.bases ?? [])].every(([b]) => copiedSize({ k: "rec", name: b }) === 0);
+  return empty ? 0 : l.size;
+}
+
 /** Whether a C++ type is a reference (`T &`, `T &&`, `int (&)[5]`). */
 const isReferenceType = (qualType: string): boolean =>
   /&$|\(&&?\)\s*(\[\d*\])+$/.test(qualType.trim());
+
+/** An enumerator's value as clang computed it: its initializer's ConstantExpr, under its casts. */
+function enumInitValue(c: ClangNode): string | undefined {
+  let n = (c.inner ?? [])[0];
+  for (let guard = 0; n !== undefined && guard < 8; guard++) {
+    // (A bool's value is spelled `true` or `false`.)
+    if (n.kind === "ConstantExpr" && n.value !== undefined)
+      return n.value === "true" ? "1" : n.value === "false" ? "0" : n.value;
+    if (n.kind !== "ImplicitCastExpr" && n.kind !== "ParenExpr") return undefined;
+    n = (n.inner ?? [])[0];
+  }
+  return undefined;
+}
 
 /** A spelling split at its first template argument list: before, the arguments, after. */
 function templateParts(t: string): { head: string; args: string[]; tail: string } | undefined {
@@ -6436,6 +6536,8 @@ export function createCMemory() {
   let fnByName: (name: string) => unknown = () => undefined;
   let next = 0x10000;
   const data = new Map<string, number>();
+  // (YK_MEMORY_TRACE: where each region was freed, for a trap's message.)
+  const freedAt = process.env.YK_MEMORY_TRACE ? new Map<number, string>() : undefined;
   const regionOf = (a: number, n: number, write: boolean): Region => {
     let lo = 0;
     let hi = regions.length - 1;
@@ -6454,7 +6556,7 @@ export function createCMemory() {
     for (let i = regions.length - 1; i >= 0; i--) {
       const r = regions[i] as Region;
       if (r.base <= a) {
-        near = ` (nearest region 0x${r.base.toString(16)}+${r.bytes.length}${r.live ? "" : ", freed"}${r.constant ? ", constant" : ""})`;
+        near = ` (nearest region 0x${r.base.toString(16)}+${r.bytes.length}${r.live ? "" : ", freed"}${r.constant ? ", constant" : ""})${freedAt?.has(r.base) ? ` freed at ${freedAt.get(r.base)} ALLOCATED at ${freedAt.get(-r.base)}` : ""}`;
         break;
       }
     }
@@ -6524,7 +6626,11 @@ export function createCMemory() {
     return a;
   };
   const leaves = {
-    __ykAlloc: (size: number, align: number): number => alloc(size, align),
+    __ykAlloc: (size: number, align: number): number => {
+      const a = alloc(size, align);
+      if (freedAt !== undefined) freedAt.set(-a, new Error().stack ?? "");
+      return a;
+    },
     /** A function's address (a function pointer's value). */
     __ykFnAddr: fnAddr,
     /** The function at an address (a call through a function pointer). */
@@ -6542,6 +6648,7 @@ export function createCMemory() {
       if (r.base !== a || r.constant)
         throw new CMemoryTrap(`memory trap: free of 0x${a.toString(16)}`);
       r.live = false;
+      if (freedAt !== undefined) freedAt.set(r.base, new Error().stack ?? "");
     },
     __ykData: (kind: string, values: readonly (number | bigint)[]): number => {
       const key = `${kind}:${values.map(String).join(",")}`;
