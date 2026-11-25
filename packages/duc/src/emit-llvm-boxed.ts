@@ -1383,6 +1383,21 @@ function lowerFunction(
    * An operation with a number's fast path: `fast` (given the operands as doubles) inline when every
    * operand is a number (and `guard` holds), else `slow` (the runtime's). The value, boxed.
    */
+  // Numeric work worth inline paths and a number clone: enough arithmetic, bitwise, Math and memory
+  // operations (a library's function compares a length here and there; a math atom computes).
+  const numericWork = ((): boolean => {
+    const ARITH = new Set(["+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", ">>>", "~"]);
+    const work = g.nodes.filter((n) => {
+      if (n.kind !== "op") return false;
+      if (ARITH.has(n.label ?? "")) return true;
+      const leaf = leafOf(n);
+      if (leaf !== undefined && MEM_INLINE[leaf] !== undefined) return true;
+      const callee = n.label === "CallExpression" ? memberOf(n.inputs[0] as ValueId) : undefined;
+      return callee !== undefined && isMath(callee.node.inputs[0] as ValueId);
+    }).length;
+    return work >= 4 && work * 12 >= g.nodes.length;
+  })();
+  const compact = !numericWork && numberParams === undefined;
   const numberFast = (
     args: readonly string[],
     fast: (ds: readonly string[]) => string,
@@ -1390,6 +1405,9 @@ function lowerFunction(
     guard?: (ds: readonly string[]) => string,
     proven = false,
   ): string => {
+    // Code with little numeric work (a library's function): the runtime's operation, not an inline
+    // fast path beside it, so the module stays small and compiles fast (#1369).
+    if (compact && !proven) return slow();
     if (proven && guard === undefined) {
       // Every operand a proven number: the double operation alone.
       return fast(
@@ -3796,8 +3814,10 @@ function lowerFunction(
       else if (callee !== undefined && isMath(callee.node.inputs[0] as ValueId))
         for (const v of n.inputs.slice(1)) numericUse.add(resolve(v as ValueId));
     }
+    const worth = numericWork;
     const speculated = params.filter(
       (p, i) =>
+        worth &&
         i >= closure.captures &&
         !(p.label ?? "").endsWith("...") &&
         rawParams?.has(i - closure.captures) !== true &&
