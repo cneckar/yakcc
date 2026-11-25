@@ -211,6 +211,9 @@ static size_t gc_npages = 0, gc_top = 0;
 static gc_run *gc_runs = NULL;
 static size_t gc_nruns = 0, gc_capruns = 0;
 static void *gc_free[GC_NCLASS];
+/* A block's index in its page: the offset times its class's reciprocal (exact below GC_PAGE), not a
+   division. */
+static uint64_t gc_recip[GC_NCLASS];
 static size_t gc_since = 0, gc_threshold = (size_t)16 << 20, gc_floor = (size_t)16 << 20;
 static int gc_state = 0; /* 0 not yet set up, 1 collecting, 2 allocating only, 3 never (no heap) */
 static uintptr_t gc_stack_top = 0;
@@ -246,6 +249,7 @@ static void gc_setup(void) {
     while (gc_sizes[c] < sz) c++;
     gc_class_of[sz / 16] = (uint8_t)c;
   }
+  for (uint32_t c = 0; c < GC_NCLASS; c++) gc_recip[c] = ((uint64_t)1 << 32) / gc_sizes[c] + 1;
   /* YK_GC_STRESS: collect every 64 KiB, so a value the roots miss is found by the tests. */
   const char *stress = getenv("YK_GC_STRESS");
   if (stress != NULL && stress[0] == '1') gc_threshold = gc_floor = (size_t)1 << 16;
@@ -302,7 +306,9 @@ static void gc_put_pages(size_t start, size_t k) {
 static void gc_collect(void);
 static void gc_report(void);
 
-static void *alloc(size_t n) {
+/* Anything but a small block from a free list while no collection is due: set-up, collection, a
+   fresh page, a large block. */
+static __attribute__((noinline)) void *alloc_slow(size_t n) {
   if (gc_state == 0) gc_setup();
   if (gc_state == 3) return bump(n);
   if (gc_state == 1 && gc_since >= gc_threshold) gc_collect();
@@ -345,11 +351,32 @@ static void *alloc(size_t n) {
   gc_free[c] = *(void **)p;
   size_t off = (uint8_t *)p - gc_heap;
   gc_page *g = &gc_pages[off >> GC_PAGE_SHIFT];
-  uint32_t b = (uint32_t)((off & (GC_PAGE - 1)) / size);
+  uint32_t b = (uint32_t)(((off & (GC_PAGE - 1)) * gc_recip[c]) >> 32);
   g->used[b >> 6] |= (uint64_t)1 << (b & 63);
   memset(p, 0, size);
   gc_since += size;
   return p;
+}
+/* A block of at least n bytes, zeroed: most often a small one from its class's free list, here (a
+   leaf, no frame); anything else alloc_slow's. */
+static void *alloc(size_t n) {
+  size_t m = n + 1; /* one past the end is inside */
+  if ((gc_state == 2 || (gc_state == 1 && gc_since < gc_threshold)) && m <= GC_LARGE) {
+    uint32_t c = gc_class_of[(m + 15) / 16];
+    uint8_t *p = gc_free[c];
+    if (p != NULL) {
+      uint32_t size = gc_sizes[c];
+      gc_free[c] = *(void **)p;
+      size_t off = (size_t)(p - gc_heap);
+      gc_page *g = &gc_pages[off >> GC_PAGE_SHIFT];
+      uint32_t b = (uint32_t)(((off & (GC_PAGE - 1)) * gc_recip[c]) >> 32);
+      g->used[b >> 6] |= (uint64_t)1 << (b & 63);
+      memset(p, 0, size);
+      gc_since += size;
+      return p;
+    }
+  }
+  return alloc_slow(n);
 }
 
 /* Marking: an explicit stack of blocks to scan. */

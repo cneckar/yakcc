@@ -3649,7 +3649,9 @@ function lowerFunction(
         set(out, obj);
         return;
       }
-      // Keys and values in source order: a computed key is the input before its value.
+      // Keys and values in source order: a computed key is the input before its value. A `.rec`
+      // variant's result needs no keys (only a function value's name).
+      const recHere = recOut === true && out === resolve(g.obs[0] as ValueId);
       const keys: string[] = [];
       const values: string[] = [];
       let at = 0;
@@ -3664,14 +3666,23 @@ function lowerFunction(
         const key =
           slot.kind === "computed"
             ? operand(ins[at++] as ValueId)
-            : str((slot as { name: string }).name);
+            : recHere
+              ? ""
+              : str((slot as { name: string }).name);
         keys.push(key);
         const v = ins[at++] as ValueId;
         // A function made here is named by its key (NamedEvaluation), unless its code named it.
         const made = producer.get(resolve(v))?.closure !== undefined;
-        values.push(made ? call("yk_name_method", `i64 ${operand(v)}, i64 ${key}`) : operand(v));
+        values.push(
+          made
+            ? call(
+                "yk_name_method",
+                `i64 ${operand(v)}, i64 ${key === "" ? str((slot as { name: string }).name) : key}`,
+              )
+            : operand(v),
+        );
       }
-      if (recOut && out === resolve(g.obs[0] as ValueId)) {
+      if (recHere) {
         // A `.rec` variant's result: its values in the caller's slots, in the keys' order.
         values.forEach((v, k) => {
           const p = fresh();
