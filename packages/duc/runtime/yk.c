@@ -75,6 +75,7 @@ typedef struct {
   void *privates;    /* its private members (#1330): a yk_object no enumeration sees, or NULL */
   uint32_t *index;   /* with 8 keys or more: each key's position + 1, by its hash; NULL to rebuild */
   uint32_t index_cap;
+  uint32_t digit_keys; /* nonzero once a key starting with a digit was added (an index's may be one) */
 } yk_object;
 
 /* A BigInt: a sign and a magnitude, 32-bit limbs least significant first, no zero limb on top. */
@@ -1168,7 +1169,86 @@ static inline __attribute__((always_inline)) int key_is(yk key, const char *name
 }
 
 static int typed_fast_get(yk obj, uint32_t i, yk *out);
+static __attribute__((noinline)) yk yk_get_slow(yk obj, yk key);
+static int64_t own_find_chars(yk_object *o, const char *p, uint32_t n);
+static yk resolve_slot(yk slot, yk receiver);
+/* An index read of a plain object (a table by code point): by the index's digits along a chain of
+   plain objects, no string made; a miss there is undefined (no built-in has such a name). 0 when
+   the chain is not all plain objects. */
+static int object_index_get(yk obj, uint32_t i, yk *out) {
+  char t[12];
+  int at = (int)sizeof t;
+  uint32_t u = i;
+  do {
+    t[--at] = (char)('0' + u % 10);
+    u /= 10;
+  } while (u != 0);
+  yk v = obj;
+  for (; v != 0 && is_object(v); v = ((yk_object *)PTR(v))->proto) {
+    yk_object *c = (yk_object *)PTR(v);
+    if (c->kind != 0) return 0;
+    if (!c->digit_keys) continue;
+    int64_t k = own_find_chars(c, t + at, (uint32_t)(sizeof t - at));
+    if (k >= 0) return *out = resolve_slot(c->values[k], obj), 1;
+  }
+  if (v != 0) return 0;
+  *out = YK_UNDEFINED;
+  return 1;
+}
+/* One code unit's string: below 256, the one string of it (made once; the collector keeps the table). */
+static yk unit_string(uint16_t u) {
+  static yk units[256];
+  if (u < 256 && units[u] != 0) return units[u];
+  yk_string *c = new_string(1);
+  c->units[0] = u;
+  yk r = string_of(c);
+  if (u < 256) units[u] = r;
+  return r;
+}
+static yk interned(const char *name, uint64_t n);
+/* The one string "length" (the lowered code's reads of .length use it too). */
+static yk length_key(void) {
+  static yk k;
+  return k != 0 ? k : (k = interned("length", 6));
+}
+/* A property read: its common cases here (a small function, no frame to set up), the rest in
+   yk_get_slow. */
 yk yk_get(yk obj, yk key) {
+  if (is_number(key)) {
+    double d = num(key);
+    if (d >= 0 && d < 4294967295.0 && d == (double)(uint32_t)d) {
+      uint32_t i = (uint32_t)d;
+      if (is_array(obj)) {
+        yk_array *a = arr(obj);
+        if (i < a->len && (a->holes == NULL || !array_hole(a, i))) return a->items[i];
+      } else if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 0) {
+        yk r;
+        if (object_index_get(obj, i, &r)) return r;
+      } else if (is_string(obj)) {
+        if (i < str(obj)->len) return unit_string(str(obj)->units[i]);
+      } else if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 7) {
+        yk r;
+        if (typed_fast_get(obj, i, &r)) return r;
+      }
+    }
+  } else if (is_object(obj)) {
+    yk_object *o = (yk_object *)PTR(obj);
+    if (o->kind == 0) {
+      uint32_t n = o->len < 32 ? o->len : 32; /* names are made once: the key itself, by pointer */
+      for (uint32_t i = 0; i < n; i++)
+        if (o->keys[i] == key) {
+          yk v = o->values[i];
+          /* A data property's value as it is; an accessor (an internal box) through resolve_slot. */
+          if (TAG(v) != T_INTERNAL) return v;
+          return resolve_slot(v, obj);
+        }
+    }
+  } else if (is_string(obj) && is_string(key) && key == length_key()) {
+    return yk_number(str(obj)->len);
+  }
+  return yk_get_slow(obj, key);
+}
+static __attribute__((noinline)) yk yk_get_slow(yk obj, yk key) {
   /* An element by an integer index: an array's (not a hole), a typed array's, in range. */
   if (is_number(key)) {
     double d = num(key);
@@ -1203,17 +1283,7 @@ yk yk_get(yk obj, yk key) {
     yk_string *s = str(obj);
     if (key_is(key, "length")) return yk_number(s->len);
     int64_t i = index_of_key(key);
-    if (i >= 0 && i < s->len) {
-      /* One code unit: below 256, the one string of it (made once; the collector keeps the table). */
-      static yk units[256];
-      uint16_t u = s->units[i];
-      if (u < 256 && units[u] != 0) return units[u];
-      yk_string *c = new_string(1);
-      c->units[0] = u;
-      yk r = string_of(c);
-      if (u < 256) units[u] = r;
-      return r;
-    }
+    if (i >= 0 && i < s->len) return unit_string(s->units[i]);
     return i >= 0 ? YK_UNDEFINED : proto_lookup(obj, key);
   }
   if (is_array(obj)) {
@@ -1266,6 +1336,7 @@ yk yk_get(yk obj, yk key) {
         for (; v != 0 && is_object(v); v = ((yk_object *)PTR(v))->proto) {
           yk_object *c = (yk_object *)PTR(v);
           if (c->kind != 0) break;
+          if (!c->digit_keys) continue; /* no key of it can be an index's */
           int64_t at = own_find_chars(c, t + i, (uint32_t)(sizeof t - i));
           if (at >= 0) return resolve_slot(c->values[at], obj);
         }
@@ -1765,6 +1836,8 @@ static void own_set(yk_object *o, yk key, yk value) {
   }
   o->keys[o->len] = key;
   o->values[o->len++] = value;
+  if (is_string(key) && str(key)->len > 0 && str(key)->units[0] >= '0' && str(key)->units[0] <= '9')
+    o->digit_keys = 1;
   /* The index takes the new key while it is at most a quarter full; else it is made again. */
   if (o->index != NULL) {
     if (o->len * 4 > o->index_cap) o->index = NULL;
@@ -2196,13 +2269,17 @@ yk yk_delete_named(yk obj, const char *name, uint64_t n) { return yk_delete(obj,
 
 /* An object literal whose keys the lowering knows are distinct strings: its arrays filled at once. */
 yk yk_object_of_distinct(uint64_t n, const yk *keys, const yk *values) {
-  yk_object *o = alloc(sizeof(yk_object));
+  /* One block: the object, then its keys, then its values (a later key past cap grows them apart). */
   uint32_t cap = n < 4 ? 4 : (uint32_t)n;
-  o->keys = alloc((size_t)cap * sizeof(yk));
-  o->values = alloc((size_t)cap * sizeof(yk));
+  yk_object *o = alloc(sizeof(yk_object) + (size_t)cap * 2 * sizeof(yk));
+  o->keys = (yk *)(o + 1);
+  o->values = o->keys + cap;
   memcpy(o->keys, keys, (size_t)n * sizeof(yk));
   memcpy(o->values, values, (size_t)n * sizeof(yk));
   o->len = (uint32_t)n;
+  for (uint64_t i = 0; i < n; i++)
+    if (is_string(keys[i]) && str(keys[i])->len > 0 && str(keys[i])->units[0] >= '0' && str(keys[i])->units[0] <= '9')
+      o->digit_keys = 1;
   o->cap = cap;
   return BOX(T_OBJECT, o);
 }
