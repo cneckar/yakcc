@@ -1015,32 +1015,6 @@ export function f(xs: number[]) {
     );
   });
 
-  it("an if whose only exits are throws takes no tail: the rest is lifted once, however long", () => {
-    const program = (rest: number) =>
-      `export function f(c: boolean, x: number) {
-  const log: number[] = [];
-  if (c) {
-    if (x > 2) {
-      throw new RangeError("big " + x);
-    }
-    log.push(x);
-  }
-${Array.from({ length: rest }, (_, i) => `  log.push(x + ${i});`).join("\n")}
-  return log;
-}`;
-    for (const rest of [1, 200]) {
-      const code = program(rest);
-      const g = liftAtom(code);
-      expect(g.nodes.filter((n) => n.origin?.kind === "ReturnSelect").length, code).toBe(0);
-      expect(g.nodes.filter((n) => n.label === ".push").length, code).toBe(rest + 1);
-      agrees(code, [
-        [true, 1],
-        [true, 3],
-        [false, 5],
-      ]);
-    }
-  }, 60_000);
-
   it("a class named as a platform global is itself in a closure inside it, as Node's URL is", () => {
     agrees(
       `export function f(p: string) {

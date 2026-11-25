@@ -899,7 +899,7 @@
   {
     "name": "seed:signed-integer",
     "origin": "seed:signed-integer",
-    "identity": "10115e6d2a8a8b6687e615bf5db5791bccd2cdce978aee3ac643d10926f98331",
+    "identity": "bc9398e9f59f9703b4e1e690e04e4d00111b805dc82fa46e0125359546015e9d",
     "constructs": ["loop", "exception", "number"],
     "args": [
       {
