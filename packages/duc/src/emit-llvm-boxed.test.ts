@@ -355,6 +355,11 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "constructors whose branch throws on one side, the heap joined after: derived and plain (#1370)",
+    "export function f(a, b) { class A { constructor(n) { this.n = n; } } class B extends A { constructor(o = {}, fl = 0) { super(1); const { k, c } = o; const has = c !== undefined; if (k !== undefined) { if (has) throw new Error('x'); this.v = k + fl; } else if (has) { this.v = c; } else { this.v = fl; } this.w = this.v * 2; } } class C { constructor(o = {}, fl = 0) { const { k, c } = o; const has = c !== undefined; if (k !== undefined) { if (has) throw new Error('y'); this.v = k + fl; } else { this.v = fl; } this.w = this.v * 2; } } const t = (g) => { try { return g(); } catch (e) { return e.message; } }; return [new B({ k: a }, 1).w, new B({ c: b }).w, new B().w, new C({ k: a }, 1).w, new C().w, t(() => new B({ k: a, c: b })), t(() => new C({ k: a, c: b }))]; }",
+    2,
+  ],
+  [
     "Math.random, with arguments it ignores (undici's random(max)): a number in [0, 1) (#1331)",
     "export function f(a, b) { const r = Math.random(a); const q = Math.random(); return [typeof r, r >= 0 && r < 1, q >= 0 && q < 1, r !== q || r === q]; }",
     2,
