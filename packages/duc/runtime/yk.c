@@ -1204,9 +1204,15 @@ yk yk_get(yk obj, yk key) {
     if (key_is(key, "length")) return yk_number(s->len);
     int64_t i = index_of_key(key);
     if (i >= 0 && i < s->len) {
+      /* One code unit: below 256, the one string of it (made once; the collector keeps the table). */
+      static yk units[256];
+      uint16_t u = s->units[i];
+      if (u < 256 && units[u] != 0) return units[u];
       yk_string *c = new_string(1);
-      c->units[0] = s->units[i];
-      return string_of(c);
+      c->units[0] = u;
+      yk r = string_of(c);
+      if (u < 256) units[u] = r;
+      return r;
     }
     return i >= 0 ? YK_UNDEFINED : proto_lookup(obj, key);
   }
