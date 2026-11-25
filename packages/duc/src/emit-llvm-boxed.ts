@@ -1322,7 +1322,8 @@ function lowerFunction(
   };
   /** A double result for `out`: its bits as they are when only numeric operations read it. */
   const numberResult = (out: ValueId, d: string): string =>
-    rawNumbers.has(resolve(out)) ? rawBits(d) : boxDouble(d);
+    // A value of bounded magnitude (finite operands, + - * of them) is never NaN: no canonical form.
+    rawNumbers.has(resolve(out)) || magnitude(out) !== undefined ? rawBits(d) : boxDouble(d);
   /** Whether a value is a typed BigInt: an i128 (a literal, or an operation the proof types). */
   const isTypedBig = (v: ValueId): boolean =>
     widthOf(v) !== undefined && (widthOf(v) as number) <= 127;
@@ -3870,6 +3871,18 @@ function lowerFunction(
         const c = fresh();
         emit(`${c} = icmp ${lbl === "===" ? "eq" : "ne"} i64 ${operand(other as ValueId)}, ${k}`);
         set(out, boolBox(c));
+        return;
+      }
+    }
+    if (ins.length === 2 && (lbl === ">>>" || lbl === "|")) {
+      // x >>> 0 of a uint32, x | 0 of an int32 (numbers both): the value itself.
+      const z = literalNumber(ins[1] as ValueId);
+      if (
+        z === 0 &&
+        !Object.is(z, -0) &&
+        numRange.get(resolve(ins[0] as ValueId)) === (lbl === ">>>" ? "u32" : "i32")
+      ) {
+        set(out, operand(ins[0] as ValueId));
         return;
       }
     }
