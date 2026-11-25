@@ -1424,6 +1424,8 @@ static int inherits_thunk(yk recv, yk key) {
   return is_thunk(proto_lookup(recv, key));
 }
 static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
+  /* The member read the call makes first: of undefined or null, its TypeError. */
+  if (is_nullish(recv)) yk_get(recv, key);
   yk arg0 = argc > 0 ? argv[0] : YK_UNDEFINED;
   yk arg1 = argc > 1 ? argv[1] : YK_UNDEFINED;
   if (is_symbol(recv)) {
