@@ -1574,3 +1574,44 @@ function fail(): never {
     expect(tree.leafCount).toBeGreaterThan(0);
   });
 });
+
+describe("decompose — a member read of a call descends into the call (#1368)", () => {
+  /**
+   * fast-check's `anything()` is `letrec((tie) => ({ .. })).anything`: a property access on a large
+   * call, with no children of its own, so the whole module failed to decompose.
+   */
+  it("letrec((tie) => ({ .. })).anything decomposes (was DidNotReachAtomError)", async () => {
+    const src = `
+declare function letrec<T>(f: (tie: (k: string) => unknown) => T): T;
+declare function oneof(...xs: unknown[]): unknown;
+declare const c: { withMap: boolean; withSet: boolean; withDate: boolean; size: number };
+
+export function anything(): unknown {
+  return letrec((tie) => ({
+    anything: oneof(tie("array"), tie("object"), ...(c.withMap ? [tie("map")] : []), ...(c.withSet ? [tie("set")] : [])),
+    array: c.size > 2 ? oneof(tie("anything")) : oneof(tie("keys")),
+    object: c.withDate ? [tie("date"), tie("anything")] : [tie("anything")],
+  })).anything;
+}
+`.trim();
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+
+  it("an element read of a call descends into the call and the key", async () => {
+    const src = `
+declare function table(f: (n: number) => number): number[];
+declare const k: number;
+
+export function pick(): number {
+  return table((n) => {
+    if (n > 10) return n * 2;
+    for (let i = 0; i < n; i++) if (i % 3 === 0) return i;
+    return -n;
+  })[k > 0 ? k : -k];
+}
+`.trim();
+    const tree = await decompose(src, emptyRegistry);
+    expect(tree.leafCount).toBeGreaterThan(0);
+  });
+});

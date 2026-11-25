@@ -1066,6 +1066,23 @@ function decomposableChildrenOf(node: Node): readonly Node[] {
     return [wrapped.getExpression()];
   }
 
+  // A member read computes its object, then reads it: `f(..).x` and `f(..)[k]` descend into the
+  // object (and the key), as a wrapper does. fast-check's `letrec((tie) => ({ .. })).anything` was a
+  // non-atomic property access with no children, and its whole module failed to decompose (#1368).
+  // Only a member read that is not atomic descends: atoms elsewhere are unchanged.
+  if (kind === SyntaxKind.PropertyAccessExpression) {
+    const access = node as Node & { getExpression(): Node };
+    return [access.getExpression()];
+  }
+  if (kind === SyntaxKind.ElementAccessExpression) {
+    const access = node as Node & {
+      getExpression(): Node;
+      getArgumentExpression(): Node | undefined;
+    };
+    const key = access.getArgumentExpression();
+    return key !== undefined ? [access.getExpression(), key] : [access.getExpression()];
+  }
+
   // ExpressionStatement: the statement is a thin wrapper — the expression is
   // the carrier of decomposable behavior. Descend into [expression].
   // (DEC-SLICER-CHILDREN-CLASS-EXPR-VAR-001)
