@@ -3967,6 +3967,11 @@ export function emitLlvmBoxed(input: DucGraph, symbol = "f"): LlvmModule {
 }
 
 /** One statement of a module (#1290): a function declaration, or a statement, and the names it declares. */
+/** The platform globals the native runtime gives (#1370's closure listing: hand-written). */
+export const NATIVE_GLOBALS: ReadonlySet<string> = GLOBALS;
+/** The leaves the native lowering calls the runtime for, by their reserved names. */
+export const NATIVE_LEAVES: ReadonlySet<string> = new Set(Object.keys(LEAVES));
+
 export interface NativeModuleStatement {
   readonly kind: "function" | "statement";
   readonly declares: readonly string[];
