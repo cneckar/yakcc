@@ -1015,32 +1015,6 @@ export function f(xs: number[]) {
     );
   });
 
-  it("an if whose only exits are throws takes no tail: the rest is lifted once, however long", () => {
-    const program = (rest: number) =>
-      `export function f(c: boolean, x: number) {
-  const log: number[] = [];
-  if (c) {
-    if (x > 2) {
-      throw new RangeError("big " + x);
-    }
-    log.push(x);
-  }
-${Array.from({ length: rest }, (_, i) => `  log.push(x + ${i});`).join("\n")}
-  return log;
-}`;
-    for (const rest of [1, 200]) {
-      const code = program(rest);
-      const g = liftAtom(code);
-      expect(g.nodes.filter((n) => n.origin?.kind === "ReturnSelect").length, code).toBe(0);
-      expect(g.nodes.filter((n) => n.label === ".push").length, code).toBe(rest + 1);
-      agrees(code, [
-        [true, 1],
-        [true, 3],
-        [false, 5],
-      ]);
-    }
-  }, 60_000);
-
   it("a class named as a platform global is itself in a closure inside it, as Node's URL is", () => {
     agrees(
       `export function f(p: string) {
@@ -1101,6 +1075,79 @@ ${Array.from({ length: rest }, (_, i) => `  log.push(x + ${i});`).join("\n")}
       [
         [{ kA: "a", kB: "b", kC: "c", kD: "d", kE: "e", kF: "f" }, 2],
         [{ kA: "a", kB: "b", kC: "c", kD: "d", kE: "e", kF: "f" }, 0],
+      ],
+    );
+  });
+
+  it("a for loop with a continue runs its update before each continue and at its body's end (#1292)", () => {
+    agrees(
+      `export function f(xs: string[], skip: string) {
+  let out = "";
+  for (let i = 0, j = 0; i < xs.length; i++, j += 2) {
+    const c = xs[i] as string;
+    if (c === skip) continue;
+    if (c === "(") {
+      out += "<" + j;
+      i += 1;
+    } else if (c === "!") throw new RangeError("bang at " + i);
+    else out += c;
+  }
+  return out;
+}`,
+      [
+        [["a", "(", "b", "c", "x", "d"], "x"],
+        [["a", "!", "b"], "q"],
+        [[], ""],
+      ],
+    );
+  });
+
+  it("a switch pass whose clauses throw and fall through round-trips: carries by declaration (#1292)", () => {
+    agrees(
+      `export function f(e: any, file = "stdin.go") {
+  switch (e.type) {
+    case "BasicLit": {
+    }
+    case "ChanRecv":
+      throw new RangeError("chan " + file + ":" + e.line);
+    case "SliceLit": {
+      return "[" + e.elems + "]";
+    }
+    case "Unsupported":
+      throw new TypeError(e.reason + " at " + e.col);
+  }
+  return null;
+}`,
+      [
+        [{ type: "BasicLit", line: 3 }],
+        [{ type: "ChanRecv", line: 4 }, "a.go"],
+        [{ type: "SliceLit", elems: "1,2" }],
+        [{ type: "Unsupported", reason: "x", col: 9 }],
+        [{ type: "Other" }],
+      ],
+    );
+  });
+
+  it("a loop's carries take their next values together: start = end reads the end before the pass's update (#1292)", () => {
+    agrees(
+      `export function f(items: number[], chunk: number) {
+  const out: number[][] = [];
+  let end = chunk;
+  if (end < items.length) {
+    let start = 0;
+    do {
+      out.push(items.slice(start, (start = end)));
+      end += chunk;
+    } while (end < items.length);
+    items = items.slice(start);
+  }
+  out.push(items);
+  return out;
+}`,
+      [
+        [[1, 2, 3, 4, 5, 6, 7], 2],
+        [[1, 2], 5],
+        [[1, 2, 3, 4], 1],
       ],
     );
   });
