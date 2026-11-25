@@ -2157,6 +2157,14 @@ static const struct {
   {"BigUint64Array", (const char *const[]){NULL}, (const char *const[]){NULL}},
 };
 static yk intrinsic_protos[N_INTRINSIC];
+#include "lengths.h"
+/* A built-in method's length (Node's), or 0 when the table has none. */
+static int method_length(const char *proto, const char *name) {
+  for (size_t i = 0; i < sizeof method_lengths / sizeof method_lengths[0]; i++)
+    if (strcmp(method_lengths[i].proto, proto) == 0 && strcmp(method_lengths[i].name, name) == 0)
+      return method_lengths[i].length;
+  return 0;
+}
 static int view_type(yk v);
 static yk intrinsic_proto(int which);
 static yk prototype_of(yk v);
@@ -2298,7 +2306,9 @@ static yk intrinsic_proto(int which) {
   for (const char *const *m = intrinsic_table[which].methods; *m != NULL; m++) {
     yk key = ascii(*m);
     yk caps[2] = {key, yk_number(which)};
-    own_set(o, key, named(yk_closure_new(which == I_OBJECT ? object_thunk_code : method_thunk_code, 1, 2, caps), key));
+    yk f = named(yk_closure_new(which == I_OBJECT ? object_thunk_code : method_thunk_code, 1, 2, caps), key);
+    ((yk_closure *)PTR(f))->flen = method_length(intrinsic_table[which].name, *m);
+    own_set(o, key, f);
   }
   for (const char *const *g = intrinsic_table[which].getters; *g != NULL; g++) {
     yk key = ascii(*g);
