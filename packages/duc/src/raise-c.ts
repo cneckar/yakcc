@@ -4935,7 +4935,7 @@ export function shaveCUnit(
       encoding: "utf8",
       maxBuffer: 1 << 30,
       stdio: ["ignore", "pipe", "ignore"],
-    }).length > 1_000_000;
+    }).length > 200_000;
   const indexed = large ? indexUnit(clang, args, file) : undefined;
   // The roots, as the filters name them; in an indexed unit, the index's own nodes (its ids).
   const roots = clangFunctions(file, filters, args, clang);
