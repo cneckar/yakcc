@@ -50,3 +50,7 @@ the C/C++ front end to shave (#1367):
 - `deps/uv/` (libuv 1.51.0, MIT, `deps/uv/LICENSE` and `LICENSE-extra`): Node's event loop library,
   `include/` and `src/`. The fixture `src/__fixtures__/c/node-uv.c` runs its computing parts: the
   error names and messages, IDNA, and address text.
+- `deps/simdjson/` (simdjson 4.5.0, Apache-2.0, `deps/simdjson/LICENSE`): the parser Node's module
+  loader reads `package.json` with. The fixture `src/__fixtures__/c/node-simdjson.cpp` reads a
+  document as `src/node_modules.cc` does, through the on-demand API; the test builds its portable
+  kernel.
