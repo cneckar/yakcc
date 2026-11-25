@@ -4644,7 +4644,18 @@ uint64_t yk_mcache_writable = 0;
    bytes are reused), so a site that hit a freed region misses. Bytes handed back to the C library
    (a large region's) change this epoch instead, which every site's cache holds. */
 uint64_t yk_mcache_epoch = 1;
+/* The region cached before the last: a callee's accesses to its caller's frame hit it. */
+uint64_t yk_mcache2_base = 0;
+uint64_t yk_mcache2_len = 0;
+uint8_t *yk_mcache2_bytes = NULL;
+uint64_t yk_mcache2_writable = 0;
 static void c_cache(c_region *r) {
+  if (yk_mcache_bytes != r->bytes) {
+    yk_mcache2_base = yk_mcache_base;
+    yk_mcache2_len = yk_mcache_len;
+    yk_mcache2_bytes = yk_mcache_bytes;
+    yk_mcache2_writable = yk_mcache_writable;
+  }
   yk_mcache_base = r->base;
   yk_mcache_len = r->len;
   yk_mcache_bytes = r->bytes;
@@ -4692,9 +4703,17 @@ static void c_release(uint8_t *p, uint32_t len) {
 static uint64_t c_alloc(double size, double align, int constant) {
   double a = align > 16 ? align : 16;
   uint64_t al = (uint64_t)a;
-  uint64_t base = (c_next + al - 1) / al * al;
-  double n = ceil(size / 16) * 16;
-  uint32_t len = (uint32_t)(n > 16 ? n : 16);
+  /* A power-of-two alignment (every C type's) is a mask; an integral size below 2^32 rounds as an
+     integer. Anything else takes the general arithmetic, with the same results. */
+  uint64_t base = (al & (al - 1)) == 0 ? (c_next + al - 1) & ~(al - 1) : (c_next + al - 1) / al * al;
+  uint32_t len;
+  if (size >= 0 && size < 4294967280.0 && (double)(uint64_t)size == size) {
+    uint64_t n = ((uint64_t)size + 15) & ~(uint64_t)15;
+    len = (uint32_t)(n > 16 ? n : 16);
+  } else {
+    double n = ceil(size / 16) * 16;
+    len = (uint32_t)(n > 16 ? n : 16);
+  }
   if (c_nregions == c_capregions) {
     c_capregions = c_capregions == 0 ? 64 : c_capregions * 2;
     c_region *grown = alloc((size_t)c_capregions * sizeof(c_region));
@@ -4766,6 +4785,7 @@ yk yk_leaf_free(yk addr) {
   if ((double)r->base != a || r->constant) c_trap(concat(str(ascii("free of 0x")), str(hex_of(a))));
   r->live = 0;
   if (yk_mcache_bytes == r->bytes) yk_mcache_len = 0;
+  if (yk_mcache2_bytes == r->bytes) yk_mcache2_len = 0;
   c_release(r->bytes, r->len);
   r->bytes = NULL;
   /* A dead region traps as no region does, so the dead ones at the end leave the table (frames are

@@ -212,6 +212,10 @@ const MEM_CACHE_DECLS = [
   "@yk_mcache_len = external global i64",
   "@yk_mcache_bytes = external global ptr",
   "@yk_mcache_writable = external global i64",
+  "@yk_mcache2_base = external global i64",
+  "@yk_mcache2_len = external global i64",
+  "@yk_mcache2_bytes = external global ptr",
+  "@yk_mcache2_writable = external global i64",
   "@yk_mcache_epoch = external global i64",
 ];
 /** The access sites' own caches: each is named once per process (`@yk.msite.N`). */
@@ -776,6 +780,46 @@ function lowerFunction(
           (t !== "" && !BIGINT_LITERAL.test(t) && !t.startsWith('"') && !Number.isNaN(Number(t))))
       );
     });
+  // Values whose every use is a proven-number arithmetic or comparison (#1369): such a consumer
+  // reads the double's bits, so a NaN result needs no canonical form. Anything that can reach boxed
+  // code (a result, a join, a carry, a call, a store) is canonical.
+  const rawNumbers = new Set<ValueId>();
+  {
+    const usesOf = new Map<ValueId, DucNode[]>();
+    const escapes = new Set<ValueId>([
+      ...g.obs.map((v) => resolve(v)),
+      ...(g.branches ?? []).map((b) => resolve(b.cond as ValueId)),
+    ]);
+    for (const n of g.nodes) {
+      for (const v of n.inputs) {
+        const r = resolve(v as ValueId);
+        usesOf.set(r, [...(usesOf.get(r) ?? []), n]);
+      }
+      if (n.kind === "loop" && n.loop !== undefined) {
+        for (const v of n.loop.next) escapes.add(resolve(v));
+        if (n.loop.cond !== undefined) escapes.add(resolve(n.loop.cond));
+      }
+    }
+    const numericUse = (n: DucNode): boolean =>
+      n.kind === "op" &&
+      ((n.inputs.length === 2 &&
+        (FAST_ARITH[n.label ?? ""] !== undefined || FAST_COMPARE[n.label ?? ""] !== undefined)) ||
+        (n.inputs.length === 1 && n.label === "-")) &&
+      allNumbers(n.inputs as readonly ValueId[]);
+    for (const n of g.nodes) {
+      const o = n.outputs[0] as ValueId | undefined;
+      if (o === undefined || escapes.has(o) || !provenNumber.has(o)) continue;
+      const us = usesOf.get(o) ?? [];
+      if (us.length > 0 && us.every(numericUse)) rawNumbers.add(o);
+    }
+  }
+  /** A double result for `out`: its bits as they are when only numeric operations read it. */
+  const numberResult = (out: ValueId, d: string): string => {
+    if (!rawNumbers.has(out)) return boxDouble(d);
+    const bits = fresh();
+    emit(`${bits} = bitcast double ${d} to i64`);
+    return bits;
+  };
   /** Whether a value is a typed BigInt: an i128 (a literal, or an operation the proof types). */
   const isTypedBig = (v: ValueId): boolean =>
     widthOf(v) !== undefined && (widthOf(v) as number) <= 127;
@@ -1094,31 +1138,37 @@ function lowerFunction(
       emit(`${ok} = and i1 ${a1}, ${inside}`);
       return { off, ok };
     };
-    const gBase = fresh();
-    emit(`${gBase} = load i64, ptr @yk_mcache_base`);
-    const gLen = fresh();
-    emit(`${gLen} = load i64, ptr @yk_mcache_len`);
-    const g = within(gBase, gLen);
-    let gOk = g.ok;
-    if (mem.store) {
-      const w = fresh();
-      emit(`${w} = load i64, ptr @yk_mcache_writable`);
-      const wr = fresh();
-      emit(`${wr} = icmp ne i64 ${w}, 0`);
-      const both = fresh();
-      emit(`${both} = and i1 ${gOk}, ${wr}`);
-      gOk = both;
+    // The runtime's two entries: the region last allocated or found, and the one before it (a
+    // callee's frame, then its caller's).
+    const hits: [string, string][] = [];
+    for (const g0 of ["@yk_mcache", "@yk_mcache2"]) {
+      const gBase = fresh();
+      emit(`${gBase} = load i64, ptr ${g0}_base`);
+      const gLen = fresh();
+      emit(`${gLen} = load i64, ptr ${g0}_len`);
+      const g = within(gBase, gLen);
+      let gOk = g.ok;
+      if (mem.store) {
+        const w = fresh();
+        emit(`${w} = load i64, ptr ${g0}_writable`);
+        const wr = fresh();
+        emit(`${wr} = icmp ne i64 ${w}, 0`);
+        const both = fresh();
+        emit(`${both} = and i1 ${gOk}, ${wr}`);
+        gOk = both;
+      }
+      const gHit = freshLabel("mglobal");
+      const next = freshLabel("mnext");
+      emit(`br i1 ${gOk}, label %${gHit}, label %${next}`);
+      block(gHit);
+      const gBytes = fresh();
+      emit(`${gBytes} = load ptr, ptr ${g0}_bytes`);
+      const gP = fresh();
+      emit(`${gP} = getelementptr i8, ptr ${gBytes}, i64 ${g.off}`);
+      emit(`br label %${fast}`);
+      hits.push([gP, gHit]);
+      block(next);
     }
-    const gHit = freshLabel("mglobal");
-    const siteCheck = freshLabel("msite");
-    emit(`br i1 ${gOk}, label %${gHit}, label %${siteCheck}`);
-    block(gHit);
-    const gBytes = fresh();
-    emit(`${gBytes} = load ptr, ptr @yk_mcache_bytes`);
-    const gP = fresh();
-    emit(`${gP} = getelementptr i8, ptr ${gBytes}, i64 ${g.off}`);
-    emit(`br label %${fast}`);
-    block(siteCheck);
     const site = `@yk.msite.${memorySites++}`;
     m.intrinsics.add(`${site} = internal global [4 x i64] zeroinitializer`);
     const siteField = (k: number): string => {
@@ -1155,7 +1205,7 @@ function lowerFunction(
     emit(`br i1 ${same}, label %${fast}, label %${slowLabel}`);
     block(fast);
     const p = fresh();
-    emit(`${p} = phi ptr [ ${gP}, %${gHit} ], [ ${sP}, %${live} ]`);
+    emit(`${p} = phi ptr ${[...hits, [sP, live]].map(([v, l]) => `[ ${v}, %${l} ]`).join(", ")}`);
     let r1: string;
     if (mem.store) {
       if (mem.kind === "u") {
@@ -1930,7 +1980,7 @@ function lowerFunction(
                 ([d]) => {
                   const r = fresh();
                   emit(`${r} = call double @${intrinsic}(double ${d})`);
-                  return boxDouble(r);
+                  return numberResult(out, r);
                 },
                 slow,
                 undefined,
@@ -2069,7 +2119,7 @@ function lowerFunction(
             ([x, y]) => {
               const r = fresh();
               emit(`${r} = ${arith} double ${x}, ${y}`);
-              return boxDouble(r);
+              return numberResult(out, r);
             },
             slow,
             undefined,
@@ -2167,7 +2217,7 @@ function lowerFunction(
               if (lbl === "+") return x;
               const r = fresh();
               emit(`${r} = fneg double ${d}`);
-              return boxDouble(r);
+              return numberResult(out, r);
             },
             slow,
             undefined,
