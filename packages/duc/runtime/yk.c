@@ -7597,6 +7597,17 @@ static yk util_get_own_non_index_properties(void *c, yk self, uint64_t argc, con
   int filter = (int)to_number(arg_or_undefined(argc, argv, 1));
   yk_array *r = new_array(4);
   yk_object *o = NULL;
+  /* The non-enumerable own ones, when all are asked for: an array's length, a function's name,
+     length and prototype. */
+  if (!(filter & 2) && !(filter & 8)) {
+    if (is_array(v)) push(r, ascii("length"));
+    if (is_closure(v)) {
+      push(r, ascii("length"));
+      push(r, ascii("name"));
+      yk_closure *c = (yk_closure *)PTR(v);
+      if (c->has_this || c->is_class) push(r, ascii("prototype"));
+    }
+  }
   if (is_array(v)) o = arr(v)->props != 0 ? (yk_object *)PTR(arr(v)->props) : NULL;
   else if (is_object(v)) o = (yk_object *)PTR(v);
   else if (is_closure(v) && ((yk_closure *)PTR(v))->props != 0) o = (yk_object *)PTR(((yk_closure *)PTR(v))->props);

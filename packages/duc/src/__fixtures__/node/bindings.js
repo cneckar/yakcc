@@ -14,6 +14,11 @@ module.exports = {
     kStringMaxLength: 2 ** 29 - 24,
     createUnsafeArrayBuffer: (size) => new ArrayBuffer(size),
   },
+  process_methods: {
+    hrtimeBuffer: new Uint32Array(3),
+    hrtime: () => {},
+    hrtimeBigInt: () => {},
+  },
   string_decoder: {
     encodings: [
       "ascii",
