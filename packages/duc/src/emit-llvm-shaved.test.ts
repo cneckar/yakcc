@@ -384,6 +384,12 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
         "export function f(x: number, k: number): unknown { const n = k | 0; const p = __ykAlloc(8, 8); const q = __ykAlloc(16, 8); __ykStoreF64(p, x); const bits = __ykLoad64(p); __ykStore64(p, (bits & 18446744069414584320n) | 5n); const y = __ykLoadF64(p); __ykStore32(q + 4, n); __ykStore8(q, n); __ykStore16(q + 2, n); __ykStoreF32(q + 8, x); const f32 = __ykLoadF32(q + 8); __ykStore64(q + 8, bits); const r = [y, __ykLoad32(q + 4), __ykLoad8(q), __ykLoad16(q + 2), f32, __ykLoad64(q + 8) === bits]; __ykFree(q); __ykFree(p); return r; }",
       ],
       [
+        // A frame used only three branches deep (and handed to another function): allocated there
+        // on first use, its frees on every path nothing when it never was (#1369).
+        "tLazy",
+        "export function f(a: number, b: number, c: number): unknown { const t = __ykAlloc(24, 8); if (a > 0) { if (b > 0) { if (c > 0) { __ykStore32(t + 4, a + b + c); const r = readAt(t + 4); __ykFree(t); return [r, t > 0]; } } __ykFree(t); return [-1]; } __ykFree(t); return [-2]; }",
+      ],
+      [
         "tTrap",
         "export function f(n: number): unknown { const a = __ykAlloc(8, 8); __ykFree(a); try { return __ykLoad8(a + n); } catch (e) { return [(e as Error).name, (e as Error).message]; } }",
       ],
@@ -445,6 +451,10 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
       ["tFrame", [7, false]],
       ["tFrame", [-2.5, false]],
       ["tFrame", [3, true]],
+      ["tLazy", [1, 2, 3]],
+      ["tLazy", [1, 2, -3]],
+      ["tLazy", [1, -2, 3]],
+      ["tLazy", [-1, 2, 3]],
       ["tLocal", [1.5, 300]],
       ["tLocal", [-0, -7]],
       ["tLocal", [Number.NaN, 70000]],
