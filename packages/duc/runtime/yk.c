@@ -5897,7 +5897,28 @@ yk yk_call_spread(yk f, yk self, yk args) { return call_value(f, self, arr(args)
 yk yk_call_method_spread(yk recv, const char *name, uint64_t n, yk args) {
   return yk_call_method(recv, name, n, arr(args)->len, arr(args)->items);
 }
+/* Math.random: xorshift128+ (as V8's), seeded from the clock and the process, 53 bits in [0, 1). */
+yk yk_math_random(void) {
+  static uint64_t s0 = 0, s1 = 0;
+  if (s0 == 0 && s1 == 0) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    s0 = ((uint64_t)ts.tv_sec * 1000000007u) ^ (uint64_t)ts.tv_nsec ^ ((uint64_t)getpid() << 32);
+    s1 = s0 * 0x9E3779B97F4A7C15ull + 1;
+    if (s0 == 0) s0 = 1;
+  }
+  uint64_t x = s0, y = s1;
+  s0 = y;
+  x ^= x << 23;
+  x ^= x >> 17;
+  x ^= y ^ (y >> 26);
+  s1 = x;
+  return yk_number((double)((s0 + s1) >> 11) / 9007199254740992.0);
+}
 yk yk_new_spread(yk f, yk args) { return yk_new(f, arr(args)->len, arr(args)->items); }
+yk yk_super_construct_spread(void *closure, yk self, yk args) {
+  return yk_super_construct(closure, self, arr(args)->len, arr(args)->items);
+}
 
 /* {…src}: src's own enumerable properties, copied in order (a getter's value, not the getter). */
 yk yk_spread_into(yk obj, yk src) {

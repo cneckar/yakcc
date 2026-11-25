@@ -27,8 +27,8 @@
 import { LlvmEmitError, type LlvmModule } from "./emit-llvm.js";
 import { DECLARES } from "./lift.js";
 import { bodyPathOf, joinOwners, sidePath } from "./line-form.js";
-import { ecmaScriptView } from "./ops.js";
 import { atomGraph, atomNames, mathOperation, operationReference } from "./operations.js";
+import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
 import { paramIndex } from "./params.js";
 import { RegexCompileError, regexMatcherGraph } from "./regex.js";
@@ -1808,7 +1808,15 @@ function lowerFunction(
     if (lbl === "super") {
       // A derived constructor's super(args): the parent's constructor on this receiver (#1294).
       if (closure === undefined) throw new LlvmEmitError("super() outside a constructor");
-      if (ins.some(isSpread)) throw new LlvmEmitError("super(...spread) is not in the subset yet");
+      if (ins.some(isSpread)) {
+        m.intrinsics.add("declare i64 @yk_super_construct_spread(ptr, i64, i64)");
+        const r = fresh();
+        emit(
+          `${r} = call i64 @yk_super_construct_spread(ptr %closure, i64 %this, i64 ${spreadList(ins)})`,
+        );
+        set(out, r);
+        return;
+      }
       const args = ins.map(operand);
       set(
         out,
@@ -2251,6 +2259,14 @@ function lowerFunction(
             out,
             call("yk_math_minmax_list", `i32 ${callee.name === "max" ? 1 : 0}, i64 ${listed}`),
           );
+          return;
+        }
+        if (callee.name === "random" && args.length === 0) {
+          // An implementation-chosen pseudo-random number in [0, 1) (21.3.2.27): the runtime's.
+          m.intrinsics.add("declare i64 @yk_math_random()");
+          const r = fresh();
+          emit(`${r} = call i64 @yk_math_random()`);
+          set(out, r);
           return;
         }
         if (callee.name === "min" || callee.name === "max") {

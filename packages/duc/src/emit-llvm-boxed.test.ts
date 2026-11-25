@@ -100,6 +100,11 @@ const PROGRAMS: [string, string, number][] = [
   // + with ToPrimitive, string concatenation and Number::toString's shortest digits.
   ["+ on every pair of kinds", "export function f(a, b) { return a + b; }", 2],
   [
+    "super(...spread) and Math.random (#1331)",
+    "export function f(a, b) { class A { constructor(...xs) { this.n = xs.length; this.s = xs.join('-'); } } class B extends A { constructor(...ys) { super(...ys, 'end'); this.k = 'b'; } } const o = new B(a, b); const rs = [Math.random(), Math.random(), Math.random()]; return [o.n, o.s, o.k, rs.every((r) => typeof r === 'number' && r >= 0 && r < 1), rs[0] !== rs[1] || rs[1] !== rs[2]]; }",
+    2,
+  ],
+  [
     "Math's approximated functions are V8's atoms (#1362), and ** is pow's; BigInt ** is exact",
     "export function f(a, b) { const t = (g) => { try { return g(); } catch (e) { return e.name; } }; const x = typeof a === 'object' ? 0.5 : a; return [Math.sin(x), Math.cos(b), Math.tan(x), Math.exp(x), Math.log(b), Math.atan2(x, b), Math.pow(x, b), x ** b, Math.cbrt(x), Math.sinh(x), Math.expm1(b), Math.log1p(x), t(() => 3n ** 40n), t(() => (-2n) ** 63n), t(() => 2n ** -1n), t(() => 2n ** 2), 10 ** -2]; }",
     2,
