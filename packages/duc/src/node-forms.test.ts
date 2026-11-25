@@ -986,4 +986,32 @@ export function f(xs: number[]) {
     expect(arrow?.inputs.length).toBe(1);
     expect(arrow?.closure?.nodes.some((n) => n.kind === "diamond-source")).toBe(false);
   });
+
+  it("a member write's object and key are read before the value written, once (#1292)", () => {
+    agrees(
+      `export function f(b: number, n: number) {
+  const o: any = { a: 1, b };
+  let k = "a";
+  const g = () => { k = "b"; return n; };
+  const log: string[] = [];
+  const at = (key: string) => { log.push(key); return key; };
+  o[k] = g();
+  k = "a";
+  o[k] += g();
+  k = "a";
+  const h = () => { k = "b"; return o; };
+  h()[k]++;
+  let i = 0;
+  const xs = [1, 2, 3];
+  xs[i++] += 10;
+  xs[i++]++;
+  o[at("c")] = at("v");
+  return [o, k, xs, i, log];
+}`,
+      [
+        [2, 5],
+        [0, 1],
+      ],
+    );
+  });
 });

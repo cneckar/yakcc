@@ -435,9 +435,9 @@ function perPassForBinding(sf: SourceFile): string | undefined {
       !Node.isBlock(body)
     )
       continue;
-    const header = [init, loop.getCondition(), loop.getIncrementor()].filter(
-      (n): n is Node => n !== undefined,
-    );
+    const header: Node[] = [init];
+    for (const part of [loop.getCondition(), loop.getIncrementor()])
+      if (part !== undefined) header.push(part);
     if (
       header.some((n) =>
         n.getDescendants().some((d) => isFunctionLikeNode(d) || Node.isClassExpression(d)),
@@ -3567,9 +3567,14 @@ class Lifter {
     }
     if (Node.isPrefixUnaryExpression(node) || Node.isPostfixUnaryExpression(node)) {
       const operand = node.getOperand();
-      const value = this.liftExpr(operand);
       // The operator is structure: `-x` and `+x`, `++x` and `x++` are different operations.
       const token = ts.tokenToString(node.getOperatorToken()) ?? node.getKindName();
+      const value = this.liftExpr(operand);
+      // `o[k]++` reads and writes the member of one lifting of `o` and `k`.
+      const target =
+        (token === "++" || token === "--") && this.plainMember(operand)
+          ? this.targetOfRead(operand, value)
+          : undefined;
       // `x++` and `x--` are worth the value before the step, as a number (#1276).
       const parent = node.getParent();
       const valueUsed =
@@ -3593,7 +3598,7 @@ class Lifter {
         steps &&
         (Node.isPropertyAccessExpression(operand) || Node.isElementAccessExpression(operand))
       )
-        this.assignTo(operand, out as ValueId);
+        this.assignTo(operand, out as ValueId, target);
       else if (steps && Node.isIdentifier(operand) && this.isBinding(operand.getText()))
         this.writeBinding(operand.getText(), out as ValueId);
       else if (steps && Node.isIdentifier(operand) && this.env.has(operand.getText())) {
@@ -4009,19 +4014,21 @@ class Lifter {
         heap: true,
       })[0] as ValueId;
     if (op === SyntaxKind.EqualsToken) {
+      const target = this.plainMember(left) ? this.memberTarget(left) : undefined;
       const value = this.liftExpr(node.getRight());
-      this.assignTo(left, value);
+      this.assignTo(left, value, target);
       return value;
     }
     if (COMPOUND_ASSIGN.has(op)) {
       // `x += e` reads the old value and the rhs, then rebinds.
       const oldValue = this.liftExpr(left);
+      const target = this.plainMember(left) ? this.targetOfRead(left, oldValue) : undefined;
       const rhs = this.liftExpr(node.getRight());
       const [out] = this.emit("op", [oldValue, rhs], 1, {
         origin: { kind: node.getKindName() },
         label: node.getOperatorToken().getText(),
       });
-      this.assignTo(left, out as ValueId);
+      this.assignTo(left, out as ValueId, target);
       return out as ValueId;
     }
     const l = this.liftExpr(left);
@@ -4126,8 +4133,54 @@ class Lifter {
     })[0] as ValueId;
   }
 
+  /**
+   * A member target's object, and its key for `o[k]`, lifted once and before the value written
+   * (#1292): JavaScript evaluates `o` and `k` in `o[k] = v` before `v`, and in `o[k] += v` reads
+   * `o[k]` with them, so a `v` that changes `k` (a cell a call rebinds) does not move the write.
+   * Undefined for any other target.
+   */
+  private memberTarget(lhs: Node): ValueId[] | undefined {
+    if (Node.isParenthesizedExpression(lhs)) return this.memberTarget(lhs.getExpression());
+    if (Node.isPropertyAccessExpression(lhs)) return [this.liftExpr(lhs.getExpression())];
+    if (Node.isElementAccessExpression(lhs))
+      return [
+        this.liftExpr(lhs.getExpression()),
+        this.liftExpr(lhs.getArgumentExpressionOrThrow()),
+      ];
+    return undefined;
+  }
+
+  /**
+   * A member target `memberTarget` takes: `o.a` or `o[k]` on an object, not through `super`, and
+   * not a private name (`this.#x`), whose reads and writes are their own.
+   */
+  private plainMember(lhs: Node): boolean {
+    const n = Node.isParenthesizedExpression(lhs) ? lhs.getExpression() : lhs;
+    if (!(Node.isPropertyAccessExpression(n) || Node.isElementAccessExpression(n))) return false;
+    if (Node.isSuperExpression(n.getExpression())) return false;
+    return !(Node.isPropertyAccessExpression(n) && Node.isPrivateIdentifier(n.getNameNode()));
+  }
+
+  /**
+   * The object and key a member read just made took (`o` and `k` of `o[k]`), when the read is the
+   * plain one, so a write of the member uses them rather than lifting them again. Undefined when the
+   * read was another form (a platform member, a binding's), which the write lifts as before.
+   */
+  private targetOfRead(lhs: Node, read: ValueId): ValueId[] | undefined {
+    const n = Node.isParenthesizedExpression(lhs) ? lhs.getExpression() : lhs;
+    let node: MutableNode | undefined;
+    for (let i = this.nodes.length - 1; i >= 0 && node === undefined; i--)
+      if (this.nodes[i]?.outputs[0] === read) node = this.nodes[i];
+    if (node === undefined || node.kind !== "op") return undefined;
+    // A heap operation's last input is the token it is ordered after, which `emit` adds.
+    const given = node.order === 1 ? node.inputs.slice(0, -1) : [...node.inputs];
+    if (Node.isPropertyAccessExpression(n))
+      return node.label === `.${n.getName()}` && given.length === 1 ? given : undefined;
+    return node.label === "ElementAccess" && given.length === 2 ? given : undefined;
+  }
+
   /** Reassign an lvalue. Identifier -> rebind; member/element -> mutate base object. */
-  private assignTo(lhs: Node, value: ValueId): void {
+  private assignTo(lhs: Node, value: ValueId, target?: readonly ValueId[]): void {
     if (Node.isIdentifier(lhs) && this.isBinding(lhs.getText())) {
       this.writeBinding(lhs.getText(), value);
       return;
@@ -4140,12 +4193,9 @@ class Lifter {
     }
     if (Node.isPropertyAccessExpression(lhs) || Node.isElementAccessExpression(lhs)) {
       const base = lhs.getExpression();
-      const inputs = [this.liftExpr(base)];
       // For `arr[i] = v`, the index chooses which slot is written, so it
       // influences the mutated object; include it as an input.
-      if (Node.isElementAccessExpression(lhs)) {
-        inputs.push(this.liftExpr(lhs.getArgumentExpressionOrThrow()));
-      }
+      const inputs = [...(target ?? this.memberTarget(lhs) ?? [])];
       inputs.push(value);
       const label = Node.isPropertyAccessExpression(lhs) ? `.${lhs.getName()}=` : "[]=";
       const [mutated] = this.emit("op", inputs, 1, { origin: { kind: "Write" }, label });
@@ -4168,7 +4218,7 @@ class Lifter {
       return;
     }
     if (Node.isParenthesizedExpression(lhs)) {
-      this.assignTo(lhs.getExpression(), value);
+      this.assignTo(lhs.getExpression(), value, target);
       return;
     }
     // Another lvalue: conservatively rebind every bound name inside.
