@@ -829,4 +829,44 @@ describe("the round trip on yakcc's own sources (#1292)", () => {
       ],
     );
   });
+
+  it("a constructor's parameter properties are parameters assigned to the receiver", () => {
+    agrees(
+      `export function f(message: string, code: number) {
+  class Failure extends Error {
+    constructor(
+      message: string,
+      public readonly code: number,
+      private readonly hint = "none",
+    ) {
+      super(message);
+      this.name = "Failure";
+    }
+    get detail() {
+      return [this.name, this.message, this.code, this.hint];
+    }
+  }
+  class Plain {
+    constructor(public x: number) {}
+  }
+  return [new Failure(message, code).detail, new Plain(code).x];
+}`,
+      [
+        ["bad", 2],
+        ["", 0],
+      ],
+    );
+  });
+
+  it("a dynamic import is the operation that loads the module", () => {
+    const code = `export async function f(spec: unknown) {
+  const { contractId } = await import("./contract-id.js");
+  return { status: "accepted", id: contractId(spec) };
+}`;
+    const g = liftAtom(code);
+    expect(opaque(g)).toEqual([]);
+    expect(g.nodes.some((n) => n.label === "import()")).toBe(true);
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+    expect(liftFidelity(code, g).holds).toBe(true);
+  });
 });

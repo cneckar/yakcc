@@ -401,6 +401,7 @@ function emitFunction(
     if (label === "," && ins.length === 2) return `(${arg(0)}, ${arg(1)})`;
     if (PREFIX.has(label) && ins.length === 1) return `${label}${arg(0)}`;
     if (label === "TypeOfExpression") return `typeof ${arg(0)}`;
+    if (label === "import()") return `import(${ins.map((v) => ref(v)).join(", ")})`;
     if (label.startsWith("in:#")) return `(${label.slice("in:".length)} in ${arg(0)})`;
     if (label === "VoidExpression") return `void ${arg(0)}`;
     // A binding outside the atom, read by its name (#1276).
