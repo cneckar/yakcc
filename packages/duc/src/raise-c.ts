@@ -1425,7 +1425,9 @@ function raiseBody(
           }
           if (isMem(d, t)) {
             const p = memOf(d, t);
-            for (const line of initialize(p.addr, t, init)) push(line);
+            // An object with no initializer has an indeterminate value (C11 6.7.9p10): its frame
+            // block, zeroed when allocated, is not filled again.
+            if (init !== undefined) for (const line of initialize(p.addr, t, init)) push(line);
             continue;
           }
           push(`let ${declName(d)} = ${init !== undefined ? expr(init) : zeroOf(t)};`);

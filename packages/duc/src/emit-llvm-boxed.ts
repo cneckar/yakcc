@@ -212,6 +212,10 @@ const MEM_CACHE_DECLS = [
   "@yk_mcache_len = external global i64",
   "@yk_mcache_bytes = external global ptr",
   "@yk_mcache_writable = external global i64",
+  "@yk_mcache2_base = external global i64",
+  "@yk_mcache2_len = external global i64",
+  "@yk_mcache2_bytes = external global ptr",
+  "@yk_mcache2_writable = external global i64",
   "@yk_mcache_epoch = external global i64",
 ];
 /** The access sites' own caches: each is named once per process (`@yk.msite.N`). */
@@ -384,6 +388,8 @@ function lowerFunction(
   name: string,
   closure: { readonly captures: number } | undefined,
   scope?: ModuleScope,
+  /** The parameters (by value) this lowering may take as numbers: a speculated clone's (#1369). */
+  numberParams?: ReadonlySet<ValueId>,
 ): void {
   // An async function's or a generator's body is lowered as any function's: the runtime runs it as a
   // coroutine, which await and yield suspend (#1295). The closure carries the mode.
@@ -646,6 +652,8 @@ function lowerFunction(
   // operation throws first) needs no tag check. Carries, joins and loop results are assumed numbers
   // until one of their inputs is not (an optimistic fixpoint).
   const NUMBER_LEAVES = new Set([
+    "__ykAlloc",
+    "__ykData",
     "__ykBigToI32",
     "__ykBigToU32",
     "__ykBigToF64",
@@ -661,6 +669,51 @@ function lowerFunction(
     "__ykF64Make",
     "__ykF32",
   ]);
+  // Integer intervals (#1369): an index the graph bounds (`x & 1`, `x >>> 31`, …) reads a
+  // constant table in range, so the read is a number with no check.
+  const intervals = new Map<ValueId, readonly [number, number] | null>();
+  const intRange = (v0: ValueId): readonly [number, number] | undefined => {
+    const v = resolve(v0);
+    if (intervals.has(v)) return intervals.get(v) ?? undefined;
+    intervals.set(v, null); // a cycle bounds nothing
+    let r: readonly [number, number] | undefined;
+    const lit = literalNumber(v);
+    const p = producer.get(v);
+    if (lit !== undefined) r = Number.isInteger(lit) ? [lit, lit] : undefined;
+    else if (p?.kind === "op" && p.inputs.length === 2) {
+      const a = p.inputs[0] as ValueId;
+      const b = p.inputs[1] as ValueId;
+      const ra = intRange(a);
+      const rb = intRange(b);
+      const i32 = (x: readonly [number, number] | undefined) =>
+        x !== undefined && x[0] >= -(2 ** 31) && x[1] < 2 ** 31;
+      const u32 = (x: readonly [number, number] | undefined) =>
+        x !== undefined && x[0] >= 0 && x[1] < 2 ** 32;
+      // Each value an interval bounds is a Number (an operand with one is a Number, and a Number
+      // with a BigInt throws; `>>>` throws on a BigInt): the result is a Number or never made.
+      if (p.label === "&") {
+        // A non-negative mask bounds the result: ToInt32 of a mask in [0, 2^31) is itself.
+        const mask = (x: readonly [number, number] | undefined) =>
+          x !== undefined && x[0] >= 0 && x[1] < 2 ** 31 ? x[1] : undefined;
+        const m = mask(rb) ?? mask(ra);
+        if (m !== undefined) r = [0, m];
+      } else if (p.label === ">>>" && rb !== undefined && rb[0] === rb[1]) {
+        const k = (((rb[0] % 32) + 32) % 32) as number;
+        r = k === 0 ? (u32(ra) ? ra : [0, 2 ** 32 - 1]) : [0, 2 ** (32 - k) - 1];
+      } else if (p.label === "|" && rb !== undefined && rb[0] === 0 && rb[1] === 0 && i32(ra))
+        r = ra;
+      else if (p.label === "|" && ra !== undefined && ra[0] === 0 && ra[1] === 0 && i32(rb)) r = rb;
+    }
+    intervals.set(v, r ?? null);
+    return r;
+  };
+  /** A constant table read whose index the intervals keep in range: always an element. */
+  const tableInRange = (n: DucNode): boolean => {
+    if (n.kind !== "op" || n.label !== "ElementAccess" || n.inputs.length !== 2) return false;
+    const table = constTables.get(resolve(n.inputs[0] as ValueId));
+    const r = intRange(n.inputs[1] as ValueId);
+    return table !== undefined && r !== undefined && r[0] >= 0 && r[1] < table.n;
+  };
   const provenNumber = new Set<ValueId>();
   {
     const loopOf = new Map<ValueId, { loop: DucNode; i: number; carry: boolean }>();
@@ -688,7 +741,7 @@ function lowerFunction(
       const out = new Set<ValueId>();
       const num = (v0: ValueId): boolean => {
         const v = resolve(v0);
-        if (assumed.has(v)) return true;
+        if (assumed.has(v) || numberParams?.has(v) === true) return true;
         if (out.has(v)) return true;
         const p = producer.get(v);
         if (p === undefined) return false;
@@ -706,7 +759,7 @@ function lowerFunction(
           const leaf = leafOf(n);
           const callee = lbl === "CallExpression" ? memberOf(ins[0] as ValueId) : undefined;
           let yes = false;
-          if (numRange.has(o)) yes = true;
+          if (numRange.has(o) || tableInRange(n)) yes = true;
           else if (leaf !== undefined) yes = NUMBER_LEAVES.has(leaf);
           else if (callee !== undefined && isMath(callee.node.inputs[0] as ValueId)) yes = true;
           else if (ins.length === 2 && ["+", "-", "*", "/", "%"].includes(lbl))
@@ -726,7 +779,7 @@ function lowerFunction(
       const proven = compute();
       const holds = (v: ValueId): boolean => {
         const r = resolve(v);
-        if (assumed.has(r) || proven.has(r)) return true;
+        if (assumed.has(r) || proven.has(r) || numberParams?.has(r) === true) return true;
         const p = producer.get(r);
         return p?.kind === "literal-source" && isNumberLiteral(p);
       };
@@ -752,6 +805,7 @@ function lowerFunction(
         }
       }
       if (!removed) {
+        for (const v of numberParams ?? []) provenNumber.add(v);
         for (const v of proven) provenNumber.add(v);
         for (const v of assumed) provenNumber.add(v);
         break;
@@ -771,6 +825,46 @@ function lowerFunction(
           (t !== "" && !BIGINT_LITERAL.test(t) && !t.startsWith('"') && !Number.isNaN(Number(t))))
       );
     });
+  // Values whose every use is a proven-number arithmetic or comparison (#1369): such a consumer
+  // reads the double's bits, so a NaN result needs no canonical form. Anything that can reach boxed
+  // code (a result, a join, a carry, a call, a store) is canonical.
+  const rawNumbers = new Set<ValueId>();
+  {
+    const usesOf = new Map<ValueId, DucNode[]>();
+    const escapes = new Set<ValueId>([
+      ...g.obs.map((v) => resolve(v)),
+      ...(g.branches ?? []).map((b) => resolve(b.cond as ValueId)),
+    ]);
+    for (const n of g.nodes) {
+      for (const v of n.inputs) {
+        const r = resolve(v as ValueId);
+        usesOf.set(r, [...(usesOf.get(r) ?? []), n]);
+      }
+      if (n.kind === "loop" && n.loop !== undefined) {
+        for (const v of n.loop.next) escapes.add(resolve(v));
+        if (n.loop.cond !== undefined) escapes.add(resolve(n.loop.cond));
+      }
+    }
+    const numericUse = (n: DucNode): boolean =>
+      n.kind === "op" &&
+      ((n.inputs.length === 2 &&
+        (FAST_ARITH[n.label ?? ""] !== undefined || FAST_COMPARE[n.label ?? ""] !== undefined)) ||
+        (n.inputs.length === 1 && n.label === "-")) &&
+      allNumbers(n.inputs as readonly ValueId[]);
+    for (const n of g.nodes) {
+      const o = n.outputs[0] as ValueId | undefined;
+      if (o === undefined || escapes.has(o) || !provenNumber.has(o)) continue;
+      const us = usesOf.get(o) ?? [];
+      if (us.length > 0 && us.every(numericUse)) rawNumbers.add(o);
+    }
+  }
+  /** A double result for `out`: its bits as they are when only numeric operations read it. */
+  const numberResult = (out: ValueId, d: string): string => {
+    if (!rawNumbers.has(out)) return boxDouble(d);
+    const bits = fresh();
+    emit(`${bits} = bitcast double ${d} to i64`);
+    return bits;
+  };
   /** Whether a value is a typed BigInt: an i128 (a literal, or an operation the proof types). */
   const isTypedBig = (v: ValueId): boolean =>
     widthOf(v) !== undefined && (widthOf(v) as number) <= 127;
@@ -946,8 +1040,8 @@ function lowerFunction(
     const fastLabel = freshLabel("fast");
     const slowLabel = freshLabel("slow");
     const join = freshLabel("joined");
-    let all = "";
-    for (const a of args) {
+    let all = proven ? "true" : "";
+    for (const a of proven ? [] : args) {
       const n = fresh();
       emit(`${n} = icmp ult i64 ${a}, ${NUMBER_LIMIT}`);
       if (all === "") all = n;
@@ -1015,6 +1109,8 @@ function lowerFunction(
     mem: { size: number; ty: string; kind: "u" | "f64" | "f32"; store: boolean },
     args: readonly string[],
     slow: () => string,
+    /** Which operands (the address, a store's value) the number proof holds. */
+    proven: readonly boolean[] = [],
   ): string => {
     for (const d of MEM_CACHE_DECLS) m.intrinsics.add(d);
     m.intrinsics.add("declare double @llvm.fabs.f64(double)");
@@ -1025,9 +1121,12 @@ function lowerFunction(
     const join = freshLabel("mjoin");
     const addr = args[0] as string;
     const value = args[1];
-    let numbers = fresh();
-    emit(`${numbers} = icmp ult i64 ${addr}, ${NUMBER_LIMIT}`);
-    if (mem.store) {
+    let numbers = "true";
+    if (proven[0] !== true) {
+      numbers = fresh();
+      emit(`${numbers} = icmp ult i64 ${addr}, ${NUMBER_LIMIT}`);
+    }
+    if (mem.store && proven[1] !== true) {
       const v = fresh();
       emit(`${v} = icmp ult i64 ${value}, ${NUMBER_LIMIT}`);
       const both = fresh();
@@ -1084,31 +1183,37 @@ function lowerFunction(
       emit(`${ok} = and i1 ${a1}, ${inside}`);
       return { off, ok };
     };
-    const gBase = fresh();
-    emit(`${gBase} = load i64, ptr @yk_mcache_base`);
-    const gLen = fresh();
-    emit(`${gLen} = load i64, ptr @yk_mcache_len`);
-    const g = within(gBase, gLen);
-    let gOk = g.ok;
-    if (mem.store) {
-      const w = fresh();
-      emit(`${w} = load i64, ptr @yk_mcache_writable`);
-      const wr = fresh();
-      emit(`${wr} = icmp ne i64 ${w}, 0`);
-      const both = fresh();
-      emit(`${both} = and i1 ${gOk}, ${wr}`);
-      gOk = both;
+    // The runtime's two entries: the region last allocated or found, and the one before it (a
+    // callee's frame, then its caller's).
+    const hits: [string, string][] = [];
+    for (const g0 of ["@yk_mcache", "@yk_mcache2"]) {
+      const gBase = fresh();
+      emit(`${gBase} = load i64, ptr ${g0}_base`);
+      const gLen = fresh();
+      emit(`${gLen} = load i64, ptr ${g0}_len`);
+      const g = within(gBase, gLen);
+      let gOk = g.ok;
+      if (mem.store) {
+        const w = fresh();
+        emit(`${w} = load i64, ptr ${g0}_writable`);
+        const wr = fresh();
+        emit(`${wr} = icmp ne i64 ${w}, 0`);
+        const both = fresh();
+        emit(`${both} = and i1 ${gOk}, ${wr}`);
+        gOk = both;
+      }
+      const gHit = freshLabel("mglobal");
+      const next = freshLabel("mnext");
+      emit(`br i1 ${gOk}, label %${gHit}, label %${next}`);
+      block(gHit);
+      const gBytes = fresh();
+      emit(`${gBytes} = load ptr, ptr ${g0}_bytes`);
+      const gP = fresh();
+      emit(`${gP} = getelementptr i8, ptr ${gBytes}, i64 ${g.off}`);
+      emit(`br label %${fast}`);
+      hits.push([gP, gHit]);
+      block(next);
     }
-    const gHit = freshLabel("mglobal");
-    const siteCheck = freshLabel("msite");
-    emit(`br i1 ${gOk}, label %${gHit}, label %${siteCheck}`);
-    block(gHit);
-    const gBytes = fresh();
-    emit(`${gBytes} = load ptr, ptr @yk_mcache_bytes`);
-    const gP = fresh();
-    emit(`${gP} = getelementptr i8, ptr ${gBytes}, i64 ${g.off}`);
-    emit(`br label %${fast}`);
-    block(siteCheck);
     const site = `@yk.msite.${memorySites++}`;
     m.intrinsics.add(`${site} = internal global [4 x i64] zeroinitializer`);
     const siteField = (k: number): string => {
@@ -1145,7 +1250,7 @@ function lowerFunction(
     emit(`br i1 ${same}, label %${fast}, label %${slowLabel}`);
     block(fast);
     const p = fresh();
-    emit(`${p} = phi ptr [ ${gP}, %${gHit} ], [ ${sP}, %${live} ]`);
+    emit(`${p} = phi ptr ${[...hits, [sP, live]].map(([v, l]) => `[ ${v}, %${l} ]`).join(", ")}`);
     let r1: string;
     if (mem.store) {
       if (mem.kind === "u") {
@@ -1769,6 +1874,20 @@ function lowerFunction(
     }
     if (lbl === "ElementAccess" && ins.length === 2) {
       const table = constTables.get(resolve(ins[0] as ValueId));
+      if (table !== undefined && tableInRange(n)) {
+        // An index the intervals keep in range: the load alone.
+        const idx = operand(ins[1] as ValueId);
+        const d = fresh();
+        emit(`${d} = bitcast i64 ${idx} to double`);
+        const i = fresh();
+        emit(`${i} = fptosi double ${d} to i64`);
+        const p = fresh();
+        emit(`${p} = getelementptr [${table.n} x i64], ptr ${table.global}, i64 0, i64 ${i}`);
+        const r = fresh();
+        emit(`${r} = load i64, ptr ${p}`);
+        set(out, r);
+        return;
+      }
       if (table !== undefined) {
         // A constant table's element at an integer index in range: a load; else the array's read.
         const idx = operand(ins[1] as ValueId);
@@ -1796,9 +1915,11 @@ function lowerFunction(
               emit(`${below} = fcmp olt double ${d}, ${table.n}.0`);
               const inRange = fresh();
               emit(`${inRange} = and i1 ${nonneg}, ${below}`);
+              // In range, so fptosi is defined: an integer when converting back gives it again.
+              const w = fresh();
+              emit(`${w} = fptosi double ${d} to i64`);
               const t = fresh();
-              emit(`${t} = call double @llvm.trunc.f64(double ${d})`);
-              m.intrinsics.add("declare double @llvm.trunc.f64(double)");
+              emit(`${t} = sitofp i64 ${w} to double`);
               const integral = fresh();
               emit(`${integral} = fcmp oeq double ${t}, ${d}`);
               const ok = fresh();
@@ -1880,7 +2001,12 @@ function lowerFunction(
       if (mem !== undefined) {
         set(
           out,
-          memoryAccess(mem, args, () => call(fn, args.map((a) => `i64 ${a}`).join(", "))),
+          memoryAccess(
+            mem,
+            args,
+            () => call(fn, args.map((a) => `i64 ${a}`).join(", ")),
+            ins.slice(1).map((v) => allNumbers([v as ValueId])),
+          ),
         );
         return;
       }
@@ -1913,7 +2039,7 @@ function lowerFunction(
                 ([d]) => {
                   const r = fresh();
                   emit(`${r} = call double @${intrinsic}(double ${d})`);
-                  return boxDouble(r);
+                  return numberResult(out, r);
                 },
                 slow,
                 undefined,
@@ -2052,7 +2178,7 @@ function lowerFunction(
             ([x, y]) => {
               const r = fresh();
               emit(`${r} = ${arith} double ${x}, ${y}`);
-              return boxDouble(r);
+              return numberResult(out, r);
             },
             slow,
             undefined,
@@ -2079,6 +2205,8 @@ function lowerFunction(
         return;
       }
       if (bitwise !== undefined) {
+        const unrangedA = !numRange.has(resolve(ins[0] as ValueId));
+        const unrangedB = !numRange.has(resolve(ins[1] as ValueId));
         set(
           out,
           numberFast(
@@ -2099,11 +2227,19 @@ function lowerFunction(
               return bits;
             },
             slow,
-            ([x, y]) => {
-              const both = fresh();
-              emit(`${both} = and i1 ${smallDouble(x as string)}, ${smallDouble(y as string)}`);
-              return both;
-            },
+            // ToInt32 inline needs |x| < 2^63: known for a value the range inference holds.
+            unrangedA && unrangedB
+              ? ([x, y]) => {
+                  const both = fresh();
+                  emit(`${both} = and i1 ${smallDouble(x as string)}, ${smallDouble(y as string)}`);
+                  return both;
+                }
+              : unrangedA
+                ? ([x]) => smallDouble(x as string)
+                : unrangedB
+                  ? ([, y]) => smallDouble(y as string)
+                  : undefined,
+            allNumbers(ins as readonly ValueId[]),
           ),
         );
         return;
@@ -2140,7 +2276,7 @@ function lowerFunction(
               if (lbl === "+") return x;
               const r = fresh();
               emit(`${r} = fneg double ${d}`);
-              return boxDouble(r);
+              return numberResult(out, r);
             },
             slow,
             undefined,
@@ -2165,7 +2301,10 @@ function lowerFunction(
               return bits;
             },
             slow,
-            ([d]) => smallDouble(d as string),
+            numRange.has(resolve(ins[0] as ValueId))
+              ? undefined
+              : ([d]) => smallDouble(d as string),
+            allNumbers([ins[0] as ValueId]),
           ),
         );
         return;
@@ -2417,6 +2556,83 @@ function lowerFunction(
       set(v, r);
     }
   });
+  // Parameter speculation (#1369): a function whose arguments feed numeric operations is also
+  // lowered taking them as numbers. Called with numbers, it runs that clone; with anything else,
+  // the lowering below, which checks each operation.
+  if (
+    numberParams === undefined &&
+    closure !== undefined &&
+    source.mode === undefined &&
+    scope?.outs === undefined &&
+    !g.nodes.some(
+      (n) =>
+        n.closure !== undefined ||
+        (n.kind === "loop" && n.loop?.iterate !== undefined) ||
+        (n.kind === "literal-source" && (n.label ?? "").startsWith("/")),
+    )
+  ) {
+    const NUMERIC = new Set([
+      "+",
+      "-",
+      "*",
+      "/",
+      "%",
+      "<",
+      ">",
+      "<=",
+      ">=",
+      "&",
+      "|",
+      "^",
+      "<<",
+      ">>",
+      ">>>",
+      "~",
+    ]);
+    const numericUse = new Set<ValueId>();
+    for (const n of g.nodes) {
+      if (n.kind !== "op") continue;
+      const leaf = leafOf(n);
+      const callee = n.label === "CallExpression" ? memberOf(n.inputs[0] as ValueId) : undefined;
+      if (NUMERIC.has(n.label ?? "") || (leaf !== undefined && MEM_INLINE[leaf] !== undefined))
+        for (const v of n.inputs) numericUse.add(resolve(v as ValueId));
+      else if (callee !== undefined && isMath(callee.node.inputs[0] as ValueId))
+        for (const v of n.inputs.slice(1)) numericUse.add(resolve(v as ValueId));
+    }
+    const speculated = params.filter(
+      (p, i) =>
+        i >= closure.captures &&
+        !(p.label ?? "").endsWith("...") &&
+        numericUse.has(p.outputs[0] as ValueId),
+    );
+    if (speculated.length > 0) {
+      const clone = m.closureName(`${name.replace(/"/g, "")}.num`);
+      lowerFunction(
+        m,
+        source,
+        clone,
+        closure,
+        scope,
+        new Set(speculated.map((p) => p.outputs[0] as ValueId)),
+      );
+      let ok = "true";
+      for (const p of speculated) {
+        const c = fresh();
+        emit(`${c} = icmp ult i64 ${operand(p.outputs[0] as ValueId)}, ${NUMBER_LIMIT}`);
+        const both = fresh();
+        emit(`${both} = and i1 ${ok}, ${c}`);
+        ok = both;
+      }
+      const spec = freshLabel("numbers");
+      const general = freshLabel("general");
+      emit(`br i1 ${ok}, label %${spec}, label %${general}`);
+      block(spec);
+      const r = fresh();
+      emit(`${r} = musttail call i64 @${clone}(ptr %closure, i64 %this, i64 %argc, ptr %argv)`);
+      emit(`ret i64 ${r}`);
+      block(general);
+    }
+  }
   emitScope(undefined);
   if (scope?.outs !== undefined) {
     // A statement: the values of the names it declares, from its one result.
