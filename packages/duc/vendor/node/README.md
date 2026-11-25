@@ -40,3 +40,10 @@ the C/C++ front end to shave (#1367):
 - `deps/histogram/` (HdrHistogram_c, public domain/BSD-2, `deps/histogram/LICENSE.txt`):
   `perf_hooks.createHistogram`'s histogram. The fixture `src/__fixtures__/c/node-histogram.c` runs it
   as Node's `src/histogram-inl.h` does.
+- `deps/openssl/` (OpenSSL 3.5.9, Apache-2.0, `deps/openssl/openssl/LICENSE.txt`), in Node's
+  layout: of `openssl/`, the files (sources, headers and `.inc` fragments) that Node's
+  linux-x86_64 `no-asm` build compiles, by the arch's `openssl.gypi` and clang's dependencies;
+  Node's stub headers and `config/` wrappers; and that arch's generated files
+  (`config/archs/linux-x86_64/no-asm/`), here regenerated from the 3.5.9 release with Node's
+  `Configure` options and equal to Node's. The fixture `src/__fixtures__/c/node-openssl.c` calls
+  the EVP functions behind Node's `crypto` module.
