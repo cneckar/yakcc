@@ -1648,13 +1648,25 @@ function raiseBody(
   const sret = unitCxx !== undefined && result.k === "rec";
   const vars = new Map<string, CType>();
   const names = new Map<string, string>();
+  // The functions the body names (a local of one of their names would hide it).
+  const calledNames = new Set<string>();
+  {
+    const walk = (n: ClangNode): void => {
+      const d = n.referencedDecl;
+      if (n.kind === "DeclRefExpr" && d !== undefined && FUNCTION_KINDS.has(d.kind))
+        calledNames.add(d.name ?? "");
+      for (const k of n.inner ?? []) walk(k);
+    };
+    walk(fn);
+  }
   const declName = (n: ClangNode): string => {
     const id = n.id ?? "";
     let nm = names.get(id);
     if (nm === undefined) {
       // (C++: not a function's name, which a call in the same body would then name.)
       let base = ident(n.name ?? "v");
-      if (unitCxx?.isFunctionName(n.name ?? "") === true) base = `${base}_v`;
+      if (calledNames.has(n.name ?? "") && unitCxx?.isFunctionName(n.name ?? "") === true)
+        base = `${base}_v`;
       nm = [...names.values()].includes(base) ? `${base}_${names.size}` : base;
       names.set(id, nm);
     }
@@ -1692,7 +1704,11 @@ function raiseBody(
     };
     const walk = (n: ClangNode): void => {
       const kids = n.inner ?? [];
-      if (n.kind === "CallExpr" || n.kind === "CXXOperatorCallExpr")
+      // (Not `bit_cast`'s argument: it is raised as the value's bits, never through memory.)
+      if (
+        (n.kind === "CallExpr" || n.kind === "CXXOperatorCallExpr") &&
+        stripCasts(kids[0] as ClangNode).referencedDecl?.name !== "bit_cast"
+      )
         for (const a of kids.slice(1)) bind(a);
 
       if (
@@ -1748,8 +1764,9 @@ function raiseBody(
       if (
         target.kind === "DeclRefExpr" &&
         !isReferenceType(target.referencedDecl?.type?.qualType ?? "")
-      )
+      ) {
         inMemory.add(target.referencedDecl?.id ?? "");
+      }
     }
     const writes =
       (n.kind === "BinaryOperator" && n.opcode === "=") ||
@@ -1772,7 +1789,14 @@ function raiseBody(
     const passThrough =
       derefOfAddr ||
       (viaDeref &&
-        ["ParenExpr", "ImplicitCastExpr", "CStyleCastExpr", "CXXStaticCastExpr"].includes(n.kind));
+        [
+          "ParenExpr",
+          "ImplicitCastExpr",
+          "CStyleCastExpr",
+          "CXXStaticCastExpr",
+          "CXXConstCastExpr",
+          "CXXReinterpretCastExpr",
+        ].includes(n.kind));
     for (const k of n.inner ?? []) scan(k, n, passThrough);
   };
   scan(b0, undefined);
