@@ -56,7 +56,7 @@ describe.skipIf(!canRun("x86_64-linux"))("Node's library, natively (#1331)", () 
       { id: "main", source: BOOT_PROGRAM },
       {
         bindings,
-        include: ["internal/util/comparisons"],
+        include: ["internal/util/comparisons", "internal/v8/startup_snapshot"],
         // Repeated local runs may reuse lifted modules (unset in CI).
         ...(process.env.YAKCC_LIFT_CACHE !== undefined
           ? { liftCache: process.env.YAKCC_LIFT_CACHE }
