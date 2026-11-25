@@ -2438,6 +2438,9 @@ function raiseBody(
         if (op === "*" && typeOf(e).k === "fn") return expr(k0);
         if (op === "*") return read(place(e));
         if (op === "&") {
+          // A function's address (`&f`, C's `f` written out): the function as a value.
+          const f = stripCasts(k0);
+          if (f.kind === "DeclRefExpr" && f.referencedDecl?.kind === "FunctionDecl") return expr(f);
           const p = place(k0);
           if (p.k === "mem") return p.addr;
           throw new RaiseCError(
@@ -6243,10 +6246,13 @@ function flattenEnteredSwitches(n: ClangNode): ClangNode {
   if (n.kind === "CompoundStmt") {
     const out: ClangNode[] = [];
     kids.forEach((k, i) => {
+      const others = [...kids.slice(0, i), ...kids.slice(i + 1)];
       const flat =
         k.kind === "SwitchStmt"
-          ? flattenSwitch(k, [...kids.slice(0, i), ...kids.slice(i + 1)])
-          : undefined;
+          ? flattenSwitch(k, others)
+          : k.kind === "WhileStmt"
+            ? peelEnteredLoop(k, kids.slice(0, i))
+            : undefined;
       if (flat === undefined) out.push(k);
       else {
         out.push(...flat);
@@ -6256,6 +6262,52 @@ function flattenEnteredSwitches(n: ClangNode): ClangNode {
     kids = out;
   }
   return changed ? ({ ...n, inner: kids } as ClangNode) : n;
+}
+
+/**
+ * A while loop a goto before it enters at a label of its body (brotli's ShannonEntropy: `if (odd)
+ * goto L; while (c) { a; L: b; }`): the rest of the body from the label, entered only by the
+ * goto, before the loop (`if (0) { L: b; }`, see enterIf), then the loop, its label dropped. The
+ * rest may not break, continue, declare or have a label.
+ */
+function peelEnteredLoop(loop: ClangNode, before: readonly ClangNode[]): ClangNode[] | undefined {
+  const [c, body, ...more] = loop.inner ?? [];
+  if (c === undefined || body?.kind !== "CompoundStmt" || more.length > 0) return undefined;
+  const items = body.inner ?? [];
+  const at = items.findIndex((x) => x.kind === "LabelStmt");
+  if (at < 0) return undefined;
+  const label = items[at] as ClangNode;
+  const id = (label as { declId?: string }).declId ?? "";
+  const gotos = (x: ClangNode): boolean =>
+    (x.kind === "GotoStmt" && (x as { targetLabelDeclId?: string }).targetLabelDeclId === id) ||
+    (x.inner ?? []).some(gotos);
+  if (!before.some(gotos) || gotos(body)) return undefined;
+  const rest = [(label.inner ?? [])[0] as ClangNode, ...items.slice(at + 1)];
+  const plain = (x: ClangNode, inLoop: boolean): boolean =>
+    !["LabelStmt", "DeclStmt"].includes(x.kind) &&
+    !(!inLoop && (x.kind === "BreakStmt" || x.kind === "ContinueStmt")) &&
+    (x.inner ?? []).every((k) =>
+      plain(k, inLoop || ["ForStmt", "WhileStmt", "DoStmt", "SwitchStmt"].includes(x.kind)),
+    );
+  if (!rest.every((x) => plain(x, false))) return undefined;
+  const zero = {
+    kind: "IntegerLiteral",
+    value: "0",
+    type: { qualType: "int" },
+    valueCategory: "prvalue",
+  } as unknown as ClangNode;
+  const peeled = {
+    kind: "IfStmt",
+    inner: [
+      zero,
+      {
+        kind: "CompoundStmt",
+        inner: [{ ...label, inner: [{ kind: "CompoundStmt", inner: rest }] }],
+      },
+    ],
+  } as unknown as ClangNode;
+  const kept = items.map((x, j) => (j === at ? ((x.inner ?? [])[0] as ClangNode) : x));
+  return [peeled, { ...loop, inner: [c, { ...body, inner: kept }] } as ClangNode];
 }
 
 function flattenSwitch(sw: ClangNode, siblings: readonly ClangNode[]): ClangNode[] | undefined {
