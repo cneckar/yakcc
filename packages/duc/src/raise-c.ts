@@ -3872,10 +3872,14 @@ function raiseBody(
             push("}");
             continue;
           }
+          // (A constant one of records whose address is taken, zlib's `static const code
+          // lenfix[512]` kept in a state, is static memory too: it outlives the call, and constant
+          // memory holds scalars only.)
+          const records = t.k === "rec" || (t.k === "arr" && t.of.k === "rec");
           if (
             d.storageClass === "static" &&
-            !/\bconst\b/.test(d.type?.qualType ?? "") &&
-            (written.has(d.id ?? "") || inMemory.has(d.id ?? ""))
+            (written.has(d.id ?? "") || inMemory.has(d.id ?? "")) &&
+            (!/\bconst\b/.test(d.type?.qualType ?? "") || records)
           ) {
             // A static local that is written: module state, in static memory (its initializer is
             // its definition's, applied once).
@@ -5459,9 +5463,36 @@ export function shaveCUnit(
       for (const k of n.inner ?? []) find(k);
     };
     find(typedef);
-    const rec = id === undefined || indexed === undefined ? undefined : indexed.byId.get(id);
-    if (rec === undefined) return undefined;
-    const fields = (readDecl(indexed as UnitIndex, rec).inner ?? [])
+    if (id === undefined) return undefined;
+    // The record (or enumeration) by id: the index's, else the whole unit's top level.
+    let node: ClangNode | undefined;
+    if (indexed !== undefined) {
+      const rec = indexed.byId.get(id);
+      node = rec === undefined ? undefined : readDecl(indexed, rec);
+    }
+    // (Ids are addresses in one dump: the filtered dump that gave the typedef has its tag too.)
+    else
+      node =
+        dumpOf(typedef.name ?? "").find((d) => d.id === id) ??
+        (wholeUnit().inner ?? []).find((d) => d.id === id);
+    if (node === undefined) return undefined;
+    // `typedef enum { A, B } e;`: its underlying type, as clang chooses it (unsigned int when no
+    // enumerator is negative, else int).
+    if (node.kind === "EnumDecl") {
+      const fixed = (node as { fixedUnderlyingType?: { qualType?: string } }).fixedUnderlyingType;
+      if (fixed?.qualType !== undefined) return fixed.qualType;
+      let next = 0n;
+      let negative = false;
+      for (const c of node.inner ?? []) {
+        if (c.kind !== "EnumConstantDecl") continue;
+        const v = enumInitValue(c);
+        if (v !== undefined) next = BigInt(v);
+        if (next < 0n) negative = true;
+        next += 1n;
+      }
+      return negative ? "int" : "unsigned int";
+    }
+    const fields = (node.inner ?? [])
       .filter((f) => f.kind === "FieldDecl")
       .map((f) => f.name ?? "");
     layout(""); // the layouts, read
