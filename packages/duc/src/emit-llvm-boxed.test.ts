@@ -360,6 +360,11 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "toString(radix) of integers and not; typed arrays' integer stores of any number (#1369)",
+    "export function f(a, b) { const xs = [0, -0, 1, -1, 255, 4096, -(2 ** 31), 2 ** 53 - 1, -(2 ** 53) + 1, 2 ** 53, 1e21, 0.5, -3.75, 1 / 3, a]; const radix = xs.flatMap((x) => [2, 8, 16, 36].map((r) => x.toString(r))); const vals = [0, 1, -1, 255, 256, -129, 65535, 65536, 2 ** 31, 2 ** 32 + 7, -(2 ** 32) - 3, 1.9, -1.9, 2 ** 53, 1e19, -1e19, NaN, Infinity, -Infinity]; const kinds = [Uint8Array, Int8Array, Uint16Array, Int16Array, Uint32Array, Int32Array]; const stored = kinds.map((K) => { const t = new K(vals.length); vals.forEach((v, i) => { t[i] = v; }); return Array.from(t); }); return [radix, stored]; }",
+    2,
+  ],
+  [
     "Math.random, with arguments it ignores (undici's random(max)): a number in [0, 1) (#1331)",
     "export function f(a, b) { const r = Math.random(a); const q = Math.random(); return [typeof r, r >= 0 && r < 1, q >= 0 && q < 1, r !== q || r === q]; }",
     2,
