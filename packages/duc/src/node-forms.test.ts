@@ -779,4 +779,54 @@ describe("the round trip on yakcc's own sources (#1292)", () => {
       [[1], [0]],
     );
   });
+
+  it("a getter's return inside a branch is the getter's, not an exit of the branch", () => {
+    agrees(
+      `export function f(e: number | null) {
+  let extra: object = {};
+  if (e != null) {
+    extra = {
+      get x() {
+        return [e, "got"];
+      },
+    };
+  }
+  const out = { y: 1, ...extra };
+  return Object.keys(out);
+}`,
+      [[1], [null]],
+    );
+  });
+
+  it("a closure reading a platform name through a local is its own source of the name", () => {
+    agrees(
+      `export function f(v: number) {
+  const object = Math;
+  const read = () => object.abs(v);
+  return read();
+}`,
+      [[-3], [2]],
+    );
+  });
+
+  it("an iterating loop that throws and returns, emitted with its written condition, lifts back", () => {
+    agrees(
+      `export function f(xs: number[], n: number, stop: boolean) {
+  for (const v of xs) {
+    if (stop) {
+      throw new RangeError("stopped");
+    }
+    if (n <= v) {
+      return ["at", v];
+    }
+  }
+  return "none";
+}`,
+      [
+        [[1, 5, 9], 4, false],
+        [[1], 0, true],
+        [[], 0, false],
+      ],
+    );
+  });
 });

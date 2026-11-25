@@ -1424,6 +1424,22 @@ class Lifter {
   /** The returns of lowered statements (see noteExits). */
   private readonly loweredExits = new Set<import("ts-morph").ts.Node>();
 
+  /**
+   * Lifts a guarded loop's body (a condition written as `if (!(c)) break;`) whose only other exits
+   * are throws as a body with exits, with no flags (#1292): a branch that throws takes the rest of
+   * the body onto its other side, as in a loop with exits, not the rest of the function.
+   */
+  private withThrowExits<T>(loop: Node, guarded: boolean, body: () => T): T {
+    if (!guarded || this.bodyExits !== undefined || !loopJumpsOf(loop).some(Node.isThrowStatement))
+      return body();
+    this.bodyExits = { node: loop };
+    try {
+      return body();
+    } finally {
+      this.bodyExits = undefined;
+    }
+  }
+
   /** Whether a statement holds an exit of the loop whose body is being lifted. */
   private holdsLoopExit(stmt: Node, loop: Node): boolean {
     return (
@@ -2783,7 +2799,7 @@ class Lifter {
         const tail = update !== undefined ? [update] : [];
         const tookUpdate =
           guard !== undefined
-            ? this.liftStatements(guard.rest, tail)
+            ? this.withThrowExits(node, true, () => this.liftStatements(guard.rest, tail))
             : Node.isBlock(body)
               ? this.liftStatements(body.getStatements(), tail)
               : this.liftStatement(body, tail);
@@ -2941,9 +2957,11 @@ class Lifter {
           const statements = Node.isBlock(body) ? body.getStatements() : [body];
           // The written guard, first, and again last when a lowering tests it after each pass too.
           const trailing = guard !== undefined && trailingIterateGuard(node) !== undefined ? 1 : 0;
-          this.liftStatements(
-            guard !== undefined ? statements.slice(1, statements.length - trailing) : statements,
-            [],
+          this.withThrowExits(node, guard !== undefined, () =>
+            this.liftStatements(
+              guard !== undefined ? statements.slice(1, statements.length - trailing) : statements,
+              [],
+            ),
           );
         } finally {
           this.dead = false;
@@ -5339,7 +5357,8 @@ function whileGuard(loop: Node): WhileGuard | undefined {
   const body = loop.getStatement();
   if (!Node.isBlock(body)) return undefined;
   const statements = body.getStatements();
-  const jumps = loopJumpsOf(loop);
+  // A throw is no jump of the guard's: the body is lifted with its exits, so it ends its path (#1292).
+  const jumps = loopJumpsOf(loop).filter((j) => !Node.isThrowStatement(j));
   if (jumps.length !== 1) return undefined;
   const at = statements.findIndex((st) => {
     if (!Node.isIfStatement(st) || st.getElseStatement() !== undefined) return false;
@@ -5399,7 +5418,8 @@ function iterateGuard(loop: Node): Node | undefined {
   // The guard, and the same guard again after the pass (emit-ts writes both, so a break leaves
   // before the next element is pulled, #1330).
   const last = trailingIterateGuard(loop);
-  const jumps = loopJumpsOf(loop);
+  // A throw is no jump of the guard's: the body is lifted with its exits, so it ends its path (#1292).
+  const jumps = loopJumpsOf(loop).filter((j) => !Node.isThrowStatement(j));
   const expected = last !== undefined ? [inner, last] : [inner];
   if (
     jumps.length !== expected.length ||
@@ -5860,9 +5880,9 @@ function insideOpaque(ret: Node, root: Node): boolean {
     p = p.getParent()
   ) {
     if (
-      Node.isFunctionDeclaration(p) ||
-      Node.isFunctionExpression(p) ||
-      Node.isArrowFunction(p) ||
+      // Any function: a method's or an accessor's return is its own (#1292), as a function's is.
+      isFunctionLikeNode(p) ||
+      Node.isClassStaticBlockDeclaration(p) ||
       Node.isForStatement(p) ||
       Node.isForOfStatement(p) ||
       Node.isForInStatement(p) ||
