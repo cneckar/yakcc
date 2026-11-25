@@ -27,6 +27,7 @@
 import { LlvmEmitError, type LlvmModule } from "./emit-llvm.js";
 import { DECLARES } from "./lift.js";
 import { bodyPathOf, joinOwners, sidePath } from "./line-form.js";
+import { atomGraph, atomNames, mathOperation, operationReference } from "./operations.js";
 import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
 import { paramIndex } from "./params.js";
@@ -126,6 +127,7 @@ const GLOBALS = new Set([
   "__yakccTry",
   "__yakccTryAsync",
   "__yakccTryGen",
+  "__yakccTryAsyncGen",
   "Promise",
   "queueMicrotask",
   "Error",
@@ -174,6 +176,9 @@ const LEAVES: Readonly<Record<string, [string, number]>> = {
   __ykAlloc: ["yk_leaf_alloc", 2],
   __ykFree: ["yk_leaf_free", 1],
   __ykData: ["yk_leaf_data", 2],
+  // The system-call leaf and the thread pointer (#1365, layer 0): createCSystem's meaning.
+  __yk_syscall: ["yk_leaf_syscall", 7],
+  __yk_tp: ["yk_leaf_tp", 0],
   __ykLoad8: ["yk_leaf_load8", 1],
   __ykLoad16: ["yk_leaf_load16", 1],
   __ykLoad32: ["yk_leaf_load32", 1],
@@ -240,6 +245,7 @@ const RUNTIME_DECLS: Readonly<Record<string, string>> = {
   yk_string_utf8: "declare i64 @yk_string_utf8(ptr, i64)",
   yk_array_of: "declare i64 @yk_array_of(i64, ptr)",
   yk_object_of: "declare i64 @yk_object_of(i64, ptr, ptr)",
+  yk_object_set_proto: "declare i64 @yk_object_set_proto(i64, i64)",
   yk_template: "declare i64 @yk_template(i64, ptr, ptr)",
   yk_get: "declare i64 @yk_get(i64, i64)",
   yk_get_named: "declare i64 @yk_get_named(i64, ptr, i64)",
@@ -324,11 +330,45 @@ function slotsOf(label: string): Slot[] {
     if (typeof entry === "string") return { kind: "named", name: entry };
     const [kind, k] = Object.entries(entry as Record<string, unknown>)[0] ?? [];
     if (kind === "method" && typeof k === "string") return { kind: "method", name: k };
+    // A method with a computed key (`[Symbol.asyncIterator]() {}`): its key, then its function.
+    if (kind === "method" && k === 1) return { kind: "computed" };
     // An accessor: named, or computed (its key the input before its function).
     if (kind === "get" || kind === "set")
       return typeof k === "string" ? { kind, name: k } : { kind };
     return { kind: "unsupported", what: `a ${kind} member` };
   });
+}
+
+/**
+ * An atom of the library (`Math.sin` is V8's `sin`, #1362), lowered into the module once as a
+ * function of the closure convention; the atoms it calls by name are lowered too, and called
+ * directly. Its name.
+ */
+function atomFunction(m: ModuleBuilder, atom: string): string {
+  const known = m.atoms.get(atom);
+  if (known !== undefined) return known;
+  const fn = `yk.atom.${atom}`;
+  m.atoms.set(atom, fn);
+  const library = new Set(atomNames());
+  const scope: ModuleScope = {
+    read: (name, emitLine, freshName) => {
+      if (!library.has(name)) return undefined;
+      // Its closure, made once (a call to it is direct; the closure is the binding's value).
+      const slot = `@yk.atomc.${name}`;
+      if (!m.atoms.has(`slot:${name}`)) {
+        m.atoms.set(`slot:${name}`, slot);
+        m.globals.push(`${slot} = internal global i64 0`);
+      }
+      m.intrinsics.add("declare i64 @yk_closure_once(ptr, ptr)");
+      const r = freshName();
+      emitLine(`${r} = call i64 @yk_closure_once(ptr ${slot}, ptr @${atomFunction(m, name)})`);
+      return r;
+    },
+    write: () => false,
+    direct: (name) => (library.has(name) ? atomFunction(m, name) : undefined),
+  };
+  lowerFunction(m, ecmaScriptView(atomGraph(atom)), fn, { captures: 0 }, scope);
+  return fn;
 }
 
 /** The module being built: its constants, the runtime functions it calls, its functions. */
@@ -340,6 +380,8 @@ class ModuleBuilder {
   readonly functions: string[] = [];
   /** Each regex literal's matcher, lowered once: its function's name. */
   readonly matchers = new Map<string, string>();
+  /** Each atom an operation references (#1362), lowered once: its function's name. */
+  readonly atoms = new Map<string, string>();
   private closures = 0;
 
   constant(text: string, nul = false): { ptr: string; length: number } {
@@ -393,7 +435,7 @@ function lowerFunction(
 ): void {
   // An async function's or a generator's body is lowered as any function's: the runtime runs it as a
   // coroutine, which await and yield suspend (#1295). The closure carries the mode.
-  if (source.mode === "async generator" || (source.mode !== undefined && closure === undefined))
+  if (source.mode !== undefined && closure === undefined)
     throw new LlvmEmitError(`an ${source.mode} function is not in the subset yet`);
   if (scope?.outs === undefined && source.obs.length > 1)
     throw new LlvmEmitError("a native function has at most one result");
@@ -1474,6 +1516,7 @@ function lowerFunction(
       "async closure": [0, 1],
       "async function": [1, 1],
       "function*": [1, 2],
+      "async function*": [1, 3],
     };
     const shape = MODES[lbl];
     if (shape === undefined)
@@ -1765,7 +1808,15 @@ function lowerFunction(
     if (lbl === "super") {
       // A derived constructor's super(args): the parent's constructor on this receiver (#1294).
       if (closure === undefined) throw new LlvmEmitError("super() outside a constructor");
-      if (ins.some(isSpread)) throw new LlvmEmitError("super(...spread) is not in the subset yet");
+      if (ins.some(isSpread)) {
+        m.intrinsics.add("declare i64 @yk_super_construct_spread(ptr, i64, i64)");
+        const r = fresh();
+        emit(
+          `${r} = call i64 @yk_super_construct_spread(ptr %closure, i64 %this, i64 ${spreadList(ins)})`,
+        );
+        set(out, r);
+        return;
+      }
       const args = ins.map(operand);
       set(
         out,
@@ -2210,6 +2261,14 @@ function lowerFunction(
           );
           return;
         }
+        if (callee.name === "random" && args.length === 0) {
+          // An implementation-chosen pseudo-random number in [0, 1) (21.3.2.27): the runtime's.
+          m.intrinsics.add("declare i64 @yk_math_random()");
+          const r = fresh();
+          emit(`${r} = call i64 @yk_math_random()`);
+          set(out, r);
+          return;
+        }
         if (callee.name === "min" || callee.name === "max") {
           set(
             out,
@@ -2218,6 +2277,18 @@ function lowerFunction(
               `i32 ${callee.name === "max" ? 1 : 0}, i64 ${args.length}, ptr ${list(args)}`,
             ),
           );
+          return;
+        }
+        const ref = mathOperation(callee.name, args.length);
+        if (ref !== undefined) {
+          // A reference to the atom implementing it: ToNumber of each argument, then the atom.
+          const nums = args.map((a) => call("yk_pos", `i64 ${a}`));
+          const fn = atomFunction(m, ref.atom);
+          const r = fresh();
+          emit(
+            `${r} = call i64 @${fn}(ptr null, i64 ${UNDEFINED}, i64 ${nums.length}, ptr ${list(nums)})`,
+          );
+          set(out, r);
           return;
         }
         if (APPROXIMATED.test(callee.name))
@@ -2410,10 +2481,51 @@ function lowerFunction(
         return;
       }
     }
-    if (ins.length === 2 && lbl === "**")
-      throw new LlvmEmitError(
-        "** is implementation-approximated in ECMAScript: a native pow need not give the reference's last bit",
+    const opRef = operationReference(lbl);
+    if (opRef !== undefined && ins.length === opRef.arity) {
+      // An operation named by its reference (`Math.sin`, #1362): ToNumber of each argument, then
+      // the atom implementing it.
+      const nums = ins.map((v) => call("yk_pos", `i64 ${operand(v as ValueId)}`));
+      const fn = atomFunction(m, opRef.atom);
+      const r = fresh();
+      emit(
+        `${r} = call i64 @${fn}(ptr null, i64 ${UNDEFINED}, i64 ${nums.length}, ptr ${list(nums)})`,
       );
+      set(out, r);
+      return;
+    }
+    if (ins.length === 2 && lbl === "**") {
+      // ToNumeric of each, once; two BigInts: the runtime's exact power; two Numbers: pow's atom
+      // (Number::exponentiate is Math.pow, V8's shaved `pow`, #1362).
+      m.intrinsics.add("declare i32 @yk_exponent(i64, i64, ptr)");
+      const pair = fresh();
+      entryAllocas.push(`  ${pair} = alloca [2 x i64]`);
+      const kind = fresh();
+      emit(
+        `${kind} = call i32 @yk_exponent(i64 ${operand(ins[0] as ValueId)}, i64 ${operand(ins[1] as ValueId)}, ptr ${pair})`,
+      );
+      const isBig = fresh();
+      emit(`${isBig} = icmp ne i32 ${kind}, 0`);
+      const bigL = freshLabel("powbig");
+      const numL = freshLabel("pownum");
+      const join = freshLabel("powjoin");
+      emit(`br i1 ${isBig}, label %${bigL}, label %${numL}`);
+      block(bigL);
+      const r1 = fresh();
+      emit(`${r1} = load i64, ptr ${pair}`);
+      emit(`br label %${join}`);
+      block(numL);
+      const fn = atomFunction(m, "pow");
+      const r2 = fresh();
+      emit(`${r2} = call i64 @${fn}(ptr null, i64 ${UNDEFINED}, i64 2, ptr ${pair})`);
+      const numEnd = currentLabel();
+      emit(`br label %${join}`);
+      block(join);
+      const r = fresh();
+      emit(`${r} = phi i64 [ ${r1}, %${bigL} ], [ ${r2}, %${numEnd} ]`);
+      set(out, r);
+      return;
+    }
     if (ins.length === 1 && UNARY[lbl] !== undefined) {
       const x = operand(ins[0] as ValueId);
       const slow = (): string => call(UNARY[lbl] as string, `i64 ${x}`);
@@ -2489,7 +2601,10 @@ function lowerFunction(
     }
     if (lbl.startsWith("object:")) {
       const slots = slotsOf(lbl);
-      if (slots.some((x) => x.kind === "spread" || x.kind === "get" || x.kind === "set")) {
+      const isProto = (x: Slot): boolean => x.kind === "named" && x.name === "__proto__";
+      if (
+        slots.some((x) => x.kind === "spread" || x.kind === "get" || x.kind === "set" || isProto(x))
+      ) {
         // Slot by slot, in source order: a spread copies, an accessor defines, a later key wins.
         let obj = call("yk_object_of", "i64 0, ptr null, ptr null");
         let at = 0;
@@ -2498,6 +2613,11 @@ function lowerFunction(
             throw new LlvmEmitError(`${slot.what} is not in the subset yet`);
           if (slot.kind === "spread") {
             obj = call("yk_spread_into", `i64 ${obj}, i64 ${operand(ins[at++] as ValueId)}`);
+            continue;
+          }
+          if (isProto(slot)) {
+            // `__proto__: v` sets the prototype (an object), and defines no property.
+            obj = call("yk_object_set_proto", `i64 ${obj}, i64 ${operand(ins[at++] as ValueId)}`);
             continue;
           }
           const key =
@@ -2586,16 +2706,14 @@ function lowerFunction(
     const exit = freshLabel("exit");
     // An iteration: an iterator over the input after the carries, asked for the next element first.
     let iterator: string | undefined;
-    // for await (x of it): the runtime has no async iterables (no symbols, no async generators),
-    // so `it` is iterated as it is and each element awaited, as ECMAScript does for a sync
-    // iterable (CreateAsyncFromSyncIterator, #1330).
-    const awaitEach = rec.iterate?.of === "async values";
+    // for await (x of it): the runtime's iterator awaits each next() result of an async generator,
+    // or each element of anything else (CreateAsyncFromSyncIterator, #1330).
     if (rec.iterate !== undefined) {
       m.used.add("yk_iter_new");
       const iterable = operand(loop.inputs[rec.carry.length] as ValueId);
       iterator = fresh();
       emit(
-        `${iterator} = call i64 @yk_iter_new(i64 ${iterable}, i32 ${rec.iterate.of === "keys" ? 1 : 0})`,
+        `${iterator} = call i64 @yk_iter_new(i64 ${iterable}, i32 ${rec.iterate.of === "keys" ? 1 : rec.iterate.of === "async values" ? 2 : 0})`,
       );
     }
     emit(`br label %${head}`);
@@ -2613,7 +2731,7 @@ function lowerFunction(
       block(got);
       const element = fresh();
       emit(`${element} = load i64, ptr ${cell}`);
-      set(rec.iterate.element, awaitEach ? call("yk_await", `i64 ${element}`) : element);
+      set(rec.iterate.element, element);
     }
     const items = planner.ordered(planner.itemsOf(bodyPathOf(loop)));
     const forCond = new Set<ScopeItem>();
