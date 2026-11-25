@@ -2441,6 +2441,9 @@ static int has_own(yk v, yk key) {
   if (is_closure(v)) {
     yk_closure *c = (yk_closure *)PTR(v);
     if (is_string(key) && (key_is(key, "name") || key_is(key, "length"))) return 1;
+    /* A function's prototype exists from its first use (made then). */
+    if (is_string(key) && key_is(key, "prototype") && (c->has_this || c->is_class || c->mode == 2 || c->mode == 3))
+      return ensure_prototype(v), 1;
     return c->props != 0 && own_get((yk_object *)PTR(c->props), key, &slot);
   }
   if (is_array(v)) {
@@ -8252,7 +8255,9 @@ yk yk_in(yk key, yk obj) {
     yk v, k = to_property_key(key);
     for (yk o = obj; is_object(o); o = ((yk_object *)PTR(o))->proto)
       if (own_get((yk_object *)PTR(o), k, &v)) return YK_TRUE;
-    return YK_FALSE;
+    /* A chain that ends with no prototype of its own goes on into its kind's intrinsic one. */
+    yk t = tail_proto(obj);
+    return yk_bool(t != 0 && chain_get(t, k, &v));
   }
   if (is_array(obj)) {
     if (is_symbol(key)) {
@@ -8265,7 +8270,11 @@ yk yk_in(yk key, yk obj) {
     int64_t i = index_of_key(key);
     return yk_bool(i >= 0 && i < arr(obj)->len && !array_hole(arr(obj), (uint32_t)i));
   }
-  if (is_closure(obj)) return YK_FALSE;
+  if (is_closure(obj)) {
+    yk v, k = to_property_key(key);
+    if (has_own(obj, k)) return YK_TRUE;
+    return yk_bool(chain_get(obj, k, &v) || chain_get(prototype_of(obj), k, &v));
+  }
   type_error("Cannot use 'in' operator to search for a key in a primitive");
   return YK_FALSE;
 }

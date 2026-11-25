@@ -285,6 +285,11 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "in along a built-in value's intrinsic prototype, and on functions (#1331)",
+    'export function f(a, b) { const fn = function g() { return this; }; fn.extra = 1; return [Symbol.iterator in new Map(), "get" in new Map(), "size" in new Set(), "then" in Promise.resolve(1), "toString" in {}, "nope" in {}, "call" in fn, "extra" in fn, "name" in fn, "prototype" in fn, "nope" in fn, Symbol.iterator in new Uint8Array(1), "getTime" in new Date(0), Symbol.iterator in [a], "length" in [b]]; }',
+    2,
+  ],
+  [
     "arrays with holes: literals, new Array(n), delete, a write past the end, length; in, keys, the callbacks (#1330)",
     "export function f(a, b) { const x = [, a, , b]; const y = new Array(3); y[1] = a; const z = [1, 2, 3]; delete z[1]; const w = []; w[3] = b; const v = [a]; v.length = 3; const seen = []; x.forEach((e, i) => seen.push(i)); const m = x.map((e) => 1); return [x.length, 0 in x, 1 in x, Object.keys(x), x.hasOwnProperty(2), seen, m.length, 0 in m, 1 in m, Object.keys(y), y.filter(() => true).length, Object.keys(z), z.reduce((s, e) => s + e, 0), Object.keys(w), w.length, Object.keys(v), [, 5, , 6].reduce((s, e) => s + e), x.some((e) => e === undefined), x.indexOf(undefined), x.includes(undefined), x.slice(0, 2).length, 0 in x.slice(0, 2), JSON.stringify(x), String([, 1, , 2]), [...[, 7]], Array.from([, 8])]; }",
     2,
