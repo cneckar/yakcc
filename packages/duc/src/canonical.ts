@@ -40,12 +40,15 @@ const COMMUTATIVE = {
  */
 function inlineLiteralCaptures(nodes: DucNode[]): DucNode[] {
   // A captured platform primitive (`const object = globalThis`, read in a closure) is the closure's
-  // own source of it, as a lowering writes the name where it is used (#1292).
+  // own source of it, as a lowering writes the name where it is used (#1292). Not `arguments`: each
+  // function has its own, and an arrow's capture of its function's is that function's.
   const literal = new Map<ValueId, DucNode>();
   for (const n of nodes)
     if (
       n.kind === "literal-source" ||
-      (n.kind === "diamond-source" && n.diamond?.reason === "platform-primitive")
+      (n.kind === "diamond-source" &&
+        n.diamond?.reason === "platform-primitive" &&
+        n.diamond.symbol !== "arguments")
     )
       literal.set(n.outputs[0] as ValueId, n);
   return nodes.map((node) => {

@@ -219,6 +219,11 @@ describe("closures over a for loop's per-pass binding, and destructuring in a tr
       "export function f(o) { let s; try { ({ source: s } = o); } catch { s = 'none'; } return s; }",
       { source: "v" },
     ],
+    [
+      "a closure that writes the header's binding writes its own pass's, copied on to the next (#1292)",
+      "export function f(t) { const fs = []; for (let i = 0; i < t; i++) { fs.push(() => i++); if (i === 1) fs[0](); } return [fs.map((g) => g()), fs.map((g) => g())]; }",
+      4,
+    ],
   ];
   for (const [name, source, input] of CASES) {
     it(name, () => {
@@ -236,11 +241,10 @@ describe("closures over a for loop's per-pass binding, and destructuring in a tr
     });
   }
 
-  it("a write to the binding in the body, a var header, or a write in the closure stays a summary", () => {
+  it("a write to the binding in the body, or a var header, stays a summary", () => {
     for (const source of [
       "export function f(t) { const fs = []; for (let i = 0; i < t; i++) { fs.push(() => i); i++; } return fs; }",
       "export function f(t) { const fs = []; for (var i = 0; i < t; i++) { fs.push(() => i); } return fs; }",
-      "export function f(t) { const fs = []; for (let i = 0; i < t; i++) { fs.push(() => i++); } return fs; }",
     ])
       expect(opaque(liftAtom(source)).length, source).toBeGreaterThan(0);
   });
