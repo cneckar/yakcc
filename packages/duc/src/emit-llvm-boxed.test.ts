@@ -265,6 +265,11 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "a function's arguments: length, indexes, beyond the parameters, spread, in a nested arrow (#1330)",
+    "export function f(a, b) { function g(x) { const inner = () => arguments.length; return [arguments.length, arguments[0] === x, arguments[1], arguments[2], [...arguments].length, inner(), Array.prototype.slice.call(arguments, 1)]; } return [g(a), g(a, b), g(), g(1, 2, 3, 4)]; }",
+    2,
+  ],
+  [
     "%TypedArray% and its prototype, ArrayBuffer's and DataView's; a class extending Uint8Array (#1331)",
     "export function f(a, b) { const TA = Object.getPrototypeOf(Uint8Array); const u = new Uint8Array([1, 2, typeof a === 'number' ? a : 3]); const len = Object.getOwnPropertyDescriptor(TA.prototype, 'length').get; const tag = Object.getOwnPropertyDescriptor(TA.prototype, Symbol.toStringTag).get; class FB extends Uint8Array { hello() { return 'hi' + this.length; } toString() { return 'FB:' + this.join('-'); } } const fb = new FB(4); fb[1] = 9; const sub = TA.prototype.slice.call(fb, 1, 3); let abstract = ''; try { new TA(); } catch (e) { abstract = e.name; } return [typeof TA, TA.name, Object.getPrototypeOf(Uint8Array.prototype) === TA.prototype, len.call(u), tag.call(u), tag.call({}), Object.prototype.toString.call(u), fb.hello(), String(fb), fb instanceof Uint8Array, fb instanceof FB, sub.length, sub[0], abstract, Uint8Array.prototype.BYTES_PER_ELEMENT, Object.getPrototypeOf(new ArrayBuffer(2)) === ArrayBuffer.prototype, Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get.call(new ArrayBuffer(5)), Object.prototype.toString.call(new DataView(new ArrayBuffer(2))), [...u.values()], TA.prototype[Symbol.iterator] === TA.prototype.values, u.constructor === Uint8Array, Object.getPrototypeOf(Float64Array) === TA]; }",
     2,

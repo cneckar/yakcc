@@ -531,10 +531,14 @@ function lowerFunction(
   const globalValue = new Map<ValueId, string>();
   const freeValue = new Map<ValueId, string>();
   const leafValue = new Map<ValueId, string>();
+  // A function's own `arguments` (#1330): its arguments as an array, made on entry (strict code:
+  // no parameter aliases them).
+  const argumentsValues: ValueId[] = [];
   for (const n of g.nodes) {
     if (n.kind !== "diamond-source") continue;
     const sym = n.diamond?.symbol ?? "";
-    if (LEAVES[sym] !== undefined) leafValue.set(n.outputs[0] as ValueId, sym);
+    if (sym === "arguments" && closure !== undefined) argumentsValues.push(n.outputs[0] as ValueId);
+    else if (LEAVES[sym] !== undefined) leafValue.set(n.outputs[0] as ValueId, sym);
     else if (n.diamond?.reason === "platform-primitive" && sym === "Math")
       mathValue.add(n.outputs[0] as ValueId);
     else if (
@@ -1055,7 +1059,7 @@ function lowerFunction(
         throw new LlvmEmitError(`the literal ${text} is not in the subset yet`);
       return boxedNumber(n);
     }
-    if (p?.kind === "diamond-source" || freeValue.has(v)) {
+    if ((p?.kind === "diamond-source" || freeValue.has(v)) && !argumentsValues.includes(v)) {
       const leaf = leafValue.get(v);
       if (leaf !== undefined) {
         // A leaf as a value: the runtime's function value for it.
@@ -2925,6 +2929,7 @@ function lowerFunction(
     if (n.kind !== "literal-source" || !text.startsWith("/")) continue;
     set(n.outputs[0] as ValueId, regexObject(text));
   }
+  for (const v of argumentsValues) set(v, call("yk_rest", "i64 %argc, ptr %argv, i64 0"));
   // Parameters: the entry function's own; a closure's captures, then its arguments.
   params.forEach((p, i) => {
     const v = p.outputs[0] as ValueId;
