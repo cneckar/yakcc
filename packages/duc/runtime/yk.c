@@ -2152,6 +2152,7 @@ static const struct {
 static yk intrinsic_protos[N_INTRINSIC];
 static int view_type(yk v);
 static yk intrinsic_proto(int which);
+static yk prototype_of(yk v);
 static uint32_t ta_bytes(int type);
 static const char *ta_name(int type);
 /* An array, string, Map or Set iterator (object kind 13; ECMA-262 23.1.5, 22.1.5, 24.1.5, 24.2.6). */
@@ -2213,6 +2214,16 @@ static yk method_thunk_code(void *c, yk self, uint64_t argc, const yk *argv) {
   int which = (int)num(((yk_closure *)c)->captures[1]);
   /* %IteratorPrototype%[Symbol.iterator], %AsyncIteratorPrototype%[Symbol.asyncIterator]: this. */
   if (which == I_ITERATOR || which == I_ASYNC_ITERATOR) return self;
+  /* Function.prototype[Symbol.hasInstance]: OrdinaryHasInstance (its prototype along the value's chain). */
+  if (which == I_FUNCTION && key == well_known_symbol(1)) {
+    yk v = argc > 0 ? argv[0] : YK_UNDEFINED;
+    if (!is_closure(self) || !(is_object(v) || is_closure(v) || is_array(v))) return YK_FALSE;
+    yk proto = yk_get(self, ascii("prototype"));
+    if (!is_object(proto)) type_error("Function has non-object prototype in instanceof check");
+    for (yk p = prototype_of(v); is_object(p); p = prototype_of(p))
+      if (p == proto) return YK_TRUE;
+    return YK_FALSE;
+  }
   /* RegExp.prototype[Symbol.replace] and its kin: the string method with this RegExp. */
   if (which == I_REGEXP && is_symbol(key))
     for (int w = 4; w <= 9; w++)
@@ -2300,6 +2311,10 @@ static yk intrinsic_proto(int which) {
     yk g = intrinsic_proto(which == I_GENERATOR_FUNCTION ? I_GENERATOR : I_ASYNC_GENERATOR);
     own_set(o, ascii("prototype"), g);
     own_set((yk_object *)PTR(g), ascii("constructor"), p);
+  }
+  if (which == I_FUNCTION) {
+    yk key = well_known_symbol(1), caps[2] = {key, yk_number(which)};
+    own_set(o, key, named(yk_closure_new(method_thunk_code, 1, 2, caps), ascii("[Symbol.hasInstance]")));
   }
   if (which == I_REGEXP)
     for (int w = 4; w <= 9; w++) {
