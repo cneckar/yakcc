@@ -97,6 +97,8 @@ typedef struct {
   uint32_t npriv;    /* a class: the private names it declares, and its key for each */
   yk *priv_names;
   yk *priv_keys;
+  yk fname;          /* its name (a string), or 0: "" — read as its own `name` unless one is written */
+  int32_t flen;      /* its parameter count, its own `length` unless one is written */
   uint32_t n;
   yk captures[];
 } yk_closure;
@@ -796,6 +798,7 @@ static yk object_to_string(yk v);
 static yk method_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
 static yk object_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
 static yk named(yk f, yk name);
+static void name_method(yk f, yk key, const char *prefix);
 static yk case_convert(yk v, int upper);
 static int date_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
 static yk date_string(double t, int what);
@@ -1591,6 +1594,9 @@ static int chain_get(yk obj, yk key, yk *out) {
     /* A function's prototype exists from its first use, as `F.prototype.m = …` needs. */
     if ((c->has_this || c->is_class || c->mode == 2 || c->mode == 3) && key_is(key, "prototype")) ensure_prototype(obj);
     if (c->props != 0 && own_get((yk_object *)PTR(c->props), key, out)) return 1;
+    /* Its name and length, unless written. */
+    if (is_string(key) && key_is(key, "name")) return *out = c->fname != 0 ? c->fname : ascii(""), 1;
+    if (is_string(key) && key_is(key, "length")) return *out = yk_number(c->flen), 1;
     /* A derived class inherits its parent's statics. */
     return c->parent != 0 && is_closure(c->parent) && chain_get(c->parent, key, out);
   }
@@ -1927,6 +1933,7 @@ yk yk_class_new(void *creator, yk parent, uint64_t n, const yk *kinds, const yk 
     }
     yk_object *target = statics[i] == YK_TRUE ? own_props(cls) : (yk_object *)PTR(proto);
     yk name = to_property_key(names[i]);
+    name_method(members[i], name, kind == 2 ? "get " : kind == 3 ? "set " : NULL);
     if (kind == 1) own_set(target, name, members[i]);
     else define_accessor(target, name, kind == 2 ? members[i] : 0, kind == 3 ? members[i] : 0);
   }
@@ -2418,6 +2425,7 @@ static int has_own(yk v, yk key) {
   if (is_object(v)) return own_get((yk_object *)PTR(v), key, &slot);
   if (is_closure(v)) {
     yk_closure *c = (yk_closure *)PTR(v);
+    if (is_string(key) && (key_is(key, "name") || key_is(key, "length"))) return 1;
     return c->props != 0 && own_get((yk_object *)PTR(c->props), key, &slot);
   }
   if (is_array(v)) {
@@ -2512,7 +2520,13 @@ static yk_array *own_keys_of(yk v) {
     push(r, ascii("length"));
     return r;
   } else if (is_closure(v)) {
-    v = ((yk_closure *)PTR(v))->props;
+    yk_closure *c = (yk_closure *)PTR(v);
+    yk p;
+    int named_own = c->props != 0 && own_get((yk_object *)PTR(c->props), ascii("name"), &p);
+    int length_own = c->props != 0 && own_get((yk_object *)PTR(c->props), ascii("length"), &p);
+    if (!length_own) push(r, ascii("length"));
+    if (!named_own) push(r, ascii("name"));
+    v = c->props;
     if (v == 0) return r;
   }
   if (!is_object(v)) return r;
@@ -2922,6 +2936,8 @@ yk yk_closure_new(yk_code code, int32_t has_this, uint64_t n, const yk *captures
   c->parent = 0;
   c->home_static = 0;
   c->mode = 0;
+  c->fname = 0;
+  c->flen = 0;
   c->n = (uint32_t)n;
   memcpy(c->captures, captures, (size_t)n * sizeof(yk));
   return BOX(T_CLOSURE, c);
@@ -3944,8 +3960,38 @@ static yk builtin_set(void *c, yk s, uint64_t argc, const yk *argv) {
 
 /* A built-in function's name (its `name` property). */
 static yk named(yk f, yk name) {
-  own_set(own_props(f), ascii("name"), name);
+  if (is_closure(f)) ((yk_closure *)PTR(f))->fname = name;
+  else own_set(own_props(f), ascii("name"), name);
   return f;
+}
+/* A function's name and length as its code gives them (the lowering's, at each closure made). */
+yk yk_closure_meta(yk f, const char *name, uint64_t n, int64_t length) {
+  yk_closure *c = (yk_closure *)PTR(f);
+  if (name != NULL) c->fname = yk_string_utf8(name, n);
+  c->flen = (int32_t)length;
+  return f;
+}
+static void name_method(yk f, yk key, const char *prefix);
+/* An object literal's method or anonymous function value: named by its key (NamedEvaluation). */
+yk yk_name_method(yk f, yk key) {
+  name_method(f, to_property_key(key), NULL);
+  return f;
+}
+/* A class's name, as its declaration (or binding) gives it. */
+yk yk_class_name(yk f, const char *name, uint64_t n) {
+  ((yk_closure *)PTR(f))->fname = yk_string_utf8(name, n);
+  return f;
+}
+/* A method's name, from its key, unless its code named it (a symbol key: "[description]"). */
+static void name_method(yk f, yk key, const char *prefix) {
+  if (!is_closure(f) || ((yk_closure *)PTR(f))->fname != 0) return;
+  yk n = key;
+  if (is_symbol(key)) {
+    yk d = ((yk_symbol *)PTR(key))->description;
+    n = d == YK_UNDEFINED ? ascii("") : concat(str(concat(str(ascii("[")), str(d))), str(ascii("]")));
+  }
+  if (prefix != NULL) n = concat(str(ascii(prefix)), str(to_string(n)));
+  ((yk_closure *)PTR(f))->fname = to_string(n);
 }
 static yk with_methods(yk_code code, int n, const char *const *names, const yk_code *codes) {
   yk f = code != NULL ? yk_closure_new(code, 0, 0, NULL) : yk_object_of(0, NULL, NULL);
@@ -7729,7 +7775,7 @@ yk yk_global(const char *name, uint64_t n) {
   if (n == 8 && memcmp(name, "Function", 8) == 0) return function_global();
   yk v = global_raw(name, n);
   if (!is_closure(v)) return v;
-  if (!has_own(v, ascii("name"))) {
+  if (((yk_closure *)PTR(v))->fname == 0) {
     named(v, yk_string_utf8(name, n));
     if (n == 6 && memcmp(name, "String", 6) == 0) {
       static const char *const m[3] = {"fromCharCode", "fromCodePoint", "raw"};

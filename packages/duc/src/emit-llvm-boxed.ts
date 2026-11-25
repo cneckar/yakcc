@@ -309,6 +309,7 @@ const RUNTIME_DECLS: Readonly<Record<string, string>> = {
   yk_private_has: "declare i64 @yk_private_has(i64, i64)",
   yk_super_construct: "declare i64 @yk_super_construct(ptr, i64, i64, ptr)",
   yk_array_hole: "declare i64 @yk_array_hole(i64, i64)",
+  yk_name_method: "declare i64 @yk_name_method(i64, i64)",
   yk_await: "declare i64 @yk_await(i64)",
   yk_yield: "declare i64 @yk_yield(i64)",
   yk_yield_star: "declare i64 @yk_yield_star(i64)",
@@ -1610,6 +1611,23 @@ function lowerFunction(
     emit(
       `${r} = call i64 @yk_closure_new(ptr @${fn}, i32 ${hasThis}, i64 ${caps.length}, ptr ${list(caps)})`,
     );
+    // Its name (the lifter's: a declaration's, or the binding an anonymous function is assigned to)
+    // and its length (the parameters before a rest one).
+    // A named function expression's own name; else the name the lifter gave it (its binding).
+    const text = n.origin?.text ?? "";
+    const ownName =
+      /^(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(/.exec(text)?.[1] ?? text;
+    const params = graph.nodes.filter(
+      (p) => p.kind === "param-source" && Number(p.label ?? "0") >= n.inputs.length,
+    );
+    const rest = params.findIndex((p) => (p.label ?? "").endsWith("..."));
+    const length = rest < 0 ? params.length : rest;
+    m.intrinsics.add("declare i64 @yk_closure_meta(i64, ptr, i64, i64)");
+    if (ownName !== undefined && /^[A-Za-z_$][\w$]*$/.test(ownName)) {
+      const k = m.constant(ownName);
+      emit(`call i64 @yk_closure_meta(i64 ${r}, ptr ${k.ptr}, i64 ${k.length}, i64 ${length})`);
+    } else if (length > 0)
+      emit(`call i64 @yk_closure_meta(i64 ${r}, ptr null, i64 0, i64 ${length})`);
     const made = mode === 0 ? r : call("yk_closure_mode", `i64 ${r}, i32 ${mode}`);
     // Made inside a class's member, it knows the class (`class-self`) as the member does.
     return closure === undefined ? made : call("yk_closure_inherit", `i64 ${made}, ptr %closure`);
@@ -1984,13 +2002,18 @@ function lowerFunction(
         ),
       );
       const statics = members.map(([, , isStatic]) => (isStatic === true ? TRUE : FALSE));
-      set(
-        out,
-        call(
-          "yk_class_new",
-          `ptr ${closure === undefined ? "null" : "%closure"}, i64 ${parent}, i64 ${members.length}, ptr ${list(kinds)}, ptr ${list(names)}, ptr ${list(statics)}, ptr ${list(fns)}`,
-        ),
+      const made = call(
+        "yk_class_new",
+        `ptr ${closure === undefined ? "null" : "%closure"}, i64 ${parent}, i64 ${members.length}, ptr ${list(kinds)}, ptr ${list(names)}, ptr ${list(statics)}, ptr ${list(fns)}`,
       );
+      // The class's name (its declaration's, or its binding's), as the lifter records it.
+      const className = n.origin?.text ?? "";
+      if (/^[A-Za-z_$][\w$]*$/.test(className)) {
+        m.intrinsics.add("declare i64 @yk_class_name(i64, ptr, i64)");
+        const k = m.constant(className);
+        emit(`call i64 @yk_class_name(i64 ${made}, ptr ${k.ptr}, i64 ${k.length})`);
+      }
+      set(out, made);
       return;
     }
     if (lbl.startsWith("delete.") && ins.length === 1) {
@@ -2758,12 +2781,15 @@ function lowerFunction(
           slot.kind === "set"
         )
           throw new LlvmEmitError("an object literal slot that is not a plain one");
-        keys.push(
+        const key =
           slot.kind === "computed"
             ? operand(ins[at++] as ValueId)
-            : str((slot as { name: string }).name),
-        );
-        values.push(operand(ins[at++] as ValueId));
+            : str((slot as { name: string }).name);
+        keys.push(key);
+        const v = ins[at++] as ValueId;
+        // A function made here is named by its key (NamedEvaluation), unless its code named it.
+        const made = producer.get(resolve(v))?.closure !== undefined;
+        values.push(made ? call("yk_name_method", `i64 ${operand(v)}, i64 ${key}`) : operand(v));
       }
       set(out, call("yk_object_of", `i64 ${keys.length}, ptr ${list(keys)}, ptr ${list(values)}`));
       return;
