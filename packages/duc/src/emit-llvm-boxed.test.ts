@@ -100,6 +100,26 @@ const PROGRAMS: [string, string, number][] = [
   // + with ToPrimitive, string concatenation and Number::toString's shortest digits.
   ["+ on every pair of kinds", "export function f(a, b) { return a + b; }", 2],
   [
+    "Date on fixed time values, the weak collections, WeakRef, the other error kinds, RegExp's copy (#1331)",
+    "export function f(a, b) { const t = (g) => { try { return g(); } catch (e) { return e.name; } }; const ms = typeof a === 'number' && Number.isFinite(a) ? Math.trunc(a * 1e9) % 8.64e15 : 1700000000123; const d = new Date(ms); const parsed = ['2024-02-29T13:45:30.123Z', '2024-02-29', '+012345-01-01T00:00:00Z', '2024-13-01', 'nope'].map((x) => Date.parse(x)); const s = new Date(Date.UTC(2020, 1, 29, 23, 59, 58, 7)); s.setUTCMonth(11, 31); const k = {}; const wm = new WeakMap([[k, 1]]); const ws = new WeakSet([k]); const r = new WeakRef(k); const ag = new AggregateError([new TypeError('x'), 2], 'many'); const re = new RegExp(/a(b)/g); return [d.getTime(), t(() => d.toISOString()), d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCDay(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds(), parsed, s.toISOString(), s.getTime(), new Date(NaN).getTime(), t(() => new Date(NaN).toISOString()), String(new Date(NaN)), Date.UTC(99, 0), wm.get(k), wm.has({}), ws.has(k), r.deref() === k, ag.name, ag.message, ag.errors.length, new EvalError('e').name, new ReferenceError('r').message, new URIError().name, re.source, re.flags, re.exec('xab')[1], typeof Date.now(), JSON.stringify(new Date(0).toJSON())]; }",
+    2,
+  ],
+  [
+    "toUpperCase and toLowerCase: full Unicode mappings and final sigma, as Node (#1331)",
+    "export function f(a, b) { const xs = [String(a), String(b), 'straße ŉ ﬀ İ ǅ', 'ΟΔΥΣΣΕΥΣ Σ ΑΣ. ΑΣ\\u0301 ΑΣΑ', 'Привет Ǆ ǈ', '\\ud801\\udc00\\ud801\\udc28 ᾳ ﬆ ΐ', 'Σ', 'aΣ', 'aΣb']; return xs.map((x) => [x.toUpperCase(), x.toLowerCase(), x.toLocaleUpperCase(), x.toLocaleLowerCase()]); }",
+    2,
+  ],
+  [
+    "URI handling, escape/unescape, and built-in functions' names (#1331)",
+    "export function f(a, b) { const t = (g) => { try { return g(); } catch (e) { return e.name; } }; const x = String(a) + ' é/?#[]&=' + String(b) + '\\ud83d\\ude00'; const e1 = encodeURIComponent(x), e2 = encodeURI(x); return [e1, e2, decodeURIComponent(e1) === x, decodeURI(e2) === x, decodeURI('%3B%2F%41%e2%82%ac'), t(() => decodeURIComponent('%')), t(() => decodeURIComponent('%E0%A4%A')), t(() => decodeURIComponent('%C0%80')), t(() => encodeURIComponent('\\ud800')), escape(x), unescape(escape(x)) === x, unescape('%u0041%41%zz'), decodeURI.name, [].join.name, Array.name, Object.keys.name, String.prototype.slice.name]; }",
+    2,
+  ],
+  [
+    "the intrinsics: uncurryThis as primordials makes it, descriptors, ownKeys, prototypes, apply and bind (#1331)",
+    "export function f(a, b) { const { apply, bind, call } = Function.prototype; const uncurryThis = bind.bind(call); const join = uncurryThis(Array.prototype.join); const slice = uncurryThis(String.prototype.slice); const hasOwn = uncurryThis(Object.prototype.hasOwnProperty); const sym = Symbol('s'); const o = { x: 1, [sym]: 2 }; Object.defineProperty(o, 'g', { get() { return this.x + 10; }, enumerable: true, configurable: true }); const d = Object.getOwnPropertyDescriptor(o, 'x'); const gd = Object.getOwnPropertyDescriptor(o, 'g'); const n = Object.create(null); n.k = String(a); const max = (...xs) => xs.length; const bound = function (p, q) { return [this.tag, p, q]; }.bind({ tag: 't' }, b); return [join([1, 2, a], '-'), slice(String(a) + 'xyz', 1), hasOwn(o, 'x'), hasOwn(o, 'nope'), Reflect.ownKeys(o).length, typeof Reflect.ownKeys(o)[2], d.value, d.writable, typeof gd.get, o.g, Object.getPrototypeOf([]) === Array.prototype, Object.getPrototypeOf(Object.prototype), Object.getPrototypeOf(n), typeof n.toString, Object.keys(n), ({}).toString(), Object.prototype.toString.call([]), [].join === Array.prototype.join, typeof globalThis.Array, globalThis.globalThis === globalThis, apply.call(max, null, [1, 2, 3]), bound('q'), Reflect.apply(max, null, [a, b]), Reflect.getPrototypeOf(Map.prototype) === Object.prototype, 'x' in o, Reflect.has(o, 'toString'), Object.hasOwn(o, 'g')]; }",
+    2,
+  ],
+  [
     "symbols: identity, description, Symbol.for, symbol keys, typeof, ToString throwing (#1331)",
     "export function f(a, b) { const t = (g) => { try { return g(); } catch (e) { return e.name; } }; const s1 = Symbol(String(a)), s2 = Symbol(String(a)), s3 = Symbol(); const o = { [s1]: 1, plain: 2 }; o[s2] = b; const copy = { ...o }; return [s1 === s2, s1.description, s3.description, s1.toString(), String(s2), typeof s1, Symbol.for('k') === Symbol.for('k'), Symbol.keyFor(Symbol.for('k')), Symbol.keyFor(s1), o[s1], o[s2], Object.keys(o), JSON.stringify(o), copy[s1], s1 in o, t(() => '' + s1), t(() => `${s1}`), typeof Symbol.iterator, Symbol.iterator.description, t(() => new Symbol())]; }",
     2,
@@ -232,6 +252,21 @@ const PROGRAMS: [string, string, number][] = [
   [
     "a try that yields, in a generator: next, throw and return reach its blocks, yield* passes them on (#1330)",
     "export function f(a, b) { const log = []; function* g(n) { try { for (let i = 0; i < n; i++) { const got = yield i; log.push('got ' + got); if (i === 2) throw new Error('two'); } } catch (e) { log.push('caught ' + e.message); yield -1; } finally { log.push('finally'); } return 'end'; } const k = typeof a === 'number' && a >= 0 && a < 6 ? Math.floor(a) : 4; const it = g(k); const out = []; let r = it.next(); while (!r.done) { out.push(r.value); r = it.next(b); } function* h() { try { yield 1; return 'early'; } catch (e) { yield 'c:' + e; } } const t = h(); const thrown = [t.next(), t.throw(b), t.next()]; function* inner() { try { yield 1; yield 2; } finally { log.push('inner done'); } } function* outer() { try { yield* inner(); } finally { log.push('outer done'); } } const o = outer(); o.next(); const ret = o.return(b); const brk = []; for (const x of outer()) { brk.push(x); break; } return [out, r.value, log, thrown, ret, brk]; }",
+    2,
+  ],
+  [
+    "array, string, Map and Set iterators: next, their prototypes and tags, partial iteration, Array.prototype's on an array-like (#1331)",
+    "export function f(a, b) { const xs = [a, b, 'z']; const it = xs.values(); const first = it.next(); const rest = [...it]; const after = it.next(); const m = new Map([[a, 1], ['k', b]]); const s = new Set([a, b, a]); const mi = m.entries(); const one = mi.next().value; const ks = []; for (const k of m.keys()) ks.push(k); const si = 'a\\u{1F600}b'[Symbol.iterator](); const chars = [si.next().value, si.next().value.length, si.next().value, si.next().done]; const AIP = Object.getPrototypeOf([][Symbol.iterator]()); const IP = Object.getPrototypeOf(AIP); const like = { length: 2, 0: 'p', 1: 'q' }; const fromLike = [...Array.prototype.entries.call(like)]; let broke = []; const it2 = xs.keys(); for (const k of it2) { broke.push(k); break; } broke.push(it2.next().value); return [first.value, first.done, rest, after.done, after.value, one, ks, [...s.values()], [...s.entries()].length, [...m.values()], chars, Object.prototype.toString.call(xs.values()), Object.prototype.toString.call(m.keys()), Object.prototype.toString.call(s.values()), Object.prototype.toString.call(si), IP[Symbol.iterator].call(it) === it, typeof AIP.next, Object.getPrototypeOf(IP) === Object.prototype, fromLike, broke, Array.from(xs.entries()).length, [...Array.prototype.keys.call(Array.prototype)].length]; }",
+    2,
+  ],
+  [
+    "classes extending Map, Set, WeakMap and Promise: the instance is one, a subclass's set override is what the constructor calls (#1331)",
+    "export function f(a, b) { class M extends Map { constructor(i) { super(i); this.tag = 'm'; } double(k) { return this.get(k) * 2; } set(k, v) { return super.set(k, typeof v === 'number' ? v + 1 : v); } } class S extends Set {} class W extends WeakMap {} class P extends Promise {} const m = new M([[1, 2], ['a', a]]); m.set(3, 4); m.set('b', b); const s = new S([a, b, a]); const w = new W(); const k = {}; w.set(k, 5); const p = new P((r) => r(7)); return [m.double(1), m.get(3), m.get('a'), m.get('b'), m.size, m.tag, m instanceof Map, m instanceof M, [...m.keys()], s.size, s.has(a), [...s].length, w.get(k), w.has({}), p instanceof Promise, p instanceof P, Object.prototype.toString.call(m), Object.prototype.toString.call(s), new Map() instanceof M, Object.getPrototypeOf(M.prototype) === Map.prototype]; }",
+    2,
+  ],
+  [
+    "generator and async generator functions: their prototype objects, %GeneratorPrototype%, %AsyncIteratorPrototype% (#1331)",
+    "export function f(a, b) { function* g() { yield a; yield b; } async function* ag() { yield a; } const GP = Object.getPrototypeOf(g.prototype); const AGP = Object.getPrototypeOf(ag.prototype); const AIP = Object.getPrototypeOf(AGP); const it = g(); const IP = Object.getPrototypeOf(GP); const AGF = Object.getPrototypeOf(ag); return [Object.getPrototypeOf(it) === g.prototype, Object.getPrototypeOf(ag()) === ag.prototype, typeof GP.next, typeof GP.return, IP === Object.getPrototypeOf(Object.getPrototypeOf([].values())), it[Symbol.iterator]() === it, typeof AIP[Symbol.asyncIterator], AIP[Symbol.asyncIterator].call(it) === it, Object.getPrototypeOf(AIP) === Object.prototype, Object.prototype.toString.call(it), Object.prototype.toString.call(ag()), AGF.prototype === AGP, Object.getPrototypeOf(g) === Object.getPrototypeOf(function* () {}), Object.getPrototypeOf(async () => 1) === Object.getPrototypeOf(async function () {}), Object.getPrototypeOf(AGF) === Function.prototype, [...it], Object.hasOwn(g.prototype, 'constructor')]; }",
     2,
   ],
 ];
@@ -367,9 +402,6 @@ describe("what the boxed lowering refuses, for now (#1292)", () => {
   it("free names, new, array holes, approximated Math", () => {
     expect(refusal("export function f(x) { return helper(x); }")).toMatch(
       /"helper" is not in the native base set/,
-    );
-    expect(refusal("export function f(x) { return new Date(); }")).toMatch(
-      /not in the native base set|not in the subset/,
     );
     // Async generators lower (emit-llvm-async-gen.test.ts).
     expect(refusal("export function f(x) { async function* g() { yield x; } return g; }")).toBe(

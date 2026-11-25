@@ -568,6 +568,19 @@ static int string_pattern_method(yk recv, yk key, uint64_t argc, const yk *argv,
 static int is_regexp(yk v);
 static yk regexp_exec(yk re, yk s);
 static yk_array *iterable_items(yk v);
+/* A built-in method's thunk (an intrinsic prototype's): a method call that finds one along the
+   receiver's own chain goes on to the runtime's own implementation (the thunk would only come back). */
+static yk method_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
+static yk object_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
+static yk builtin_iter_new(yk src, int mode, int type);
+static int is_builtin_iter(yk v);
+static int builtin_iter_step(yk v, yk *out);
+static yk iter_result(yk value, int done);
+static int is_thunk(yk f) {
+  if (TAG(f) != 0xFFFDu) return 0;
+  yk_code code = ((yk_closure *)PTR(f))->code;
+  return code == method_thunk_code || code == object_thunk_code;
+}
 static yk big_to_string_v(yk v);
 static double big_to_double_v(yk v);
 static int big_cmp_v(yk a, yk b);
@@ -746,6 +759,18 @@ static yk symbol_iterator(void) { return well_known_symbol(3); }
 static yk symbol_async_iterator(void) { return well_known_symbol(0); }
 static int string_equal(yk_string *a, yk_string *b);
 static int symbol_member(yk sym, yk key, yk *out);
+static yk make_error(const char *name, yk message);
+_Noreturn void yk_throw(yk v);
+static yk proto_lookup(yk v, yk key);
+static yk tail_proto(yk v);
+static int has_own(yk v, yk key);
+static yk object_to_string(yk v);
+static yk method_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
+static yk object_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
+static yk named(yk f, yk name);
+static yk case_convert(yk v, int upper);
+static int date_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
+static yk date_string(double t, int what);
 /* Property keys equal: the same symbol, or strings of the same units. */
 static int key_equal(yk a, yk b) {
   if (a == b) return 1;
@@ -788,6 +813,7 @@ static yk to_primitive(yk v) {
   /* A typed array's toString is its join; a buffer's and a view's, their tag. */
   if (self->kind == 7) return buffer_primitive(v);
   if (self->kind == 6) return ascii("[object ArrayBuffer]");
+  if (self->kind == 10) return date_string(*(double *)self->ext, 0); /* a Date's default hint is string */
   if (self->kind == 8) return ascii("[object DataView]");
   if (self->kind == 3)
     return concat(str(concat(str(concat(str(ascii("/")), str(self->regex[0]))), str(ascii("/")))), str(self->regex[1]));
@@ -1056,7 +1082,12 @@ static int key_is(yk key, const char *name) {
 }
 
 yk yk_get(yk obj, yk key) {
-  if (is_nullish(obj)) type_error(obj == YK_NULL ? "Cannot read properties of null" : "Cannot read properties of undefined");
+  if (is_nullish(obj)) {
+    /* V8's message: the property read, by its key. */
+    yk k = is_symbol(key) ? symbol_descriptive(key) : to_string(key);
+    yk m = concat(str(ascii(obj == YK_NULL ? "Cannot read properties of null (reading '" : "Cannot read properties of undefined (reading '")), str(k));
+    yk_throw(make_error("TypeError", concat(str(m), str(ascii("')")))));
+  }
   if (is_string(obj)) {
     yk_string *s = str(obj);
     if (key_is(key, "length")) return yk_number(s->len);
@@ -1066,7 +1097,7 @@ yk yk_get(yk obj, yk key) {
       c->units[0] = s->units[i];
       return string_of(c);
     }
-    return YK_UNDEFINED;
+    return i >= 0 ? YK_UNDEFINED : proto_lookup(obj, key);
   }
   if (is_array(obj)) {
     yk_array *a = arr(obj);
@@ -1075,7 +1106,7 @@ yk yk_get(yk obj, yk key) {
     if (i >= 0 && i < a->len) return a->items[i];
     yk v;
     if (i < 0 && a->props != 0 && own_get((yk_object *)PTR(a->props), to_property_key(key), &v)) return v;
-    return YK_UNDEFINED;
+    return i >= 0 ? YK_UNDEFINED : proto_lookup(obj, key);
   }
   if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 3) {
     yk_object *o = (yk_object *)PTR(obj);
@@ -1103,17 +1134,17 @@ yk yk_get(yk obj, yk key) {
       if (m != 0) return m;
     }
     yk v;
-    return chain_get(obj, to_property_key(key), &v) ? resolve_slot(v, obj) : YK_UNDEFINED;
+    return chain_get(obj, to_property_key(key), &v) ? resolve_slot(v, obj) : proto_lookup(obj, key);
   }
   if (is_closure(obj)) {
     yk v;
-    return chain_get(obj, to_property_key(key), &v) ? resolve_slot(v, obj) : YK_UNDEFINED;
+    return chain_get(obj, to_property_key(key), &v) ? resolve_slot(v, obj) : proto_lookup(obj, key);
   }
   if (is_symbol(obj)) {
     yk v;
-    return symbol_member(obj, key, &v) ? v : YK_UNDEFINED;
+    if (symbol_member(obj, key, &v)) return v;
   }
-  return YK_UNDEFINED;
+  return proto_lookup(obj, key);
 }
 
 yk yk_get_named(yk obj, const char *name, uint64_t n) { return yk_get(obj, yk_string_utf8(name, n)); }
@@ -1129,10 +1160,24 @@ static int64_t relative(yk v, int64_t len, int64_t dflt) {
 }
 
 /* A method call on a string or an array: the builtins this slice covers. */
+static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv);
+static yk make_error(const char *name, yk message);
+_Noreturn void yk_throw(yk v);
 yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk *argv) {
+  return call_method_key(recv, yk_string_utf8(name, n), argc, argv);
+}
+static yk bound_new(yk target, yk self, uint64_t argc, const yk *argv);
+/* A method call by its key: the receiver's own (or inherited) method, else the runtime's own
+   implementation for its type; anything else is a TypeError. */
+/* The method a value's chain (or its intrinsic prototype) gives for a key is one of the runtime's thunks. */
+static int inherits_thunk(yk recv, yk key) {
+  yk f;
+  if (chain_get(recv, key, &f)) return is_thunk(f);
+  return is_thunk(proto_lookup(recv, key));
+}
+static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
   yk arg0 = argc > 0 ? argv[0] : YK_UNDEFINED;
   yk arg1 = argc > 1 ? argv[1] : YK_UNDEFINED;
-  yk key = yk_string_utf8(name, n);
   if (is_symbol(recv)) {
     yk m;
     if (symbol_member(recv, key, &m) && is_closure(m)) return call_value(m, recv, argc, argv);
@@ -1149,6 +1194,13 @@ yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk
   if (is_object(recv)) {
     yk_object *o = (yk_object *)PTR(recv);
     yk f;
+    if (o->kind == 10) {
+      yk out;
+      if (date_method(recv, key, argc, argv, &out)) return out;
+    }
+    if (o->kind == 11 && key_is(key, "deref")) return *(yk *)o->ext;
+    if (o->kind == 12 && (key_is(key, "register") || key_is(key, "unregister")))
+      return key_is(key, "register") ? YK_UNDEFINED : YK_FALSE;
     if (o->kind == 4 || o->kind == 5 || o->kind == 9) {
       yk m = async_member(o, key);
       if (m != 0) return call_value(m, recv, argc, argv);
@@ -1159,21 +1211,45 @@ yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk
     }
     if (o->kind == 1 || o->kind == 2) {
       yk out;
+      if (o->proto != 0 && chain_get(recv, key, &f) && !is_thunk(f = resolve_slot(f, recv)))
+        return call_value(f, recv, argc, argv); /* a subclass's own method */
       if (collection_method(o, recv, key, argc, argv, &out)) return out;
-    } else if (chain_get(recv, key, &f))
-      return call_value(resolve_slot(f, recv), recv, argc, argv);
+    } else if (chain_get(recv, key, &f) && !is_thunk(f = resolve_slot(f, recv)))
+      return call_value(f, recv, argc, argv);
   }
   if (is_closure(recv)) {
     yk f;
-    if (chain_get(recv, key, &f)) return call_value(resolve_slot(f, recv), recv, argc, argv);
+    if (chain_get(recv, key, &f) && !is_thunk(f = resolve_slot(f, recv))) return call_value(f, recv, argc, argv);
     if (key_is(key, "call")) return call_value(recv, arg0, argc > 0 ? argc - 1 : 0, argv + (argc > 0 ? 1 : 0));
+    if (key_is(key, "apply")) {
+      /* CreateListFromArrayLike of the second argument (undefined and null: no arguments). */
+      if (is_nullish(arg1)) return call_value(recv, arg0, 0, NULL);
+      if (is_array(arg1)) return call_value(recv, arg0, arr(arg1)->len, arr(arg1)->items);
+      if (!is_object(arg1) && !is_closure(arg1)) type_error("CreateListFromArrayLike called on non-object");
+      double n = to_number(yk_get(arg1, ascii("length")));
+      yk_array *list = new_array(4);
+      for (double i = 0; i < n; i++) push(list, yk_get(arg1, yk_number(i)));
+      return call_value(recv, arg0, list->len, list->items);
+    }
+    if (key_is(key, "bind")) return bound_new(recv, arg0, argc > 0 ? argc - 1 : 0, argv + (argc > 0 ? 1 : 0));
   }
   if (is_array(recv)) {
     yk out;
     if (array_callback_method(recv, key, argc, argv, &out)) return out;
+    if (key_is(key, "values") || key == symbol_iterator()) return builtin_iter_new(recv, 1, 0);
+    if (key_is(key, "keys")) return builtin_iter_new(recv, 0, 0);
+    if (key_is(key, "entries")) return builtin_iter_new(recv, 2, 0);
+  }
+  if (is_string(recv) && key == symbol_iterator()) return builtin_iter_new(recv, 1, 1);
+  if (is_builtin_iter(recv) && key_is(key, "next")) {
+    yk v;
+    int more = builtin_iter_step(recv, &v);
+    return iter_result(more ? v : YK_UNDEFINED, !more);
   }
   if (is_string(recv)) {
     yk_string *s0 = str(recv);
+    if (key_is(key, "toUpperCase") || key_is(key, "toLocaleUpperCase")) return case_convert(recv, 1);
+    if (key_is(key, "toLowerCase") || key_is(key, "toLocaleLowerCase")) return case_convert(recv, 0);
     if (key_is(key, "includes") || key_is(key, "startsWith") || key_is(key, "endsWith")) {
       yk_string *t = str(to_string(arg0));
       int64_t len = s0->len;
@@ -1354,8 +1430,57 @@ yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk
     return to_string(recv);
   }
   if ((is_number(recv) || is_bool(recv) || is_bigint(recv)) && key_is(key, "valueOf")) return recv;
-  fprintf(stderr, "TypeError: %.*s is not a function here\n", (int)n, name);
-  exit(70);
+  {
+    /* A method the program put on an intrinsic prototype (not one of the runtime's thunks). */
+    yk f = proto_lookup(recv, key);
+    if (is_closure(f) && ((yk_closure *)PTR(f))->code != method_thunk_code &&
+        ((yk_closure *)PTR(f))->code != object_thunk_code)
+      return call_value(f, recv, argc, argv);
+  }
+  /* Object.prototype's methods, for every receiver (and Array.prototype.toString, String's). */
+  if (key_is(key, "hasOwnProperty") || key_is(key, "propertyIsEnumerable")) return yk_bool(has_own(recv, arg0));
+  if (key_is(key, "isPrototypeOf")) {
+    for (yk p = is_object(arg0) ? ((yk_object *)PTR(arg0))->proto : 0; is_object(p); p = ((yk_object *)PTR(p))->proto)
+      if (p == recv) return YK_TRUE;
+    return yk_bool(is_object(arg0) && recv == tail_proto(arg0));
+  }
+  if (key_is(key, "toString") || key_is(key, "toLocaleString")) {
+    if (is_array(recv)) return array_join(arr(recv), str(ascii(",")));
+    if (is_string(recv)) return recv;
+    if (is_symbol(recv)) return symbol_descriptive(recv);
+    if (is_object(recv) && ((yk_object *)PTR(recv))->error) return to_string(recv);
+    return object_to_string(recv);
+  }
+  if (key_is(key, "valueOf")) return recv;
+  /* %IteratorPrototype%[Symbol.iterator]: the iterator itself. */
+  if ((key == symbol_iterator() || key == symbol_async_iterator()) && (is_object(recv) || is_closure(recv)) &&
+      inherits_thunk(recv, key))
+    return recv;
+  /* Array.prototype's iterators on an array-like (Array.prototype itself among them). */
+  if ((key_is(key, "keys") || key_is(key, "values") || key_is(key, "entries")) && (is_object(recv) || is_closure(recv)) &&
+      inherits_thunk(recv, key))
+    return builtin_iter_new(recv, key_is(key, "keys") ? 0 : key_is(key, "values") ? 1 : 2, 0);
+  yk desc = is_symbol(key) ? symbol_descriptive(key) : key;
+  yk_throw(make_error("TypeError", concat(str(to_string(desc)), str(ascii(" is not a function here")))));
+  return YK_UNDEFINED;
+}
+/* A bound function (Function.prototype.bind): its target, this and leading arguments. */
+static yk bound_code(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)self;
+  yk_closure *b = (yk_closure *)c;
+  uint32_t k = b->n - 2;
+  yk_array *args = new_array(k + (uint32_t)argc + 1);
+  for (uint32_t i = 0; i < k; i++) push(args, b->captures[2 + i]);
+  for (uint64_t i = 0; i < argc; i++) push(args, argv[i]);
+  return call_value(b->captures[0], b->captures[1], args->len, args->items);
+}
+static yk bound_new(yk target, yk self, uint64_t argc, const yk *argv) {
+  if (!is_closure(target)) type_error("Bind must be called on a function");
+  yk_array *caps = new_array((uint32_t)argc + 2);
+  push(caps, target);
+  push(caps, self);
+  for (uint64_t i = 0; i < argc; i++) push(caps, argv[i]);
+  return yk_closure_new(bound_code, 0, caps->len, caps->items);
 }
 
 /* --- objects --- */
@@ -1418,7 +1543,7 @@ static int chain_get(yk obj, yk key, yk *out) {
   if (is_closure(obj)) {
     yk_closure *c = (yk_closure *)PTR(obj);
     /* A function's prototype exists from its first use, as `F.prototype.m = …` needs. */
-    if ((c->has_this || c->is_class) && key_is(key, "prototype")) ensure_prototype(obj);
+    if ((c->has_this || c->is_class || c->mode == 2 || c->mode == 3) && key_is(key, "prototype")) ensure_prototype(obj);
     if (c->props != 0 && own_get((yk_object *)PTR(c->props), key, out)) return 1;
     /* A derived class inherits its parent's statics. */
     return c->parent != 0 && is_closure(c->parent) && chain_get(c->parent, key, out);
@@ -1428,10 +1553,19 @@ static int chain_get(yk obj, yk key, yk *out) {
   return 0;
 }
 
+static yk generator_proto(int async);
 static yk ensure_prototype(yk f) {
   yk_closure *c = (yk_closure *)PTR(f);
   yk p;
   if (c->props != 0 && own_get((yk_object *)PTR(c->props), ascii("prototype"), &p)) return p;
+  if (c->mode == 2 || c->mode == 3) {
+    /* A generator function's prototype: its generators', with no constructor, inheriting
+       %GeneratorPrototype% (%AsyncGeneratorPrototype%). */
+    p = yk_object_of(0, NULL, NULL);
+    ((yk_object *)PTR(p))->proto = generator_proto(c->mode == 3);
+    own_set(own_props(f), ascii("prototype"), p);
+    return p;
+  }
   yk key = ascii("constructor");
   p = yk_object_of(1, &key, &f);
   own_set(own_props(f), ascii("prototype"), p);
@@ -1463,6 +1597,7 @@ yk yk_define(yk obj, yk key, yk value) {
    (null among them) leaves the object as it is; no property is defined. */
 yk yk_object_set_proto(yk obj, yk proto) {
   if (is_object(proto)) ((yk_object *)PTR(obj))->proto = proto;
+  else if (proto == YK_NULL) ((yk_object *)PTR(obj))->proto = YK_NULL;
   return obj;
 }
 yk yk_define_accessor(yk obj, yk key, yk getter, yk setter) {
@@ -1482,11 +1617,20 @@ static yk builtin_error(void *, yk, uint64_t, const yk *);
 static yk builtin_type_error(void *, yk, uint64_t, const yk *);
 static yk builtin_range_error(void *, yk, uint64_t, const yk *);
 static yk builtin_syntax_error(void *, yk, uint64_t, const yk *);
+static yk builtin_eval_error(void *, yk, uint64_t, const yk *);
+static yk builtin_reference_error(void *, yk, uint64_t, const yk *);
+static yk builtin_uri_error(void *, yk, uint64_t, const yk *);
+static yk builtin_aggregate_error(void *, yk, uint64_t, const yk *);
+static int is_adoptable_builtin(yk f);
+static yk builtin_map(void *c, yk s, uint64_t argc, const yk *argv);
+static yk builtin_set(void *c, yk s, uint64_t argc, const yk *argv);
+yk yk_new(yk f, uint64_t argc, const yk *argv);
 static int is_error_constructor(yk f) {
   if (!is_closure(f)) return 0;
   yk_code code = ((yk_closure *)PTR(f))->code;
   return code == builtin_error || code == builtin_type_error || code == builtin_range_error ||
-         code == builtin_syntax_error;
+         code == builtin_syntax_error || code == builtin_eval_error || code == builtin_reference_error ||
+         code == builtin_uri_error || code == builtin_aggregate_error;
 }
 /* A class's instance fields, defined on a receiver in order, each initializer run with it as its
    receiver: by `new` for a base class before its constructor's body, and for a derived class when
@@ -1601,6 +1745,31 @@ yk yk_super_construct(void *closure, yk self, uint64_t argc, const yk *argv) {
     init_fields(cls, self);
     return self;
   }
+  if (is_adoptable_builtin(parent)) {
+    /* A built-in object constructor (Map, Set, Promise, …): its instance's internal state becomes the
+       receiver's, which keeps its own prototype (the subclass's). */
+    yk_code code = ((yk_closure *)PTR(parent))->code;
+    int adder = (code == builtin_map || code == builtin_set) && argc > 0 && !is_nullish(argv[0]);
+    yk made = yk_new(parent, adder ? 0 : argc, argv);
+    yk_object *o = (yk_object *)PTR(self), *b = (yk_object *)PTR(made);
+    o->kind = b->kind, o->entries = b->entries, o->ext = b->ext, o->regex = b->regex, o->error = b->error;
+    for (uint32_t i = 0; i < b->len; i++) own_set(o, b->keys[i], b->values[i]);
+    if (adder) {
+      /* The entries go in through the receiver's set / add, a subclass's override included. */
+      yk_array *items = iterable_items(argv[0]);
+      for (uint32_t i = 0; i < items->len; i++) {
+        yk e = items->items[i];
+        if (code == builtin_set) call_method_key(self, ascii("add"), 1, &e);
+        else {
+          if (!is_array(e) && !is_object(e)) type_error("Iterator value is not an entry object");
+          yk kv[2] = {yk_get(e, ascii("0")), yk_get(e, ascii("1"))};
+          call_method_key(self, ascii("set"), 2, kv);
+        }
+      }
+    }
+    init_fields(cls, self);
+    return self;
+  }
   yk_closure *p = (yk_closure *)PTR(parent);
   /* A base parent's fields are defined before its body runs; a derived parent's by its super(). */
   if (p->is_class && p->parent == 0) init_fields(parent, self);
@@ -1623,7 +1792,7 @@ yk yk_super_get_key(void *closure, yk self, yk key) {
   key = to_property_key(key);
   yk slot;
   yk_closure *p = (yk_closure *)PTR(parent);
-  yk base = c->home_static ? parent : (p->is_class || p->has_this) ? ensure_prototype(parent) : 0;
+  yk base = c->home_static ? parent : (p->is_class || p->has_this || is_adoptable_builtin(parent)) ? ensure_prototype(parent) : 0;
   if (base == 0 || !chain_get(base, key, &slot)) return YK_UNDEFINED;
   return resolve_slot(slot, self);
 }
@@ -1636,7 +1805,7 @@ yk yk_super_get(void *closure, yk self, const char *name, uint64_t n) {
   if (parent == 0 || !is_closure(parent)) return YK_UNDEFINED;
   yk key = yk_string_utf8(name, n), slot;
   yk_closure *p = (yk_closure *)PTR(parent);
-  yk base = c->home_static ? parent : (p->is_class || p->has_this) ? ensure_prototype(parent) : 0;
+  yk base = c->home_static ? parent : (p->is_class || p->has_this || is_adoptable_builtin(parent)) ? ensure_prototype(parent) : 0;
   if (base == 0 || !chain_get(base, key, &slot)) return YK_UNDEFINED;
   return resolve_slot(slot, self);
 }
@@ -1669,7 +1838,8 @@ yk yk_class_new(void *creator, yk parent, uint64_t n, const yk *kinds, const yk 
     type_error("Class extends value is not a constructor or null");
   if (parent != 0 && !is_error_constructor(parent)) {
     yk_closure *p = (yk_closure *)PTR(parent);
-    if (!p->is_class && !p->has_this) type_error("extending this constructor is not in the runtime yet");
+    if (!p->is_class && !p->has_this && !is_adoptable_builtin(parent))
+      type_error("extending this constructor is not in the runtime yet");
   }
   yk cls = 0;
   for (uint64_t i = 0; i < n; i++)
@@ -1864,6 +2034,547 @@ yk yk_set_named(yk obj, const char *name, uint64_t n, yk value) {
   return yk_set(obj, yk_string_utf8(name, n), value);
 }
 
+
+/* --- the intrinsics (#1331): the built-ins' prototypes as objects ---
+ *
+ * Each of Object, Function, Array, String, Number, Boolean, Symbol, BigInt, Map, Set, Promise, RegExp
+ * and Error has a prototype object (made on first use) whose methods are thunks: functions that call
+ * the runtime's own implementation of the method on their receiver; its getters likewise. A property
+ * a value does not have along its own chain is looked up in its type's intrinsic prototype, so a
+ * built-in's methods are values (`[].join`, `f.call`), reflected on as Node's primordials do. Every
+ * intrinsic prototype but Object.prototype inherits from it; Object.prototype's prototype is null.
+ */
+enum { I_OBJECT, I_FUNCTION, I_ARRAY, I_STRING, I_NUMBER, I_BOOLEAN, I_SYMBOL, I_BIGINT, I_MAP, I_SET,
+       I_PROMISE, I_REGEXP, I_ERROR, I_WEAKMAP, I_WEAKSET, I_WEAKREF, I_FINREG, I_DATE, I_ITERATOR,
+       I_ARRAY_ITERATOR, I_STRING_ITERATOR, I_MAP_ITERATOR, I_SET_ITERATOR, I_GENERATOR, I_ASYNC_ITERATOR,
+       I_ASYNC_GENERATOR, I_ASYNC_FUNCTION, I_GENERATOR_FUNCTION, I_ASYNC_GENERATOR_FUNCTION, N_INTRINSIC };
+static const struct {
+  const char *name;
+  const char *const *methods;
+  const char *const *getters;
+} intrinsic_table[N_INTRINSIC] = {
+  {"Object", (const char *const[]){"hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable", "toString", "valueOf", "toLocaleString", NULL}, (const char *const[]){NULL}},
+  {"Function", (const char *const[]){"apply", "bind", "call", "toString", NULL}, (const char *const[]){NULL}},
+  {"Array", (const char *const[]){"at", "concat", "copyWithin", "fill", "find", "findIndex", "findLast", "findLastIndex", "lastIndexOf", "pop", "push", "reverse", "shift", "unshift", "slice", "sort", "splice", "includes", "indexOf", "join", "keys", "entries", "values", "forEach", "filter", "flat", "flatMap", "map", "every", "some", "reduce", "reduceRight", "toReversed", "toSorted", "toSpliced", "with", "toLocaleString", "toString", NULL}, (const char *const[]){NULL}},
+  {"String", (const char *const[]){"anchor", "at", "big", "blink", "bold", "charAt", "charCodeAt", "codePointAt", "concat", "endsWith", "fontcolor", "fontsize", "fixed", "includes", "indexOf", "isWellFormed", "italics", "lastIndexOf", "link", "localeCompare", "match", "matchAll", "normalize", "padEnd", "padStart", "repeat", "replace", "replaceAll", "search", "slice", "small", "split", "strike", "sub", "substr", "substring", "sup", "startsWith", "toString", "toWellFormed", "trim", "trimStart", "trimLeft", "trimEnd", "trimRight", "toLocaleLowerCase", "toLocaleUpperCase", "toLowerCase", "toUpperCase", "valueOf", NULL}, (const char *const[]){NULL}},
+  {"Number", (const char *const[]){"toExponential", "toFixed", "toPrecision", "toString", "valueOf", "toLocaleString", NULL}, (const char *const[]){NULL}},
+  {"Boolean", (const char *const[]){"toString", "valueOf", NULL}, (const char *const[]){NULL}},
+  {"Symbol", (const char *const[]){"toString", "valueOf", NULL}, (const char *const[]){"description", NULL}},
+  {"BigInt", (const char *const[]){"toLocaleString", "toString", "valueOf", NULL}, (const char *const[]){NULL}},
+  {"Map", (const char *const[]){"get", "set", "has", "delete", "clear", "entries", "forEach", "keys", "values", NULL}, (const char *const[]){"size", NULL}},
+  {"Set", (const char *const[]){"has", "add", "delete", "clear", "entries", "forEach", "values", "keys", "union", "intersection", "difference", "symmetricDifference", "isSubsetOf", "isSupersetOf", "isDisjointFrom", NULL}, (const char *const[]){"size", NULL}},
+  {"Promise", (const char *const[]){"then", "catch", "finally", NULL}, (const char *const[]){NULL}},
+  {"RegExp", (const char *const[]){"exec", "compile", "toString", "test", NULL}, (const char *const[]){"dotAll", "flags", "global", "hasIndices", "ignoreCase", "multiline", "source", "sticky", "unicode", "unicodeSets", NULL}},
+  {"Error", (const char *const[]){"toString", NULL}, (const char *const[]){NULL}},
+  {"WeakMap", (const char *const[]){"delete", "get", "set", "has", NULL}, (const char *const[]){NULL}},
+  {"WeakSet", (const char *const[]){"delete", "has", "add", NULL}, (const char *const[]){NULL}},
+  {"WeakRef", (const char *const[]){"deref", NULL}, (const char *const[]){NULL}},
+  {"FinalizationRegistry", (const char *const[]){"register", "unregister", NULL}, (const char *const[]){NULL}},
+  {"Date", (const char *const[]){"toString", "toDateString", "toTimeString", "toISOString", "toUTCString", "toGMTString", "getDate", "setDate", "getDay", "getFullYear", "setFullYear", "getHours", "setHours", "getMilliseconds", "setMilliseconds", "getMinutes", "setMinutes", "getMonth", "setMonth", "getSeconds", "setSeconds", "getTime", "setTime", "getTimezoneOffset", "getUTCDate", "setUTCDate", "getUTCDay", "getUTCFullYear", "setUTCFullYear", "getUTCHours", "setUTCHours", "getUTCMilliseconds", "setUTCMilliseconds", "getUTCMinutes", "setUTCMinutes", "getUTCMonth", "setUTCMonth", "getUTCSeconds", "setUTCSeconds", "valueOf", "getYear", "setYear", "toJSON", "toLocaleString", "toLocaleDateString", "toLocaleTimeString", NULL}, (const char *const[]){NULL}},
+  {"Iterator", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"Array Iterator", (const char *const[]){"next", NULL}, (const char *const[]){NULL}},
+  {"String Iterator", (const char *const[]){"next", NULL}, (const char *const[]){NULL}},
+  {"Map Iterator", (const char *const[]){"next", NULL}, (const char *const[]){NULL}},
+  {"Set Iterator", (const char *const[]){"next", NULL}, (const char *const[]){NULL}},
+  {"Generator", (const char *const[]){"next", "return", "throw", NULL}, (const char *const[]){NULL}},
+  {"AsyncIterator", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"AsyncGenerator", (const char *const[]){"next", "return", "throw", NULL}, (const char *const[]){NULL}},
+  {"AsyncFunction", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"GeneratorFunction", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"AsyncGeneratorFunction", (const char *const[]){NULL}, (const char *const[]){NULL}},
+};
+static yk intrinsic_protos[N_INTRINSIC];
+/* An array, string, Map or Set iterator (object kind 13; ECMA-262 23.1.5, 22.1.5, 24.1.5, 24.2.6). */
+typedef struct {
+  yk src;       /* what it iterates: an array or array-like, a string, a Map, a Set; 0 when done */
+  uint32_t i;   /* the next index (a string's: the next code unit) */
+  int32_t mode; /* 0 keys, 1 values, 2 entries */
+  int32_t type; /* 0 array, 1 string, 2 Map, 3 Set */
+} builtin_iter;
+static yk builtin_iter_new(yk src, int mode, int type) {
+  yk r = yk_object_of(0, NULL, NULL);
+  yk_object *o = (yk_object *)PTR(r);
+  builtin_iter *b = alloc(sizeof(builtin_iter));
+  b->src = src, b->i = 0, b->mode = mode, b->type = type;
+  o->kind = 13;
+  o->ext = b;
+  return r;
+}
+static int is_builtin_iter(yk v) { return is_object(v) && ((yk_object *)PTR(v))->kind == 13; }
+/* The iterator's next value, or 0 when it is done (and stays done). */
+static int builtin_iter_step(yk v, yk *out) {
+  builtin_iter *b = ((yk_object *)PTR(v))->ext;
+  if (b->src == 0) return 0;
+  uint32_t i = b->i;
+  if (b->type == 1) {
+    yk_string *s = str(b->src);
+    if (i >= s->len) return b->src = 0, 0;
+    uint32_t n = s->units[i] >= 0xD800 && s->units[i] <= 0xDBFF && i + 1 < s->len && s->units[i + 1] >= 0xDC00 &&
+                 s->units[i + 1] <= 0xDFFF ? 2 : 1;
+    yk_string *c = new_string(n);
+    memcpy(c->units, s->units + i, n * 2);
+    b->i += n;
+    return *out = BOX(T_STRING, c), 1;
+  }
+  if (b->type >= 2) {
+    yk_array *e = ((yk_object *)PTR(b->src))->entries;
+    if (i >= e->len) return b->src = 0, 0;
+    b->i++;
+    yk item = e->items[i];
+    if (b->type == 3) {
+      yk pair[2] = {item, item};
+      return *out = b->mode == 2 ? yk_array_of(2, pair) : item, 1;
+    }
+    return *out = b->mode == 2 ? yk_array_of(2, arr(item)->items) : arr(item)->items[b->mode == 0 ? 0 : 1], 1;
+  }
+  double len = is_array(b->src) ? arr(b->src)->len : to_number(yk_get(b->src, ascii("length")));
+  if (!(i < len)) return b->src = 0, 0;
+  b->i++;
+  yk value = b->mode == 0 ? YK_UNDEFINED
+             : is_array(b->src) ? arr(b->src)->items[i] : yk_get(b->src, to_string(yk_number(i)));
+  if (b->mode == 0) return *out = yk_number(i), 1;
+  if (b->mode == 1) return *out = value, 1;
+  yk pair[2] = {yk_number(i), value};
+  return *out = yk_array_of(2, pair), 1;
+}
+static yk iter_result(yk value, int done);
+static yk method_thunk_code(void *c, yk self, uint64_t argc, const yk *argv) {
+  yk key = ((yk_closure *)c)->captures[0];
+  int which = (int)num(((yk_closure *)c)->captures[1]);
+  /* %IteratorPrototype%[Symbol.iterator], %AsyncIteratorPrototype%[Symbol.asyncIterator]: this. */
+  if (which == I_ITERATOR || which == I_ASYNC_ITERATOR) return self;
+  /* Array.prototype's iterators on any array-like. */
+  if (which == I_ARRAY && !is_array(self) && !is_object(self) && !is_closure(self) && is_nullish(self))
+    type_error("Cannot convert undefined or null to object");
+  if (which == I_ARRAY && !is_array(self) && (key_is(key, "keys") || key_is(key, "values") || key_is(key, "entries") ||
+                                             key == symbol_iterator()))
+    return builtin_iter_new(self, key_is(key, "keys") ? 0 : key_is(key, "entries") ? 2 : 1, 0);
+  if (is_object(self) && (((yk_object *)PTR(self))->kind == 1 || ((yk_object *)PTR(self))->kind == 2)) {
+    /* Map.prototype.set and the like on a Map: its own semantics, not a subclass's override. */
+    yk out;
+    if (collection_method((yk_object *)PTR(self), self, ((yk_closure *)c)->captures[0], argc, argv, &out)) return out;
+  }
+  return call_method_key(self, ((yk_closure *)c)->captures[0], argc, argv);
+}
+/* Object.prototype's own methods: its semantics on any receiver (not the receiver's type's). */
+static yk object_thunk_code(void *c, yk self, uint64_t argc, const yk *argv) {
+  yk key = ((yk_closure *)c)->captures[0];
+  yk arg0 = argc > 0 ? argv[0] : YK_UNDEFINED;
+  if (key_is(key, "toString")) return object_to_string(self);
+  if (key_is(key, "toLocaleString")) return call_method_key(self, ascii("toString"), 0, NULL);
+  if (key_is(key, "valueOf")) return self;
+  if (key_is(key, "hasOwnProperty") || key_is(key, "propertyIsEnumerable")) return yk_bool(has_own(self, arg0));
+  return call_method_key(self, key, argc, argv);
+}
+static yk native_getter(yk self, yk key);
+static yk getter_thunk_code(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)argc, (void)argv;
+  return native_getter(self, ((yk_closure *)c)->captures[0]);
+}
+static yk intrinsic_proto(int which) {
+  if (intrinsic_protos[which] != 0) return intrinsic_protos[which];
+  yk p = yk_object_of(0, NULL, NULL);
+  intrinsic_protos[which] = p;
+  yk_object *o = (yk_object *)PTR(p);
+  o->proto = which == I_OBJECT                ? YK_NULL
+             : which == I_ASYNC_GENERATOR     ? intrinsic_proto(I_ASYNC_ITERATOR)
+             : which == I_ASYNC_ITERATOR      ? intrinsic_proto(I_OBJECT)
+             : which >= I_ASYNC_FUNCTION      ? intrinsic_proto(I_FUNCTION)
+             : which > I_ITERATOR             ? intrinsic_proto(I_ITERATOR)
+                                              : intrinsic_proto(I_OBJECT);
+  for (const char *const *m = intrinsic_table[which].methods; *m != NULL; m++) {
+    yk key = ascii(*m);
+    yk caps[2] = {key, yk_number(which)};
+    own_set(o, key, named(yk_closure_new(which == I_OBJECT ? object_thunk_code : method_thunk_code, 1, 2, caps), key));
+  }
+  for (const char *const *g = intrinsic_table[which].getters; *g != NULL; g++) {
+    yk key = ascii(*g);
+    define_accessor(o, key, yk_closure_new(getter_thunk_code, 1, 1, &key), 0);
+  }
+  /* The iterator method each iterable type has. */
+  if (which == I_ARRAY || which == I_SET) own_set(o, symbol_iterator(), yk_get(p, ascii("values")));
+  if (which == I_MAP) own_set(o, symbol_iterator(), yk_get(p, ascii("entries")));
+  if ((which > I_ITERATOR && which != I_ASYNC_ITERATOR) || (which >= I_MAP && which <= I_PROMISE) || (which >= I_WEAKMAP && which <= I_FINREG) ||
+      which == I_SYMBOL || which == I_BIGINT)
+    own_set(o, well_known_symbol(11), ascii(intrinsic_table[which].name));
+  if (which == I_GENERATOR_FUNCTION || which == I_ASYNC_GENERATOR_FUNCTION) {
+    /* %GeneratorFunction.prototype%.prototype: %GeneratorPrototype%, whose constructor it is. */
+    yk g = intrinsic_proto(which == I_GENERATOR_FUNCTION ? I_GENERATOR : I_ASYNC_GENERATOR);
+    own_set(o, ascii("prototype"), g);
+    own_set((yk_object *)PTR(g), ascii("constructor"), p);
+  }
+  if (which == I_ASYNC_ITERATOR) {
+    yk key = symbol_async_iterator();
+    yk caps[2] = {key, yk_number(which)};
+    own_set(o, key, named(yk_closure_new(method_thunk_code, 1, 2, caps), ascii("[Symbol.asyncIterator]")));
+  }
+  if (which == I_STRING || which == I_ITERATOR) {
+    yk key = symbol_iterator();
+    yk caps[2] = {key, yk_number(which)};
+    own_set(o, key, named(yk_closure_new(method_thunk_code, 1, 2, caps), ascii("[Symbol.iterator]")));
+  }
+  return p;
+}
+/* A function's intrinsic prototype: %AsyncFunction.prototype%, %GeneratorFunction.prototype%,
+   %AsyncGeneratorFunction.prototype%, or Function.prototype. */
+static yk closure_proto(yk_closure *c) {
+  return intrinsic_proto(c->mode == 1 ? I_ASYNC_FUNCTION : c->mode == 2 ? I_GENERATOR_FUNCTION
+                         : c->mode == 3 ? I_ASYNC_GENERATOR_FUNCTION : I_FUNCTION);
+}
+static yk generator_proto(int async) { return intrinsic_proto(async ? I_ASYNC_GENERATOR : I_GENERATOR); }
+/* The intrinsic prototype a value's own chain ends in, or 0 (an object whose chain ends in null). */
+static yk tail_proto(yk v) {
+  if (is_object(v)) {
+    yk x = v;
+    while (is_object(((yk_object *)PTR(x))->proto)) x = ((yk_object *)PTR(x))->proto;
+    yk_object *o = (yk_object *)PTR(x);
+    if (o->proto == YK_NULL) return 0;
+    switch (o->kind) {
+    case 1: return intrinsic_proto(I_MAP);
+    case 2: return intrinsic_proto(I_SET);
+    case 3: return intrinsic_proto(I_REGEXP);
+    case 4: return intrinsic_proto(I_PROMISE);
+    case 10: return intrinsic_proto(I_DATE);
+    case 11: return intrinsic_proto(I_WEAKREF);
+    case 12: return intrinsic_proto(I_FINREG);
+    case 13: return intrinsic_proto(I_ARRAY_ITERATOR + ((builtin_iter *)o->ext)->type);
+    default: return intrinsic_proto(o->error ? I_ERROR : I_OBJECT);
+    }
+  }
+  if (is_closure(v)) return closure_proto((yk_closure *)PTR(v));
+  if (is_array(v)) return intrinsic_proto(I_ARRAY);
+  if (is_string(v)) return intrinsic_proto(I_STRING);
+  if (is_number(v)) return intrinsic_proto(I_NUMBER);
+  if (is_bool(v)) return intrinsic_proto(I_BOOLEAN);
+  if (is_symbol(v)) return intrinsic_proto(I_SYMBOL);
+  if (is_bigint(v)) return intrinsic_proto(I_BIGINT);
+  return 0;
+}
+/* A property a value's own chain lacks, from its type's intrinsic prototype (a getter called with
+   the value as its receiver); undefined if none has it. */
+static yk proto_lookup(yk v, yk key) {
+  yk p = tail_proto(v), slot;
+  if (p == 0 || !chain_get(p, to_property_key(key), &slot)) return YK_UNDEFINED;
+  return resolve_slot(slot, v);
+}
+
+/* An intrinsic getter's value on its receiver: the runtime's own (Map/Set size, a symbol's
+   description, a RegExp's source and flags); a TypeError on a receiver of another type. */
+static yk native_getter(yk self, yk key) {
+  if (is_symbol(self) && key_is(key, "description")) return ((yk_symbol *)PTR(self))->description;
+  if (is_object(self)) {
+    yk_object *o = (yk_object *)PTR(self);
+    if ((o->kind == 1 || o->kind == 2) && key_is(key, "size")) return yk_number(o->entries->len);
+    if (o->kind == 3) return yk_get(self, key); /* RegExp: its own branch reads source and flags */
+  }
+  type_error("Method called on an incompatible receiver");
+  return YK_UNDEFINED;
+}
+/* key in a value's own properties (Object.prototype.hasOwnProperty). */
+static int has_own(yk v, yk key) {
+  key = to_property_key(key);
+  yk slot;
+  if (is_object(v)) return own_get((yk_object *)PTR(v), key, &slot);
+  if (is_closure(v)) {
+    yk_closure *c = (yk_closure *)PTR(v);
+    return c->props != 0 && own_get((yk_object *)PTR(c->props), key, &slot);
+  }
+  if (is_array(v)) {
+    yk_array *a = arr(v);
+    if (key_is(key, "length")) return 1;
+    int64_t i = index_of_key(key);
+    if (i >= 0) return i < a->len;
+    return a->props != 0 && own_get((yk_object *)PTR(a->props), key, &slot);
+  }
+  if (is_string(v)) {
+    if (key_is(key, "length")) return 1;
+    int64_t i = index_of_key(key);
+    return i >= 0 && i < str(v)->len;
+  }
+  return 0;
+}
+/* Object.prototype.toString: "[object " + the tag + "]" (Symbol.toStringTag when it is a string). */
+static yk object_to_string(yk v) {
+  const char *tag = "Object";
+  if (v == YK_UNDEFINED) tag = "Undefined";
+  else if (v == YK_NULL) tag = "Null";
+  else if (is_array(v)) tag = "Array";
+  else if (is_closure(v)) tag = "Function";
+  else if (is_string(v)) tag = "String";
+  else if (is_number(v)) tag = "Number";
+  else if (is_bool(v)) tag = "Boolean";
+  else if (is_object(v)) {
+    yk_object *o = (yk_object *)PTR(v);
+    if (o->error) tag = "Error";
+    else if (o->kind == 3) tag = "RegExp";
+  }
+  if (is_object(v) || is_closure(v)) {
+    yk t = yk_get(v, well_known_symbol(11));
+    if (is_string(t)) return concat(str(concat(str(ascii("[object ")), str(t))), str(ascii("]")));
+  }
+  char buf[40];
+  snprintf(buf, sizeof buf, "[object %s]", tag);
+  return ascii(buf);
+}
+
+/* --- reflection (#1331): Reflect, Object's reflective functions, Function, globalThis --- */
+static yk_array *own_keys_of(yk v);
+static yk_array *ordered_keys(yk_object *o);
+static yk_array *symbol_keys(yk_object *o);
+yk yk_in(yk key, yk obj);
+yk yk_new(yk f, uint64_t argc, const yk *argv);
+static yk with_methods(yk_code code, int n, const char *const *names, const yk_code *codes);
+static yk arg_or_undefined(uint64_t argc, const yk *argv, uint64_t i) { return i < argc ? argv[i] : YK_UNDEFINED; }
+/* [[GetPrototypeOf]]: an object's prototype (its intrinsic one when it has none of its own). */
+static yk prototype_of(yk v) {
+  if (is_object(v)) {
+    yk p = ((yk_object *)PTR(v))->proto;
+    if (is_object(p)) return p;
+    if (p == YK_NULL) return YK_NULL;
+    yk t = tail_proto(v);
+    return t == 0 ? YK_NULL : t;
+  }
+  if (is_closure(v)) {
+    yk_closure *c = (yk_closure *)PTR(v);
+    if (c->parent != 0 && is_closure(c->parent)) return c->parent;
+    return closure_proto(c);
+  }
+  yk t = tail_proto(v);
+  return t == 0 ? YK_NULL : t;
+}
+static yk reflect_get_prototype_of(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk v = arg_or_undefined(argc, argv, 0);
+  if (is_nullish(v)) type_error("Cannot convert undefined or null to object");
+  return prototype_of(v);
+}
+static yk reflect_set_prototype_of(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk v = arg_or_undefined(argc, argv, 0), p = arg_or_undefined(argc, argv, 1);
+  if (is_object(v) && (is_object(p) || p == YK_NULL)) ((yk_object *)PTR(v))->proto = p;
+  else if (is_closure(v) && is_closure(p)) ((yk_closure *)PTR(v))->parent = p;
+  return v;
+}
+/* OwnPropertyKeys: its own string keys (integer indexes first), then its symbols. */
+static yk_array *own_keys_of(yk v) {
+  yk_array *r = new_array(4);
+  if (is_array(v)) {
+    for (uint32_t i = 0; i < arr(v)->len; i++) push(r, to_string(yk_number(i)));
+    push(r, ascii("length"));
+    v = arr(v)->props;
+    if (v == 0) return r;
+  } else if (is_string(v)) {
+    for (uint32_t i = 0; i < str(v)->len; i++) push(r, to_string(yk_number(i)));
+    push(r, ascii("length"));
+    return r;
+  } else if (is_closure(v)) {
+    v = ((yk_closure *)PTR(v))->props;
+    if (v == 0) return r;
+  }
+  if (!is_object(v)) return r;
+  yk_array *s = ordered_keys((yk_object *)PTR(v));
+  for (uint32_t i = 0; i < s->len; i++) push(r, s->items[i]);
+  s = symbol_keys((yk_object *)PTR(v));
+  for (uint32_t i = 0; i < s->len; i++) push(r, s->items[i]);
+  return r;
+}
+static yk reflect_own_keys(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return BOX(T_ARRAY, own_keys_of(arg_or_undefined(argc, argv, 0)));
+}
+static yk object_get_own_property_names(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk_array *k = own_keys_of(arg_or_undefined(argc, argv, 0)), *r = new_array(k->len);
+  for (uint32_t i = 0; i < k->len; i++)
+    if (is_string(k->items[i])) push(r, k->items[i]);
+  return BOX(T_ARRAY, r);
+}
+static yk object_get_own_property_symbols(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk_array *k = own_keys_of(arg_or_undefined(argc, argv, 0)), *r = new_array(2);
+  for (uint32_t i = 0; i < k->len; i++)
+    if (is_symbol(k->items[i])) push(r, k->items[i]);
+  return BOX(T_ARRAY, r);
+}
+/* The own slot of a key: an object's (or a function's, an array's extra) properties. */
+static int own_slot(yk v, yk key, yk *slot) {
+  if (is_object(v)) return own_get((yk_object *)PTR(v), key, slot);
+  if (is_closure(v)) {
+    yk p = ((yk_closure *)PTR(v))->props;
+    return p != 0 && own_get((yk_object *)PTR(p), key, slot);
+  }
+  if (is_array(v) && arr(v)->props != 0) return own_get((yk_object *)PTR(arr(v)->props), key, slot);
+  return 0;
+}
+/* [[GetOwnProperty]] as a descriptor object, or undefined. Every property is writable, enumerable
+   and configurable here: the runtime keeps no attributes. */
+static yk descriptor_of(yk v, yk key) {
+  key = to_property_key(key);
+  if (!has_own(v, key)) return YK_UNDEFINED;
+  yk slot, t = YK_TRUE;
+  if (own_slot(v, key, &slot) && is_accessor(slot)) {
+    yk_accessor *a = (yk_accessor *)PTR(slot);
+    yk keys[4] = {ascii("get"), ascii("set"), ascii("enumerable"), ascii("configurable")};
+    yk vals[4] = {a->get != 0 ? a->get : YK_UNDEFINED, a->set != 0 ? a->set : YK_UNDEFINED, t, t};
+    return yk_object_of(4, keys, vals);
+  }
+  yk keys[4] = {ascii("value"), ascii("writable"), ascii("enumerable"), ascii("configurable")};
+  yk vals[4] = {yk_get(v, key), t, t, t};
+  return yk_object_of(4, keys, vals);
+}
+static yk reflect_get_own_property_descriptor(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return descriptor_of(arg_or_undefined(argc, argv, 0), arg_or_undefined(argc, argv, 1));
+}
+static yk object_get_own_property_descriptors(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk v = arg_or_undefined(argc, argv, 0), r = yk_object_of(0, NULL, NULL);
+  yk_array *k = own_keys_of(v);
+  for (uint32_t i = 0; i < k->len; i++) own_set((yk_object *)PTR(r), k->items[i], descriptor_of(v, k->items[i]));
+  return r;
+}
+/* [[DefineOwnProperty]] from a descriptor: an accessor's get/set, or a value. */
+static void define_from(yk v, yk key, yk desc) {
+  key = to_property_key(key);
+  if (!is_object(desc) && !is_closure(desc)) type_error("Property description must be an object");
+  yk g = yk_get(desc, ascii("get")), st = yk_get(desc, ascii("set"));
+  if (g != YK_UNDEFINED || st != YK_UNDEFINED) {
+    yk_object *o = is_array(v) ? (arr(v)->props == 0 ? (yk_object *)PTR(arr(v)->props = yk_object_of(0, NULL, NULL))
+                                                     : (yk_object *)PTR(arr(v)->props))
+                               : own_props(v);
+    define_accessor(o, key, is_closure(g) ? g : 0, is_closure(st) ? st : 0);
+    return;
+  }
+  if (yk_in(ascii("value"), desc) == YK_TRUE) {
+    yk value = yk_get(desc, ascii("value"));
+    if (is_object(v) || is_closure(v)) own_set(own_props(v), key, value);
+    else yk_set(v, key, value);
+  } else if (!has_own(v, key) && (is_object(v) || is_closure(v)))
+    own_set(own_props(v), key, YK_UNDEFINED);
+}
+static yk object_define_property(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk v = arg_or_undefined(argc, argv, 0);
+  if (!is_object(v) && !is_closure(v) && !is_array(v)) type_error("Object.defineProperty called on non-object");
+  define_from(v, arg_or_undefined(argc, argv, 1), arg_or_undefined(argc, argv, 2));
+  return v;
+}
+static yk reflect_define_property(void *c, yk s, uint64_t argc, const yk *argv) {
+  object_define_property(c, s, argc, argv);
+  return YK_TRUE;
+}
+static yk object_define_properties(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk v = arg_or_undefined(argc, argv, 0), props = arg_or_undefined(argc, argv, 1);
+  yk_array *k = own_keys_of(props);
+  for (uint32_t i = 0; i < k->len; i++) define_from(v, k->items[i], yk_get(props, k->items[i]));
+  return v;
+}
+static yk object_create(void *c, yk s, uint64_t argc, const yk *argv) {
+  yk o = yk_object_of(0, NULL, NULL), p = arg_or_undefined(argc, argv, 0);
+  if (!is_object(p) && p != YK_NULL) type_error("Object prototype may only be an Object or null");
+  ((yk_object *)PTR(o))->proto = p;
+  if (argc > 1 && argv[1] != YK_UNDEFINED) object_define_properties(c, s, 2, (yk[]){o, argv[1]});
+  return o;
+}
+static yk object_has_own(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return yk_bool(has_own(arg_or_undefined(argc, argv, 0), arg_or_undefined(argc, argv, 1)));
+}
+static yk object_from_entries(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk o = yk_object_of(0, NULL, NULL);
+  yk_array *items = iterable_items(arg_or_undefined(argc, argv, 0));
+  for (uint32_t i = 0; i < items->len; i++)
+    own_set((yk_object *)PTR(o), to_property_key(yk_get(items->items[i], yk_number(0))), yk_get(items->items[i], yk_number(1)));
+  return o;
+}
+static yk object_false(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s, (void)argc, (void)argv; return YK_FALSE; }
+static yk object_true(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s, (void)argc, (void)argv; return YK_TRUE; }
+static yk object_first(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return arg_or_undefined(argc, argv, 0); }
+static yk reflect_apply(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk args = arg_or_undefined(argc, argv, 2);
+  return call_method_key(arg_or_undefined(argc, argv, 0), ascii("apply"), 2, (yk[]){arg_or_undefined(argc, argv, 1), args});
+}
+static yk reflect_construct(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk_array *args = iterable_items(arg_or_undefined(argc, argv, 1));
+  return yk_new(arg_or_undefined(argc, argv, 0), args->len, args->items);
+}
+static yk reflect_get(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return yk_get(arg_or_undefined(argc, argv, 0), arg_or_undefined(argc, argv, 1));
+}
+static yk reflect_set(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk_set(arg_or_undefined(argc, argv, 0), arg_or_undefined(argc, argv, 1), arg_or_undefined(argc, argv, 2));
+  return YK_TRUE;
+}
+static yk reflect_has(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk v = arg_or_undefined(argc, argv, 0), k = arg_or_undefined(argc, argv, 1);
+  if (has_own(v, k)) return YK_TRUE;
+  return yk_bool(proto_lookup(v, k) != YK_UNDEFINED || yk_in(k, v) == YK_TRUE);
+}
+static yk reflect_delete_property(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return yk_delete(arg_or_undefined(argc, argv, 0), arg_or_undefined(argc, argv, 1));
+}
+static yk reflect_global(void) {
+  static yk r = 0;
+  if (r != 0) return r;
+  static const char *const m[13] = {"apply", "construct", "defineProperty", "deleteProperty", "get",
+                                    "getOwnPropertyDescriptor", "getPrototypeOf", "has", "isExtensible",
+                                    "ownKeys", "preventExtensions", "set", "setPrototypeOf"};
+  static const yk_code k[13] = {reflect_apply, reflect_construct, reflect_define_property, reflect_delete_property,
+                                reflect_get, reflect_get_own_property_descriptor, reflect_get_prototype_of,
+                                reflect_has, object_true, reflect_own_keys, object_true, reflect_set,
+                                reflect_set_prototype_of};
+  return r = with_methods(NULL, 13, m, k);
+}
+/* Function: no code is compiled at run time here; its prototype is the intrinsic one. */
+static yk builtin_function(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s, (void)argc, (void)argv;
+  type_error("Function() compiles code at run time, which the native runtime does not");
+  return YK_UNDEFINED;
+}
+static yk function_global(void) {
+  static yk f = 0;
+  if (f != 0) return f;
+  f = yk_closure_new(builtin_function, 0, 0, NULL);
+  yk p = intrinsic_proto(I_FUNCTION);
+  own_set(own_props(f), ascii("prototype"), p);
+  own_set((yk_object *)PTR(p), ascii("constructor"), f);
+  return f;
+}
+/* globalThis: an object of the globals, each made when first read. */
+static yk global_this(void) {
+  static yk g = 0;
+  if (g != 0) return g;
+  g = yk_object_of(0, NULL, NULL);
+  static const char *const names[] = {"Object", "Function", "Array", "String", "Number", "Boolean", "Symbol",
+                                      "BigInt", "Map", "Set", "Promise", "Error", "TypeError", "RangeError",
+                                      "SyntaxError", "JSON", "Reflect", "parseInt", "parseFloat", "isNaN",
+                                      "isFinite", "queueMicrotask", "ArrayBuffer", "DataView", "Uint8Array",
+                                      "Int8Array", "Uint16Array", "Int16Array", "Uint32Array", "Int32Array",
+                                      "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array",
+                                      "Uint8ClampedArray", "TextEncoder", "console", "process", "EvalError",
+                                      "ReferenceError", "URIError", "AggregateError", "WeakMap", "WeakSet",
+                                      "WeakRef", "FinalizationRegistry", "Date", "RegExp", "encodeURIComponent",
+                                      "encodeURI", "decodeURIComponent", "decodeURI", "escape", "unescape",
+                                      "eval", NULL};
+  for (int i = 0; names[i] != NULL; i++) {
+    yk v = yk_global(names[i], strlen(names[i]));
+    if (v != YK_UNDEFINED) own_set((yk_object *)PTR(g), ascii(names[i]), v);
+  }
+  own_set((yk_object *)PTR(g), ascii("globalThis"), g);
+  own_set((yk_object *)PTR(g), ascii("NaN"), yk_number(NAN));
+  own_set((yk_object *)PTR(g), ascii("Infinity"), yk_number(INFINITY));
+  own_set((yk_object *)PTR(g), ascii("undefined"), YK_UNDEFINED);
+  return g;
+}
+
 /* --- keys, in the order JavaScript gives them: array indexes ascending, then strings as added --- */
 
 static int canonical_index(yk_string *s, uint32_t *out) {
@@ -1925,6 +2636,7 @@ typedef struct {
   yk next;        /* its next method */
   int32_t proto_async; /* the iterator is an async one ([Symbol.asyncIterator]): next() awaited */
   int32_t finished;    /* it said done (or threw): not closed again */
+  yk biter;            /* a built-in iterator (kind 13), or 0 */
 } yk_iter;
 /* An object's (or function's) iterator method by the protocol, or 0: [Symbol.asyncIterator] first
    when asked for an async one, then [Symbol.iterator]. */
@@ -1988,6 +2700,8 @@ yk yk_iter_new(yk v, int32_t keys) {
     }
   } else if (is_object(v) && ((yk_object *)PTR(v))->kind == 5) {
     it->gen = v; /* a generator: drawn from one next() at a time */
+  } else if (is_builtin_iter(v)) {
+    it->biter = v; /* an array's, string's, Map's or Set's iterator: drawn as it goes */
   } else if (is_object(v) && ((yk_object *)PTR(v))->kind != 0) {
     it->src = BOX(T_ARRAY, iterable_items(v));
   } else if (!is_array(v) && !is_string(v))
@@ -2025,6 +2739,7 @@ static int iter_step(yk_iter *it, yk *out) {
     return 1;
   }
   if (it->gen != 0) return generator_step(it->gen, out);
+  if (it->biter != 0) return builtin_iter_step(it->biter, out);
   if (it->keys != NULL) {
     if (it->i >= it->keys->len) return 0;
     *out = it->keys->items[it->i++];
@@ -2845,7 +3560,8 @@ static int collection_method(yk_object *o, yk recv, yk key, uint64_t argc, const
   }
   /* keys / values / entries: the items, as an array (iterable, as the iterators they stand for). */
   int keys = key_is(key, "keys"), values = key_is(key, "values"), entries = key_is(key, "entries");
-  if (keys || values || entries) {
+  if (keys || values || entries) return *out = builtin_iter_new(recv, keys ? 0 : values ? 1 : 2, o->kind == 1 ? 2 : 3), 1;
+  if (0) {
     yk_array *r = new_array(o->entries->len);
     for (uint32_t j = 0; j < o->entries->len; j++) {
       yk e = o->entries->items[j];
@@ -2888,9 +3604,12 @@ static yk_array *iterable_items(yk v) {
     return r;
   }
   if (is_object(v) && (((yk_object *)PTR(v))->kind == 1 || ((yk_object *)PTR(v))->kind == 2)) {
-    yk out, key = ascii(((yk_object *)PTR(v))->kind == 1 ? "entries" : "values");
-    collection_method((yk_object *)PTR(v), v, key, 0, NULL, &out);
-    return arr(out);
+    v = builtin_iter_new(v, ((yk_object *)PTR(v))->kind == 1 ? 2 : 1, ((yk_object *)PTR(v))->kind == 1 ? 2 : 3);
+  }
+  if (is_builtin_iter(v)) {
+    yk e;
+    while (builtin_iter_step(v, &e)) push(r, e);
+    return r;
   }
   yk it = yk_iter_new(v, 0), e;
   while (yk_iter_next(it, &e)) push(r, e);
@@ -3063,9 +3782,14 @@ static yk builtin_set(void *c, yk s, uint64_t argc, const yk *argv) {
   return set;
 }
 
+/* A built-in function's name (its `name` property). */
+static yk named(yk f, yk name) {
+  own_set(own_props(f), ascii("name"), name);
+  return f;
+}
 static yk with_methods(yk_code code, int n, const char *const *names, const yk_code *codes) {
   yk f = code != NULL ? yk_closure_new(code, 0, 0, NULL) : yk_object_of(0, NULL, NULL);
-  for (int i = 0; i < n; i++) yk_set(f, ascii(names[i]), yk_closure_new(codes[i], 0, 0, NULL));
+  for (int i = 0; i < n; i++) yk_set(f, ascii(names[i]), named(yk_closure_new(codes[i], 0, 0, NULL), ascii(names[i])));
   return f;
 }
 
@@ -3378,6 +4102,344 @@ static yk builtin_error(void *c, yk s, uint64_t argc, const yk *argv) { (void)c,
 static yk builtin_type_error(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return builtin_error_named("TypeError", argc, argv); }
 static yk builtin_range_error(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return builtin_error_named("RangeError", argc, argv); }
 static yk builtin_syntax_error(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return builtin_error_named("SyntaxError", argc, argv); }
+static yk builtin_eval_error(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return builtin_error_named("EvalError", argc, argv); }
+static yk builtin_reference_error(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return builtin_error_named("ReferenceError", argc, argv); }
+static yk builtin_uri_error(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return builtin_error_named("URIError", argc, argv); }
+/* AggregateError(errors, message): an Error whose errors are the iterable's values. */
+static yk builtin_aggregate_error(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk e = builtin_error_named("AggregateError", argc > 1 ? 1 : 0, argv + 1);
+  yk_array *items = iterable_items(argc > 0 ? argv[0] : YK_UNDEFINED);
+  own_set((yk_object *)PTR(e), ascii("errors"), BOX(T_ARRAY, items));
+  return e;
+}
+
+/* --- WeakMap, WeakSet, WeakRef, FinalizationRegistry (#1331) ---
+   A weak collection is a Map or Set whose prototype is its own intrinsic one: the collector keeps
+   whatever is reachable, so holding the keys strongly only keeps more alive, which nothing can
+   observe (no WeakRef here is ever cleared, no finalization callback ever runs). */
+static yk weak_collection(int kind, int which, uint64_t argc, const yk *argv) {
+  yk c = new_collection(kind);
+  ((yk_object *)PTR(c))->proto = intrinsic_proto(which);
+  if (argc > 0 && !is_nullish(argv[0])) {
+    yk_array *items = iterable_items(argv[0]);
+    for (uint32_t i = 0; i < items->len; i++) {
+      yk e = items->items[i];
+      if (kind == 1) collection_put((yk_object *)PTR(c), yk_get(e, yk_number(0)), yk_get(e, yk_number(1)));
+      else collection_put((yk_object *)PTR(c), e, YK_UNDEFINED);
+    }
+  }
+  return c;
+}
+static yk builtin_weak_map(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return weak_collection(1, I_WEAKMAP, argc, argv); }
+static yk builtin_weak_set(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return weak_collection(2, I_WEAKSET, argc, argv); }
+static yk builtin_weak_ref(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk target = argc > 0 ? argv[0] : YK_UNDEFINED;
+  if (!is_object(target) && !is_closure(target) && !is_array(target) && !is_symbol(target))
+    type_error("WeakRef: invalid target");
+  yk r = yk_object_of(0, NULL, NULL);
+  ((yk_object *)PTR(r))->kind = 11;
+  yk *box = alloc(sizeof(yk));
+  *box = target;
+  ((yk_object *)PTR(r))->ext = box;
+  return r;
+}
+static yk builtin_finalization_registry(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  if (argc == 0 || !is_closure(argv[0])) type_error("FinalizationRegistry: cleanup must be callable");
+  yk r = yk_object_of(0, NULL, NULL);
+  ((yk_object *)PTR(r))->kind = 12;
+  return r;
+}
+
+/* --- Date (ECMA-262 21.4): a time value, milliseconds since the epoch (NaN when invalid). Local time
+   is UTC here (offset 0). --- */
+static const double ms_per_day = 86400000.0;
+static double date_value(yk d) { return *(double *)((yk_object *)PTR(d))->ext; }
+static yk date_new(double t) {
+  yk r = yk_object_of(0, NULL, NULL);
+  ((yk_object *)PTR(r))->kind = 10;
+  double *box = alloc(sizeof(double));
+  *box = t;
+  ((yk_object *)PTR(r))->ext = box;
+  return r;
+}
+static int is_date(yk v) { return is_object(v) && ((yk_object *)PTR(v))->kind == 10; }
+static double time_clip(double t) {
+  if (!isfinite(t) || fabs(t) > 8.64e15) return NAN;
+  return trunc(t) + 0.0;
+}
+/* Days from the epoch of a civil date (proleptic Gregorian), and back (H. Hinnant's algorithms). */
+static double days_from_civil(double y, double m, double d) {
+  y -= m <= 2;
+  double era = floor(y / 400);
+  double yoe = y - era * 400;
+  double doy = floor((153 * (m + (m > 2 ? -3 : 9)) + 2) / 5) + d - 1;
+  double doe = yoe * 365 + floor(yoe / 4) - floor(yoe / 100) + doy;
+  return era * 146097 + doe - 719468;
+}
+static void civil_from_days(double z, double *y, double *m, double *d) {
+  z += 719468;
+  double era = floor(z / 146097);
+  double doe = z - era * 146097;
+  double yoe = floor((doe - floor(doe / 1460) + floor(doe / 36524) - floor(doe / 146096)) / 365);
+  double yy = yoe + era * 400;
+  double doy = doe - (365 * yoe + floor(yoe / 4) - floor(yoe / 100));
+  double mp = floor((5 * doy + 2) / 153);
+  *d = doy - floor((153 * mp + 2) / 5) + 1;
+  *m = mp < 10 ? mp + 3 : mp - 9;
+  *y = yy + (*m <= 2);
+}
+/* MakeDay + MakeTime + MakeDate: a time value from its fields (month from 0, as JavaScript's). */
+static double make_date(double y, double mon, double day, double h, double mi, double sec, double ms) {
+  double fields[7] = {y, mon, day, h, mi, sec, ms};
+  for (int i = 0; i < 7; i++)
+    if (!isfinite(fields[i])) return NAN;
+  y = trunc(y) + floor(trunc(mon) / 12);
+  double m = fmod(trunc(mon), 12);
+  if (m < 0) m += 12;
+  double days = days_from_civil(y, m + 1, 1) + trunc(day) - 1;
+  return days * ms_per_day + trunc(h) * 3600000.0 + trunc(mi) * 60000.0 + trunc(sec) * 1000.0 + trunc(ms);
+}
+static double date_now(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  return (double)ts.tv_sec * 1000.0 + (double)(ts.tv_nsec / 1000000);
+}
+/* Date.parse: the ISO 8601 forms ECMA-262 21.4.1.32 defines (a date alone is UTC; a date-time with no
+   offset is local, which is UTC here); anything else is NaN. */
+static double date_parse(yk v) {
+  yk_string *s = str(to_string(v));
+  uint32_t i = 0, n = s->len;
+  int sign = 1, ydigits = 4;
+  if (i < n && (s->units[i] == '+' || s->units[i] == '-')) {
+    sign = s->units[i] == '-' ? -1 : 1;
+    ydigits = 6;
+    i++;
+  }
+  double f[7] = {0, 0, 1, 0, 0, 0, 0};
+  int lens[7] = {ydigits, 2, 2, 2, 2, 2, 3};
+  const char seps[7] = {0, '-', '-', 'T', ':', ':', '.'};
+  int k = 0;
+  for (; k < 7; k++) {
+    if (k > 0) {
+      if (i >= n || s->units[i] != (uint16_t)seps[k]) break;
+      if (k == 3 && i + 1 >= n) return NAN;
+      i++;
+    }
+    double x = 0;
+    for (int j = 0; j < lens[k]; j++) {
+      if (i >= n || s->units[i] < '0' || s->units[i] > '9') return NAN;
+      x = x * 10 + (s->units[i++] - '0');
+    }
+    f[k] = x;
+    if (k == 6) {
+      while (i < n && s->units[i] >= '0' && s->units[i] <= '9') i++; /* more digits: ignored */
+      k++;
+      break;
+    }
+  }
+  if (k == 4) return NAN; /* THH without :mm */
+  if (ydigits == 6 && sign == -1 && f[0] == 0) return NAN;
+  double offset = 0;
+  int has_offset = 0;
+  if (i < n && s->units[i] == 'Z') {
+    has_offset = 1;
+    i++;
+  } else if (i < n && (s->units[i] == '+' || s->units[i] == '-') && k > 3) {
+    int os = s->units[i] == '-' ? -1 : 1;
+    i++;
+    double hh = 0, mm = 0;
+    for (int j = 0; j < 2; j++) {
+      if (i >= n || s->units[i] < '0' || s->units[i] > '9') return NAN;
+      hh = hh * 10 + (s->units[i++] - '0');
+    }
+    if (i >= n || s->units[i] != ':') return NAN;
+    i++;
+    for (int j = 0; j < 2; j++) {
+      if (i >= n || s->units[i] < '0' || s->units[i] > '9') return NAN;
+      mm = mm * 10 + (s->units[i++] - '0');
+    }
+    offset = os * (hh * 60 + mm) * 60000.0;
+    has_offset = 1;
+  }
+  if (i != n) return NAN;
+  if (f[1] < 1 || f[1] > 12 || f[2] < 1 || f[2] > 31 || f[3] > 24 || f[4] > 59 || f[5] > 59) return NAN;
+  if (f[3] == 24 && (f[4] != 0 || f[5] != 0 || f[6] != 0)) return NAN;
+  (void)has_offset;
+  double t = make_date(sign * f[0], f[1] - 1, f[2], f[3], f[4], f[5], f[6]) - offset;
+  return time_clip(t);
+}
+static yk builtin_date(void *c, yk s, uint64_t argc, const yk *argv);
+/* new Date(…): now; a time value; a date's; a string parsed; or the fields (local, so UTC here). */
+static yk date_construct(uint64_t argc, const yk *argv) {
+  if (argc == 0) return date_new(date_now());
+  if (argc == 1) {
+    yk v = argv[0];
+    if (is_date(v)) return date_new(date_value(v));
+    v = to_primitive(v);
+    if (is_string(v)) return date_new(date_parse(v));
+    return date_new(time_clip(to_number(v)));
+  }
+  double f[7] = {0, 0, 1, 0, 0, 0, 0};
+  for (uint64_t i = 0; i < argc && i < 7; i++) f[i] = to_number(argv[i]);
+  if (isfinite(f[0])) {
+    double yi = trunc(f[0]);
+    if (yi >= 0 && yi <= 99) f[0] = 1900 + yi;
+  }
+  return date_new(time_clip(make_date(f[0], f[1], f[2], f[3], f[4], f[5], f[6])));
+}
+static const char *const week_days[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+static const char *const month_names[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+/* A time value's fields: year, month (0-11), day, weekday, hours, minutes, seconds, milliseconds. */
+static void date_fields(double t, double out[8]) {
+  double day = floor(t / ms_per_day), in_day = t - day * ms_per_day;
+  double y, m, d;
+  civil_from_days(day, &y, &m, &d);
+  out[0] = y, out[1] = m - 1, out[2] = d;
+  double wd = fmod(day + 4, 7);
+  out[3] = wd < 0 ? wd + 7 : wd + 0.0; /* fmod of a negative multiple is -0 */
+  out[4] = floor(in_day / 3600000.0);
+  out[5] = fmod(floor(in_day / 60000.0), 60);
+  out[6] = fmod(floor(in_day / 1000.0), 60);
+  out[7] = fmod(in_day, 1000);
+}
+static yk date_string(double t, int what) {
+  if (t != t) return ascii("Invalid Date");
+  double f[8];
+  date_fields(t, f);
+  char buf[96];
+  char year[16];
+  if (f[0] < 0) snprintf(year, sizeof year, "-%06.0f", -f[0]);
+  else snprintf(year, sizeof year, "%04.0f", f[0]);
+  if (what == 0) /* toString */
+    snprintf(buf, sizeof buf, "%s %s %02.0f %s %02.0f:%02.0f:%02.0f GMT+0000 (Coordinated Universal Time)",
+             week_days[(int)f[3]], month_names[(int)f[1]], f[2], year, f[4], f[5], f[6]);
+  else if (what == 1) /* toDateString */
+    snprintf(buf, sizeof buf, "%s %s %02.0f %s", week_days[(int)f[3]], month_names[(int)f[1]], f[2], year);
+  else if (what == 2) /* toTimeString */
+    snprintf(buf, sizeof buf, "%02.0f:%02.0f:%02.0f GMT+0000 (Coordinated Universal Time)", f[4], f[5], f[6]);
+  else /* toUTCString */
+    snprintf(buf, sizeof buf, "%s, %02.0f %s %s %02.0f:%02.0f:%02.0f GMT", week_days[(int)f[3]], f[2],
+             month_names[(int)f[1]], year, f[4], f[5], f[6]);
+  return ascii(buf);
+}
+static yk date_iso(double t) {
+  if (t != t) range_error("Invalid time value");
+  double f[8];
+  date_fields(t, f);
+  char buf[48], year[16];
+  if (f[0] >= 0 && f[0] <= 9999) snprintf(year, sizeof year, "%04.0f", f[0]);
+  else snprintf(year, sizeof year, "%c%06.0f", f[0] < 0 ? '-' : '+', fabs(f[0]));
+  snprintf(buf, sizeof buf, "%s-%02.0f-%02.0fT%02.0f:%02.0f:%02.0f.%03.0fZ", year, f[1] + 1, f[2], f[4], f[5], f[6], f[7]);
+  return ascii(buf);
+}
+/* A Date method by its key, or 0 when it is not one. */
+static int date_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out) {
+  double t = date_value(recv);
+  if (key_is(key, "getTime") || key_is(key, "valueOf")) return *out = yk_number(t), 1;
+  if (key_is(key, "toISOString")) return *out = date_iso(t), 1;
+  if (key_is(key, "toJSON")) return *out = t != t ? YK_NULL : date_iso(t), 1;
+  if (key_is(key, "toString") || key_is(key, "toLocaleString")) return *out = date_string(t, 0), 1;
+  if (key_is(key, "toDateString") || key_is(key, "toLocaleDateString")) return *out = date_string(t, 1), 1;
+  if (key_is(key, "toTimeString") || key_is(key, "toLocaleTimeString")) return *out = date_string(t, 2), 1;
+  if (key_is(key, "toUTCString") || key_is(key, "toGMTString")) return *out = date_string(t, 3), 1;
+  if (key_is(key, "getTimezoneOffset")) return *out = t != t ? yk_number(NAN) : yk_number(0), 1;
+  static const char *const getters[] = {"FullYear", "Month", "Date", "Day", "Hours", "Minutes", "Seconds", "Milliseconds"};
+  if (is_string(key) && str(key)->len > 3 && str(key)->units[0] == 'g' && str(key)->units[1] == 'e' && str(key)->units[2] == 't') {
+    yk_string *k = str(key);
+    uint32_t from = 3;
+    if (k->len > 6 && k->units[3] == 'U' && k->units[4] == 'T' && k->units[5] == 'C') from = 6;
+    for (int g = 0; g < 8; g++) {
+      size_t gl = strlen(getters[g]);
+      if (k->len - from != gl) continue;
+      int same = 1;
+      for (size_t j = 0; j < gl; j++)
+        if (k->units[from + j] != (uint16_t)getters[g][j]) same = 0;
+      if (!same) continue;
+      if (t != t) return *out = yk_number(NAN), 1;
+      double f[8];
+      date_fields(t, f);
+      return *out = yk_number(f[g]), 1;
+    }
+    if (key_is(key, "getYear")) {
+      if (t != t) return *out = yk_number(NAN), 1;
+      double f[8];
+      date_fields(t, f);
+      return *out = yk_number(f[0] - 1900), 1;
+    }
+  }
+  if (key_is(key, "setTime")) {
+    double v = time_clip(to_number(argc > 0 ? argv[0] : YK_UNDEFINED));
+    *(double *)((yk_object *)PTR(recv))->ext = v;
+    return *out = yk_number(v), 1;
+  }
+  /* setFullYear … setMilliseconds (and the UTC forms: the same, local time being UTC). */
+  static const char *const setters[] = {"FullYear", "Month", "Date", "Hours", "Minutes", "Seconds", "Milliseconds"};
+  static const int field_of[] = {0, 1, 2, 4, 5, 6, 7};
+  static const int arity[] = {3, 2, 1, 4, 3, 2, 1};
+  if (is_string(key) && str(key)->len > 3 && str(key)->units[0] == 's' && str(key)->units[1] == 'e' && str(key)->units[2] == 't') {
+    yk_string *k = str(key);
+    uint32_t from = 3;
+    if (k->len > 6 && k->units[3] == 'U' && k->units[4] == 'T' && k->units[5] == 'C') from = 6;
+    for (int g = 0; g < 7; g++) {
+      size_t gl = strlen(setters[g]);
+      if (k->len - from != gl) continue;
+      int same = 1;
+      for (size_t j = 0; j < gl; j++)
+        if (k->units[from + j] != (uint16_t)setters[g][j]) same = 0;
+      if (!same) continue;
+      double f[8];
+      if (t != t) {
+        if (g != 0) return *out = yk_number(NAN), 1;
+        date_fields(0, f);
+      } else
+        date_fields(t, f);
+      double fields[8] = {f[0], f[1], f[2], 0, f[4], f[5], f[6], f[7]};
+      for (int a = 0; a < arity[g] && (uint64_t)a < argc; a++) {
+        int idx = field_of[g] + a;
+        if (idx == 3) idx = 4; /* after Date comes Hours */
+        fields[idx] = to_number(argv[a]);
+      }
+      if (argc == 0) fields[field_of[g]] = NAN;
+      double v = time_clip(make_date(fields[0], fields[1], fields[2], fields[4], fields[5], fields[6], fields[7]));
+      *(double *)((yk_object *)PTR(recv))->ext = v;
+      return *out = yk_number(v), 1;
+    }
+  }
+  return 0;
+}
+static yk date_static_now(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s, (void)argc, (void)argv; return yk_number(date_now()); }
+static yk date_static_parse(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return yk_number(date_parse(argc > 0 ? argv[0] : YK_UNDEFINED)); }
+static yk date_static_utc(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  double f[7] = {NAN, 0, 1, 0, 0, 0, 0};
+  for (uint64_t i = 0; i < argc && i < 7; i++) f[i] = to_number(argv[i]);
+  if (isfinite(f[0])) {
+    double yi = trunc(f[0]);
+    if (yi >= 0 && yi <= 99) f[0] = 1900 + yi;
+  }
+  return yk_number(time_clip(make_date(f[0], f[1], f[2], f[3], f[4], f[5], f[6])));
+}
+/* Date called as a function: the current time's string. */
+static yk builtin_date(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s, (void)argc, (void)argv;
+  return date_string(date_now(), 0);
+}
+/* RegExp(pattern, flags): a RegExp's copy (its source, flags and matcher). A pattern given as a string
+   would be compiled at run time, which the native runtime does not do. */
+static yk builtin_regexp(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk p = argc > 0 ? argv[0] : YK_UNDEFINED;
+  if (is_regexp(p) && (argc < 2 || argv[1] == YK_UNDEFINED)) {
+    yk_object *o = (yk_object *)PTR(p);
+    return yk_regexp_new(o->regex[0], o->regex[1], o->regex[2], o->regex[3]);
+  }
+  type_error("RegExp: compiling a pattern at run time is not in the native runtime");
+  return YK_UNDEFINED;
+}
 
 /* parseFloat: the longest prefix that is a StrDecimalLiteral, after leading white space. */
 static double parse_float(yk_string *s) {
@@ -3513,6 +4575,242 @@ static yk builtin_array(void *c, yk self, uint64_t argc, const yk *argv) {
   return yk_array_of(argc, argv);
 }
 
+/* --- case mapping (String.prototype.toUpperCase / toLowerCase): Unicode's full mappings, as Node
+   gives them (case.h, generated from Node), and the final sigma rule (a Σ ending a word is ς). --- */
+#include "case.h"
+static const case_map *case_find(const case_map *table, int n, uint32_t cp) {
+  int lo = 0, hi = n - 1;
+  while (lo <= hi) {
+    int mid = (lo + hi) / 2;
+    if (table[mid].cp == cp) return &table[mid];
+    if (table[mid].cp < cp) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return NULL;
+}
+static uint32_t code_point_at(const yk_string *s, uint32_t i, uint32_t *width) {
+  uint16_t c = s->units[i];
+  if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s->len && s->units[i + 1] >= 0xDC00 && s->units[i + 1] <= 0xDFFF) {
+    *width = 2;
+    return 0x10000 + ((uint32_t)(c - 0xD800) << 10) + (s->units[i + 1] - 0xDC00);
+  }
+  *width = 1;
+  return c;
+}
+/* Whether a code point is cased or case-ignorable enough for the final sigma rule: a letter that
+   has a case mapping (approximated by the tables), and not a case-ignorable mark. */
+static int is_cased(uint32_t cp) {
+  return case_find(upper_map, N_UPPER, cp) != NULL || case_find(lower_map, N_LOWER, cp) != NULL;
+}
+static yk case_convert(yk v, int upper) {
+  yk_string *s = str(v);
+  uint16_t *out = scratch(((size_t)s->len * 3 + 2) * sizeof(uint16_t));
+  uint32_t n = 0;
+  for (uint32_t i = 0; i < s->len;) {
+    uint32_t w, cp = code_point_at(s, i, &w);
+    if (!upper && cp == 0x3A3) {
+      /* Final_Sigma: preceded by a cased letter and not followed by one (skipping ignorables). */
+      int before = 0, after = 0;
+      for (int64_t j = (int64_t)i - 1; j >= 0; j--) {
+        uint16_t u = s->units[j];
+        if (u == 0x27 || u == 0xAD || u == 0x2019 || (u >= 0x300 && u <= 0x36F)) continue;
+        before = is_cased(u);
+        break;
+      }
+      for (uint32_t j = i + 1; j < s->len; j++) {
+        uint16_t u = s->units[j];
+        if (u == 0x27 || u == 0xAD || u == 0x2019 || (u >= 0x300 && u <= 0x36F)) continue;
+        after = is_cased(u);
+        break;
+      }
+      out[n++] = before && !after ? 0x3C2 : 0x3C3;
+      i += w;
+      continue;
+    }
+    const case_map *m = upper ? case_find(upper_map, N_UPPER, cp) : case_find(lower_map, N_LOWER, cp);
+    if (m != NULL)
+      for (int k = 0; k < m->n; k++) out[n++] = m->to[k];
+    else
+      for (uint32_t k = 0; k < w; k++) out[n++] = s->units[i + k];
+    i += w;
+  }
+  yk_string *r = new_string(n);
+  memcpy(r->units, out, (size_t)n * 2);
+  free(out);
+  return string_of(r);
+}
+
+/* --- URI handling (ECMA-262 19.2.6) and the legacy escape/unescape (B.2.1) --- */
+static _Noreturn void uri_error(void) {
+  yk_throw(make_error("URIError", ascii("URI malformed")));
+}
+static int in_set(uint16_t c, const char *set) {
+  if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return 1;
+  return c < 128 && c != 0 && strchr(set, (char)c) != NULL;
+}
+/* Encode: each code unit outside the unescaped set as the %XX bytes of its code point's UTF-8. */
+static yk uri_encode(yk v, const char *unescaped) {
+  yk_string *s = str(to_string(v));
+  yk_array *parts = new_array(4);
+  uint16_t *out = scratch(((size_t)s->len * 12 + 2) * sizeof(uint16_t));
+  uint32_t n = 0;
+  static const char hex[] = "0123456789ABCDEF";
+  for (uint32_t i = 0; i < s->len; i++) {
+    uint16_t c = s->units[i];
+    if (in_set(c, unescaped)) {
+      out[n++] = c;
+      continue;
+    }
+    uint32_t cp = c;
+    if (c >= 0xDC00 && c <= 0xDFFF) uri_error();
+    if (c >= 0xD800 && c <= 0xDBFF) {
+      if (i + 1 >= s->len || s->units[i + 1] < 0xDC00 || s->units[i + 1] > 0xDFFF) uri_error();
+      cp = 0x10000 + ((c - 0xD800) << 10) + (s->units[++i] - 0xDC00);
+    }
+    uint8_t b[4];
+    int k;
+    if (cp < 0x80) b[0] = (uint8_t)cp, k = 1;
+    else if (cp < 0x800) b[0] = (uint8_t)(0xC0 | cp >> 6), b[1] = (uint8_t)(0x80 | (cp & 63)), k = 2;
+    else if (cp < 0x10000)
+      b[0] = (uint8_t)(0xE0 | cp >> 12), b[1] = (uint8_t)(0x80 | ((cp >> 6) & 63)), b[2] = (uint8_t)(0x80 | (cp & 63)), k = 3;
+    else
+      b[0] = (uint8_t)(0xF0 | cp >> 18), b[1] = (uint8_t)(0x80 | ((cp >> 12) & 63)),
+      b[2] = (uint8_t)(0x80 | ((cp >> 6) & 63)), b[3] = (uint8_t)(0x80 | (cp & 63)), k = 4;
+    for (int j = 0; j < k; j++) {
+      out[n++] = '%';
+      out[n++] = (uint16_t)hex[b[j] >> 4];
+      out[n++] = (uint16_t)hex[b[j] & 15];
+    }
+  }
+  (void)parts;
+  yk_string *r = new_string(n);
+  memcpy(r->units, out, (size_t)n * 2);
+  free(out);
+  return string_of(r);
+}
+static int hex_value(uint16_t c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+/* Decode: each %XX… as the UTF-8 it is (a reserved character's escape kept as it is). */
+static yk uri_decode(yk v, const char *reserved) {
+  yk_string *s = str(to_string(v));
+  uint16_t *out = scratch(((size_t)s->len + 2) * sizeof(uint16_t));
+  uint32_t n = 0;
+  for (uint32_t i = 0; i < s->len; i++) {
+    uint16_t c = s->units[i];
+    if (c != '%') {
+      out[n++] = c;
+      continue;
+    }
+    uint32_t start = i;
+    if (i + 2 >= s->len || hex_value(s->units[i + 1]) < 0 || hex_value(s->units[i + 2]) < 0) uri_error();
+    uint8_t b = (uint8_t)(hex_value(s->units[i + 1]) * 16 + hex_value(s->units[i + 2]));
+    i += 2;
+    if (b < 0x80) {
+      if (reserved[0] != 0 && strchr(reserved, (char)b) != NULL && b != 0)
+        for (uint32_t j = start; j <= i; j++) out[n++] = s->units[j];
+      else
+        out[n++] = b;
+      continue;
+    }
+    int k = (b & 0xE0) == 0xC0 ? 2 : (b & 0xF0) == 0xE0 ? 3 : (b & 0xF8) == 0xF0 ? 4 : 0;
+    if (k == 0) uri_error();
+    uint32_t cp = b & (0xFF >> (k + 1));
+    for (int j = 1; j < k; j++) {
+      if (i + 3 >= s->len || s->units[i + 1] != '%') uri_error();
+      int h1 = hex_value(s->units[i + 2]), h2 = hex_value(s->units[i + 3]);
+      if (h1 < 0 || h2 < 0) uri_error();
+      uint8_t cb = (uint8_t)(h1 * 16 + h2);
+      if ((cb & 0xC0) != 0x80) uri_error();
+      cp = (cp << 6) | (cb & 63);
+      i += 3;
+    }
+    static const uint32_t least[5] = {0, 0, 0x80, 0x800, 0x10000};
+    if (cp < least[k] || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) uri_error();
+    if (cp < 0x10000) out[n++] = (uint16_t)cp;
+    else {
+      cp -= 0x10000;
+      out[n++] = (uint16_t)(0xD800 + (cp >> 10));
+      out[n++] = (uint16_t)(0xDC00 + (cp & 0x3FF));
+    }
+  }
+  yk_string *r = new_string(n);
+  memcpy(r->units, out, (size_t)n * 2);
+  free(out);
+  return string_of(r);
+}
+static yk builtin_encode_uri_component(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return uri_encode(argc > 0 ? argv[0] : YK_UNDEFINED, "-_.!~*'()");
+}
+static yk builtin_encode_uri(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return uri_encode(argc > 0 ? argv[0] : YK_UNDEFINED, "-_.!~*'();/?:@&=+$,#");
+}
+static yk builtin_decode_uri_component(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return uri_decode(argc > 0 ? argv[0] : YK_UNDEFINED, "");
+}
+static yk builtin_decode_uri(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  return uri_decode(argc > 0 ? argv[0] : YK_UNDEFINED, ";/?:@&=+$,#");
+}
+static yk builtin_escape(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk_string *in = str(to_string(argc > 0 ? argv[0] : YK_UNDEFINED));
+  uint16_t *out = scratch(((size_t)in->len * 6 + 2) * sizeof(uint16_t));
+  uint32_t n = 0;
+  static const char hex[] = "0123456789ABCDEF";
+  for (uint32_t i = 0; i < in->len; i++) {
+    uint16_t ch = in->units[i];
+    if (in_set(ch, "@*_+-./")) out[n++] = ch;
+    else if (ch < 256) {
+      out[n++] = '%', out[n++] = (uint16_t)hex[ch >> 4], out[n++] = (uint16_t)hex[ch & 15];
+    } else {
+      out[n++] = '%', out[n++] = 'u';
+      for (int sh = 12; sh >= 0; sh -= 4) out[n++] = (uint16_t)hex[(ch >> sh) & 15];
+    }
+  }
+  yk_string *r = new_string(n);
+  memcpy(r->units, out, (size_t)n * 2);
+  free(out);
+  return string_of(r);
+}
+static yk builtin_unescape(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk_string *in = str(to_string(argc > 0 ? argv[0] : YK_UNDEFINED));
+  yk_string *r = new_string(in->len);
+  uint32_t n = 0;
+  for (uint32_t i = 0; i < in->len; i++) {
+    uint16_t ch = in->units[i];
+    if (ch == '%' && i + 5 < in->len && in->units[i + 1] == 'u') {
+      int h[4], ok = 1;
+      for (int j = 0; ok && j < 4; j++) ok = (h[j] = hex_value(in->units[i + 2 + j])) >= 0;
+      if (ok) {
+        r->units[n++] = (uint16_t)(h[0] << 12 | h[1] << 8 | h[2] << 4 | h[3]);
+        i += 5;
+        continue;
+      }
+    }
+    if (ch == '%' && i + 2 < in->len && hex_value(in->units[i + 1]) >= 0 && hex_value(in->units[i + 2]) >= 0) {
+      r->units[n++] = (uint16_t)(hex_value(in->units[i + 1]) * 16 + hex_value(in->units[i + 2]));
+      i += 2;
+      continue;
+    }
+    r->units[n++] = ch;
+  }
+  r->len = n;
+  return string_of(r);
+}
+/* eval: no code is compiled at run time here. */
+static yk builtin_eval(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s, (void)argc, (void)argv;
+  type_error("eval compiles code at run time, which the native runtime does not");
+  return YK_UNDEFINED;
+}
 static yk builtin_string(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
   if (argc > 0 && is_symbol(argv[0])) return symbol_descriptive(argv[0]);
@@ -4010,6 +5308,7 @@ static yk agen_new(void *c, yk self, uint64_t argc, const yk *argv);
 static yk agen_new(void *c, yk self, uint64_t argc, const yk *argv) {
   yk g = yk_object_of(0, NULL, NULL);
   ((yk_object *)PTR(g))->kind = 9;
+  ((yk_object *)PTR(g))->proto = ensure_prototype(BOX(T_CLOSURE, c));
   coro *co = coro_new(2, (yk_closure *)c, self, argc, argv);
   co->requests = new_array(6);
   ((yk_object *)PTR(g))->ext = co;
@@ -4018,6 +5317,7 @@ static yk agen_new(void *c, yk self, uint64_t argc, const yk *argv) {
 static yk generator_new(void *c, yk self, uint64_t argc, const yk *argv) {
   yk g = yk_object_of(0, NULL, NULL);
   ((yk_object *)PTR(g))->kind = 5;
+  ((yk_object *)PTR(g))->proto = ensure_prototype(BOX(T_CLOSURE, c));
   ((yk_object *)PTR(g))->ext = coro_new(1, (yk_closure *)c, self, argc, argv);
   return g;
 }
@@ -5972,8 +7272,38 @@ static yk leaf_value(const char *name, uint64_t n) {
   return 0;
 }
 
-#define N_GLOBALS 24
+#define N_GLOBALS 41
+static yk global_raw(const char *name, uint64_t n);
+static yk global_this(void);
+static yk reflect_global(void);
+static yk function_global(void);
+/* A global's value; a built-in constructor's `prototype` is its intrinsic prototype (#1331). */
 yk yk_global(const char *name, uint64_t n) {
+  if (n == 10 && memcmp(name, "globalThis", 10) == 0) return global_this();
+  if (n == 7 && memcmp(name, "Reflect", 7) == 0) return reflect_global();
+  if (n == 8 && memcmp(name, "Function", 8) == 0) return function_global();
+  yk v = global_raw(name, n);
+  if (!is_closure(v)) return v;
+  if (!has_own(v, ascii("name"))) named(v, yk_string_utf8(name, n));
+  static const char *const ctors[] = {"Object", "Array", "String", "Number", "Boolean", "Symbol", "BigInt",
+                                      "Map", "Set", "Promise", "Error", "TypeError", "RangeError", "SyntaxError",
+                                      "EvalError", "ReferenceError", "URIError", "AggregateError", "WeakMap",
+                                      "WeakSet", "WeakRef", "FinalizationRegistry", "Date", "RegExp"};
+  static const int which[] = {I_OBJECT, I_ARRAY, I_STRING, I_NUMBER, I_BOOLEAN, I_SYMBOL, I_BIGINT,
+                              I_MAP, I_SET, I_PROMISE, I_ERROR, I_ERROR, I_ERROR, I_ERROR,
+                              I_ERROR, I_ERROR, I_ERROR, I_ERROR, I_WEAKMAP,
+                              I_WEAKSET, I_WEAKREF, I_FINREG, I_DATE, I_REGEXP};
+  for (int i = 0; i < 24; i++)
+    if (strlen(ctors[i]) == n && memcmp(ctors[i], name, n) == 0 && !has_own(v, ascii("prototype"))) {
+      yk p = intrinsic_proto(which[i]);
+      own_set(own_props(v), ascii("prototype"), p);
+      if (which[i] != I_ERROR || i == 10) own_set((yk_object *)PTR(p), ascii("constructor"), v);
+      if (which[i] == I_WEAKMAP || which[i] == I_WEAKSET) /* not Map's nor Set's */
+        ((yk_object *)PTR(p))->proto = intrinsic_proto(I_OBJECT);
+    }
+  return v;
+}
+static yk global_raw(const char *name, uint64_t n) {
   if (n > 4 && memcmp(name, "__yk", 4) == 0) {
     yk leaf = leaf_value(name, n);
     if (leaf != 0) return leaf;
@@ -5992,14 +7322,24 @@ yk yk_global(const char *name, uint64_t n) {
                                          "Error", "TypeError", "RangeError", "SyntaxError",
                                          "Map", "Set", "Object", "JSON", "Symbol", "Promise",
                                          "__yakccTryAsync", "queueMicrotask", "__yakccTryGen",
-                                         "__yakccTryAsyncGen"};
+                                         "__yakccTryAsyncGen", "encodeURIComponent", "encodeURI",
+                                         "decodeURIComponent", "decodeURI", "escape", "unescape", "eval",
+                                         "EvalError", "ReferenceError", "URIError", "AggregateError",
+                                         "WeakMap", "WeakSet", "WeakRef", "FinalizationRegistry", "Date",
+                                         "RegExp"};
   static yk_code codes[N_GLOBALS] = {builtin_string, builtin_number, builtin_boolean,
                                      builtin_parse_float, builtin_parse_int, builtin_is_nan,
                                      builtin_is_finite, builtin_array, NULL, builtin_try,
                                      builtin_error, builtin_type_error, builtin_range_error,
                                      builtin_syntax_error, builtin_map, builtin_set, builtin_object,
                                      NULL, NULL, builtin_promise, try_async_body,
-                                     builtin_queue_microtask, try_gen_code, try_async_gen_code};
+                                     builtin_queue_microtask, try_gen_code, try_async_gen_code,
+                                     builtin_encode_uri_component, builtin_encode_uri,
+                                     builtin_decode_uri_component, builtin_decode_uri, builtin_escape,
+                                     builtin_unescape, builtin_eval, builtin_eval_error,
+                                     builtin_reference_error, builtin_uri_error, builtin_aggregate_error,
+                                     builtin_weak_map, builtin_weak_set, builtin_weak_ref,
+                                     builtin_finalization_registry, builtin_date, builtin_regexp};
   for (int i = 0; i < N_GLOBALS; i++)
     if (strlen(names[i]) == n && memcmp(names[i], name, n) == 0) {
       if (fns[i] != 0) return fns[i];
@@ -6020,6 +7360,11 @@ yk yk_global(const char *name, uint64_t n) {
       if (codes[i] == try_gen_code) return fns[i] = yk_closure_mode(yk_closure_new(try_gen_code, 0, 0, NULL), 2);
       if (codes[i] == try_async_gen_code)
         return fns[i] = yk_closure_mode(yk_closure_new(try_async_gen_code, 0, 0, NULL), 3);
+      if (codes[i] == builtin_date) {
+        static const char *const m[3] = {"now", "parse", "UTC"};
+        static const yk_code k[3] = {date_static_now, date_static_parse, date_static_utc};
+        return fns[i] = with_methods(builtin_date, 3, m, k);
+      }
       if (codes[i] == builtin_array) {
         static const char *const m[2] = {"from", "isArray"};
         static const yk_code k[2] = {builtin_array_from, builtin_array_is_array};
@@ -6039,10 +7384,21 @@ yk yk_global(const char *name, uint64_t n) {
         return fns[i] = f;
       }
       if (codes[i] == builtin_object) {
-        static const char *const m[6] = {"keys", "values", "entries", "assign", "freeze", "is"};
-        static const yk_code k[6] = {builtin_object_keys, builtin_object_values, builtin_object_entries,
-                                     builtin_object_assign, builtin_identity, builtin_object_is};
-        return fns[i] = with_methods(builtin_object, 6, m, k);
+        static const char *const m[23] = {"keys", "values", "entries", "assign", "freeze", "is",
+                                          "getPrototypeOf", "setPrototypeOf", "getOwnPropertyNames",
+                                          "getOwnPropertySymbols", "getOwnPropertyDescriptor",
+                                          "getOwnPropertyDescriptors", "defineProperty", "defineProperties",
+                                          "create", "hasOwn", "fromEntries", "isFrozen", "isSealed",
+                                          "isExtensible", "preventExtensions", "seal", "groupBy"};
+        static const yk_code k[23] = {builtin_object_keys, builtin_object_values, builtin_object_entries,
+                                      builtin_object_assign, builtin_identity, builtin_object_is,
+                                      reflect_get_prototype_of, reflect_set_prototype_of,
+                                      object_get_own_property_names, object_get_own_property_symbols,
+                                      reflect_get_own_property_descriptor, object_get_own_property_descriptors,
+                                      object_define_property, object_define_properties, object_create,
+                                      object_has_own, object_from_entries, object_false, object_false,
+                                      object_true, object_first, object_first, object_false};
+        return fns[i] = with_methods(builtin_object, 23, m, k);
       }
       return fns[i] = yk_closure_new(codes[i], 0, 0, NULL);
     }
@@ -6058,8 +7414,12 @@ yk yk_new(yk f, uint64_t argc, const yk *argv) {
     if (is_buffer_code(code)) return code(NULL, YK_UNDEFINED, argc, argv);
     if (code == builtin_array || code == builtin_error || code == builtin_type_error ||
         code == builtin_range_error || code == builtin_syntax_error || code == builtin_map ||
-        code == builtin_set || code == builtin_object)
+        code == builtin_set || code == builtin_object || code == builtin_eval_error ||
+        code == builtin_reference_error || code == builtin_uri_error || code == builtin_aggregate_error ||
+        code == builtin_weak_map || code == builtin_weak_set || code == builtin_weak_ref ||
+        code == builtin_finalization_registry || code == builtin_regexp)
       return code(NULL, YK_UNDEFINED, argc, argv);
+    if (code == builtin_date) return date_construct(argc, argv);
     /* A class, or a `function`: an object inheriting its prototype, given to it as `this`. */
     yk_closure *c = (yk_closure *)PTR(f);
     if (c->is_class || c->has_this) {
@@ -6075,6 +7435,15 @@ yk yk_new(yk f, uint64_t argc, const yk *argv) {
   return YK_UNDEFINED;
 }
 
+/* The built-in constructors whose instances are objects with internal state a subclass's receiver
+   can take over (class SafeMap extends Map). */
+static int is_adoptable_builtin(yk f) {
+  if (!is_closure(f)) return 0;
+  yk_code code = ((yk_closure *)PTR(f))->code;
+  return code == builtin_map || code == builtin_set || code == builtin_weak_map || code == builtin_weak_set ||
+         code == builtin_weak_ref || code == builtin_finalization_registry || code == builtin_promise ||
+         code == builtin_date || code == builtin_regexp;
+}
 /* a instanceof F, for the constructors the runtime has: Array, and the Error family. */
 yk yk_instanceof(yk v, yk f) {
   if (!is_closure(f)) type_error("Right-hand side of 'instanceof' is not callable");
@@ -6094,9 +7463,10 @@ yk yk_instanceof(yk v, yk f) {
     return yk_bool(strict_equal(name, ascii(want)));
   }
   yk_closure *c = (yk_closure *)PTR(f);
-  if (c->is_class || c->has_this) {
+  if (c->is_class || c->has_this || is_adoptable_builtin(f)) {
     yk proto = ensure_prototype(f);
-    for (yk o = is_object(v) ? ((yk_object *)PTR(v))->proto : 0; o != 0 && is_object(o); o = ((yk_object *)PTR(o))->proto)
+    if (!is_object(v) && !is_closure(v)) return YK_FALSE;
+    for (yk o = prototype_of(v); is_object(o); o = prototype_of(o))
       if (o == proto) return YK_TRUE;
   }
   return YK_FALSE;

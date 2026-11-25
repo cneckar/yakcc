@@ -139,6 +139,26 @@ const GLOBALS = new Set([
   "Object",
   "JSON",
   "Symbol",
+  "globalThis",
+  "Reflect",
+  "Function",
+  "encodeURIComponent",
+  "encodeURI",
+  "decodeURIComponent",
+  "decodeURI",
+  "escape",
+  "unescape",
+  "eval",
+  "EvalError",
+  "ReferenceError",
+  "URIError",
+  "AggregateError",
+  "WeakMap",
+  "WeakSet",
+  "WeakRef",
+  "FinalizationRegistry",
+  "Date",
+  "RegExp",
   "BigInt",
   "ArrayBuffer",
   "DataView",
@@ -306,8 +326,30 @@ const RUNTIME_DECLS: Readonly<Record<string, string>> = {
 };
 
 /** UTF-8 bytes as an LLVM string constant body. */
+/**
+ * A string's bytes as WTF-8: UTF-8, but a lone surrogate (which a JavaScript string may hold, and
+ * UTF-8 cannot) is its own three bytes, which the runtime's decoder reads back as that code unit.
+ */
+function wtf8(text: string): Uint8Array {
+  const out: number[] = [];
+  for (let i = 0; i < text.length; i++) {
+    let c = text.charCodeAt(i);
+    const d = text.charCodeAt(i + 1);
+    if (c >= 0xd800 && c <= 0xdbff && d >= 0xdc00 && d <= 0xdfff) {
+      c = 0x10000 + ((c - 0xd800) << 10) + (d - 0xdc00);
+      i++;
+    }
+    if (c < 0x80) out.push(c);
+    else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+    else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    else
+      out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+  }
+  return Uint8Array.from(out);
+}
+
 function llvmBytes(text: string): { body: string; length: number } {
-  const bytes = new TextEncoder().encode(text);
+  const bytes = wtf8(text);
   let body = "";
   for (const b of bytes)
     body +=
