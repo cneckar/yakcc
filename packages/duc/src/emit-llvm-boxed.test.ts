@@ -295,6 +295,11 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "a condition made outside an if and tested only by ifs nested in its sides, one of which only throws (#1292): computed before them",
+    "export function f(a, b) { class A { constructor(bl, o) { if (typeof o !== 'number') { throw new TypeError('expected number, got ' + typeof o); } this.o = o; } } class B extends A { constructor(opts = {}, flags = 0) { super(64, opts.dkLen === undefined ? 32 : opts.dkLen); const { key, context } = opts; const hasContext = context !== undefined; if (key !== undefined) { if (hasContext) throw new Error('both'); this.f = 1; } else if (hasContext) { this.f = 3; } else { this.f = 2; } this.s = this.f + 1; } } const t = (g) => { try { return g(); } catch (e) { return e.message; } }; return [t(() => new B().o), t(() => new B({ dkLen: a }).o), t(() => new B({ key: b }).s), t(() => new B({ context: a }).f), t(() => new B({ key: 1, context: 2 }).f)]; }",
+    2,
+  ],
+  [
     "in along a built-in value's intrinsic prototype, and on functions (#1331)",
     'export function f(a, b) { const fn = function g() { return this; }; fn.extra = 1; return [Symbol.iterator in new Map(), "get" in new Map(), "size" in new Set(), "then" in Promise.resolve(1), "toString" in {}, "nope" in {}, "call" in fn, "extra" in fn, "name" in fn, "prototype" in fn, "nope" in fn, Symbol.iterator in new Uint8Array(1), "getTime" in new Date(0), Symbol.iterator in [a], "length" in [b]]; }',
     2,

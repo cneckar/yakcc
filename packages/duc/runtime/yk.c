@@ -1285,6 +1285,11 @@ static yk interned(const char *name, uint64_t n) {
   return yk_string_utf8(name, n);
 }
 yk yk_get_named(yk obj, const char *name, uint64_t n) { return yk_get(obj, interned(name, n)); }
+/* A name or literal the lowered code keeps in a global (its slot): the string, made at first use. */
+yk yk_key_of(yk *slot, const char *p, uint64_t n) {
+  if (*slot != 0) return *slot;
+  return *slot = interned(p, n);
+}
 /* A string literal of the lowered code: its constant bytes' string, made once. */
 yk yk_string_const(const char *p, uint64_t n) { return interned(p, n); }
 
