@@ -784,7 +784,22 @@ function emitFunction(
       .filter((v) => (consumers.get(v) ?? []).length === 0)
       .map((v) => `${ref(v)};`);
     body.unshift(...unused);
-    const next = rec.next.map((v, i) => `${carried[i]} = ${ref(v)};`);
+    // A carried value the body never reads (only the header's condition does), whose next value is
+    // made outside the body (a constant, an outer value), is assigned as the pass starts, not as it
+    // ends (#1292): the same loop, and nothing in the body (a branch that throws, whose join would
+    // otherwise take it) can come between. Lifted again, its next value is that value either way.
+    const bodyText = body.join("\n");
+    const declaredInBody = (text: string): boolean =>
+      new RegExp(`(?:const|let) ${text.replace(/\$/g, "\\$")}\\b`).test(bodyText);
+    const early = rec.next.map((v, i) => {
+      const name = carried[i] as string;
+      const value = ref(v);
+      const read = new RegExp(`(?<![\\w$])${name.replace(/\$/g, "\\$")}(?![\\w$])`).test(bodyText);
+      const outside = !/^[\w$]+$/.test(value) || /^\d/.test(value) || !declaredInBody(value);
+      return !read && outside && value !== name;
+    });
+    body.unshift(...rec.next.flatMap((v, i) => (early[i] ? [`${carried[i]} = ${ref(v)};`] : [])));
+    const next = rec.next.flatMap((v, i) => (early[i] ? [] : [`${carried[i]} = ${ref(v)};`]));
     // Tested again after the pass, on the carried values the next pass starts from, so a stop
     // leaves before the next element is pulled (#1330). Only a condition over the carried values
     // alone can be tested there.

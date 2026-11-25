@@ -1104,4 +1104,53 @@ ${Array.from({ length: rest }, (_, i) => `  log.push(x + ${i});`).join("\n")}
       ],
     );
   });
+
+  it("a for loop with a continue runs its update before each continue and at its body's end (#1292)", () => {
+    agrees(
+      `export function f(xs: string[], skip: string) {
+  let out = "";
+  for (let i = 0, j = 0; i < xs.length; i++, j += 2) {
+    const c = xs[i] as string;
+    if (c === skip) continue;
+    if (c === "(") {
+      out += "<" + j;
+      i += 1;
+    } else if (c === "!") throw new RangeError("bang at " + i);
+    else out += c;
+  }
+  return out;
+}`,
+      [
+        [["a", "(", "b", "c", "x", "d"], "x"],
+        [["a", "!", "b"], "q"],
+        [[], ""],
+      ],
+    );
+  });
+
+  it("a switch pass whose clauses throw and fall through round-trips: carries by declaration (#1292)", () => {
+    agrees(
+      `export function f(e: any, file = "stdin.go") {
+  switch (e.type) {
+    case "BasicLit": {
+    }
+    case "ChanRecv":
+      throw new RangeError("chan " + file + ":" + e.line);
+    case "SliceLit": {
+      return "[" + e.elems + "]";
+    }
+    case "Unsupported":
+      throw new TypeError(e.reason + " at " + e.col);
+  }
+  return null;
+}`,
+      [
+        [{ type: "BasicLit", line: 3 }],
+        [{ type: "ChanRecv", line: 4 }, "a.go"],
+        [{ type: "SliceLit", elems: "1,2" }],
+        [{ type: "Unsupported", reason: "x", col: 9 }],
+        [{ type: "Other" }],
+      ],
+    );
+  });
 });
