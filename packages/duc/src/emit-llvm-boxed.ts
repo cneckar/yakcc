@@ -2123,6 +2123,257 @@ function lowerFunction(
     emit(`${r} = phi i64 [ ${r1}, %${fastEnd} ], [ ${r2}, %${slowEnd} ]`);
     return r;
   };
+  // The runtime's layouts the lowering reads itself (#1369): yk.c asserts its structs match these.
+  const LAYOUTS = [
+    "%yk.array = type { i32, i32, ptr, i64, ptr }",
+    "%yk.object = type { i32, i32, ptr, ptr, i32, i32, i64, ptr, ptr, ptr }",
+    "%yk.view = type { i64, i32, i32, i32 }",
+    "%yk.buffer = type { i32, ptr }",
+  ];
+  const unboxPtr = (v: string): string => {
+    const a = fresh();
+    emit(`${a} = and i64 ${v}, 281474976710655`);
+    const p = fresh();
+    emit(`${p} = inttoptr i64 ${a} to ptr`);
+    return p;
+  };
+  /** Hot code's obj[key]: an array's element (no holes) or a Uint32Array's / Uint8Array's at an
+   * index in range, read here; anything else the runtime's yk_get. */
+  const indexRead = (obj: string, key: string): string => {
+    for (const t of LAYOUTS) if (!m.globals.includes(t)) m.globals.unshift(t);
+    const slowL = freshLabel("getslow");
+    const join = freshLabel("got");
+    const incoming: [string, string][] = [];
+    const isNum = fresh();
+    emit(`${isNum} = icmp ult i64 ${key}, ${NUMBER_LIMIT}`);
+    const numL = freshLabel("getnum");
+    emit(`br i1 ${isNum}, label %${numL}, label %${slowL}`);
+    block(numL);
+    const d = fresh();
+    emit(`${d} = bitcast i64 ${key} to double`);
+    const lo = fresh();
+    emit(`${lo} = fcmp oge double ${d}, 0.0`);
+    const hi = fresh();
+    emit(`${hi} = fcmp olt double ${d}, 4294967296.0`);
+    const inR = fresh();
+    emit(`${inR} = and i1 ${lo}, ${hi}`);
+    const rangeL = freshLabel("getrange");
+    emit(`br i1 ${inR}, label %${rangeL}, label %${slowL}`);
+    block(rangeL);
+    const i = fresh();
+    emit(`${i} = fptoui double ${d} to i32`);
+    const back = fresh();
+    emit(`${back} = uitofp i32 ${i} to double`);
+    const whole = fresh();
+    emit(`${whole} = fcmp oeq double ${back}, ${d}`);
+    const intL = freshLabel("getint");
+    emit(`br i1 ${whole}, label %${intL}, label %${slowL}`);
+    block(intL);
+    const tag = fresh();
+    emit(`${tag} = lshr i64 ${obj}, 48`);
+    const arrL = freshLabel("getarr");
+    const objL = freshLabel("getobj");
+    const notArr = freshLabel("getnotarr");
+    const isArr = fresh();
+    emit(`${isArr} = icmp eq i64 ${tag}, 65531`);
+    emit(`br i1 ${isArr}, label %${arrL}, label %${notArr}`);
+    // An array: in range, with no holes.
+    block(arrL);
+    const ap = unboxPtr(obj);
+    const lenP = fresh();
+    emit(`${lenP} = getelementptr %yk.array, ptr ${ap}, i32 0, i32 0`);
+    const len = fresh();
+    emit(`${len} = load i32, ptr ${lenP}`);
+    const holesP = fresh();
+    emit(`${holesP} = getelementptr %yk.array, ptr ${ap}, i32 0, i32 4`);
+    const holes = fresh();
+    emit(`${holes} = load ptr, ptr ${holesP}`);
+    const noHoles = fresh();
+    emit(`${noHoles} = icmp eq ptr ${holes}, null`);
+    const inLen = fresh();
+    emit(`${inLen} = icmp ult i32 ${i}, ${len}`);
+    const okA = fresh();
+    emit(`${okA} = and i1 ${noHoles}, ${inLen}`);
+    const arrHit = freshLabel("getarrhit");
+    emit(`br i1 ${okA}, label %${arrHit}, label %${slowL}`);
+    block(arrHit);
+    const itemsP = fresh();
+    emit(`${itemsP} = getelementptr %yk.array, ptr ${ap}, i32 0, i32 2`);
+    const items = fresh();
+    emit(`${items} = load ptr, ptr ${itemsP}`);
+    const ep = fresh();
+    emit(`${ep} = getelementptr i64, ptr ${items}, i32 ${i}`);
+    const ev = fresh();
+    emit(`${ev} = load i64, ptr ${ep}`);
+    incoming.push([ev, arrHit]);
+    emit(`br label %${join}`);
+    // A string: its unit below 256 in range, the runtime's one string of it once made.
+    block(notArr);
+    const strL = freshLabel("getstr");
+    const notStr = freshLabel("getnotstr");
+    const isStr = fresh();
+    emit(`${isStr} = icmp eq i64 ${tag}, 65530`);
+    emit(`br i1 ${isStr}, label %${strL}, label %${notStr}`);
+    block(strL);
+    if (!m.globals.includes("@yk_units = external global [256 x i64]"))
+      m.globals.push("@yk_units = external global [256 x i64]");
+    const sp = unboxPtr(obj);
+    const slen = fresh();
+    emit(`${slen} = load i32, ptr ${sp}`);
+    const inS = fresh();
+    emit(`${inS} = icmp ult i32 ${i}, ${slen}`);
+    const strIn = freshLabel("getstrin");
+    emit(`br i1 ${inS}, label %${strIn}, label %${slowL}`);
+    block(strIn);
+    const unitsP = fresh();
+    emit(`${unitsP} = getelementptr i8, ptr ${sp}, i32 4`);
+    const up = fresh();
+    emit(`${up} = getelementptr i16, ptr ${unitsP}, i32 ${i}`);
+    const u = fresh();
+    emit(`${u} = load i16, ptr ${up}`);
+    const small = fresh();
+    emit(`${small} = icmp ult i16 ${u}, 256`);
+    const strSmall = freshLabel("getstrsmall");
+    emit(`br i1 ${small}, label %${strSmall}, label %${slowL}`);
+    block(strSmall);
+    const ui = fresh();
+    emit(`${ui} = zext i16 ${u} to i32`);
+    const tp = fresh();
+    emit(`${tp} = getelementptr [256 x i64], ptr @yk_units, i32 0, i32 ${ui}`);
+    const sv0 = fresh();
+    emit(`${sv0} = load i64, ptr ${tp}`);
+    const made = fresh();
+    emit(`${made} = icmp ne i64 ${sv0}, 0`);
+    const strHit = freshLabel("getstrhit");
+    emit(`br i1 ${made}, label %${strHit}, label %${slowL}`);
+    block(strHit);
+    incoming.push([sv0, strHit]);
+    emit(`br label %${join}`);
+    // A typed array (an object of kind 7): a Uint32Array's or Uint8Array's element in range.
+    block(notStr);
+    const isObj = fresh();
+    emit(`${isObj} = icmp eq i64 ${tag}, 65532`);
+    emit(`br i1 ${isObj}, label %${objL}, label %${slowL}`);
+    block(objL);
+    const op = unboxPtr(obj);
+    const kindP = fresh();
+    emit(`${kindP} = getelementptr %yk.object, ptr ${op}, i32 0, i32 5`);
+    const kind = fresh();
+    emit(`${kind} = load i32, ptr ${kindP}`);
+    const isTyped = fresh();
+    emit(`${isTyped} = icmp eq i32 ${kind}, 7`);
+    const typedL = freshLabel("gettyped");
+    emit(`br i1 ${isTyped}, label %${typedL}, label %${slowL}`);
+    block(typedL);
+    const extP = fresh();
+    emit(`${extP} = getelementptr %yk.object, ptr ${op}, i32 0, i32 9`);
+    const view = fresh();
+    emit(`${view} = load ptr, ptr ${extP}`);
+    const vlenP = fresh();
+    emit(`${vlenP} = getelementptr %yk.view, ptr ${view}, i32 0, i32 2`);
+    const vlen = fresh();
+    emit(`${vlen} = load i32, ptr ${vlenP}`);
+    const inV = fresh();
+    emit(`${inV} = icmp ult i32 ${i}, ${vlen}`);
+    const vtypeP = fresh();
+    emit(`${vtypeP} = getelementptr %yk.view, ptr ${view}, i32 0, i32 3`);
+    const vtype = fresh();
+    emit(`${vtype} = load i32, ptr ${vtypeP}`);
+    const inTL = freshLabel("getview");
+    emit(`br i1 ${inV}, label %${inTL}, label %${slowL}`);
+    block(inTL);
+    const bufP = fresh();
+    emit(`${bufP} = getelementptr %yk.view, ptr ${view}, i32 0, i32 0`);
+    const buf = fresh();
+    emit(`${buf} = load i64, ptr ${bufP}`);
+    const bo = unboxPtr(buf);
+    const bextP = fresh();
+    emit(`${bextP} = getelementptr %yk.object, ptr ${bo}, i32 0, i32 9`);
+    const bext = fresh();
+    emit(`${bext} = load ptr, ptr ${bextP}`);
+    const dataP = fresh();
+    emit(`${dataP} = getelementptr %yk.buffer, ptr ${bext}, i32 0, i32 1`);
+    const data = fresh();
+    emit(`${data} = load ptr, ptr ${dataP}`);
+    const offP = fresh();
+    emit(`${offP} = getelementptr %yk.view, ptr ${view}, i32 0, i32 1`);
+    const off = fresh();
+    emit(`${off} = load i32, ptr ${offP}`);
+    const base = fresh();
+    emit(`${base} = getelementptr i8, ptr ${data}, i32 ${off}`);
+    const u32L = freshLabel("getu32");
+    const u8L = freshLabel("getu8");
+    const notU32 = freshLabel("getnotu32");
+    const isU32 = fresh();
+    emit(`${isU32} = icmp eq i32 ${vtype}, 6`);
+    emit(`br i1 ${isU32}, label %${u32L}, label %${notU32}`);
+    block(u32L);
+    const p32 = fresh();
+    emit(`${p32} = getelementptr i32, ptr ${base}, i32 ${i}`);
+    const x32 = fresh();
+    emit(`${x32} = load i32, ptr ${p32}, align 1`);
+    const f32 = fresh();
+    emit(`${f32} = uitofp i32 ${x32} to double`);
+    const b32 = fresh();
+    emit(`${b32} = bitcast double ${f32} to i64`);
+    incoming.push([b32, u32L]);
+    emit(`br label %${join}`);
+    block(notU32);
+    const isU8 = fresh();
+    emit(`${isU8} = icmp eq i32 ${vtype}, 1`);
+    emit(`br i1 ${isU8}, label %${u8L}, label %${slowL}`);
+    block(u8L);
+    const p8 = fresh();
+    emit(`${p8} = getelementptr i8, ptr ${base}, i32 ${i}`);
+    const x8 = fresh();
+    emit(`${x8} = load i8, ptr ${p8}`);
+    const f8 = fresh();
+    emit(`${f8} = uitofp i8 ${x8} to double`);
+    const b8 = fresh();
+    emit(`${b8} = bitcast double ${f8} to i64`);
+    incoming.push([b8, u8L]);
+    emit(`br label %${join}`);
+    block(slowL);
+    const sv = call("yk_get", `i64 ${obj}, i64 ${key}`);
+    incoming.push([sv, currentLabel()]);
+    emit(`br label %${join}`);
+    block(join);
+    const r = fresh();
+    emit(`${r} = phi i64 ${incoming.map(([v, l]) => `[ ${v}, %${l} ]`).join(", ")}`);
+    return r;
+  };
+  /** Hot code's x.length: a string's or an array's, read here; else yk_get's. */
+  const lengthRead = (obj: string, key: string): string => {
+    const tag = fresh();
+    emit(`${tag} = lshr i64 ${obj}, 48`);
+    const isS = fresh();
+    emit(`${isS} = icmp eq i64 ${tag}, 65530`);
+    const isA = fresh();
+    emit(`${isA} = icmp eq i64 ${tag}, 65531`);
+    const either = fresh();
+    emit(`${either} = or i1 ${isS}, ${isA}`);
+    const fastL = freshLabel("lenfast");
+    const slowL = freshLabel("lenslow");
+    const join = freshLabel("len");
+    emit(`br i1 ${either}, label %${fastL}, label %${slowL}`);
+    block(fastL);
+    const p = unboxPtr(obj);
+    const n = fresh();
+    emit(`${n} = load i32, ptr ${p}`);
+    const f = fresh();
+    emit(`${f} = uitofp i32 ${n} to double`);
+    const b = fresh();
+    emit(`${b} = bitcast double ${f} to i64`);
+    emit(`br label %${join}`);
+    block(slowL);
+    const sv = call("yk_get", `i64 ${obj}, i64 ${key}`);
+    const slowEnd = currentLabel();
+    emit(`br label %${join}`);
+    block(join);
+    const r = fresh();
+    emit(`${r} = phi i64 [ ${b}, %${fastL} ], [ ${sv}, %${slowEnd} ]`);
+    return r;
+  };
   const boolBox = (b: string): string => {
     const r = fresh();
     emit(`${r} = select i1 ${b}, i64 ${TRUE}, i64 ${FALSE}`);
@@ -2776,7 +3027,13 @@ function lowerFunction(
     if (member && calleeReads.has(out)) return;
     if (member) {
       const obj = operand(ins[0] as ValueId);
-      set(out, call("yk_get", `i64 ${obj}, i64 ${keyOf(lbl.slice(1))}`));
+      const key = keyOf(lbl.slice(1));
+      set(
+        out,
+        lbl === ".length" && (!compact || inLoop(n))
+          ? lengthRead(obj, key)
+          : call("yk_get", `i64 ${obj}, i64 ${key}`),
+      );
       return;
     }
     if (/^\.[\w$]+=$/.test(lbl) && ins.length === 2) {
@@ -2843,10 +3100,9 @@ function lowerFunction(
         );
         return;
       }
-      set(
-        out,
-        call("yk_get", `i64 ${operand(ins[0] as ValueId)}, i64 ${operand(ins[1] as ValueId)}`),
-      );
+      const o = operand(ins[0] as ValueId);
+      const k = operand(ins[1] as ValueId);
+      set(out, !compact || inLoop(n) ? indexRead(o, k) : call("yk_get", `i64 ${o}, i64 ${k}`));
       return;
     }
     if (lbl === "[]=" && ins.length === 3) {

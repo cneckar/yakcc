@@ -330,6 +330,11 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "index and length reads in loops: arrays (holes), strings, typed arrays of every kind and offset, any key (#1369)",
+    "export function f(a, b) { const buf = new ArrayBuffer(32); const u8 = new Uint8Array(buf); for (let i = 0; i < 32; i++) u8[i] = i * 7 + 1; const views = [u8, new Uint8Array(buf, 3, 5), new Uint32Array(buf, 4, 3), new Int16Array(buf), new Float64Array(buf, 8, 2), new BigUint64Array(buf, 16, 1), new Uint8ClampedArray([300, -5])]; const holey = [1, , 3]; holey[6] = 'six'; const str = 'h\u00e9\u0100\ud83d\ude00' + a; const fn = (x, y) => x; const things = [[10, 20, 30], holey, str, ...views, { length: 'own', 0: 'zero', 2: 'two' }, fn, Object.assign([7, 8], { k: 1 })]; const keys = [0, 1, 2, 5, 6, 7, -1, -0, 1.5, NaN, 4294967295, 2 ** 40, '1', 'length', true]; const out = []; for (const t of things) { const row = [t.length]; for (const k of keys) { const v = t[k]; row.push(typeof v === 'bigint' ? String(v) + 'n' : v); } out.push(row); } return out; }",
+    2,
+  ],
+  [
     "Math.random, with arguments it ignores (undici's random(max)): a number in [0, 1) (#1331)",
     "export function f(a, b) { const r = Math.random(a); const q = Math.random(); return [typeof r, r >= 0 && r < 1, q >= 0 && q < 1, r !== q || r === q]; }",
     2,
