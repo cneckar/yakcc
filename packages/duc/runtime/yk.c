@@ -795,6 +795,7 @@ static int is_thunk(yk f) {
   return code == method_thunk_code || code == object_thunk_code;
 }
 static yk big_to_string_v(yk v);
+static yk big_to_radix_v(yk v, uint32_t radix);
 static double big_to_double_v(yk v);
 static int big_cmp_v(yk a, yk b);
 static int big_cmp_double_v(yk a, double y);
@@ -1985,6 +1986,13 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
       if (a > b) { double t = a; a = b; b = t; }
       return substring(s0, (uint32_t)a, (uint32_t)b);
     }
+    if (key_is(key, "at")) {
+      /* String.prototype.at: a relative index, negative from the end; undefined outside. */
+      double d = arg0 == YK_UNDEFINED ? 0 : to_number(arg0);
+      d = d != d ? 0 : trunc(d);
+      if (d < 0) d += s0->len;
+      return d < 0 || d >= s0->len ? YK_UNDEFINED : substring(s0, (uint32_t)d, (uint32_t)d + 1);
+    }
     if (key_is(key, "charAt")) {
       double d = arg0 == YK_UNDEFINED ? 0 : to_number(arg0);
       d = d != d ? 0 : trunc(d);
@@ -2152,10 +2160,10 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
     if (html_method(str(recv), key, arg0, &out)) return out;
   }
   if ((is_number(recv) || is_bool(recv) || is_bigint(recv)) && key_is(key, "toString")) {
-    if (is_number(recv) && arg0 != YK_UNDEFINED) {
+    if ((is_number(recv) || is_bigint(recv)) && arg0 != YK_UNDEFINED) {
       double r = trunc(to_number(arg0));
       if (!(r >= 2 && r <= 36)) range_error("toString() radix must be between 2 and 36");
-      if (r != 10) return number_to_radix(num(recv), (int)r);
+      if (r != 10) return is_bigint(recv) ? big_to_radix_v(recv, (uint32_t)r) : number_to_radix(num(recv), (int)r);
     }
     return to_string(recv);
   }
@@ -3576,6 +3584,36 @@ static yk object_from_entries(void *c, yk s, uint64_t argc, const yk *argv) {
     own_set((yk_object *)PTR(o), to_property_key(yk_get(items->items[i], yk_number(0))), yk_get(items->items[i], yk_number(1)));
   return o;
 }
+/* Object.groupBy / Map.groupBy (ECMA-262 7.3.35 GroupBy): each item under its callback's key, in
+   order; an object's keys property keys (a null-prototype object), a Map's the values as they are. */
+static void collection_put(yk_object *o, yk key, yk value);
+static int64_t collection_find(yk_object *o, yk key);
+static yk new_collection(int32_t kind);
+static yk group_by(uint64_t argc, const yk *argv, int map) {
+  yk items = arg_or_undefined(argc, argv, 0), cb = arg_or_undefined(argc, argv, 1);
+  if (!is_closure(cb)) type_error("callback is not a function");
+  yk_array *list = iterable_items(items);
+  yk out = map ? new_collection(1) : yk_object_of(0, NULL, NULL);
+  if (!map) ((yk_object *)PTR(out))->proto = YK_NULL;
+  for (uint32_t i = 0; i < list->len; i++) {
+    yk args[2] = {list->items[i], yk_number(i)};
+    yk k = call_value(cb, YK_UNDEFINED, 2, args);
+    yk group;
+    if (map) {
+      if (k == yk_number(-0.0)) k = yk_number(0);
+      int64_t at = collection_find((yk_object *)PTR(out), k);
+      if (at >= 0) group = arr(((yk_object *)PTR(out))->entries->items[at])->items[1];
+      else collection_put((yk_object *)PTR(out), k, group = yk_array_of(0, NULL));
+    } else {
+      k = to_property_key(k);
+      if (!own_get((yk_object *)PTR(out), k, &group)) own_set((yk_object *)PTR(out), k, group = yk_array_of(0, NULL));
+    }
+    push(arr(group), list->items[i]);
+  }
+  return out;
+}
+static yk object_group_by(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return group_by(argc, argv, 0); }
+static yk map_group_by(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return group_by(argc, argv, 1); }
 static yk object_false(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s, (void)argc, (void)argv; return YK_FALSE; }
 static yk object_true(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s, (void)argc, (void)argv; return YK_TRUE; }
 static yk object_first(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return arg_or_undefined(argc, argv, 0); }
@@ -4525,6 +4563,31 @@ static yk big_from_double(double x) {
 }
 
 /* The BigInt's decimal digits. */
+/* A BigInt's digits in a radix 2…36 (BigInt.prototype.toString(radix)). */
+static yk big_to_radix(const yk_bigint *a, uint32_t radix) {
+  if (a->len == 0) return ascii("0");
+  uint32_t n = a->len;
+  uint32_t *w = alloc((size_t)n * 4);
+  memcpy(w, a->d, (size_t)n * 4);
+  size_t cap = (size_t)n * 33 + 2, k = 0;
+  char *digits = alloc(cap);
+  while (n > 0) {
+    uint64_t rem = 0;
+    for (uint32_t i = n; i-- > 0;) {
+      uint64_t cur = (rem << 32) | w[i];
+      w[i] = (uint32_t)(cur / radix);
+      rem = cur % radix;
+    }
+    while (n > 0 && w[n - 1] == 0) n--;
+    digits[k++] = "0123456789abcdefghijklmnopqrstuvwxyz"[rem];
+  }
+  char *out = alloc(k + 2);
+  size_t o = 0;
+  if (a->neg) out[o++] = '-';
+  while (k > 0) out[o++] = digits[--k];
+  out[o] = 0;
+  return ascii(out);
+}
 static yk big_to_string(const yk_bigint *a) {
   if (a->len == 0) return ascii("0");
   uint32_t n = a->len;
@@ -4809,6 +4872,7 @@ yk yk_leaf_f64_make(yk hi, yk lo) {
 }
 
 static yk big_to_string_v(yk v) { return big_to_string(big(v)); }
+static yk big_to_radix_v(yk v, uint32_t radix) { return big_to_radix(big(v), radix); }
 static double big_to_double_v(yk v) { return big_to_double(big(v)); }
 static int big_cmp_v(yk a, yk b) { return big_cmp(big(a), big(b)); }
 static int big_cmp_double_v(yk a, double y) { return big_cmp_double(big(a), y); }
@@ -5114,7 +5178,7 @@ static yk_array *iterable_items(yk v) {
   return r;
 }
 
-/* --- JSON.stringify (no replacer, no indent) --- */
+/* --- JSON.stringify --- */
 
 static void json_quote(yk_array *parts, yk_string *s) {
   yk_string *q = new_string(s->len * 6 + 2);
@@ -5139,49 +5203,150 @@ static void json_quote(yk_array *parts, yk_string *s) {
   push(parts, string_of(q));
 }
 
-/* 0: nothing written (undefined, a function); 1: written. */
-static int json_write(yk_array *parts, yk v) {
-  if (v == YK_UNDEFINED || is_closure(v)) return 0;
-  if (v == YK_NULL) return push(parts, ascii("null")), 1;
-  if (is_bool(v)) return push(parts, ascii(v == YK_TRUE ? "true" : "false")), 1;
-  if (is_number(v)) {
-    double d = num(v);
-    return push(parts, d != d || isinf(d) ? ascii("null") : to_string(v)), 1;
+/* JSON.stringify (ECMA-262 25.5.2): SerializeJSONProperty over a state of the replacer function or
+   property list, the gap and the indent, and the stack of the values being serialized (a circular
+   structure's TypeError has V8's message). */
+static yk object_parts(yk v, int which);
+typedef struct {
+  yk replacer;        /* a function, or 0 */
+  yk_array *props;    /* the property list (a replacer array's), or NULL */
+  yk_string *gap;     /* "" when none */
+  yk_array *stack;    /* the objects being serialized */
+  yk_array *keys;     /* the key each was reached by */
+} json_state;
+static int json_property(json_state *st, yk_array *parts, yk holder, yk key, yk value, yk_string *indent);
+static yk json_ctor_name(yk v) {
+  if (is_array(v)) return ascii("Array");
+  yk c = yk_get(v, ascii("constructor"));
+  if (is_closure(c)) {
+    yk n = yk_get(c, ascii("name"));
+    if (is_string(n) && str(n)->len > 0) return n;
   }
-  if (is_string(v)) return json_quote(parts, str(v)), 1;
-  if (is_array(v)) {
-    push(parts, ascii("["));
-    for (uint32_t i = 0; i < arr(v)->len; i++) {
-      if (i > 0) push(parts, ascii(","));
-      if (!json_write(parts, arr(v)->items[i])) push(parts, ascii("null"));
-    }
-    return push(parts, ascii("]")), 1;
-  }
-  yk_object *o = (yk_object *)PTR(v);
-  push(parts, ascii("{"));
-  if (o->kind == 0) {
-    yk_array *keys = enumerable_keys(o);
-    int first = 1;
-    for (uint32_t i = 0; i < keys->len; i++) {
-      yk value;
-      own_get(o, keys->items[i], &value);
-      value = resolve_slot(value, v);
-      if (value == YK_UNDEFINED || is_closure(value)) continue;
-      if (!first) push(parts, ascii(","));
-      first = 0;
-      json_quote(parts, str(keys->items[i]));
-      push(parts, ascii(":"));
-      json_write(parts, value);
-    }
-  }
-  return push(parts, ascii("}")), 1;
+  return ascii("Object");
 }
-
+static yk json_key_text(yk holder, yk key) {
+  if (is_array(holder)) return concat(str(ascii("index ")), str(to_string(key)));
+  return concat(str(concat(str(ascii("property '")), str(to_string(key)))), str(ascii("'")));
+}
+static _Noreturn void json_circular(json_state *st, yk value, yk key, yk holder) {
+  /* V8's: where the circle starts, the properties along it (2 first, 1 last, "..." between), and
+     the one that closes it. */
+  uint32_t at = 0;
+  while (at < st->stack->len && st->stack->items[at] != value) at++;
+  yk m = ascii("Converting circular structure to JSON\n    --> starting at object with constructor '");
+  m = concat(str(concat(str(m), str(json_ctor_name(value)))), str(ascii("'")));
+  uint32_t n = st->stack->len - at - 1; /* the objects after the start along the circle */
+  for (uint32_t j = 0; j < n; j++) {
+    if (n > 3 && j == 2) {
+      m = concat(str(m), str(ascii("\n    |     ...")));
+      j = n - 2;
+      continue;
+    }
+    yk obj = st->stack->items[at + 1 + j];
+    yk via = json_key_text(st->stack->items[at + j], st->keys->items[at + 1 + j]);
+    m = concat(str(m), str(ascii("\n    |     ")));
+    m = concat(str(concat(str(m), str(via))), str(ascii(" -> object with constructor '")));
+    m = concat(str(concat(str(m), str(json_ctor_name(obj)))), str(ascii("'")));
+  }
+  m = concat(str(concat(str(m), str(ascii("\n    --- ")))), str(json_key_text(holder, key)));
+  m = concat(str(m), str(ascii(" closes the circle")));
+  yk_throw(make_error("TypeError", m));
+}
+static int json_object(json_state *st, yk_array *parts, yk v, yk key, yk holder, yk_string *indent) {
+  for (uint32_t i = 0; i < st->stack->len; i++)
+    if (st->stack->items[i] == v) json_circular(st, v, key, holder);
+  push(st->stack, v);
+  push(st->keys, key);
+  yk_string *inner = str(concat(indent, st->gap));
+  int list = is_array(v);
+  yk_array *members = new_array(8);
+  if (list) {
+    double len = to_number(yk_get(v, ascii("length")));
+    for (double i = 0; i < len; i++) {
+      yk_array *one = new_array(4);
+      yk k = to_string(yk_number(i));
+      if (!json_property(st, one, v, k, yk_get(v, yk_number(i)), inner)) push(one, ascii("null"));
+      push(members, array_join(one, str(ascii(""))));
+    }
+  } else {
+    yk_array *keys = st->props != NULL ? st->props : arr(object_parts(v, 0));
+    for (uint32_t i = 0; i < keys->len; i++) {
+      yk k = keys->items[i];
+      yk_array *one = new_array(4);
+      json_quote(one, str(k));
+      push(one, ascii(st->gap->len > 0 ? ": " : ":"));
+      if (json_property(st, one, v, k, yk_get(v, k), inner)) push(members, array_join(one, str(ascii(""))));
+    }
+  }
+  st->stack->len--;
+  st->keys->len--;
+  if (members->len == 0) return push(parts, ascii(list ? "[]" : "{}")), 1;
+  push(parts, ascii(list ? "[" : "{"));
+  if (st->gap->len == 0) push(parts, array_join(members, str(ascii(","))));
+  else {
+    yk sep = concat(str(ascii(",\n")), inner);
+    push(parts, concat(str(ascii("\n")), inner));
+    push(parts, array_join(members, str(sep)));
+    push(parts, concat(str(ascii("\n")), indent));
+  }
+  return push(parts, ascii(list ? "]" : "}")), 1;
+}
+/* 0: nothing written (undefined, a function, a symbol); 1: written. */
+static int json_property(json_state *st, yk_array *parts, yk holder, yk key, yk value, yk_string *indent) {
+  if (is_object(value) || is_closure(value) || is_array(value) || is_bigint(value)) {
+    yk tj = yk_get(value, ascii("toJSON"));
+    if (is_closure(tj)) value = call_value(tj, value, 1, &key);
+  }
+  if (st->replacer != 0) {
+    yk args[2] = {key, value};
+    value = call_value(st->replacer, holder, 2, args);
+  }
+  if (value == YK_NULL) return push(parts, ascii("null")), 1;
+  if (is_bool(value)) return push(parts, ascii(value == YK_TRUE ? "true" : "false")), 1;
+  if (is_string(value)) return json_quote(parts, str(value)), 1;
+  if (is_number(value)) {
+    double d = num(value);
+    return push(parts, d != d || isinf(d) ? ascii("null") : to_string(value)), 1;
+  }
+  if (is_bigint(value)) type_error("Do not know how to serialize a BigInt");
+  if ((is_object(value) && !is_symbol(value)) || is_array(value)) return json_object(st, parts, value, key, holder, indent);
+  return 0;
+}
 static yk builtin_json_stringify(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
+  json_state st = {0, NULL, str(ascii("")), new_array(8), new_array(8)};
+  yk replacer = argc > 1 ? argv[1] : YK_UNDEFINED, space = argc > 2 ? argv[2] : YK_UNDEFINED;
+  if (is_closure(replacer)) st.replacer = replacer;
+  else if (is_array(replacer)) {
+    /* The property list: each string or number, once, in order. */
+    st.props = new_array(arr(replacer)->len);
+    for (uint32_t i = 0; i < arr(replacer)->len; i++) {
+      yk e = arr(replacer)->items[i];
+      if (!is_string(e) && !is_number(e)) continue;
+      e = to_string(e);
+      int seen = 0;
+      for (uint32_t j = 0; j < st.props->len; j++) seen |= key_equal(st.props->items[j], e);
+      if (!seen) push(st.props, e);
+    }
+  }
+  if (is_number(space)) {
+    double n = num(space);
+    int k = n != n ? 0 : n > 10 ? 10 : n < 1 ? 0 : (int)n;
+    yk_string *g = new_string((uint32_t)k);
+    for (int i = 0; i < k; i++) g->units[i] = ' ';
+    g->len = (uint32_t)k;
+    st.gap = g;
+  } else if (is_string(space)) {
+    yk_string *sp = str(space);
+    st.gap = sp->len <= 10 ? sp : str(substring(sp, 0, 10));
+  }
   yk_array *parts = new_array(16);
-  if (!json_write(parts, argc > 0 ? argv[0] : YK_UNDEFINED)) return YK_UNDEFINED;
-  return array_join(parts, str(ascii("")));
+  yk wrapper = yk_object_of(0, NULL, NULL);
+  yk empty = ascii("");
+  yk v = argc > 0 ? argv[0] : YK_UNDEFINED;
+  yk_set(wrapper, empty, v);
+  if (!json_property(&st, parts, wrapper, empty, v, str(empty))) return YK_UNDEFINED;
+  return array_join(parts, str(empty));
 }
 
 /* --- Array.from, Array.isArray, Object.keys / values / entries / assign / freeze, Map, Set --- */
@@ -5399,6 +5564,7 @@ static int is_regexp(yk v) { return is_object(v) && ((yk_object *)PTR(v))->kind 
 yk yk_regexp_new(yk source, yk flags, yk matcher, yk names) {
   yk key = ascii("lastIndex"), zero = yk_number(0);
   yk v = yk_object_of(1, &key, &zero);
+  set_hidden((yk_object *)PTR(v), key, 1); /* lastIndex: own, writable, not enumerable */
   yk_object *o = (yk_object *)PTR(v);
   o->kind = 3;
   o->regex = alloc(4 * sizeof(yk));
@@ -9592,6 +9758,11 @@ static yk global_raw(const char *name, uint64_t n) {
       if (codes[i] == try_gen_code) return fns[i] = yk_closure_mode(yk_closure_new(try_gen_code, 0, 0, NULL), 2);
       if (codes[i] == try_async_gen_code)
         return fns[i] = yk_closure_mode(yk_closure_new(try_async_gen_code, 0, 0, NULL), 3);
+      if (codes[i] == builtin_map) {
+        static const char *const m[1] = {"groupBy"};
+        static const yk_code k[1] = {map_group_by};
+        return fns[i] = with_methods(builtin_map, 1, m, k);
+      }
       if (codes[i] == builtin_date) {
         static const char *const m[3] = {"now", "parse", "UTC"};
         static const yk_code k[3] = {date_static_now, date_static_parse, date_static_utc};
@@ -9629,7 +9800,7 @@ static yk global_raw(const char *name, uint64_t n) {
                                       reflect_get_own_property_descriptor, object_get_own_property_descriptors,
                                       object_define_property, object_define_properties, object_create,
                                       object_has_own, object_from_entries, object_false, object_false,
-                                      object_true, object_first, object_first, object_false};
+                                      object_true, object_first, object_first, object_group_by};
         return fns[i] = with_methods(builtin_object, 23, m, k);
       }
       return fns[i] = yk_closure_new(codes[i], 0, 0, NULL);
