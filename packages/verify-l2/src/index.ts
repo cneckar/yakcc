@@ -4,15 +4,29 @@
  */
 export type {
   CounterexampleInput,
-  L2Contract,
   L2Options,
   L2Report,
   Obligation,
+  ObligationKind,
   Outcome,
+  ThrowReport,
   Verdict,
 } from "./verify.js";
 export { ENCODER_VERSION, verifyL2 } from "./verify.js";
-export type { EncodedGraph, Sort, Term } from "./encode.js";
-export { PRELUDE, Unsupported, encodeGraph, f64Bits, f64FromBits, f64Literal } from "./encode.js";
+export type { Callee, L2Contract } from "./types.js";
+export type { GoalObligation, LoopInfo, ThrowSite } from "./encoder.js";
+export { Encoder, loopsOf, sortOf } from "./encoder.js";
+export type { Sort, Term } from "./terms.js";
+export {
+  MATH_EXACT,
+  PRELUDE,
+  Unsupported,
+  f64Bits,
+  f64FromBits,
+  f64Literal,
+  mathCall,
+  operation,
+  truthy,
+} from "./terms.js";
 export type { SolverAnswer } from "./solver.js";
 export { check, shutdownSolver, solverVersion } from "./solver.js";

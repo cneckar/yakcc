@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The encoder: a DUC graph as SMT-LIB2 terms, with ECMAScript's meaning on binary64 numbers and
- * booleans (#1421, slice 1).
+ * Terms: ECMAScript's numbers and booleans as SMT-LIB2, and its operators on them (#1421). The
+ * graph walk that uses them is `encoder.ts`.
  *
  * @decision DEC-VERIFY-L2-ENCODING-001
  * title: exact or unsupported, never approximated
@@ -15,11 +15,9 @@
  *   verifier (eidic/eidic docs/enhanced-verification.md), which found an unsound `x == x` proof this
  *   way and refuses floating `%`: SMT's fp.rem is the IEEE remainder, ECMAScript's `%` is fmod.
  *
- *   Nodes inside a branch region are encoded unconditionally. That is sound because every operation
- *   encoded here is total and has no effect; a `sel` picks the value the taken path computes. An
- *   effect (heap-ordered operations, throws), a loop, a closure or a reference is unsupported.
+ *   Every operation encoded here is total and has no effect, so a node inside a branch region is
+ *   encoded unconditionally; a `sel` picks the value the taken path computes.
  */
-import { type DucGraph, type DucNode, type ValueId, ecmaScriptView } from "@yakcc/duc";
 
 /** The sorts this encoder knows: ECMAScript's Number as binary64, and Boolean. */
 export type Sort = "F64" | "Bool";
@@ -70,7 +68,7 @@ const ONE = f64Literal(1);
 const ZERO = f64Literal(0);
 
 /** ToNumber, on the sorts encoded here: a boolean is 1 or 0. */
-function toNumber(t: Term): Term {
+export function toNumber(t: Term): Term {
   return t.sort === "F64" ? t : { sort: "F64", smt: `(ite ${t.smt} ${ONE.smt} ${ZERO.smt})` };
 }
 
@@ -142,124 +140,22 @@ function toInt32(t: Term): string {
 }
 
 /** The platform constants that are numbers. */
-const PLATFORM_NUMBERS: Readonly<Record<string, number>> = {
+export const PLATFORM_NUMBERS: Readonly<Record<string, number>> = {
   NaN: Number.NaN,
   Infinity: Number.POSITIVE_INFINITY,
 };
 
 const NUMBER_LITERAL = /^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
 
-/** The encoding of one graph: definitions in dependency order, and its one result. */
-export interface EncodedGraph {
-  /** `(define-fun …)` lines, each value before its uses. */
-  readonly defs: readonly string[];
-  readonly result: Term;
-}
-
-/**
- * Encodes a graph as SMT-LIB2 definitions. `params` are the terms its parameters are bound to, in
- * order. Names are prefixed with `ns` so several graphs share one query. Throws {@link Unsupported}
- * for any construct outside the exact fragment.
- */
-export function encodeGraph(input: DucGraph, ns: string, params: readonly Term[]): EncodedGraph {
-  const g = ecmaScriptView(input);
-  if (g.mode !== undefined) throw new Unsupported(g.mode, `an ${g.mode} function`);
-  if (g.obs.length !== 1) {
-    throw new Unsupported("observations", `${g.obs.length} observations; one result is required`);
-  }
-  // An effect anywhere is refused, even one the result does not read: a throw decides whether the
-  // atom returns at all, and a write is behavior the contract does not cover (#1421 slice 5).
-  for (const n of g.nodes) {
-    if (n.order === 1 || n.label === "throw") {
-      throw new Unsupported(n.label ?? n.kind, `${n.label ?? n.kind}: an effect`);
-    }
-    if (n.kind === "loop" || n.kind === "carry-source" || n.closure !== undefined) {
-      throw new Unsupported(n.kind, `a ${n.closure !== undefined ? "closure" : n.kind}`);
-    }
-  }
-  const defOf = new Map<ValueId, DucNode>();
-  for (const n of g.nodes) for (const v of n.outputs) defOf.set(v, n);
-  const terms = new Map<ValueId, Term>();
-  const defs: string[] = [];
-  const visiting = new Set<ValueId>();
-
-  const encode = (v: ValueId): Term => {
-    const done = terms.get(v);
-    if (done !== undefined) return done;
-    if (visiting.has(v)) throw new Unsupported("cycle", `value ${v} depends on itself`);
-    visiting.add(v);
-    const n = defOf.get(v);
-    if (n === undefined) throw new Unsupported("dangling", `value ${v} has no definition`);
-    const term = encodeNode(n);
-    visiting.delete(v);
-    // Sources are inlined; every computed value gets a name, so the query reads like the graph.
-    if (n.kind === "param-source" || n.kind === "literal-source" || n.kind === "diamond-source") {
-      terms.set(v, term);
-      return term;
-    }
-    const name = `${ns}_${v}`;
-    defs.push(`(define-fun ${name} () ${smtSort(term.sort)} ${term.smt})`);
-    const named: Term = { sort: term.sort, smt: name };
-    terms.set(v, named);
-    return named;
-  };
-
-  const encodeNode = (n: DucNode): Term => {
-    if (n.order === 1) {
-      throw new Unsupported(n.label ?? n.kind, `${n.label ?? n.kind}: a heap-ordered operation`);
-    }
-    if (n.closure !== undefined) throw new Unsupported("closure", "a closure");
-    if (n.outputs.length !== 1) {
-      throw new Unsupported(n.kind, `a ${n.kind} node with ${n.outputs.length} outputs`);
-    }
-    switch (n.kind) {
-      case "param-source": {
-        const index = Number(n.label);
-        const p = Number.isInteger(index) ? params[index] : undefined;
-        if (p === undefined) throw new Unsupported("parameter", `parameter ${n.label ?? "?"}`);
-        return p;
-      }
-      case "literal-source":
-        return literal(n.label ?? "");
-      case "diamond-source": {
-        const d = n.diamond;
-        const value = d?.reason === "platform-primitive" ? PLATFORM_NUMBERS[d.symbol] : undefined;
-        if (value === undefined) {
-          throw new Unsupported(
-            d?.symbol ?? "reference",
-            `a reference to ${d?.symbol ?? "?"} (${d?.reason ?? "unknown"})`,
-          );
-        }
-        return f64Literal(value);
-      }
-      case "sel": {
-        if (n.label !== undefined || n.inputs.length !== 3) {
-          throw new Unsupported("sel", `a select labelled ${n.label ?? "?"}`);
-        }
-        const [c, t, e] = n.inputs.map(encode) as [Term, Term, Term];
-        if (t.sort !== e.sort) {
-          throw new Unsupported("union", "a select whose two values have different types");
-        }
-        return { sort: t.sort, smt: `(ite ${truthy(c).smt} ${t.smt} ${e.smt})` };
-      }
-      case "op":
-        return operation(n.label ?? "", n.inputs.map(encode));
-      default:
-        throw new Unsupported(n.kind, `a ${n.kind} node`);
-    }
-  };
-
-  const result = encode(g.obs[0] as ValueId);
-  return { defs, result };
-}
-
-function literal(label: string): Term {
+/** A literal by its label: a number or a boolean. */
+export function literal(label: string): Term {
   if (label === "true" || label === "false") return { sort: "Bool", smt: label };
   if (NUMBER_LITERAL.test(label)) return f64Literal(Number(label));
   throw new Unsupported("literal", `the literal ${label}`);
 }
 
-function operation(label: string, args: readonly Term[]): Term {
+/** An ECMAScript operator (as `ecmaScriptView` writes it) on encoded operands. */
+export function operation(label: string, args: readonly Term[]): Term {
   if (args.length === 2) {
     const [a, b] = args as [Term, Term];
     const arith = ARITHMETIC[label];
@@ -321,6 +217,13 @@ function operation(label: string, args: readonly Term[]): Term {
         return { sort: "Bool", smt: `(not ${truthy(a).smt})` };
       case "~":
         return fromInt32(`(bvnot ${toInt32(a)})`, "int32");
+      // ++ and -- (prefix or postfix) are the operand's new value: ToNumeric(x) ± 1.
+      case "++":
+      case "post++":
+        return { sort: "F64", smt: `(fp.add RNE ${toNumber(a).smt} ${ONE.smt})` };
+      case "--":
+      case "post--":
+        return { sort: "F64", smt: `(fp.sub RNE ${toNumber(a).smt} ${ONE.smt})` };
     }
   }
   throw new Unsupported(label, `the operation ${label} on ${args.length} operand(s)`);
@@ -328,4 +231,61 @@ function operation(label: string, args: readonly Term[]): Term {
 
 function sameSortEq(a: Term, b: Term): string {
   return a.sort === "F64" ? `(fp.eq ${a.smt} ${b.smt})` : `(= ${a.smt} ${b.smt})`;
+}
+
+const NAN = f64Literal(Number.NaN);
+
+/**
+ * The `Math` functions whose meaning is exact (IEEE 754 operations or ECMAScript's own rules on NaN
+ * and ±0), so their encoding is their meaning on every input. The approximated ones (`sin`, `exp`,
+ * `pow`, …) and `round` and `random` are not here.
+ */
+export const MATH_EXACT: ReadonlySet<string> = new Set([
+  "abs",
+  "floor",
+  "ceil",
+  "trunc",
+  "sqrt",
+  "min",
+  "max",
+  "sign",
+  "fround",
+]);
+
+/** A call of an exact `Math` function on encoded arguments (each ToNumber'd, as `Math` does). */
+export function mathCall(name: string, args: readonly Term[]): Term {
+  const xs = args.map((a) => toNumber(a).smt);
+  const x = xs[0] ?? NAN.smt;
+  const f = (smt: string): Term => ({ sort: "F64", smt });
+  switch (name) {
+    case "abs":
+      return f(`(fp.abs ${x})`);
+    case "floor":
+      return f(`(fp.roundToIntegral RTN ${x})`);
+    case "ceil":
+      return f(`(fp.roundToIntegral RTP ${x})`);
+    case "trunc":
+      return f(`(fp.roundToIntegral RTZ ${x})`);
+    case "sqrt":
+      return f(`(fp.sqrt RNE ${x})`);
+    case "fround":
+      return f(`((_ to_fp 11 53) RNE ((_ to_fp 8 24) RNE ${x}))`);
+    case "sign":
+      return f(
+        `(ite (or (fp.isNaN ${x}) (fp.isZero ${x})) ${x} (ite (fp.isNegative ${x}) ${f64Literal(-1).smt} ${ONE.smt}))`,
+      );
+    case "min":
+    case "max": {
+      // Math.min() is +Infinity, Math.max() is -Infinity; NaN wins; -0 is below +0.
+      const empty = f64Literal(
+        name === "min" ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY,
+      );
+      const pick = (a: string, b: string): string =>
+        name === "min"
+          ? `(ite (or (fp.isNaN ${a}) (fp.isNaN ${b})) ${NAN.smt} (ite (fp.lt ${a} ${b}) ${a} (ite (fp.lt ${b} ${a}) ${b} (ite (fp.isNegative ${a}) ${a} ${b}))))`
+          : `(ite (or (fp.isNaN ${a}) (fp.isNaN ${b})) ${NAN.smt} (ite (fp.gt ${a} ${b}) ${a} (ite (fp.gt ${b} ${a}) ${b} (ite (fp.isNegative ${a}) ${b} ${a}))))`;
+      return f(xs.reduce((acc, a) => pick(acc, a), empty.smt));
+    }
+  }
+  throw new Unsupported(`Math.${name}`, `Math.${name}: not an exact operation`);
 }

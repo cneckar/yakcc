@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { liftAtom } from "@yakcc/duc";
 import { afterAll, describe, expect, it } from "vitest";
-import { encodeGraph, f64Bits, f64FromBits, f64Literal } from "./encode.js";
+import { Encoder } from "./encoder.js";
 import { shutdownSolver } from "./solver.js";
+import { f64Bits, f64FromBits, f64Literal } from "./terms.js";
 import { type L2Contract, verifyL2 } from "./verify.js";
 
 afterAll(async () => {
@@ -150,11 +151,13 @@ describe("unsupported, never approximated", () => {
     expect(r.verdict).toBe("not-proven");
   });
 
-  it("refuses calls, throws and loops", async () => {
+  it("refuses approximated Math, unlinked calls, effects and iteration", async () => {
     for (const src of [
-      "function f(x: number): number { return Math.abs(x); }",
-      "function f(x: number): number { if (x > 0) throw new Error('no'); return x; }",
-      "function f(n: number): number { let s = 0; for (let i = 0; i < n; i++) { s = s + i; } return s; }",
+      "function f(x: number): number { return Math.sin(x); }",
+      'import { g } from "./g.js";\nexport function f(x: number): number { return g(x); }',
+      "function f(x: number): number { console.log(x); return x; }",
+      "function f(x: number): number { let s = 0; for (const v of [x]) { s = s + v; } return s; }",
+      "function f(x: number): number { while (x > 0) { if (x > 5) { throw new Error('big'); } x = x - 1; } return x; }",
     ]) {
       const r = await verifyL2(src, contract([num("x")], ["result === result"]));
       expect(r.obligations[0]?.outcome, src).toBe("unsupported");
@@ -211,7 +214,9 @@ describe("determinism", () => {
   it("encodes each computed value once, in dependency order", () => {
     const g = liftAtom(CLAMP);
     const params = [0, 1, 2].map((i) => ({ sort: "F64" as const, smt: `((_ to_fp 11 53) p${i})` }));
-    const { defs, result } = encodeGraph(g, "impl", params);
+    const enc = new Encoder(contract([num("x"), num("lo"), num("hi")], []), params);
+    const result = enc.atom(g);
+    const defs = enc.defs;
     const names = defs.map((d) => /define-fun (\S+)/.exec(d)?.[1]);
     expect(new Set(names).size).toBe(names.length);
     for (const [i, d] of defs.entries()) {
