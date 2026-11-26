@@ -163,6 +163,7 @@ const GLOBALS = new Set([
   "__yakccSetTickHook",
   "__yakccOnExit",
   "__yakccRunMicrotasks",
+  "__yakccSetPromiseRejectHook",
   "eval",
   "EvalError",
   "ReferenceError",
@@ -1044,6 +1045,29 @@ function lowerFunction(
       // what a `typeof` probe for it sees. Any other use fails when it runs.
       globalValue.set(n.outputs[0] as ValueId, sym);
     else throw new LlvmEmitError(`"${sym}" is not in the native base set`);
+  }
+  // An async try awaited at once (`await __yakccTryAsync(body, handler, finalizer)`, #1276): run in
+  // this async function's coroutine, its blocks' awaits this function's, so it takes no more jobs
+  // than the source's try statement does. The calls, by their result.
+  const inlineTries = new Set<ValueId>();
+  {
+    const awaitedBy = new Map<ValueId, number>();
+    const otherUse = new Set<ValueId>();
+    for (const n of g.nodes)
+      for (const v of n.inputs) {
+        const r = resolve(v as ValueId);
+        if (n.label === "AwaitExpression") awaitedBy.set(r, (awaitedBy.get(r) ?? 0) + 1);
+        else otherUse.add(r);
+      }
+    for (const n of g.nodes)
+      if (
+        closure !== undefined &&
+        n.label === "CallExpression" &&
+        globalValue.get(resolve(n.inputs[0] as ValueId)) === "__yakccTryAsync"
+      ) {
+        const out = n.outputs[0] as ValueId;
+        if (awaitedBy.get(out) === 1 && !otherUse.has(out)) inlineTries.add(out);
+      }
   }
   const memberOf = (v: ValueId): { node: DucNode; name: string } | undefined => {
     const p = producer.get(resolve(v));
@@ -3360,6 +3384,11 @@ function lowerFunction(
         "a class the lifter keeps as a summary (a parameter property, a decorator) is not in the subset",
       );
     if (lbl === "AwaitExpression" && ins.length === 1) {
+      // An inline try's result: already its block's completion (no job).
+      if (inlineTries.has(resolve(ins[0] as ValueId))) {
+        set(out, operand(ins[0] as ValueId));
+        return;
+      }
       // The coroutine suspends until the value settles (#1295).
       set(out, call("yk_await", `i64 ${operand(ins[0] as ValueId)}`));
       return;
@@ -4020,6 +4049,14 @@ function lowerFunction(
         return;
       }
       set(out, call(fn, args.map((a) => `i64 ${a}`).join(", ")));
+      return;
+    }
+    if (lbl === "CallExpression" && inlineTries.has(out)) {
+      const args = ins.slice(1).map(operand);
+      m.intrinsics.add("declare i64 @yk_try_async_now(i64, ptr)");
+      const r = fresh();
+      emit(`${r} = call i64 @yk_try_async_now(i64 ${args.length}, ptr ${list(args)})`);
+      set(out, r);
       return;
     }
     if (lbl === "CallExpression") {

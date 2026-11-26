@@ -291,3 +291,38 @@ describe.skipIf(!canRun("x86_64-linux"))("more of Node's modules, natively (#136
     expect(r.status).toBe(0);
   }, 1_200_000);
 });
+
+const REJECT_PROGRAM = `const seen = [];
+process.on("unhandledRejection", (reason, promise) => {
+  seen.push("unhandled " + (reason instanceof Error ? reason.message : String(reason)) + " " + (promise instanceof Promise));
+});
+process.on("rejectionHandled", () => seen.push("handled later"));
+Promise.reject(new Error("first"));
+Promise.reject("a string");
+const caught = Promise.reject(new Error("caught in time"));
+caught.catch(() => seen.push("caught in time"));
+process.on("exit", (code) => console.log(seen.join("|"), code));
+`;
+
+describe.skipIf(!canRun("x86_64-linux"))("unhandled rejections, as Node's (#1361 P2)", () => {
+  it("process's unhandledRejection event for each, none for one handled in time", () => {
+    const record = nodeBootProgram(
+      lib,
+      { id: "main", source: REJECT_PROGRAM },
+      {
+        bindings,
+        include: ["internal/util/comparisons", "internal/v8/startup_snapshot"],
+        ...(process.env.YAKCC_LIFT_CACHE !== undefined
+          ? { liftCache: process.env.YAKCC_LIFT_CACHE }
+          : {}),
+      },
+    );
+    const exe = join(work, "rejections");
+    buildRecord(record, exe);
+    const r = spawnSync(exe, [], { encoding: "utf8" });
+    const want = spawnSync(process.execPath, ["-e", REJECT_PROGRAM], { encoding: "utf8" });
+    expect(r.stderr).toBe(want.stderr);
+    expect(r.stdout).toBe(want.stdout);
+    expect(r.status).toBe(want.status);
+  }, 1_200_000);
+});
