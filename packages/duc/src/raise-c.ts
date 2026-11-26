@@ -619,6 +619,9 @@ function parseType(spelled: string, depth = 0): CType {
         `struct __yk_vector<${Number(n) * (of === undefined ? 1 : (VECTOR_LANE[of.trim()] ?? 0))}> `,
     )
     .replace(/__attribute__\(\(.*?\)\)\s*/g, "")
+    // An atomic object (C11, `_Atomic(int)`, `_Atomic int`): laid out as its type is, on x86-64.
+    .replace(/\b_Atomic\s*\(([^()]*)\)/g, "$1")
+    .replace(/\b_Atomic\b\s*/g, "")
     // (Qualifiers inside a template's arguments are part of its name: `<const char *>`.)
     .replace(/<[\s\S]*>|\b(?:const|volatile|restrict|__restrict)\b/g, (m) =>
       m.startsWith("<") ? m : "",
@@ -631,8 +634,35 @@ function parseType(spelled: string, depth = 0): CType {
     .replace(/\(\s+\*/g, "(*")
     .trim();
   // A pointer to a function, and a pointer to one (`void (**)(int)`).
-  const fnPtr = /\((\*+)((?:\[\d*\])*)\)\s*\(.*\)$/.exec(raw);
-  if (fnPtr !== null) {
+  // (The declarator at the top level: a function's parameters can be such pointers too, `int
+  // (const H *, int (*)(void *))` is a function.)
+  const fnPtr = [...raw.matchAll(/\((\*+)((?:\[\d*\])*)\)\s*\(.*\)$/g)].find((m) => {
+    let depth = 0;
+    for (let i = 0; i < (m.index ?? 0); i++)
+      if (raw[i] === "(" || raw[i] === "<") depth++;
+      else if (raw[i] === ")" || raw[i] === ">") depth--;
+    return depth === 0;
+  });
+  // (A declarator nested in one, `void (*(*)(A))(void)`: a pointer to a function returning a
+  // function's pointer, a pointer to a function as an object.)
+  if (fnPtr === undefined) {
+    for (let i = 0, depth = 0; i < raw.length; i++) {
+      const ch = raw[i];
+      if (ch === "(" && depth === 0 && raw[i + 1] === "*") {
+        let close = i;
+        for (let d = 0; close < raw.length; close++) {
+          if (raw[close] === "(") d++;
+          else if (raw[close] === ")" && --d === 0) break;
+        }
+        const inner = raw.slice(i + 1, close).replace(/^\*+/, "");
+        if (/^\(\*+\)\s*\(.*\)$/.test(inner) && /^\s*\(.*\)$/.test(raw.slice(close + 1)))
+          return { k: "ptr", to: { k: "fn" } };
+      }
+      if (ch === "(" || ch === "<") depth++;
+      else if (ch === ")" || ch === ">") depth--;
+    }
+  }
+  if (fnPtr !== undefined) {
     let t: CType = { k: "fn" };
     for (let i = 0; i < (fnPtr[1] as string).length; i++) t = { k: "ptr", to: t };
     // An array of them (`void (*[3])(int)`): its dimensions, outermost first.
@@ -1026,6 +1056,11 @@ const LEAF_CALLS: Readonly<Record<string, (args: readonly string[]) => string>> 
   __builtin_expect: (a) => `${a[0]}`,
   // A prefetch is a hint; every atomic of a size up to 8 bytes is lock-free here.
   __builtin_prefetch: () => "undefined",
+  // A fence orders one thread's memory against others': one thread here.
+  __c11_atomic_thread_fence: () => "undefined",
+  __c11_atomic_signal_fence: () => "undefined",
+  __atomic_thread_fence: () => "undefined",
+  __atomic_signal_fence: () => "undefined",
   __atomic_is_lock_free: (a) => `(${a[0]} <= 8n ? 1 : 0)`,
   // alloca's memory, from the heap (it outlives the call: never freed, as no frame frees it here).
   __builtin_alloca: (a) => `__ykAlloc(__ykBigToF64(${a[0]}), 16)`,
@@ -2384,6 +2419,14 @@ function raiseBody(
           const v = kids[2] as ClangNode;
           return `(${storeAt(expr(k0), pt.to, convert(expr(v), typeOf(v), pt.to))}, undefined)`;
         }
+        // The generic forms (through a pointer to the value, `__atomic_load(p, &ret, order)`): the
+        // object copied to or from it.
+        if (op === "__atomic_load" || op === "__atomic_store") {
+          const there = expr(kids[2] as ClangNode);
+          return op === "__atomic_load"
+            ? `(${storeAt(there, pt.to, loadAt(expr(k0), pt.to))}, undefined)`
+            : `(${storeAt(expr(k0), pt.to, loadAt(there, pt.to))}, undefined)`;
+        }
         // The read-modify-writes, in one thread of the leaves' memory: read, compute, write.
         const T = pt.to;
         const a = temp({ k: "f64" });
@@ -2537,7 +2580,16 @@ function raiseBody(
             );
           return p.addr;
         }
-        if (["NoOp", "FunctionToPointerDecay", "BitCast"].includes(ck)) return expr(k0);
+        if (
+          [
+            "NoOp",
+            "FunctionToPointerDecay",
+            "BitCast",
+            "NonAtomicToAtomic",
+            "AtomicToNonAtomic",
+          ].includes(ck)
+        )
+          return expr(k0);
         // A pointer to a derived class as one to its base (C++), and back: the base's offset.
         if (ck === "DerivedToBase" || ck === "UncheckedDerivedToBase" || ck === "BaseToDerived") {
           const from = typeOf(k0);
@@ -2906,8 +2958,38 @@ function raiseBody(
         const direct =
           callee.kind === "DeclRefExpr" &&
           (d?.kind === "FunctionDecl" || d?.kind === "CXXMethodDecl");
-        if (!direct && ct.k === "ptr" && ct.to.k === "fn")
-          return `__ykFnAt(${expr(k0)})(${args.join(", ")})`;
+        // A call of a variadic function: the arguments past its parameters (promoted by clang)
+        // are packed into 8-byte slots, and the slots' address is its last argument, `__va`.
+        const packVariadic = (
+          fixed: number,
+        ): { callArgs: string[]; pack: string[]; area: string } => {
+          const area = temp({ k: "f64" });
+          const extras = kids.slice(1 + fixed);
+          const pack = [
+            `(${area} = __ykAlloc(${Math.max(8, 8 * extras.length)}, 8))`,
+            ...extras.map((x, i) => {
+              const xt = typeOf(x);
+              const slot = i === 0 ? area : `(${area} + ${8 * i})`;
+              const v = args[fixed + i] as string;
+              if (xt.k === "f64") return `__ykStoreF64(${slot}, ${v})`;
+              if (wide(xt)) return `__ykStore64(${slot}, ${v})`;
+              if (xt.k === "ptr" || xt.k === "i32" || xt.k === "u32")
+                return `__ykStore64(${slot}, __ykNumToBig(${v}))`;
+              throw new RaiseCError(`a variable argument of ${xt.k}`);
+            }),
+          ];
+          return { callArgs: [...args.slice(0, fixed), area], pack, area };
+        };
+        if (!direct && ct.k === "ptr" && ct.to.k === "fn") {
+          const at = `__ykFnAt(${expr(k0)})`;
+          // (Variadic through the pointer, `(ERR_new(), .., ERR_set_error)(lib, r, fmt, ..)`: as a
+          // direct call packs them.)
+          const fixedThere = variadicParams(k0.type?.desugaredQualType ?? k0.type?.qualType ?? "");
+          if (fixedThere === undefined) return `${at}(${args.join(", ")})`;
+          const v = packVariadic(fixedThere);
+          const r = temp(typeOf(e).k === "void" ? { k: "i32" } : typeOf(e));
+          return `(${v.pack.join(", ")}, (${r} = ${at}(${v.callArgs.join(", ")})), __ykFree(${v.area}), ${r})`;
+        }
         // The checked arithmetic builtins: the exact result (as a bigint), stored at the third
         // argument in its type, and whether that changed it.
         const checked = (
@@ -2950,30 +3032,11 @@ function raiseBody(
         }
         if (name === "__builtin_va_end") return "undefined";
         if (name === "__builtin_va_copy") return `__ykStore64(${args[0]}, __ykLoad64(${args[1]}))`;
-        // A call of a variadic function: the arguments past its parameters (promoted by clang)
-        // are packed into 8-byte slots, and the slots' address is its last argument, `__va`.
         const fixed = variadicParams(d.type?.qualType ?? "");
         let callArgs = args;
         let pack: string[] = [];
         let area = "";
-        if (fixed !== undefined) {
-          area = temp({ k: "f64" });
-          const extras = kids.slice(1 + fixed);
-          pack = [
-            `(${area} = __ykAlloc(${Math.max(8, 8 * extras.length)}, 8))`,
-            ...extras.map((x, i) => {
-              const xt = typeOf(x);
-              const slot = i === 0 ? area : `(${area} + ${8 * i})`;
-              const v = args[1 + fixed + i - 1] as string;
-              if (xt.k === "f64") return `__ykStoreF64(${slot}, ${v})`;
-              if (wide(xt)) return `__ykStore64(${slot}, ${v})`;
-              if (xt.k === "ptr" || xt.k === "i32" || xt.k === "u32")
-                return `__ykStore64(${slot}, __ykNumToBig(${v}))`;
-              throw new RaiseCError(`a variable argument of ${xt.k}`);
-            }),
-          ];
-          callArgs = [...args.slice(0, fixed), area];
-        }
+        if (fixed !== undefined) ({ callArgs, pack, area } = packVariadic(fixed));
         const index = callOrder.get(e);
         const key = resolve({
           name,
@@ -4170,6 +4233,8 @@ function raiseBody(
             lastUnion = all64 ? fields : undefined;
             continue;
           }
+          // (A function declared in a block, `extern int getentropy(void *, size_t);`: no code.)
+          if (d.kind === "FunctionDecl") continue;
           if (d.kind !== "VarDecl") throw new RaiseCError(`the declaration ${d.kind}`);
           const t = ctype(d.type);
           // A static whose initializer runs code (C++: `static std::u32string s = U"";`):
@@ -5259,9 +5324,10 @@ export function shaveCUnit(
     return pick(candidates(), bare);
   };
   const typedefScopes = new Map<string, Map<string, string>>();
-  // C++: classes, from the index.
+  // C++: classes, from the index. (A large C unit is indexed too, and stays C: its records are
+  // returned as C's are, the same in every unit.)
   const cxx: CxxUnit | undefined =
-    indexed === undefined
+    indexed === undefined || !(/\+\+$/.test(clang) || /\.(cc|cpp|cxx)$/.test(file))
       ? undefined
       : {
           isStaticMember: (fnId) => {
@@ -5685,9 +5751,10 @@ export function shaveCUnit(
           stdio: ["ignore", "pipe", "ignore"],
         },
       );
-      const written = [...printed.matchAll(/__builtin_offsetof\(([^,()]+),([^()]*)\)/g)].map(
-        (m) => [m[1] as string, m[2] as string] as [string, string],
-      );
+      // (A type may be an unnamed record's, `struct (unnamed struct at f.c:110:51)`.)
+      const written = [
+        ...printed.matchAll(/__builtin_offsetof\(((?:[^,()]|\([^()]*\))+),([^()]*)\)/g),
+      ].map((m) => [m[1] as string, m[2] as string] as [string, string]);
       const nodes: ClangNode[] = [];
       const walk = (v: unknown): void => {
         if (Array.isArray(v)) for (const x of v) walk(x);
@@ -6557,6 +6624,13 @@ function staticDefinition(
         return scalar(kids[kids.length - 1] as ClangNode);
       case "IntegerLiteral":
         return { k: "v", v: BigInt(e.value ?? "0") };
+      // A constant condition's choice (`flags & X ? a : b`, OpenSSL's cipher tables).
+      case "ConditionalOperator": {
+        const c = scalar(k0);
+        if (c.k !== "v")
+          throw new RaiseCError("a condition in an initializer that is not a number");
+        return scalar(kids[c.v !== 0n && c.v !== 0 ? 1 : 2] as ClangNode);
+      }
       case "DeclRefExpr": {
         const d = e.referencedDecl as ClangNode;
         const v = d.kind === "EnumConstantDecl" ? unitEnumValue(d.name ?? "", d.id) : undefined;
@@ -7152,6 +7226,28 @@ function flattenEnteredSwitches(n: ClangNode): ClangNode {
       }
     });
     kids = out;
+    // A label first in an endless loop's body (`for (;;) { redo: .. }`, OpenSSL's RSA key
+    // generation, entered by a goto after the loop): the loop's own, as going to it is.
+    kids = kids.map((k) => {
+      const parts = k.inner ?? [];
+      const body = parts[parts.length - 1];
+      const endless =
+        (k.kind === "ForStmt" &&
+          parts.length === 5 &&
+          parts.slice(0, 4).every((x) => x === null || x === undefined || x.kind === undefined)) ||
+        false;
+      const first = body?.kind === "CompoundStmt" ? (body.inner ?? [])[0] : undefined;
+      if (!endless || body === undefined || first?.kind !== "LabelStmt") return k;
+      changed = true;
+      const loop = {
+        ...k,
+        inner: [
+          ...parts.slice(0, 4),
+          { ...body, inner: [...(first.inner ?? []), ...(body.inner ?? []).slice(1)] },
+        ],
+      } as ClangNode;
+      return { ...first, inner: [loop] } as ClangNode;
+    });
     // A while loop the statements before it enter (see enterLoop), each in turn.
     for (let i = 0; i < kids.length; i++) {
       if (kids[i]?.kind !== "WhileStmt") continue;
