@@ -619,6 +619,9 @@ function parseType(spelled: string, depth = 0): CType {
         `struct __yk_vector<${Number(n) * (of === undefined ? 1 : (VECTOR_LANE[of.trim()] ?? 0))}> `,
     )
     .replace(/__attribute__\(\(.*?\)\)\s*/g, "")
+    // An atomic object (C11, `_Atomic(int)`, `_Atomic int`): laid out as its type is, on x86-64.
+    .replace(/\b_Atomic\s*\(([^()]*)\)/g, "$1")
+    .replace(/\b_Atomic\b\s*/g, "")
     // (Qualifiers inside a template's arguments are part of its name: `<const char *>`.)
     .replace(/<[\s\S]*>|\b(?:const|volatile|restrict|__restrict)\b/g, (m) =>
       m.startsWith("<") ? m : "",
@@ -2384,6 +2387,14 @@ function raiseBody(
           const v = kids[2] as ClangNode;
           return `(${storeAt(expr(k0), pt.to, convert(expr(v), typeOf(v), pt.to))}, undefined)`;
         }
+        // The generic forms (through a pointer to the value, `__atomic_load(p, &ret, order)`): the
+        // object copied to or from it.
+        if (op === "__atomic_load" || op === "__atomic_store") {
+          const there = expr(kids[2] as ClangNode);
+          return op === "__atomic_load"
+            ? `(${storeAt(there, pt.to, loadAt(expr(k0), pt.to))}, undefined)`
+            : `(${storeAt(expr(k0), pt.to, loadAt(there, pt.to))}, undefined)`;
+        }
         // The read-modify-writes, in one thread of the leaves' memory: read, compute, write.
         const T = pt.to;
         const a = temp({ k: "f64" });
@@ -2537,7 +2548,16 @@ function raiseBody(
             );
           return p.addr;
         }
-        if (["NoOp", "FunctionToPointerDecay", "BitCast"].includes(ck)) return expr(k0);
+        if (
+          [
+            "NoOp",
+            "FunctionToPointerDecay",
+            "BitCast",
+            "NonAtomicToAtomic",
+            "AtomicToNonAtomic",
+          ].includes(ck)
+        )
+          return expr(k0);
         // A pointer to a derived class as one to its base (C++), and back: the base's offset.
         if (ck === "DerivedToBase" || ck === "UncheckedDerivedToBase" || ck === "BaseToDerived") {
           const from = typeOf(k0);
@@ -5685,9 +5705,10 @@ export function shaveCUnit(
           stdio: ["ignore", "pipe", "ignore"],
         },
       );
-      const written = [...printed.matchAll(/__builtin_offsetof\(([^,()]+),([^()]*)\)/g)].map(
-        (m) => [m[1] as string, m[2] as string] as [string, string],
-      );
+      // (A type may be an unnamed record's, `struct (unnamed struct at f.c:110:51)`.)
+      const written = [
+        ...printed.matchAll(/__builtin_offsetof\(((?:[^,()]|\([^()]*\))+),([^()]*)\)/g),
+      ].map((m) => [m[1] as string, m[2] as string] as [string, string]);
       const nodes: ClangNode[] = [];
       const walk = (v: unknown): void => {
         if (Array.isArray(v)) for (const x of v) walk(x);
