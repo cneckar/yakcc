@@ -1115,10 +1115,17 @@ static yk to_primitive(yk v) { return to_primitive_hint(v, 0); }
 /* OrdinaryToPrimitive with hint string (ToString, ToPropertyKey, a template's substitutions):
    toString before valueOf. Hints: 0 default, 1 string, 2 number (valueOf first, as default). */
 static yk to_primitive_string(yk v) { return to_primitive_hint(v, 1); }
+/* Function.prototype.toString: the runtime keeps no source text, so a function is V8's form for one
+   it has none of, with its name. */
+static yk function_source(yk f) {
+  yk n = yk_get(f, ascii("name"));
+  yk name = is_string(n) ? n : ascii("");
+  return concat(str(concat(str(ascii("function ")), str(name))), str(ascii("() { [native code] }")));
+}
 static yk to_primitive_hint(yk v, int hint) {
   int string_hint = hint == 1;
   if (is_array(v)) return to_string(v);
-  if (is_closure(v)) return ascii("function () { [native code] }");
+  if (is_closure(v)) return function_source(v);
   if (!is_object(v)) return v;
   yk_object *self = (yk_object *)PTR(v);
   {
@@ -1427,6 +1434,7 @@ yk yk_sb_finish(yk h) {
 }
 
 /* typeof's result: one string per type, made once. */
+static yk function_prototype_made = 0; /* Function.prototype, once made (intrinsic_proto) */
 yk yk_typeof(yk v) {
   static yk made[8]; /* each made once (the collector sees this table) */
 #define YK_TYPE(k, s) (made[k] != 0 ? made[k] : (made[k] = interned(s, sizeof s - 1)))
@@ -1437,6 +1445,7 @@ yk yk_typeof(yk v) {
   if (is_closure(v)) return YK_TYPE(4, "function");
   if (is_bigint(v)) return YK_TYPE(5, "bigint");
   if (is_symbol(v)) return YK_TYPE(6, "symbol");
+  if (v != 0 && v == function_prototype_made) return YK_TYPE(4, "function"); /* Function.prototype is callable */
   return YK_TYPE(7, "object");
 #undef YK_TYPE
 }
@@ -1956,6 +1965,7 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
       return call_value(recv, arg0, list->len, list->items);
     }
     if (key_is(key, "bind")) return bound_new(recv, arg0, argc > 0 ? argc - 1 : 0, argv + (argc > 0 ? 1 : 0));
+    if (key_is(key, "toString")) return function_source(recv);
   }
   if (is_array(recv)) {
     yk out;
@@ -2632,6 +2642,16 @@ static void init_fields(yk cls, yk self) {
   }
 }
 /* super(args) in a derived constructor: the parent's constructor run on this receiver (#1294). */
+/* new.target (ECMA-262 13.3.12): yk_new (or super(), or Reflect.construct) leaves the constructor
+   it is about to run and the value; that constructor takes it on entry, before any other call can
+   leave another; every other function finds nothing left for it (undefined). */
+static void *pending_new = NULL;
+static yk pending_target = YK_UNDEFINED, constructing = YK_UNDEFINED;
+yk yk_take_new_target(void *closure) {
+  if (closure == NULL || pending_new != closure) return YK_UNDEFINED;
+  pending_new = NULL;
+  return pending_target;
+}
 yk yk_super_construct(void *closure, yk self, uint64_t argc, const yk *argv) {
   yk cls = ((yk_closure *)closure)->class_self;
   yk parent = cls == 0 ? 0 : ((yk_closure *)PTR(cls))->parent;
@@ -2682,6 +2702,7 @@ yk yk_super_construct(void *closure, yk self, uint64_t argc, const yk *argv) {
   yk_closure *p = (yk_closure *)PTR(parent);
   /* A base parent's fields are defined before its body runs; a derived parent's by its super(). */
   if (p->is_class && p->parent == 0) init_fields(parent, self);
+  pending_new = p, pending_target = constructing; /* its new.target the derived one's */
   yk r = p->code(p, self, argc, argv);
   if (is_reference(r)) return r;
   init_fields(cls, self);
@@ -3293,6 +3314,7 @@ static yk intrinsic_proto(int which) {
   if (intrinsic_protos[which] != 0) return intrinsic_protos[which];
   yk p = yk_object_of(0, NULL, NULL);
   intrinsic_protos[which] = p;
+  if (which == I_FUNCTION) function_prototype_made = p;
   yk_object *o = (yk_object *)PTR(p);
   o->proto = which == I_OBJECT                ? YK_NULL
              : which > I_ERROR && which <= I_AGGREGATE_ERROR ? intrinsic_proto(I_ERROR)
@@ -3793,10 +3815,16 @@ static yk reflect_apply(void *c, yk s, uint64_t argc, const yk *argv) {
   yk args = arg_or_undefined(argc, argv, 2);
   return call_method_key(arg_or_undefined(argc, argv, 0), ascii("apply"), 2, (yk[]){arg_or_undefined(argc, argv, 1), args});
 }
+static yk construct_with_target(yk f, yk target, uint64_t argc, const yk *argv);
 static yk reflect_construct(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
+  yk f = arg_or_undefined(argc, argv, 0);
   yk_array *args = iterable_items(arg_or_undefined(argc, argv, 1));
-  return yk_new(arg_or_undefined(argc, argv, 0), args->len, args->items);
+  /* With a newTarget: a class's or `function`'s instance of the target's prototype. */
+  if (argc > 2 && argv[2] != f && is_closure(f) && is_closure(argv[2]) &&
+      (((yk_closure *)PTR(f))->is_class || ((yk_closure *)PTR(f))->has_this) && ((yk_closure *)PTR(f))->mode == 0)
+    return construct_with_target(f, argv[2], args->len, args->items);
+  return yk_new(f, args->len, args->items);
 }
 static yk reflect_get(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
@@ -6905,6 +6933,7 @@ typedef struct coro {
   yk result;           /* when done: what it returned, or threw */
   int threw;
   yk returning;        /* a generator's return(v): the v */
+  int returned;        /* done by a return() it was going through (not by its body's end) */
   void *stack;
   int awaiting;           /* an async generator's: suspended at an await (a job resumes it) */
   yk_array *requests;     /* an async generator's queue: [mode, value, promise] for each request */
@@ -7132,6 +7161,7 @@ static void coro_main(void) {
   } else if (is_generator_return(thrown)) {
     co->result = co->returning;
     co->threw = 0;
+    co->returned = 1;
   } else {
     co->result = thrown;
     co->threw = 1;
@@ -7374,6 +7404,7 @@ yk yk_yield(yk v) {
 /* yield* v: each value v's iteration gives, yielded in turn; its return value is the result. What
    the consumer sends, throws or returns is passed on to a generator delegated to, so its catch and
    finally blocks see it, as ECMAScript's yield* does (#1330). */
+static yk try_gen_code(void *c, yk self, uint64_t argc, const yk *argv);
 yk yk_yield_star(yk v) {
   if (current_coro != NULL && current_coro->kind == 2 && is_object(v) && ((yk_object *)PTR(v))->kind == 9) {
     /* yield* in an async generator, to another: each request passed on and its result awaited; its
@@ -7399,8 +7430,11 @@ yk yk_yield_star(yk v) {
     int mode = 0;
     for (;;) {
       if (!generator_resume(v, sent, mode, &out)) {
-        /* Done: by return(), this generator returns too, with what the delegate returned. */
-        if (mode == 2) generator_return_through(out);
+        /* Done: by return(), this generator returns too, with what the delegate returned; so too
+           when the delegate is a try statement's (the runtime's __yakccTryGen) that finished a
+           return it was going through, its finally having yielded since. */
+        coro *dc = (coro *)((yk_object *)PTR(v))->ext;
+        if (mode == 2 || (dc->returned && dc->fn != NULL && dc->fn->code == try_gen_code)) generator_return_through(out);
         return out;
       }
       sent = coro_suspend_mode(out, &mode);
@@ -10162,6 +10196,21 @@ static yk proxy_revocable(void *c, yk s, uint64_t argc, const yk *argv) {
   yk vals[2] = {proxy, yk_closure_new(proxy_revoke, 0, 1, &proxy)};
   return yk_object_of(2, keys, vals);
 }
+/* [[Construct]] of a class or `function` with a new.target: an object inheriting the target's
+   prototype, given to the constructor as `this`. */
+static yk construct_with_target(yk f, yk target, uint64_t argc, const yk *argv) {
+  yk_closure *c = (yk_closure *)PTR(f);
+  yk o = yk_object_of(0, NULL, NULL);
+  ((yk_object *)PTR(o))->proto = ensure_prototype(target);
+  /* A base class's fields are the instance's before its constructor's body runs (#1330). */
+  if (c->is_class && c->parent == 0) init_fields(f, o);
+  yk saved = constructing;
+  constructing = target;
+  pending_new = c, pending_target = target;
+  yk r = c->code(c, o, argc, argv);
+  constructing = saved;
+  return is_reference(r) ? r : o;
+}
 yk yk_new(yk f, uint64_t argc, const yk *argv) {
   if (is_closure(f)) {
     yk_code code = ((yk_closure *)PTR(f))->code;
@@ -10182,14 +10231,7 @@ yk yk_new(yk f, uint64_t argc, const yk *argv) {
     if (code == builtin_date) return date_construct(argc, argv);
     /* A class, or a `function`: an object inheriting its prototype, given to it as `this`. */
     yk_closure *c = (yk_closure *)PTR(f);
-    if (c->is_class || c->has_this) {
-      yk o = yk_object_of(0, NULL, NULL);
-      ((yk_object *)PTR(o))->proto = ensure_prototype(f);
-      /* A base class's fields are the instance's before its constructor's body runs (#1330). */
-      if (c->is_class && c->parent == 0) init_fields(f, o);
-      yk r = c->code(c, o, argc, argv);
-      return is_reference(r) ? r : o;
-    }
+    if (c->is_class || c->has_this) return construct_with_target(f, f, argc, argv);
   }
   type_error("this constructor is not in the runtime yet");
   return YK_UNDEFINED;

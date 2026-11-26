@@ -1019,10 +1019,14 @@ function lowerFunction(
   // A function's own `arguments` (#1330): its arguments as an array, made on entry (strict code:
   // no parameter aliases them).
   const argumentsValues: ValueId[] = [];
+  // A function's own new.target (ECMA-262 13.3.12): taken on entry, as yk_new or super() left it.
+  const newTargetValues: ValueId[] = [];
   for (const n of g.nodes) {
     if (n.kind !== "diamond-source") continue;
     const sym = n.diamond?.symbol ?? "";
     if (sym === "arguments" && closure !== undefined) argumentsValues.push(n.outputs[0] as ValueId);
+    else if (sym === "new.target" && closure !== undefined)
+      newTargetValues.push(n.outputs[0] as ValueId);
     else if (LEAVES[sym] !== undefined) leafValue.set(n.outputs[0] as ValueId, sym);
     else if (n.diamond?.reason === "platform-primitive" && sym === "Math")
       mathValue.add(n.outputs[0] as ValueId);
@@ -1828,7 +1832,11 @@ function lowerFunction(
         throw new LlvmEmitError(`the literal ${text} is not in the subset yet`);
       return boxedNumber(n);
     }
-    if ((p?.kind === "diamond-source" || freeValue.has(v)) && !argumentsValues.includes(v)) {
+    if (
+      (p?.kind === "diamond-source" || freeValue.has(v)) &&
+      !argumentsValues.includes(v) &&
+      !newTargetValues.includes(v)
+    ) {
       const leaf = leafValue.get(v);
       if (leaf !== undefined) {
         // A leaf as a value: the runtime's function value for it.
@@ -5118,6 +5126,12 @@ function lowerFunction(
     set(n.outputs[0] as ValueId, regexObject(text));
   }
   for (const v of argumentsValues) set(v, call("yk_rest", "i64 %argc, ptr %argv, i64 0"));
+  if (newTargetValues.length > 0) {
+    m.intrinsics.add("declare i64 @yk_take_new_target(ptr)");
+    const nt = fresh();
+    emit(`${nt} = call i64 @yk_take_new_target(ptr %closure)`);
+    for (const v of newTargetValues) set(v, nt);
+  }
   // Parameters: the entry function's own; a closure's captures, then its arguments.
   params.forEach((p, i) => {
     const v = p.outputs[0] as ValueId;
