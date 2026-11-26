@@ -6514,6 +6514,7 @@ typedef struct {
   yk value;
   reaction **on_fulfil, **on_reject;
   uint32_t n, cap;
+  int handled; /* [[PromiseIsHandled]]: a reaction was ever added */
 } promise_state;
 
 typedef struct coro {
@@ -6583,11 +6584,29 @@ static void enqueue(job j) {
   jobs[jobs_tail++] = j;
 }
 
+/* HostPromiseRejectionTracker (#1361 P2): a boot program over Node's library sets the hook (V8's
+   promise reject callback: type 0 rejected with no handler, 1 a handler added after); without one,
+   the runtime keeps the promises rejected with no handler and, once the jobs are done, an unhandled
+   one ends the program as Node's default does. */
+static yk reject_hook = 0;
+static yk_array *unhandled_rejections = NULL;
+static void push(yk_array *a, yk v);
+static yk_array *new_array(uint32_t cap);
+static void track_rejection(yk p, int type, yk reason) {
+  if (is_closure(reject_hook)) {
+    yk args[3] = {yk_number(type), p, reason};
+    call_value(reject_hook, YK_UNDEFINED, 3, args);
+  } else if (type == 0) {
+    if (unhandled_rejections == NULL) unhandled_rejections = new_array(4);
+    push(unhandled_rejections, p);
+  }
+}
 static void settle(yk p, int state, yk value) {
   promise_state *s = pstate(p);
   if (s->state != 0) return;
   s->state = state;
   s->value = value;
+  if (state == 2 && !s->handled) track_rejection(p, 0, value);
   /* TriggerPromiseReactions: each of the settled side, in order, as a job. */
   for (uint32_t i = 0; i < s->n; i++)
     enqueue((job){0, state == 1 ? s->on_fulfil[i] : s->on_reject[i], value, 0, 0, 0});
@@ -6658,6 +6677,8 @@ static void perform_then(yk p, yk on_fulfil, yk on_reject, yk derived, coro *res
   *f = (reaction){0, is_closure(on_fulfil) ? on_fulfil : 0, derived, resume};
   *r = (reaction){1, is_closure(on_reject) ? on_reject : 0, derived, resume};
   promise_state *s = pstate(p);
+  if (s->state == 2 && !s->handled) track_rejection(p, 1, YK_UNDEFINED);
+  s->handled = 1;
   if (s->state == 0) {
     if (s->n == s->cap) {
       uint32_t old = s->cap;
@@ -7279,6 +7300,17 @@ static yk promise_static_race(void *c, yk self, uint64_t argc, const yk *argv) {
 /* __yakccTryAsync(body, handler, finalizer): the async try primitive, as the TypeScript lowering's
    runtime defines it: try { try { return await body() } catch (t) { …; return await handler(t) } }
    finally { const done = await finalizer(); if (done is [1, …]) return done }. */
+/* A block of the async try (an async closure), run as the try's own statements are: in the
+   current async function's coroutine, its awaits suspending that function, so it takes no more
+   jobs than the source's try does; its result as `await block()` would give it. */
+static yk try_async_block(yk f, uint64_t argc, const yk *argv) {
+  yk_closure *k = is_closure(f) ? (yk_closure *)PTR(f) : NULL;
+  if (k != NULL && k->mode == 1 && !k->is_class && current_coro != NULL && current_coro->kind == 0) {
+    yk r = k->code(k, YK_UNDEFINED, argc, argv);
+    return is_promise(r) ? yk_await(r) : r;
+  }
+  return yk_await(call_value(f, YK_UNDEFINED, argc, argv));
+}
 static yk try_async_body(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
   yk body = argv[0], handler_fn = argc > 1 ? argv[1] : YK_UNDEFINED, fin = argc > 2 ? argv[2] : YK_UNDEFINED;
@@ -7289,7 +7321,7 @@ static yk try_async_body(void *c, yk self, uint64_t argc, const yk *argv) {
     h.prev = handlers;
     handlers = &h;
     if (setjmp(h.env) == 0) {
-      r = yk_await(call_value(body, YK_UNDEFINED, 0, NULL));
+      r = try_async_block(body, 0, NULL);
       threw = 0;
     } else {
       r = thrown;
@@ -7303,7 +7335,7 @@ static yk try_async_body(void *c, yk self, uint64_t argc, const yk *argv) {
     h.prev = handlers;
     handlers = &h;
     if (setjmp(h.env) == 0) {
-      r = yk_await(call_value(handler_fn, YK_UNDEFINED, 1, &exc));
+      r = try_async_block(handler_fn, 1, &exc);
       threw = 0;
     } else {
       r = thrown;
@@ -7312,13 +7344,20 @@ static yk try_async_body(void *c, yk self, uint64_t argc, const yk *argv) {
     handlers = h.prev;
   }
   if (is_closure(fin)) {
-    yk done = yk_await(call_value(fin, YK_UNDEFINED, 0, NULL));
+    yk done = try_async_block(fin, 0, NULL);
     if (is_array(done) && arr(done)->len > 0 && strict_equal(arr(done)->items[0], yk_number(1))) return done;
   }
   if (threw) yk_throw(r);
   return r;
 }
 
+/* await __yakccTryAsync(…) in an async function: the try run in its coroutine, its completion the
+   await's value (the emitter's, #1276). */
+yk yk_try_async_now(uint64_t argc, const yk *argv) {
+  if (current_coro == NULL || current_coro->kind != 0)
+    return yk_await(call_value(yk_global("__yakccTryAsync", 15), YK_UNDEFINED, argc, argv));
+  return try_async_body(NULL, YK_UNDEFINED, argc, argv);
+}
 static yk builtin_queue_microtask(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
   yk f = argc > 0 ? argv[0] : YK_UNDEFINED;
@@ -8378,6 +8417,28 @@ static yk builtin_on_exit(void *c, yk s, uint64_t argc, const yk *argv) {
   exit_hook = arg_or_undefined(argc, argv, 0);
   return YK_UNDEFINED;
 }
+static yk builtin_set_reject_hook(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  reject_hook = arg_or_undefined(argc, argv, 0);
+  return YK_UNDEFINED;
+}
+/* With no hook: a promise still rejected with no handler once the jobs are done ends the program,
+   its reason thrown uncaught (a reason that is not an Error as Node's ERR_UNHANDLED_REJECTION). */
+static void report_unhandled_rejections(void) {
+  if (unhandled_rejections == NULL || !program_mode) return;
+  for (uint32_t i = 0; i < unhandled_rejections->len; i++) {
+    yk p = unhandled_rejections->items[i];
+    promise_state *s = pstate(p);
+    if (s->handled) continue;
+    yk reason = s->value;
+    if (is_object(reason) && ((yk_object *)PTR(reason))->error) yk_throw(reason);
+    yk e = make_error("Error", concat(str(concat(str(ascii("This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \"")), str(to_string(is_symbol(reason) ? symbol_descriptive(reason) : reason)))), str(ascii("\"."))));
+    yk_set(e, ascii("code"), ascii("ERR_UNHANDLED_REJECTION"));
+    yk_set(e, ascii("name"), ascii("UnhandledPromiseRejection"));
+    yk_throw(e);
+  }
+  unhandled_rejections->len = 0;
+}
 static void run_jobs_and_ticks(void) {
   if (is_closure(tick_hook))
     for (;;) {
@@ -8386,6 +8447,7 @@ static void run_jobs_and_ticks(void) {
       yk_drain();
     }
   yk_drain();
+  report_unhandled_rejections();
 }
 int yk_main_end(void) {
   run_jobs_and_ticks();
@@ -9387,6 +9449,10 @@ static yk global_uncached(const char *name, uint64_t n) {
   if (n == 18 && memcmp(name, "__yakccSetTickHook", 18) == 0) {
     static yk f;
     return f != 0 ? f : (f = yk_closure_new(builtin_set_tick_hook, 0, 0, NULL));
+  }
+  if (n == 27 && memcmp(name, "__yakccSetPromiseRejectHook", 27) == 0) {
+    static yk f;
+    return f != 0 ? f : (f = yk_closure_new(builtin_set_reject_hook, 0, 0, NULL));
   }
   if (n == 20 && memcmp(name, "__yakccRunMicrotasks", 20) == 0) {
     static yk f;

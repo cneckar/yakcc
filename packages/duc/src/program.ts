@@ -698,7 +698,8 @@ runtime.task_queue = {
     kPromiseRejectAfterResolved: 2,
     kPromiseResolveAfterResolved: 3,
   },
-  setPromiseRejectCallback: () => {},
+  // V8's promise reject callback: the runtime calls it as V8 does (type, promise, reason).
+  setPromiseRejectCallback: (f) => __yakccSetPromiseRejectHook(f),
 };
 // Async hooks' state (src/async_wrap.cc, Environment::AsyncHooks): the fields and the stack of
 // [execution id, trigger id] pairs, as Node keeps them; the main script runs as id 1, triggered by 0.
