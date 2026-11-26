@@ -5753,6 +5753,12 @@ static yk named(yk f, yk name) {
   return f;
 }
 /* A function's name and length as its code gives them (the lowering's, at each closure made). */
+yk yk_closure_meta_key(yk f, yk name, int64_t length) {
+  yk_closure *c = (yk_closure *)PTR(f);
+  c->fname = name;
+  c->flen = (int32_t)length;
+  return f;
+}
 yk yk_closure_meta(yk f, const char *name, uint64_t n, int64_t length) {
   yk_closure *c = (yk_closure *)PTR(f);
   if (name != NULL) c->fname = yk_string_utf8(name, n);
