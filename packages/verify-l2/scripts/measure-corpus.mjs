@@ -11,7 +11,14 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { liftAtom } from "@yakcc/duc";
-import { ENCODER_VERSION, Encoder, Unsupported, shutdownSolver, verifyL2 } from "../dist/index.js";
+import {
+  ENCODER_VERSION,
+  Encoder,
+  Unsupported,
+  shutdownSolver,
+  sortOf,
+  verifyL2,
+} from "../dist/index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..", "..");
@@ -21,7 +28,15 @@ const require = createRequire(join(root, "packages", "registry", "package.json")
 const Database = require("better-sqlite3");
 const db = new Database(dbPath, { readonly: true });
 
-const SORT = { number: "F64", boolean: "Bool", string: "Str" };
+// The sort of a declared type, or undefined (sortOf refuses what L2 has no sort for).
+const sortOfType = (t) => {
+  try {
+    return sortOf(String(t), "");
+  } catch (e) {
+    if (e instanceof Unsupported) return undefined;
+    throw e;
+  }
+};
 const rows = db
   .prepare("select block_merkle_root r, spec_canonical_bytes s, impl_source i from blocks")
   .all();
@@ -45,7 +60,7 @@ for (const row of rows) {
   if ((spec.preconditions ?? []).length > 0) stats.withPreconditions++;
   const inputs = spec.inputs ?? [];
   const outputs = spec.outputs ?? [];
-  const nonScalar = [...inputs, ...outputs].find((p) => SORT[p.type] === undefined);
+  const nonScalar = [...inputs, ...outputs].find((p) => sortOfType(p.type) === undefined);
   const scalar = nonScalar === undefined && outputs.length === 1;
   if (scalar) stats.scalarSignature++;
   else
@@ -65,10 +80,10 @@ for (const row of rows) {
   const arity = graph.nodes.filter((n) => n.kind === "param-source").length;
   // Declared types where the spec gives them; a number otherwise.
   const params = Array.from({ length: arity }, (_, i) => {
-    const sort = SORT[inputs[i]?.type];
-    return sort === "Bool" || sort === "Str"
-      ? { sort, smt: `p${i}` }
-      : { sort: "F64", smt: `((_ to_fp 11 53) p${i})` };
+    const sort = sortOfType(inputs[i]?.type);
+    return sort === undefined || sort === "F64"
+      ? { sort: "F64", smt: `((_ to_fp 11 53) p${i})` }
+      : { sort, smt: `p${i}` };
   });
   try {
     new Encoder({ inputs: [], outputs: [], preconditions: [], postconditions: [] }, params).atom(
@@ -120,14 +135,16 @@ let sampleEncodable = 0;
 let sampleScalar = 0;
 // The sample's argument kinds (#1299's generator): numbers, indices and integers are numbers;
 // "str" and { str } are strings.
-const kindSort = (a) =>
-  a === "num" || a === "int" || a === "idx"
-    ? "F64"
-    : a === "bool"
-      ? "Bool"
-      : a === "str" || (typeof a === "object" && a !== null && "str" in a)
-        ? "Str"
-        : undefined;
+const kindSort = (a) => {
+  if (a === "num" || a === "int" || a === "idx" || a === "byte") return "F64";
+  if (a === "bool") return "Bool";
+  if (a === "str" || (typeof a === "object" && a !== null && "str" in a)) return "Str";
+  if (typeof a === "object" && a !== null && "arr" in a) {
+    const e = kindSort(a.arr);
+    return e === "F64" ? "ArrF64" : e === "Bool" ? "ArrBool" : e === "Str" ? "ArrStr" : undefined;
+  }
+  return undefined;
+};
 for (const atom of sample) {
   const scalar = atom.args.every((a) => kindSort(a) !== undefined);
   if (scalar) sampleScalar++;

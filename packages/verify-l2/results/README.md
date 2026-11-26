@@ -86,3 +86,29 @@ templates), object fields and arrays.
 | closures | 5 |
 | `.length` of arrays | 4 |
 | a number converted to a string | 3 |
+
+## With arrays and `undefined` (encoder `verify-l2/5`)
+
+Every node is now encoded (an unused write was missed before), so a block's first refusal is the
+first node the encoder cannot model, in graph order. That reorders the registry's refusal list:
+module statements 1,444, closures 572, `for…of` 122, `await` 99.
+
+| | With strings | With arrays |
+|---|---|---|
+| Registry blocks with an encodable signature | 46 | 49 |
+| Registry blocks inside the fragment | 9 | 10 |
+| DUC sample functions with encodable argument types | 35 | 37 |
+| DUC sample functions inside the fragment | 4 | 5 |
+
+**The sample's next refusals:**
+
+| Construct | Functions |
+|---|---|
+| `.length` (of values whose type the sample does not give) | 14 |
+| closures | 8 |
+| `null` and other literals | 4 |
+| `.kind` (object fields) | 3 |
+| `.replace` | 3 |
+| a number converted to a string | 3 |
+
+Next: records (object fields), closures as callbacks (`map`, `filter`), `null`.

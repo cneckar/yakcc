@@ -23,7 +23,26 @@
  * The sorts this encoder knows: ECMAScript's Number as binary64, Boolean, and String as a sequence
  * of UTF-16 code units (`(Seq (_ BitVec 16))`), which is exactly what ECMAScript says a string is.
  */
-export type Sort = "F64" | "Bool" | "Str";
+export type Sort = "F64" | "Bool" | "Str" | ArraySort;
+
+/**
+ * Arrays, read-only, as sequences of their elements: numbers by their 64 bits (so a model gives
+ * them exactly), booleans, strings. An array is an object with an identity; nothing here observes
+ * it (writes are effects, refused; `===` on arrays is refused).
+ */
+export type ArraySort = "ArrF64" | "ArrBool" | "ArrStr";
+
+export function isArraySort(sort: Sort): sort is ArraySort {
+  return sort === "ArrF64" || sort === "ArrBool" || sort === "ArrStr";
+}
+
+/** An array sort's element sort. */
+export function elementSort(sort: ArraySort): "F64" | "Bool" | "Str" {
+  return sort === "ArrF64" ? "F64" : sort === "ArrBool" ? "Bool" : "Str";
+}
+
+/** ECMAScript's maximum array length, 2^32 - 1. */
+export const MAX_ARRAY_LENGTH = "4294967295";
 
 /**
  * An SMT-LIB2 term with its sort. A number may carry `int`, an SMT Int whose rounding to binary64
@@ -38,10 +57,39 @@ export interface Term {
   readonly int?: string;
   /** A bound on |int| known by construction, when there is one. */
   readonly bound?: number;
+  /**
+   * When present, the value may be `undefined` (an element read past the end, `s[i]`): this Bool
+   * says it is not, and `smt` is the value then. Only ECMAScript's own conversions of `undefined`
+   * consume it (ToNumber gives NaN, ToString "undefined", ToBoolean false, equality, `??`); any
+   * other use is refused.
+   */
+  readonly defined?: string;
+}
+
+/** The value of a possibly-undefined term when it is defined. */
+export function base(t: Term): Term {
+  const { defined: _defined, ...rest } = t;
+  return rest;
 }
 
 /** ECMAScript's maximum string length, 2^53 - 1 (a longer result throws a RangeError). */
 export const MAX_STRING_LENGTH = "9007199254740991";
+
+/**
+ * `undefined` as a term: never defined. Every conversion of it is ECMAScript's (ToNumber NaN,
+ * ToString "undefined", ToBoolean false), so it can stand anywhere those apply. Its sort is a
+ * placeholder, adapted to the other operand's where two values meet (`adapt`).
+ */
+export const UNDEFINED: Term = {
+  sort: "F64",
+  smt: "((_ to_fp 11 53) #x7ff8000000000000)",
+  defined: "false",
+};
+
+/** `t` in `to`'s sort if `t` is the literal undefined (its value is never read). */
+export function adapt(t: Term, to: Term): Term {
+  return t.defined === "false" ? { sort: to.sort, smt: to.smt, defined: "false" } : t;
+}
 
 const TWO_53 = "9007199254740992";
 
@@ -87,7 +135,20 @@ export class Unsupported extends Error {
 
 /** The SMT-LIB2 sort of a {@link Sort}. */
 export function smtSort(sort: Sort): string {
-  return sort === "F64" ? "(_ FloatingPoint 11 53)" : sort === "Bool" ? "Bool" : STR_SORT;
+  switch (sort) {
+    case "F64":
+      return "(_ FloatingPoint 11 53)";
+    case "Bool":
+      return "Bool";
+    case "Str":
+      return STR_SORT;
+    case "ArrF64":
+      return "(Seq (_ BitVec 64))";
+    case "ArrBool":
+      return "(Seq Bool)";
+    case "ArrStr":
+      return `(Seq ${STR_SORT})`;
+  }
 }
 
 export const STR_SORT = "(Seq (_ BitVec 16))";
@@ -129,6 +190,14 @@ const ZERO = f64Literal(0);
 
 /** ToNumber, on the sorts encoded here: a boolean is 1 or 0. */
 export function toNumber(t: Term): Term {
+  if (t.defined !== undefined) {
+    return {
+      sort: "F64",
+      smt: `(ite ${t.defined} ${toNumber(base(t)).smt} ${f64Literal(Number.NaN).smt})`,
+    };
+  }
+  if (isArraySort(t.sort))
+    throw new Unsupported("ToNumber(array)", "an array converted to a number");
   if (t.sort === "Str") {
     throw new Unsupported("ToNumber(string)", "a string converted to a number (StringToNumber)");
   }
@@ -137,6 +206,12 @@ export function toNumber(t: Term): Term {
 
 /** ToString, on booleans and strings; a number's ToString is not encoded. */
 function toStr(t: Term): Term {
+  if (t.defined !== undefined) {
+    return {
+      sort: "Str",
+      smt: `(ite ${t.defined} ${toStr(base(t)).smt} ${strLiteral("undefined").smt})`,
+    };
+  }
   if (t.sort === "Str") return t;
   if (t.sort === "Bool")
     return {
@@ -148,6 +223,9 @@ function toStr(t: Term): Term {
 
 /** ToBoolean: a number is false at ±0 and NaN. */
 export function truthy(t: Term): Term {
+  if (t.defined !== undefined)
+    return { sort: "Bool", smt: `(and ${t.defined} ${truthy(base(t)).smt})` };
+  if (isArraySort(t.sort)) return { sort: "Bool", smt: "true" }; // an object is truthy
   if (t.sort === "Str") return { sort: "Bool", smt: `(> (seq.len ${t.smt}) 0)` };
   return t.sort === "Bool"
     ? t
@@ -238,6 +316,13 @@ export function literal(label: string): Term {
 
 /** An ECMAScript operator (as `ecmaScriptView` writes it) on encoded operands. */
 export function operation(label: string, args: readonly Term[]): Term {
+  if (args.some((a) => isArraySort(a.sort)) && !["&&", "||", "??", "!"].includes(label)) {
+    throw new Unsupported(label, `${label} on an array (identity and ToPrimitive are not encoded)`);
+  }
+  if (args.length === 2 && (args[0]?.defined !== undefined || args[1]?.defined !== undefined)) {
+    const maybe = maybeUndefined(label, args[0] as Term, args[1] as Term);
+    if (maybe !== undefined) return maybe;
+  }
   if (args.length === 2) {
     const [a, b] = args as [Term, Term];
     // + is concatenation when either side is a string (after ToPrimitive, a no-op on these sorts).
@@ -337,6 +422,59 @@ export function operation(label: string, args: readonly Term[]): Term {
     }
   }
   throw new Unsupported(label, `the operation ${label} on ${args.length} operand(s)`);
+}
+
+/**
+ * The binary operators whose meaning on `undefined` is encoded here: equality (undefined equals only
+ * undefined, strictly or loosely, there being no null), `&&`, `||` and `??`. Every other operator
+ * reaches `undefined` through ToNumber or ToString, which handle it. Undefined if not one of these.
+ */
+function maybeUndefined(label: string, a0: Term, b0: Term): Term | undefined {
+  const a = adapt(a0, b0);
+  const b = adapt(b0, a0);
+  const da = a.defined ?? "true";
+  const db = b.defined ?? "true";
+  switch (label) {
+    case "===":
+    case "!==":
+    case "==":
+    case "!=": {
+      const strict = label === "===" || label === "!==";
+      const x = base(a);
+      const y = base(b);
+      const both =
+        x.sort === y.sort
+          ? sameSortEq(x, y)
+          : strict
+            ? "false"
+            : sameSortEq(toNumber(x), toNumber(y));
+      const eq = `(or (and ${da} ${db} ${both}) (and (not ${da}) (not ${db})))`;
+      return { sort: "Bool", smt: label === "===" || label === "==" ? eq : `(not ${eq})` };
+    }
+    case "&&":
+    case "||": {
+      if (a.sort !== b.sort) throw new Unsupported("union", `${label} on values of two types`);
+      const c = truthy(a).smt;
+      const [t, e] = label === "&&" ? [b, a] : [a, b];
+      const dt = t.defined ?? "true";
+      const de = e.defined ?? "true";
+      return {
+        sort: a.sort,
+        smt: `(ite ${c} ${t.smt} ${e.smt})`,
+        defined: `(ite ${c} ${dt} ${de})`,
+      };
+    }
+    case "??": {
+      if (a.defined === undefined) return a;
+      if (a.sort !== b.sort) throw new Unsupported("union", "?? on values of two types");
+      return {
+        sort: a.sort,
+        smt: `(ite ${da} ${a.smt} ${b.smt})`,
+        ...(b.defined !== undefined ? { defined: `(or ${da} ${db})` } : {}),
+      };
+    }
+  }
+  return undefined;
 }
 
 function sameSortEq(a: Term, b: Term): string {
@@ -466,21 +604,9 @@ export function stringMethod(name: string, s: Term, args: readonly Term[]): Term
         smt: `(ite (and (<= 0 ${k}) (< ${k} ${len})) ((_ to_fp_unsigned 11 53) RNE (seq.nth ${s.smt} ${k})) ${f64Literal(Number.NaN).smt})`,
       };
     }
-    case "slice": {
+    case "slice":
       if (args.length > 2) bad("more than two arguments");
-      // A relative index: from the end when negative, clamped to [0, len].
-      const rel = (t: Term | undefined, dflt: string): string => {
-        if (t === undefined) return dflt;
-        const k = toIndex(t, `(- ${len})`, len);
-        return `(let ((k ${k})) (ite (< k 0) (ite (< (+ ${len} k) 0) 0 (+ ${len} k)) (ite (< k ${len}) k ${len})))`;
-      };
-      const from = rel(arg(0), "0");
-      const to = rel(arg(1), len);
-      return {
-        sort: "Str",
-        smt: `(let ((f ${from}) (e ${to})) (ite (< f e) (seq.extract ${s.smt} f (- e f)) (as seq.empty ${STR_SORT})))`,
-      };
-    }
+      return { sort: "Str", smt: seqSlice(s.smt, args, `(as seq.empty ${STR_SORT})`) };
     case "substring": {
       if (args.length > 2) bad("more than two arguments");
       const clamp = (t: Term | undefined, dflt: string): string => {
@@ -541,4 +667,146 @@ export function template(label: string, values: readonly Term[]): Term {
     sort: "Str",
     smt: pieces.length === 1 ? (pieces[0] as string) : `(seq.++ ${pieces.join(" ")})`,
   };
+}
+
+/** `slice(a, b)` of a sequence: relative indices (from the end when negative), clamped to [0, len]. */
+function seqSlice(seq: string, args: readonly Term[], empty: string): string {
+  const len = `(seq.len ${seq})`;
+  const rel = (t: Term | undefined, dflt: string): string => {
+    if (t === undefined) return dflt;
+    const k = toIndex(t, `(- ${len})`, len);
+    return `(let ((k ${k})) (ite (< k 0) (ite (< (+ ${len} k) 0) 0 (+ ${len} k)) (ite (< k ${len}) k ${len})))`;
+  };
+  return `(let ((f ${rel(args[0], "0")}) (e ${rel(args[1], len)})) (ite (< f e) (seq.extract ${seq} f (- e f)) ${empty}))`;
+}
+
+/**
+ * A property key from a number, for `s[i]` and `xs[i]`: the integer it is (CanonicalNumericIndexString:
+ * -0 is "0", 1.5 and NaN are not integer keys) and whether it is one inside [0, len).
+ */
+function integerKey(idx: Term, len: string): { k: string; valid: string } {
+  if (idx.sort !== "F64" || idx.defined !== undefined) {
+    throw new Unsupported("ElementAccess", "an element read whose key is not a number");
+  }
+  if (idx.int !== undefined)
+    return { k: idx.int, valid: `(and (<= 0 ${idx.int}) (< ${idx.int} ${len}))` };
+  const n = idx.smt;
+  const k = `(to_int (fp.to_real ${n}))`;
+  return {
+    k,
+    valid: `(and (not (fp.isNaN ${n})) (not (fp.isInfinite ${n})) (fp.eq (fp.roundToIntegral RTZ ${n}) ${n}) (<= 0 ${k}) (< ${k} ${len}))`,
+  };
+}
+
+/** `target[index]`: a string's code unit as a string, or an array's element; undefined past the end. */
+export function elementAccess(target: Term, index: Term): Term {
+  if (target.defined !== undefined) {
+    throw new Unsupported(
+      "ElementAccess",
+      "an element read of a value that may be undefined (a TypeError)",
+    );
+  }
+  const len = `(seq.len ${target.smt})`;
+  const { k, valid } = integerKey(index, len);
+  switch (target.sort) {
+    case "Str":
+      return { sort: "Str", smt: `(seq.at ${target.smt} ${k})`, defined: valid };
+    case "ArrF64":
+      return { sort: "F64", smt: `((_ to_fp 11 53) (seq.nth ${target.smt} ${k}))`, defined: valid };
+    case "ArrBool":
+    case "ArrStr":
+      return {
+        sort: elementSort(target.sort),
+        smt: `(seq.nth ${target.smt} ${k})`,
+        defined: valid,
+      };
+  }
+  throw new Unsupported("ElementAccess", `an element read of a ${target.sort} value`);
+}
+
+/** An array literal of numbers, booleans or strings (no holes, spreads or undefined elements). */
+export function arrayLiteral(elements: readonly Term[]): Term {
+  const first = elements[0];
+  if (first === undefined)
+    throw new Unsupported("ArrayLiteral", "an empty array literal (its element type is not known)");
+  if (
+    elements.some((e) => e.sort !== first.sort || e.defined !== undefined || isArraySort(e.sort))
+  ) {
+    throw new Unsupported(
+      "ArrayLiteral",
+      "an array literal whose elements are not all numbers, booleans or strings",
+    );
+  }
+  const sort: ArraySort =
+    first.sort === "F64" ? "ArrF64" : first.sort === "Bool" ? "ArrBool" : "ArrStr";
+  const units = elements.map(
+    (e) => `(seq.unit ${e.sort === "F64" ? `(fp.to_ieee_bv ${e.smt})` : e.smt})`,
+  );
+  return { sort, smt: units.length === 1 ? (units[0] as string) : `(seq.++ ${units.join(" ")})` };
+}
+
+/** An array's `length`. */
+export function arrayLength(xs: Term): Term {
+  return intF64(`(seq.len ${xs.smt})`, undefined, Number(MAX_ARRAY_LENGTH));
+}
+
+/** The array methods whose meaning is encoded. */
+export const ARRAY_METHODS: ReadonlySet<string> = new Set([
+  "slice",
+  "concat",
+  "includes",
+  "indexOf",
+]);
+
+/**
+ * A call of an array method. `includes` and `indexOf` only on arrays of strings or booleans: on
+ * numbers `includes` finds NaN and `indexOf` does not, and both find -0 for 0, where sequence
+ * equality is structural; neither is that.
+ */
+export function arrayMethod(name: string, xs: Term, args: readonly Term[]): Term {
+  if (!isArraySort(xs.sort)) throw new Unsupported(name, `${name} on a ${xs.sort} value`);
+  const bad = (why: string): never => {
+    throw new Unsupported(`Array.prototype.${name}`, `${name}: ${why}`);
+  };
+  const empty = `(as seq.empty ${smtSort(xs.sort)})`;
+  switch (name) {
+    case "slice":
+      if (args.length > 2) bad("more than two arguments");
+      return { sort: xs.sort, smt: seqSlice(xs.smt, args, empty) };
+    case "concat": {
+      if (args.some((a) => a.sort !== xs.sort || a.defined !== undefined))
+        bad("an argument that is not an array of the same type");
+      return {
+        sort: xs.sort,
+        smt: args.length === 0 ? xs.smt : `(seq.++ ${xs.smt} ${args.map((a) => a.smt).join(" ")})`,
+      };
+    }
+    case "includes":
+    case "indexOf": {
+      if (xs.sort === "ArrF64")
+        bad("on numbers (SameValueZero and strict equality are not sequence equality)");
+      const v = args[0];
+      if (args.length !== 1 || v === undefined) bad("a position argument is not encoded");
+      const needle = v as Term;
+      if (needle.sort !== elementSort(xs.sort) || needle.defined !== undefined)
+        bad("a search value of another type");
+      const unit = `(seq.unit ${needle.smt})`;
+      if (name === "includes") return { sort: "Bool", smt: `(seq.contains ${xs.smt} ${unit})` };
+      return {
+        sort: "F64",
+        smt: `(let ((i (seq.indexof ${xs.smt} ${unit} 0))) (ite (< i 0) ${f64Literal(-1).smt} ((_ to_fp 11 53) RNE (to_real i))))`,
+        int: `(seq.indexof ${xs.smt} ${unit} 0)`,
+        bound: Number(MAX_ARRAY_LENGTH),
+      };
+    }
+  }
+  return bad("not encoded");
+}
+
+/**
+ * True lemmas of `seq.indexof seq needle 0` (= i), which Z3 does not find alone: i is non-negative
+ * exactly when seq contains needle, and then needle is there, inside seq.
+ */
+export function indexOfLemma(seq: string, needle: string, i: string): string {
+  return `(let ((i ${i})) (and (= (>= i 0) (seq.contains ${seq} ${needle})) (=> (>= i 0) (and (<= (+ i (seq.len ${needle})) (seq.len ${seq})) (= (seq.extract ${seq} i (seq.len ${needle})) ${needle})))))`;
 }
