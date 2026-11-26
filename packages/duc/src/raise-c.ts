@@ -30,6 +30,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  utimesSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -117,13 +118,24 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
     .digest("hex")
     .slice(0, 32);
   const path = join(dir, `${key}.json`);
+  // (And past 12 GB in all, the least recently used: ICU's 456 dumps are 80 MB each.)
+  const kept: { file: string; size: number; used: number }[] = [];
   for (const old of readdirSync(dir))
     try {
-      if (Date.now() - statSync(join(dir, old)).atimeMs > 86_400_000)
-        rmSync(join(dir, old), { force: true });
+      const o = statSync(join(dir, old));
+      const used = Math.max(o.atimeMs, o.mtimeMs);
+      if (Date.now() - used > 86_400_000) rmSync(join(dir, old), { force: true });
+      else if (old.endsWith(".json")) kept.push({ file: join(dir, old), size: o.size, used });
     } catch {
       // another process's, gone
     }
+  let total = kept.reduce((n, k) => n + k.size, 0);
+  for (const k of kept.sort((a, b) => a.used - b.used)) {
+    if (total <= 12 * 2 ** 30) break;
+    if (k.file === path) continue;
+    rmSync(k.file, { force: true });
+    total -= k.size;
+  }
   if (!existsSync(path)) {
     const part = `${path}.${process.pid}.part`;
     const out = openSync(part, "w");
@@ -136,6 +148,14 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
       closeSync(out);
     }
     renameSync(part, path);
+  } else {
+    // (Used now: kept before older ones.)
+    const now = new Date();
+    try {
+      utimesSync(path, now, now);
+    } catch {
+      // removed meanwhile by another process: read below fails as a missing dump would
+    }
   }
   const decls: IndexedDecl[] = [];
   const byName = new Map<string, IndexedDecl[]>();
@@ -733,7 +753,7 @@ function parseType(spelled: string, depth = 0): CType {
       if (
         e instanceof RaiseCError &&
         /is not raised yet$/.test(e.message) &&
-        /^\w+$/.test((ptr[1] as string).trim())
+        /^[A-Za-z_][\w:]*$/.test((ptr[1] as string).trim())
       )
         return { k: "ptr", to: { k: "void" } };
       throw e;
@@ -777,9 +797,13 @@ function parseType(spelled: string, depth = 0): CType {
   }
   // A record named without its tag (C++: `impl::DecNum`, partly qualified; `div_t`, a C typedef's
   // unnamed struct, which takes the typedef's name).
-  if (/^[A-Za-z_][\w:]*$/.test(raw))
+  if (/^[A-Za-z_][\w:]*$/.test(raw)) {
     for (const tag of ["class", "struct", "union"])
       if (unitLayout(`${tag} ${raw}`) !== undefined) return { k: "rec", name: `${tag} ${raw}` };
+    // (A C typedef's unnamed record, which the layout dump names by the typedef alone:
+    // `pthread_mutex_t`.)
+    if (unitLayout(raw) !== undefined) return { k: "rec", name: raw };
+  }
   throw new RaiseCError(`the C type "${raw}" is not raised yet`);
 }
 
@@ -1309,6 +1333,8 @@ export interface CxxUnit {
     | undefined;
   /** Whether a member function is virtual. */
   readonly isVirtual: (methodId: string) => boolean;
+  /** Whether a member function is final, or its class is (a call of it is not dispatched). */
+  readonly isFinal: (methodId: string) => boolean;
   /** A function's parameter's default argument (its expression), by the function's id. */
   readonly defaultArgOf: (fnId: string, index: number) => ClangNode | undefined;
   /**
@@ -1545,12 +1571,23 @@ const dataKind = (t: CType): string => (t.k === "ptr" ? "u64" : t.k === "bool" ?
  * A member function's key within its class: its name and its parameters and qualifiers, without
  * namespaces or spaces (`area() const`, as a declaration's type or clang's vtable dump spells it).
  */
+/** A class's own name, without its tag, scopes and template arguments (`StringByteSink`). */
+const simpleClass = (record: string): string => {
+  let t = record.replace(/^(struct|class|union) /, "");
+  for (let prev = ""; prev !== t; ) {
+    prev = t;
+    t = t.replace(/<[^<>]*>/g, "");
+  }
+  return t.split("::").pop() ?? "";
+};
+
 const memberKey = (name: string, signature: string): string =>
   name +
   signature
     .slice(signature.indexOf("("))
     .replace(/\s*\bnoexcept\b(\([^)]*\))?/g, "")
     .replace(/\s*\bthrow\b\s*(\(\s*\))?/g, "")
+    .replace(/\(anonymous namespace\)::/g, "")
     .replace(/\b[A-Za-z_]\w*::/g, "")
     .replace(/\s+/g, "");
 
@@ -2219,6 +2256,21 @@ function raiseBody(
           if (off === undefined) throw new RaiseCError(`${to.name} as a base of ${from.name}`);
           return { k: "mem", addr: off === 0 ? p.addr : `(${p.addr} + ${off})`, t: to };
         }
+        // A base's subobject as the derived object it is in (`static_cast<Derived &>(base)`): back
+        // by the base's offset.
+        if (e.castKind === "BaseToDerived") {
+          const from = typeOf(k0);
+          const to = typeOf(e);
+          const p = place(k0);
+          if (from.k !== "rec" || to.k !== "rec" || p.k !== "mem") break;
+          const off = baseOffset(to.name, from.name);
+          if (off === undefined) throw new RaiseCError(`${from.name} as a base of ${to.name}`);
+          return { k: "mem", addr: off === 0 ? p.addr : `(${p.addr} - ${off})`, t: to };
+        }
+        // A conversion operator returning a reference (`operator const UnicodeString &()`): the
+        // object at the address it returns.
+        if (e.castKind === "UserDefinedConversion" && typeOf(e).k !== "ptr")
+          return { k: "mem", addr: expr(k0), t: typeOf(e) };
         break;
       case "DeclRefExpr": {
         const d = e.referencedDecl as ClangNode;
@@ -2886,6 +2938,31 @@ function raiseBody(
             return `__ykAlloc(Math.max(1, ${count} * ${sizeOf(t.to)}), ${Math.max(8, alignOf(t.to))})`;
           }
         }
+        // An array of class objects (`new UnicodeString[n]`): each made by the default
+        // constructor; with a destructor to run, a cookie before the first, its count (Itanium's
+        // C++ ABI), which delete[] reads.
+        if (
+          (e as { isArray?: boolean }).isArray === true &&
+          (e as { isPlacement?: boolean }).isPlacement !== true
+        ) {
+          const t = typeOf(e);
+          if (t.k === "ptr" && t.to.k === "rec") {
+            const n = kids[0] as ClangNode;
+            const count = temp({ k: "f64" });
+            const base = temp({ k: "f64" });
+            const size = sizeOf(t.to);
+            const cookie = destroy("0", t.to).length > 0 ? Math.max(8, alignOf(t.to)) : 0;
+            const init = kids.find((k) => k.kind === "CXXConstructExpr");
+            const recName = t.to.name;
+            const one = (at: string): string =>
+              init === undefined
+                ? "undefined"
+                : construct(at, { ...init, type: { qualType: recName } } as ClangNode);
+            const i = temp({ k: "f64" });
+            const each = `(() => { for (${i} = 0; ${i} < ${count}; ${i}++) ${one(`(${base} + ${cookie} + ${i} * ${size})`)}; })()`;
+            return `((${count} = ${wide(typeOf(n)) ? `__ykBigToF64(${expr(n)})` : expr(n)}), (${base} = __ykAlloc(Math.max(1, ${cookie} + ${count} * ${size}), ${Math.max(8, alignOf(t.to))})), ${cookie > 0 ? `__ykStore64(${base}, __ykNumToBig(${count})), ` : ""}${each}, (${base} + ${cookie}))`;
+          }
+        }
         // (`new (std::nothrow) T(..)`: the plain new, which does not fail here.)
         const nothrow = /nothrow_t/.test(
           (e as { operatorNewDecl?: { type?: { qualType?: string } } }).operatorNewDecl?.type
@@ -2916,6 +2993,21 @@ function raiseBody(
         if (t.k !== "ptr") throw new RaiseCError("a delete of a non-pointer");
         const p = temp({ k: "f64" });
         let gone: string;
+        // delete[] of class objects with a destructor to run: each, last first, then the block
+        // from its cookie (see the array new).
+        if ((e as { isArrayAsWritten?: boolean }).isArrayAsWritten === true && t.to.k === "rec") {
+          const one = destroy("__ykEl", t.to);
+          if (one.length > 0) {
+            const cookie = Math.max(8, alignOf(t.to));
+            const n = temp({ k: "f64" });
+            const i = temp({ k: "f64" });
+            const size = sizeOf(t.to);
+            const each = one
+              .map((x) => x.replaceAll("__ykEl", `(${p} + ${i} * ${size})`))
+              .join(", ");
+            return `(((${p} = ${expr(k0)}) !== 0) ? ((${n} = __ykBigToF64(__ykI64(__ykLoad64(${p} - ${cookie})))), (() => { for (${i} = ${n} - 1; ${i} >= 0; ${i}--) { ${each}; } })(), __ykFree(${p} - ${cookie}), undefined) : undefined)`;
+          }
+        }
         const slot = t.to.k === "rec" ? unitCxx?.deletingSlotOf(t.to.name) : undefined;
         if (slot !== undefined) {
           const vt = `__ykBigToF64(__ykI64(__ykLoad64(${p})))`;
@@ -3466,13 +3558,17 @@ function raiseBody(
         return `((${to} = ${addr}), ${stores.join(", ")}, undefined)`;
       }
     }
-    if (ctor === undefined) throw new RaiseCError(`the constructor ${t.name}(${ctorType})`);
+    // (A default construction of a class the unit shows no constructor of, a C struct's, an
+    // anonymous union's, `aligned_storage`'s: the implicit one, below.)
+    if (ctor === undefined && args.length > 0)
+      throw new RaiseCError(`the constructor ${t.name}(${ctorType})`);
     const to = temp({ k: "f64" });
     // (One the class declares that another unit defines: its symbol's, as a call.)
-    const elsewhere = !ctor.body && ctor.provided === true ? outside(ctor.id) : undefined;
+    const elsewhere =
+      ctor !== undefined && !ctor.body && ctor.provided === true ? outside(ctor.id) : undefined;
     if (elsewhere !== undefined)
-      return `${elsewhere}(${[addr, ...withDefaults(args, ctor.id).map(argOf)].join(", ")})`;
-    if (!ctor.body) {
+      return `${elsewhere}(${[addr, ...withDefaults(args, ctor?.id).map(argOf)].join(", ")})`;
+    if (ctor === undefined || !ctor.body) {
       // The implicit (or defaulted) constructors: the default one constructs each base and
       // member (its default initializer, or its class's default constructor); a copy or move,
       // each in turn (see relocate).
@@ -3706,7 +3802,13 @@ function raiseBody(
     }
     // A virtual call (not one a qualifier names): the function in the object's vtable.
     const qualified = (member.inner ?? []).some((k) => k.kind === "NestedNameSpecifier");
-    if (id !== undefined && !qualified && unitCxx?.isVirtual(id) === true) {
+    // (Of a final method or class, as clang emits it: a direct call, its vtable unneeded.)
+    if (
+      id !== undefined &&
+      !qualified &&
+      unitCxx?.isVirtual(id) === true &&
+      unitCxx.isFinal(id) !== true
+    ) {
       const slot = unitCxx.slotOf(id);
       if (slot === undefined) throw new RaiseCError(`the vtable slot of ${name}`);
       const o = temp({ k: "f64" });
@@ -3733,6 +3835,12 @@ function raiseBody(
           { length: n },
           (_, i) => `${storeAt(at(i), t.of, String(bytes[i] ?? 0))};`,
         );
+      }
+      // An array of class objects, each made by the constructor (C++: `UnicodeString parts[5];`):
+      // each in turn.
+      if (s?.kind === "CXXConstructExpr" && t.of.k === "rec") {
+        const elem = { ...s, type: { qualType: (t.of as { name: string }).name } } as ClangNode;
+        return Array.from({ length: n }, (_, i) => `${construct(at(i), elem)};`);
       }
       if (s !== undefined && s.kind !== "InitListExpr")
         throw new RaiseCError(`an array initialized by ${s.kind}`);
@@ -5385,12 +5493,17 @@ export function shaveCUnit(
         .replace(/\s+/g, "")
         .replace(/^(-?\d+)[uUlL]*$/, "$1")
         .replace(/^true$/, "1")
-        .replace(/^false$/, "0");
+        .replace(/^false$/, "0")
+        // (A declaration's, `&ures_close_78`: by its name.)
+        .replace(/^&/, "");
     const argsOf = (node: ClangNode): string[] =>
       (node.inner ?? [])
         .filter((a) => a.kind === "TemplateArgument")
         .map((a) => {
-          const v = canon(a.type?.qualType ?? String((a as { value?: unknown }).value ?? ""));
+          const named = (a as { decl?: { name?: string } }).decl?.name;
+          const v = canon(
+            a.type?.qualType ?? named ?? String((a as { value?: unknown }).value ?? ""),
+          );
           return v === "-1" && a.type === undefined ? "1" : v;
         });
     // The candidate whose arguments these are (a type spelled without its default arguments,
@@ -5526,6 +5639,9 @@ export function shaveCUnit(
                       .filter((a) => a.kind === "TemplateArgument")
                       .map((a) => {
                         if (a.type?.qualType !== undefined) return a.type.qualType;
+                        // (A declaration's, `&ures_close_78`, as the layout dump spells it.)
+                        const named = (a as { decl?: { name?: string } }).decl?.name;
+                        if (named !== undefined) return `&${named}`;
                         // (A bool's true is dumped as -1.)
                         const v = String((a as { value?: unknown }).value ?? "");
                         return v === "-1" ? "1" : v;
@@ -5782,29 +5898,42 @@ export function shaveCUnit(
             }
             return false;
           },
+          isFinal: (methodId) => {
+            const d = indexed.byId.get(methodId);
+            if (d === undefined) return false;
+            const hasFinal = (n: ClangNode): boolean =>
+              (n.inner ?? []).some((c) => c.kind === "FinalAttr");
+            if (hasFinal(readDecl(indexed, d))) return true;
+            const cls = d.parent === undefined ? undefined : indexed.byId.get(d.parent);
+            return cls !== undefined && hasFinal(readDecl(indexed, cls));
+          },
           slotOf: (methodId) => {
             const d = indexed.byId.get(methodId);
             const cls = d?.parent === undefined ? undefined : indexed.byId.get(d.parent);
             if (d === undefined || cls === undefined) return undefined;
             const node = readDecl(indexed, d);
-            return vtables()
-              .indices.get(cls.name)
-              ?.get(memberKey(node.name ?? "", node.type?.qualType ?? ""));
+            const slots = vtables().indices.get(cls.name);
+            const exact = slots?.get(memberKey(node.name ?? "", node.type?.qualType ?? ""));
+            if (exact !== undefined || slots === undefined) return exact;
+            // (Its parameters spelled otherwise there, a typedef's for its type, `UBool (UChar32)`
+            // as `signed char (int)`: the one entry of its name and arity.)
+            const arity = (sig: string): number => {
+              const inner = sig.slice(sig.indexOf("(") + 1, sig.lastIndexOf(")")).trim();
+              return inner === "" || inner === "void" ? 0 : splitTemplateArgs(inner).length;
+            };
+            const want = arity(node.type?.qualType ?? "");
+            const name = node.name ?? "";
+            const hits = [...slots].filter(
+              ([k]) => k.startsWith(`${name}(`) && arity(k.slice(name.length)) === want,
+            );
+            return hits.length === 1 ? (hits[0] as [string, number])[1] : undefined;
           },
           deletingSlotOf: (record) => {
-            const simple =
-              record
-                .replace(/^(struct|class|union) /, "")
-                .split("::")
-                .pop() ?? "";
+            const simple = simpleClass(record);
             return vtables().indices.get(simple)?.get(`~${simple}()[deleting]`);
           },
           vtableOf: (record, destroy) => {
-            const simple =
-              record
-                .replace(/^(struct|class|union) /, "")
-                .split("::")
-                .pop() ?? "";
+            const simple = simpleClass(record);
             const key = `vtable:${unit}:${simple}`;
             if (statics.has(key)) return key;
             const entries = vtables().tables.get(simple);
@@ -5841,11 +5970,20 @@ export function shaveCUnit(
                   ),
                 });
               else {
-                // The final overrider: a method of the class the entry names.
-                const head = text.slice(0, text.indexOf("("));
+                // The final overrider: a method of the class the entry names. (Its scope without
+                // `(anonymous namespace)`, whose parenthesis is not the parameters'.)
+                // (And a template instance's: its arguments, and the `[T = ..]` clang appends.)
+                let plain = text
+                  .replace(/\(anonymous namespace\)::/g, "")
+                  .replace(/\s*\[[A-Za-z_]\w* = .*\]$/, "");
+                for (let prev = "", i = 0; prev !== plain && i < 8; i++) {
+                  prev = plain;
+                  plain = plain.replace(/<[^<>()]*>(?=::)/g, "");
+                }
+                const head = plain.slice(0, plain.indexOf("("));
                 const owner = head.split("::").slice(-2, -1)[0] ?? "";
                 const name = head.split("::").pop() ?? "";
-                const want = memberKey(name, text.slice(text.indexOf("(")));
+                const want = memberKey(name, plain.slice(plain.indexOf("(")));
                 let id: string | undefined;
                 for (const d of indexed.byName.get(owner) ?? []) {
                   if (!RECORD_KINDS.has(d.kind)) continue;
@@ -5887,7 +6025,7 @@ export function shaveCUnit(
       const lines = block.split("\n");
       const head = /^(Vtable for|VTable indices for) '(.+?)'/.exec(lines[0] ?? "");
       if (head === null) continue;
-      const simple = (head[2] as string).split("::").pop() ?? "";
+      const simple = simpleClass(head[2] as string);
       const rows = lines.flatMap((l) => {
         const m = /^\s*(\d+) \| (.*)$/.exec(l);
         return m === null ? [] : [[Number(m[1]), (m[2] as string).trim()] as const];
