@@ -98,6 +98,11 @@ function disagreements(
 
 const PROGRAMS: [string, string, number][] = [
   [
+    "large Maps and Sets (their hash index): mixed keys, -0 and NaN, deletes and re-adds, order, clear (#1370)",
+    "export function f(a, b) { const m = new Map(); const objs = []; for (let i = 0; i < 300; i++) { const o = { i }; objs.push(o); m.set(i % 3 === 0 ? i : i % 3 === 1 ? 'k' + i : o, i); } m.set(-0, 'zero'); m.set(NaN, 'nan'); m.set(10n, 'big'); m.set(a, 'a'); m.set(b, 'b'); const got = [m.get(0), m.get(+0), m.get(NaN), m.get(0 / 0), m.get(10n), m.get('k4'), m.get(objs[2]), m.get({ i: 2 }), m.get(a), m.get(b), m.size]; for (let i = 0; i < 300; i += 7) m.delete(i % 3 === 0 ? i : i % 3 === 1 ? 'k' + i : objs[i]); const after = [m.size, m.has(7), m.has('k7'), m.has(objs[14]), m.get(3), [...m.keys()].slice(0, 12).map(String)]; m.set(7, 'back'); m.set('k7', 'back'); const order = [...m.entries()].slice(-4).map(([k, v]) => String(k) + '=' + v); const s = new Set(); for (let i = 0; i < 200; i++) s.add(i % 50 === 0 ? 'x' + i : i * 2); for (let i = 0; i < 400; i += 3) s.delete(i); s.add(-0); const sres = [s.size, s.has(0), s.has(4), s.has(6), s.has('x50'), [...s].slice(0, 10).map(String), [...s.union(new Set([1, 2, 3, 4]))].length]; m.clear(); m.set('again', 1); return [got, after, order, sres, m.size, m.get('again'), m.get('k4')]; }",
+    2,
+  ],
+  [
     "named writes and reads with their site caches: setters along the chain, own accessors, shadowing, objects of other shapes at one site (#1370)",
     "export function f(a, b) { const log = []; const proto = { set x(v) { log.push('set ' + v); }, get y() { return 'proto y'; } }; const objs = [Object.create(proto), { x: 1, y: 2 }, { y: 3, x: 4, z: 5 }, Object.create(proto), { get x() { return 'getter'; }, set x(v) { log.push('own ' + v); } }]; const out = []; for (let i = 0; i < objs.length; i++) { const o = objs[i]; o.x = String(a) + i; out.push([o.x, o.y, o.z, Object.keys(o)]); } const shapes = [{ k: 1 }, { j: 0, k: 2 }, { k: 3 }, { i: 0, j: 0, k: 4 }]; let s = 0; for (const o of shapes) { s += o.k; o.k = o.k * 10; } return [out, log, s, shapes.map((o) => o.k), b]; }",
     2,
