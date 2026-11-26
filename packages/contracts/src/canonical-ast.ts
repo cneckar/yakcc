@@ -235,7 +235,11 @@ function collectLocalRenames(root: Node): Map<string, string> {
       kind === SyntaxKind.BindingElement
     ) {
       // The name child of a VariableDeclaration / Parameter is the binding identifier
-      const nameNode = (node as { getNameNode?: () => Node | undefined }).getNameNode?.();
+      // A JSDoc function type's parameters have no name, and ts-morph's getNameNode throws on them.
+      const named = (node.compilerNode as { name?: unknown }).name !== undefined;
+      const nameNode = named
+        ? (node as { getNameNode?: () => Node | undefined }).getNameNode?.()
+        : undefined;
       if (nameNode !== undefined && nameNode.getKind() === SyntaxKind.Identifier) {
         const name = nameNode.getText();
         if (!renames.has(name) && isLocalBinding(node, root)) {
@@ -336,7 +340,7 @@ function parseAndGate(source: string): SourceFile {
     scriptKind: ScriptKind.TS,
   });
 
-  // Collect only SYNTAX diagnostics (TypeScript error codes 1000–1999).
+  // Collect only SYNTAX and grammar diagnostics (TypeScript error codes 1000–1999).
   //
   // We intentionally exclude semantic errors such as "Cannot find module X"
   // (TS2307) and "Cannot find name Y" (TS2304). Those arise from the isolated
@@ -344,28 +348,156 @@ function parseAndGate(source: string): SourceFile {
   // indicate that the source text is structurally malformed. Callers hash
   // real-world TypeScript files that freely import from external packages.
   //
-  // Syntax errors (1xxx) are the only class that can make the AST too broken
-  // to print deterministically; they are the correct gate here.
-  const syntaxDiagnostics = file
-    .getPreEmitDiagnostics()
-    .filter(
-      (d) =>
-        d.getCategory() === ts.DiagnosticCategory.Error &&
-        d.getCode() >= 1000 &&
-        d.getCode() < 2000,
-    );
-
+  // The parser's and the binder's errors are read directly, and the grammar errors a fragment
+  // takes from its context (a `return`, `await`, `break` or `continue` with nothing around it to
+  // belong to) are found by one walk: the type checker reports these too, but running it to read
+  // them type-checked every hashed source, and that was nearly all of the time a shave of a large
+  // file spent (#1368). Over yakcc's sources, Node's library and the npm closure, this gate
+  // rejects exactly the fragments the checker's 1xxx errors did.
+  const syntaxDiagnostics = grammarErrors(project, file);
   if (syntaxDiagnostics.length > 0) {
-    const messages = syntaxDiagnostics.map((d) => {
-      const msg = d.getMessageText();
-      return typeof msg === "string" ? msg : msg.getMessageText();
-    });
+    const messages = syntaxDiagnostics.map((d) => d.message);
     throw new CanonicalAstParseError(
       `TypeScript syntax error(s) in source: ${messages[0] ?? "unknown error"}`,
       messages,
     );
   }
   return file;
+}
+
+/** A grammar error: where it starts, its TypeScript code and its message. */
+interface GrammarError {
+  readonly start: number;
+  readonly code: number;
+  readonly message: string;
+}
+
+const isGrammarError = (d: ts.Diagnostic): boolean =>
+  d.category === ts.DiagnosticCategory.Error && d.code >= 1000 && d.code < 2000;
+
+/** The parser's, the binder's and the context's grammar errors, in source order. */
+function grammarErrors(project: Project, file: SourceFile): GrammarError[] {
+  const program = project.getProgram().compilerObject;
+  const sf = file.compilerNode;
+  // Binding happens when the checker is made; making it checks nothing.
+  program.getTypeChecker();
+  const bound = (sf as ts.SourceFile & { bindDiagnostics?: readonly ts.Diagnostic[] })
+    .bindDiagnostics;
+  const syntactic = program.getSyntacticDiagnostics(sf);
+  const errors: GrammarError[] = [...syntactic, ...(bound ?? [])]
+    .filter(isGrammarError)
+    .map((d) => ({
+      start: d.start ?? 0,
+      code: d.code,
+      message: ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+    }));
+  // The checker reports a grammar error only on a source that parsed without any error, of any
+  // code; an empty if body it reports as a plain error, whatever the parse.
+  errors.push(...contextErrors(sf, syntactic.length === 0));
+  return errors.sort((a, b) => a.start - b.start || a.code - b.code);
+}
+
+const CONTEXT_MESSAGES: Readonly<Record<number, string>> = {
+  1103: "'for await' loops are only allowed within async functions and at the top levels of modules.",
+  1104: "A 'continue' statement can only be used within an enclosing iteration statement.",
+  1105: "A 'break' statement can only be used within an enclosing iteration or switch statement.",
+  1108: "A 'return' statement can only be used within a function body.",
+  1163: "A 'yield' expression is only allowed in a generator body.",
+  1211: "A class declaration without the 'default' modifier must have a name.",
+  1313: "The body of an 'if' statement cannot be the empty statement.",
+  1115: "A 'continue' statement can only jump to a label of an enclosing iteration statement.",
+  1116: "A 'break' statement can only jump to a label of an enclosing statement.",
+  1308: "'await' expressions are only allowed within async functions and at the top levels of modules.",
+  1375: "'await' expressions are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module.",
+  1431: "'for await' loops are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an empty 'export {}' to make this file a module.",
+};
+
+/** Where a jump may go: enclosing loops and switches, and labels (true: the label is a loop's). */
+interface JumpScope {
+  readonly breaks: boolean;
+  readonly continues: boolean;
+  readonly labels: ReadonlyMap<string, boolean>;
+}
+
+const NO_JUMPS: JumpScope = { breaks: false, continues: false, labels: new Map() };
+
+/**
+ * The grammar errors a fragment takes from having nothing around it: a `return` outside a
+ * function, an `await` or `for await` outside an async function, a `yield` outside a generator, a
+ * `break` or `continue` outside the loop, switch or label it names, a class expression taken out
+ * as a declaration with no name. With them, the one other 1xxx error the checker reports over
+ * these sources: an `if` whose body is an empty statement. `parsedCleanly` false keeps only that
+ * one, as the checker does.
+ */
+function contextErrors(sf: ts.SourceFile, parsedCleanly: boolean): GrammarError[] {
+  const errors: GrammarError[] = [];
+  const report = (node: ts.Node, code: number): void => {
+    if (!parsedCleanly && code !== 1313) return;
+    errors.push({ start: node.getStart(sf), code, message: CONTEXT_MESSAGES[code] ?? "" });
+  };
+  const isAsync = (fn: ts.Node): boolean =>
+    ts.isClassStaticBlockDeclaration(fn) ||
+    (ts.getCombinedModifierFlags(fn as ts.Declaration) & ts.ModifierFlags.Async) !== 0;
+  const walk = (node: ts.Node, fn: ts.Node | undefined, jumps: JumpScope): void => {
+    if (ts.isReturnStatement(node) && fn === undefined) report(node, 1108);
+    if (ts.isYieldExpression(node) && (node.flags & ts.NodeFlags.YieldContext) === 0)
+      report(node, 1163);
+    if (
+      ts.isClassDeclaration(node) &&
+      node.name === undefined &&
+      !(ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Default)
+    )
+      report(node, 1211);
+    if (ts.isIfStatement(node) && ts.isEmptyStatement(node.thenStatement))
+      report(node.thenStatement, 1313);
+    if (ts.isAwaitExpression(node)) {
+      if (fn === undefined) report(node, 1375);
+      else if (!isAsync(fn)) report(node, 1308);
+    }
+    if (ts.isBreakStatement(node) || ts.isContinueStatement(node)) {
+      const isBreak = ts.isBreakStatement(node);
+      if (node.label === undefined) {
+        if (!(isBreak ? jumps.breaks : jumps.continues)) report(node, isBreak ? 1105 : 1104);
+      } else {
+        const loop = jumps.labels.get(node.label.text);
+        if (loop === undefined || (!isBreak && !loop)) report(node, isBreak ? 1116 : 1115);
+      }
+    }
+    if (
+      (ts.isFunctionLike(node) && !ts.isCallSignatureDeclaration(node)) ||
+      ts.isClassStaticBlockDeclaration(node)
+    ) {
+      ts.forEachChild(node, (child) => walk(child, node, NO_JUMPS));
+      return;
+    }
+    if (ts.isIterationStatement(node, false)) {
+      if (ts.isForOfStatement(node) && node.awaitModifier !== undefined) {
+        if (fn === undefined) report(node, 1431);
+        else if (!isAsync(fn)) report(node, 1103);
+      }
+      const inLoop = { ...jumps, breaks: true, continues: true };
+      ts.forEachChild(node, (child) => walk(child, fn, child === node.statement ? inLoop : jumps));
+      return;
+    }
+    if (ts.isSwitchStatement(node)) {
+      const inSwitch = { ...jumps, breaks: true };
+      ts.forEachChild(node, (child) =>
+        walk(child, fn, child === node.caseBlock ? inSwitch : jumps),
+      );
+      return;
+    }
+    if (ts.isLabeledStatement(node)) {
+      let labelled: ts.Statement = node.statement;
+      while (ts.isLabeledStatement(labelled)) labelled = labelled.statement;
+      const labels = new Map(jumps.labels);
+      labels.set(node.label.text, ts.isIterationStatement(labelled, false));
+      ts.forEachChild(node, (child) => walk(child, fn, { ...jumps, labels }));
+      return;
+    }
+    ts.forEachChild(node, (child) => walk(child, fn, jumps));
+  };
+  ts.forEachChild(sf, (child) => walk(child, undefined, NO_JUMPS));
+  return errors;
 }
 
 /**
