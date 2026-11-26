@@ -1704,6 +1704,45 @@ static int64_t relative(yk v, int64_t len, int64_t dflt) {
 static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv);
 static yk make_error(const char *name, yk message);
 _Noreturn void yk_throw(yk v);
+/* Annex B's HTML methods (anchor, bold, …): the string in a tag, an attribute's quotes as &quot;.
+   Looked for last, after every other string method (they are rare). */
+static int html_method(yk_string *s0, yk key, yk arg0, yk *out) {
+    {
+      /* Annex B's HTML methods: the string in a tag, an attribute's quotes as &quot;. */
+      static const char *const html[][3] = {{"anchor", "a", "name"}, {"big", "big", NULL}, {"blink", "blink", NULL},
+                                            {"bold", "b", NULL}, {"fixed", "tt", NULL}, {"fontcolor", "font", "color"},
+                                            {"fontsize", "font", "size"}, {"italics", "i", NULL}, {"link", "a", "href"},
+                                            {"small", "small", NULL}, {"strike", "strike", NULL}, {"sub", "sub", NULL},
+                                            {"sup", "sup", NULL}};
+      for (size_t h = 0; h < sizeof html / sizeof html[0]; h++) {
+        if (!key_is(key, html[h][0])) continue;
+        yk open = concat(str(ascii("<")), str(ascii(html[h][1])));
+        if (html[h][2] != NULL) {
+          yk_string *v = str(to_string(arg0));
+          yk q = ascii("");
+          uint32_t last = 0;
+          for (uint32_t i = 0; i < v->len; i++)
+            if (v->units[i] == '"') {
+              q = concat(str(q), str(substring(v, last, i)));
+              q = concat(str(q), str(ascii("&quot;")));
+              last = i + 1;
+            }
+          q = concat(str(q), str(substring(v, last, v->len)));
+          open = concat(str(open), str(ascii(" ")));
+          open = concat(str(open), str(ascii(html[h][2])));
+          open = concat(str(open), str(ascii("=\"")));
+          open = concat(str(open), str(q));
+          open = concat(str(open), str(ascii("\"")));
+        }
+        open = concat(str(open), str(ascii(">")));
+        open = concat(str(open), s0);
+        open = concat(str(open), str(ascii("</")));
+        open = concat(str(open), str(ascii(html[h][1])));
+        return *out = concat(str(open), str(ascii(">"))), 1;
+      }
+    }
+  return 0;
+}
 /* A method call by a key the lowered code keeps (its string, made once). */
 yk yk_call_method_k(yk recv, yk key, uint64_t argc, const yk *argv) { return call_method_key(recv, key, argc, argv); }
 /* s.charCodeAt(i) (#1369): a string's unit at a number index, at once; else the method call. */
@@ -1905,40 +1944,6 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
       }
       return to ? string_of(r) : yk_bool(ok);
     }
-    {
-      /* Annex B's HTML methods: the string in a tag, an attribute's quotes as &quot;. */
-      static const char *const html[][3] = {{"anchor", "a", "name"}, {"big", "big", NULL}, {"blink", "blink", NULL},
-                                            {"bold", "b", NULL}, {"fixed", "tt", NULL}, {"fontcolor", "font", "color"},
-                                            {"fontsize", "font", "size"}, {"italics", "i", NULL}, {"link", "a", "href"},
-                                            {"small", "small", NULL}, {"strike", "strike", NULL}, {"sub", "sub", NULL},
-                                            {"sup", "sup", NULL}};
-      for (size_t h = 0; h < sizeof html / sizeof html[0]; h++) {
-        if (!key_is(key, html[h][0])) continue;
-        yk open = concat(str(ascii("<")), str(ascii(html[h][1])));
-        if (html[h][2] != NULL) {
-          yk_string *v = str(to_string(arg0));
-          yk q = ascii("");
-          uint32_t last = 0;
-          for (uint32_t i = 0; i < v->len; i++)
-            if (v->units[i] == '"') {
-              q = concat(str(q), str(substring(v, last, i)));
-              q = concat(str(q), str(ascii("&quot;")));
-              last = i + 1;
-            }
-          q = concat(str(q), str(substring(v, last, v->len)));
-          open = concat(str(open), str(ascii(" ")));
-          open = concat(str(open), str(ascii(html[h][2])));
-          open = concat(str(open), str(ascii("=\"")));
-          open = concat(str(open), str(q));
-          open = concat(str(open), str(ascii("\"")));
-        }
-        open = concat(str(open), str(ascii(">")));
-        open = concat(str(open), s0);
-        open = concat(str(open), str(ascii("</")));
-        open = concat(str(open), str(ascii(html[h][1])));
-        return concat(str(open), str(ascii(">")));
-      }
-    }
     if (key_is(key, "trimStart") || key_is(key, "trimEnd") || key_is(key, "trimLeft") || key_is(key, "trimRight")) {
       uint32_t a = 0, b = s0->len;
       if (key_is(key, "trimStart") || key_is(key, "trimLeft")) while (a < b && is_space(s0->units[a])) a++;
@@ -2075,6 +2080,10 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
     }
     if (key_is(key, "join"))
       return array_join(a, str(arg0 == YK_UNDEFINED ? ascii(",") : to_string(arg0)));
+  }
+  if (is_string(recv)) {
+    yk out;
+    if (html_method(str(recv), key, arg0, &out)) return out;
   }
   if ((is_number(recv) || is_bool(recv) || is_bigint(recv)) && key_is(key, "toString")) {
     if (is_number(recv) && arg0 != YK_UNDEFINED) {
