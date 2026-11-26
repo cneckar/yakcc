@@ -1245,6 +1245,11 @@ export interface Lambda {
 
 /** What the raiser asks of a C++ unit about its classes. */
 export interface CxxUnit {
+  /**
+   * A function's symbol (its mangled name), through its redeclarations, by its id: how a unit
+   * names a function another unit defines, as a linker does.
+   */
+  readonly mangledOf: (fnId: string) => string | undefined;
   /** A member function's class, as a record type (`struct Point`), by the function's id. */
   readonly classOf: (fnId: string) => string | undefined;
   /** The namespaces a function is in, outermost first (`simdjson::fallback::ondemand`). */
@@ -1258,7 +1263,14 @@ export interface CxxUnit {
   readonly constructorOf: (
     record: string,
     type: string,
-  ) => { readonly id: string; readonly body: boolean } | undefined;
+  ) =>
+    | {
+        readonly id: string;
+        readonly body: boolean;
+        /** Declared by the class (not implicit nor defaulted): defined here, or in another unit. */
+        readonly provided?: boolean;
+      }
+    | undefined;
   /** A class's destructor, if it declares one. */
   readonly destructorOf: (
     record: string,
@@ -2506,6 +2518,8 @@ function raiseBody(
             id: d.id,
           });
           if (key !== undefined) return `__ykFnAddr(${key})`;
+          const there = outside(d.id);
+          if (there !== undefined) return `__ykFnAddr(${there})`;
           externals.add(d.name ?? "");
           return `__ykFnAddr(${ident(d.name ?? "")})`;
         }
@@ -2860,12 +2874,13 @@ function raiseBody(
           if (p.k !== "mem") throw new RaiseCError("an operator of an object not in memory");
           return methodCall(p.addr, callee, kids.slice(2), ret);
         }
-        const key = resolve({
-          name: d?.name ?? "",
-          kind: d?.kind ?? "",
-          type: normType(d?.type?.qualType ?? ""),
-          id: d?.id,
-        });
+        const key =
+          resolve({
+            name: d?.name ?? "",
+            kind: d?.kind ?? "",
+            type: normType(d?.type?.qualType ?? ""),
+            id: d?.id,
+          }) ?? outside(d?.id);
         if (key === undefined) {
           throw new RaiseCError(`the operator ${d?.name ?? callee.kind} is not in the unit`);
         }
@@ -3045,8 +3060,9 @@ function raiseBody(
           at: index === undefined ? undefined : { caller: symbolOf(fn), index },
           id: d.id,
         });
-        const target = key ?? ident(name);
-        if (key === undefined) externals.add(name);
+        const there = key === undefined ? outside(d.id) : undefined;
+        const target = key ?? there ?? ident(name);
+        if (key === undefined && there === undefined) externals.add(name);
         // C++: an argument bound to a reference parameter is its object's address; a default
         // argument, the callee's.
         if (fixed === undefined) callArgs = withDefaults(kids.slice(1), d.id).map(argOf);
@@ -3358,6 +3374,10 @@ function raiseBody(
     }
     if (ctor === undefined) throw new RaiseCError(`the constructor ${t.name}(${ctorType})`);
     const to = temp({ k: "f64" });
+    // (One the class declares that another unit defines: its symbol's, as a call.)
+    const elsewhere = !ctor.body && ctor.provided === true ? outside(ctor.id) : undefined;
+    if (elsewhere !== undefined)
+      return `${elsewhere}(${[addr, ...withDefaults(args, ctor.id).map(argOf)].join(", ")})`;
     if (!ctor.body) {
       // The implicit (or defaulted) constructors: the default one constructs each base and
       // member (its default initializer, or its class's default constructor); a copy or move,
@@ -3398,16 +3418,17 @@ function raiseBody(
       }
       throw new RaiseCError(`the implicit constructor ${t.name}(${ctorType})`);
     }
-    const key = resolve({
-      name:
-        t.name
-          .replace(/^(struct|class|union) /, "")
-          .split("::")
-          .pop() ?? "",
-      kind: "CXXConstructorDecl",
-      type: ctorType,
-      id: ctor.id,
-    });
+    const key =
+      resolve({
+        name:
+          t.name
+            .replace(/^(struct|class|union) /, "")
+            .split("::")
+            .pop() ?? "",
+        kind: "CXXConstructorDecl",
+        type: ctorType,
+        id: ctor.id,
+      }) ?? outside(ctor.id);
     if (key === undefined)
       throw new RaiseCError(`the constructor ${t.name}(${ctorType}) is not in the unit`);
     return `${key}(${[addr, ...withDefaults(args, ctor.id).map(argOf)].join(", ")})`;
@@ -3431,6 +3452,10 @@ function raiseBody(
       });
       if (key === undefined) throw new RaiseCError(`the destructor of ${t.name}`);
       out.push(`${key}(${addr})`);
+    } else if (dtor !== undefined) {
+      // (Defined in another unit: its symbol's; a defaulted one has none, and nothing to run.)
+      const key = outside(dtor.id);
+      if (key !== undefined) out.push(`${key}(${addr})`);
     }
     const at = (o: number): string => (o === 0 ? addr : `(${addr} + ${o})`);
     // (A union's members are not destroyed with it: its owner knows which one lives.)
@@ -3534,6 +3559,17 @@ function raiseBody(
       return d;
     });
   /** A member function called on the object at `self` (C++). */
+  /**
+   * C++: a function this unit declares and another defines, by its symbol (an external, as a
+   * linker resolves it). Undefined when it has none (C).
+   */
+  const outside = (id: string | undefined): string | undefined => {
+    if (unitCxx === undefined || id === undefined) return undefined;
+    const m = unitCxx.mangledOf(id);
+    if (m === undefined) return undefined;
+    externals.add(m);
+    return m;
+  };
   const methodCall = (
     self: string,
     member: ClangNode,
@@ -3584,7 +3620,7 @@ function raiseBody(
       const fnAt = `__ykBigToF64(__ykI64(__ykLoad64(${vt} + ${8 * slot})))`;
       return `((${o} = ${self}), __ykFnAt(${fnAt})(${[...ret.slot(), o, ...args.map(argOf)].join(", ")}))`;
     }
-    const key = resolve({ name, kind: "CXXMethodDecl", type: "", id });
+    const key = resolve({ name, kind: "CXXMethodDecl", type: "", id }) ?? outside(id);
     if (key === undefined) throw new RaiseCError(`the method ${name} is not in the unit`);
     return `${key}(${[...ret.slot(), self, ...withDefaults(args, id).map(argOf)].join(", ")})`;
   };
@@ -5011,8 +5047,18 @@ export function shaveCUnit(
       stdio: ["ignore", "pipe", "ignore"],
     }).length > 200_000;
   const indexed = large ? indexUnit(clang, args, file) : undefined;
+  const isCxx = /\+\+$/.test(clang) || /\.(cc|cpp|cxx)$/.test(file);
   // The roots, as the filters name them; in an indexed unit, the index's own nodes (its ids).
-  const roots = clangFunctions(file, filters, args, clang);
+  // (C++: a filter can be a symbol, the mangled name another unit calls a function by.)
+  const bySymbol = indexed === undefined ? [] : filters.filter((f) => indexed.byMangled.has(f));
+  const roots = clangFunctions(
+    file,
+    filters.filter((f) => !bySymbol.includes(f)),
+    args,
+    clang,
+  );
+  for (const f of bySymbol)
+    roots.set(f, readDecl(indexed as UnitIndex, indexed?.byMangled.get(f) as IndexedDecl));
   if (indexed !== undefined)
     for (const [name, fn] of roots) {
       const m = (fn as { mangledName?: string }).mangledName;
@@ -5135,6 +5181,20 @@ export function shaveCUnit(
       );
     return { decl, ambiguous: true };
   };
+  /**
+   * A function's key. A static function's name is its unit's alone (strtol.c's strtox is not
+   * strtod.c's): its key carries the unit's. C++: its symbol, the mangled name, by which another
+   * unit names it as a linker does (one of internal linkage, the unit's too).
+   */
+  const unitSuffix = (unit.split("/").pop() ?? unit).replace(/\.\w+$/, "").replace(/\W/g, "_");
+  const keyBase = (decl: ClangNode, name: string): string => {
+    const m = (decl as { mangledName?: string }).mangledName;
+    if (isCxx && m !== undefined && m !== name)
+      return decl.storageClass === "static" || /_GLOBAL__N/.test(m) ? `${m}__${unitSuffix}` : m;
+    return decl.kind === "FunctionDecl" && decl.storageClass === "static"
+      ? `${ident(name)}__${unitSuffix}`
+      : ident(name);
+  };
   const resolve: CalleeResolver = (c) => {
     // An indexed unit: the declaration the reference names, through its redeclarations.
     if (indexed !== undefined && c.id !== undefined) {
@@ -5148,10 +5208,7 @@ export function shaveCUnit(
           return already;
         }
         const decl = readDecl(indexed, def);
-        const base =
-          decl.kind === "FunctionDecl" && decl.storageClass === "static"
-            ? `${ident(c.name)}__${(unit.split("/").pop() ?? unit).replace(/\.\w+$/, "").replace(/\W/g, "_")}`
-            : ident(c.name);
+        const base = keyBase(decl, c.name);
         let key = base;
         for (let n = 2; found.has(key); n++) key = `${base}_${n}`;
         found.set(key, decl);
@@ -5167,12 +5224,7 @@ export function shaveCUnit(
     if (decl === undefined) return undefined;
     const bySymbol = keyBySymbol.get(symbolOf(decl));
     if (bySymbol !== undefined) return bySymbol;
-    // A static function's name is its unit's alone (strtol.c's strtox is not strtod.c's): its key
-    // carries the unit's.
-    const base =
-      decl.kind === "FunctionDecl" && decl.storageClass === "static"
-        ? `${ident(c.name)}__${(unit.split("/").pop() ?? unit).replace(/\.\w+$/, "").replace(/\W/g, "_")}`
-        : ident(c.name);
+    const base = keyBase(decl, c.name);
     let key = base;
     for (let n = 2; found.has(key); n++) key = `${base}_${n}`;
     found.set(key, decl);
@@ -5327,9 +5379,20 @@ export function shaveCUnit(
   // C++: classes, from the index. (A large C unit is indexed too, and stays C: its records are
   // returned as C's are, the same in every unit.)
   const cxx: CxxUnit | undefined =
-    indexed === undefined || !(/\+\+$/.test(clang) || /\.(cc|cpp|cxx)$/.test(file))
+    indexed === undefined || !isCxx
       ? undefined
       : {
+          mangledOf: (fnId) => {
+            let first = fnId;
+            for (let g = 0; indexed.previous.has(first) && g < 1000; g++)
+              first = indexed.previous.get(first) as string;
+            for (let at: string | undefined = first, g = 0; at !== undefined && g < 1000; g++) {
+              const m = indexed.byId.get(at)?.mangled;
+              if (m !== undefined) return m;
+              at = indexed.next.get(at);
+            }
+            return undefined;
+          },
           isStaticMember: (fnId) => {
             let id: string | undefined = fnId;
             for (let k = 0; k < 8 && id !== undefined; k++) {
@@ -5409,9 +5472,13 @@ export function shaveCUnit(
             const ctor =
               matching((t) => normType(t) === normType(type)) ??
               matching((t) => bare(t) === bare(type));
-            return ctor === undefined
-              ? undefined
-              : { id: ctor.id ?? "", body: definitionIn(indexed, ctor.id ?? "") !== undefined };
+            if (ctor === undefined) return undefined;
+            const c = ctor as { isImplicit?: boolean; explicitlyDefaulted?: string };
+            return {
+              id: ctor.id ?? "",
+              body: definitionIn(indexed, ctor.id ?? "") !== undefined,
+              provided: c.isImplicit !== true && c.explicitlyDefaulted === undefined,
+            };
           },
           destructorOf: (record) => {
             const dtor = (findRecord(record)?.inner ?? []).find(
@@ -5589,10 +5656,20 @@ export function shaveCUnit(
             return undefined;
           },
           isVirtual: (methodId) => {
-            const d = indexed.byId.get(methodId);
-            return (
-              d !== undefined && (readDecl(indexed, d) as { virtual?: boolean }).virtual === true
-            );
+            // (Any of its declarations: an out-of-line definition does not repeat `virtual`.)
+            let first = methodId;
+            for (let g = 0; indexed.previous.has(first) && g < 1000; g++)
+              first = indexed.previous.get(first) as string;
+            for (let at: string | undefined = first, g = 0; at !== undefined && g < 1000; g++) {
+              const d = indexed.byId.get(at);
+              if (
+                d !== undefined &&
+                (readDecl(indexed, d) as { virtual?: boolean }).virtual === true
+              )
+                return true;
+              at = indexed.next.get(at);
+            }
+            return false;
           },
           slotOf: (methodId) => {
             const d = indexed.byId.get(methodId);
