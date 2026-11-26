@@ -1075,7 +1075,8 @@ class Lifter {
     for (const [j, stmt] of stmts.entries()) {
       if (!Node.isVariableStatement(stmt)) continue;
       const isVar = stmt.getDeclarationKind() === VariableDeclarationKind.Var;
-      for (let k = lastWithClosure + 1; k <= j; k++) if (closures(k).length > 0) lastWithClosure = k;
+      for (let k = lastWithClosure + 1; k <= j; k++)
+        if (closures(k).length > 0) lastWithClosure = k;
       for (const decl of stmt.getDeclarations())
         for (const name of patternNames(decl.getNameNode())) {
           // A closure reads this binding only where no scope between it and this one declares
@@ -1089,8 +1090,7 @@ class Lifter {
             // A closure in a let's or const's own initializer that reads it when it runs, after
             // the initializer (#1330): `const c = eos(s, () => c())`. One that is the initializer
             // itself is `function-self`.
-            (!isVar &&
-              closures(j).some((fn) => readsThis(fn) && constInitializedBy(fn) !== name));
+            (!isVar && closures(j).some((fn) => readsThis(fn) && constInitializedBy(fn) !== name));
           // A `let` or `const` too, read by a closure made before it, which runs after it is
           // initialized (#1297); or assigned by a closure in its own initializer (`let id =
           // setTimeout(() => { id = null })`). A const arrow calling itself is `function-self`.
