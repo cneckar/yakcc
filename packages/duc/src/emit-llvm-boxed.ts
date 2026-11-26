@@ -2338,16 +2338,18 @@ function lowerFunction(
       const within = (base: string, len: string): { off: string; ok: string } => {
         const off = fresh();
         emit(`${off} = sub i64 ${i}, ${base}`);
-        const room = fresh();
-        emit(`${room} = icmp uge i64 ${len}, ${mem.size}`);
-        const lim = fresh();
-        emit(`${lim} = sub i64 ${len}, ${mem.size}`);
+        // off + size <= len as one compare: off below len less size - 1 (0 when len is shorter),
+        // which a loop computes once.
+        let lim = len;
+        if (mem.size > 1) {
+          m.intrinsics.add("declare i64 @llvm.usub.sat.i64(i64, i64)");
+          lim = fresh();
+          emit(`${lim} = call i64 @llvm.usub.sat.i64(i64 ${len}, i64 ${mem.size - 1})`);
+        }
         const inside = fresh();
-        emit(`${inside} = icmp ule i64 ${off}, ${lim}`);
-        const a1 = fresh();
-        emit(`${a1} = and i1 ${integral}, ${room}`);
+        emit(`${inside} = icmp ult i64 ${off}, ${lim}`);
         const ok = fresh();
-        emit(`${ok} = and i1 ${a1}, ${inside}`);
+        emit(`${ok} = and i1 ${integral}, ${inside}`);
         return { off, ok };
       };
       // The runtime's two entries: the region last allocated or found, and the one before it (a
@@ -2369,12 +2371,13 @@ function lowerFunction(
           emit(`${both} = and i1 ${gOk}, ${wr}`);
           gOk = both;
         }
+        // The bytes read before the test, so that a loop reads them once.
+        const gBytes = fresh();
+        emit(`${gBytes} = load ptr, ptr ${g0}_bytes`);
         const gHit = freshLabel("mglobal");
         const next = freshLabel("mnext");
         emit(`br i1 ${likely(gOk)}, label %${gHit}, label %${next}`);
         block(gHit);
-        const gBytes = fresh();
-        emit(`${gBytes} = load ptr, ptr ${g0}_bytes`);
         const gP = fresh();
         emit(`${gP} = getelementptr i8, ptr ${gBytes}, i64 ${g.off}`);
         emit(`br label %${fast}`);

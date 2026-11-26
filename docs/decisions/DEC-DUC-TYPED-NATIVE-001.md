@@ -103,9 +103,9 @@ Compile with `-O2` without fast-math and without FP contraction (`-ffp-contract=
 |---|---|---|---|
 | V8's `sin` + `exp` (`ieee754.cc`), 200K calls each | 76.4M | 41.6M | 1.84× |
 | an FNV-style integer loop (xor, `Math.imul`, rotate, add), 2M iterations | 32.5M | 19.2M | 1.69× |
-| an adler32-style loop over a 4096-byte local buffer, 500 passes | 60.1M | 27.9M | 2.15× |
+| an adler32-style loop over a 4096-byte local buffer, 500 passes | 51.8M | 27.9M | 1.86× |
 
-What makes the integer loops fast: each proven integer keeps its int64 beside its box, through operations, loop carries and loads; fast paths are marked likely. What the byte loop still pays for is its memory region check on each load.
+What makes the integer loops fast: each proven integer keeps its int64 beside its box, through operations, loop carries and loads; fast paths are marked likely. What the byte loop still pays for is its memory region check on each load: one unsigned compare of the offset against the region's length less the access's size, the region's base and length carried by the loop.
 
 ## Alternatives
 - **A second, separate typed emitter.** It duplicates the scope, loop and branch lowering, and gives no fallback for values outside its types.

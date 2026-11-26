@@ -407,6 +407,17 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
         "export function f(x: number, n: number): unknown { const y = __ykAlloc(16, 8); const a = rawPass(y, x); const r = [a, __ykLoadF64(y), __ykLoadF64(y + 8)]; let t = false; const z = __ykAlloc(12, 4); try { if (n > 0) rawOver(z); } catch (e) { t = true; } __ykFree(z); __ykFree(y); return [r, t]; }",
       ],
       [
+        // Accesses at a computed offset (each site's cache, not a span): a 4- and a 2-byte read and
+        // a 4-byte write at every offset to past the end of a 10-byte block, so the last that fits
+        // and the first that does not (#1369).
+        "readAtK",
+        "export function f(p: number, k: number, w: number): unknown { if (w === 4) return __ykLoad32(p + k); if (w === 2) return __ykLoad16(p + k); __ykStore32(p + k, 7); return __ykLoad8(p + k); }",
+      ],
+      [
+        "tEdge",
+        "export function f(n: number): unknown { const a = __ykAlloc(10, 2); for (let i = 0; i < 10; i++) __ykStore8(a + i, i + n); const out: unknown[] = []; for (const w of [4, 2, 1]) for (let k = 0; k < 12; k++) { try { out.push(readAtK(a, k, w)); } catch (e) { out.push((e as Error).name); } } __ykFree(a); return out; }",
+      ],
+      [
         "tTrap",
         "export function f(n: number): unknown { const a = __ykAlloc(8, 8); __ykFree(a); try { return __ykLoad8(a + n); } catch (e) { return [(e as Error).name, (e as Error).message]; } }",
       ],
@@ -465,6 +476,8 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
     calls.push(
       ["tTrap", [0]],
       ["tTrap", [99]],
+      ["tEdge", [3]],
+      ["tEdge", [250]],
       ["tStale", [5]],
       ["tStale", [-3]],
       ...[0, 1, 2, 3, 4].flatMap((kind) =>
