@@ -22,6 +22,8 @@
 // path does not execute module code, so this does not arise there.
 
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { type DiamondReason, liftAtom } from "@yakcc/duc";
 import { Node, Project, ScriptKind, type SourceFile, SyntaxKind } from "ts-morph";
 
@@ -32,6 +34,11 @@ export type ModuleBinding = "pure" | "mutable";
 export interface ModuleBindingInfo {
   readonly binding: ModuleBinding;
   readonly declHash: string;
+  /**
+   * Whether something in the module reassigns the binding (#1375): a write, an update, a loop that
+   * assigns it, a write on the global object. A read of it is ordered with the calls around it.
+   */
+  readonly reassigned?: true;
 }
 
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
@@ -518,9 +525,161 @@ export function moduleBindingsOf(moduleSource: string): Map<string, ModuleBindin
   // `var G = typeof window < "u" && window || typeof global < "u" && global || self`. Read where
   // it is, a name only some write sets is mutable, as a module variable a write sets is.
   for (const [name, declHash] of globalWrites(sf, bindings)) {
-    if (!bindings.has(name)) bindings.set(name, { binding: "mutable", declHash });
+    if (!bindings.has(name)) bindings.set(name, { binding: "mutable", declHash, reassigned: true });
+  }
+  // A name the module assigns anywhere is reassigned. A nested scope's own binding of the same name
+  // counts too: ordering a read that needs no order is only less canonical, never wrong.
+  for (const name of reassignedNames(sf)) {
+    const b = bindings.get(name);
+    if (b !== undefined && b.reassigned !== true) bindings.set(name, { ...b, reassigned: true });
   }
   return bindings;
+}
+
+/** The names a module assigns, updates, or has a loop assign, anywhere in it. */
+function reassignedNames(sf: SourceFile): Set<string> {
+  const names = new Set<string>();
+  const target = (t: Node): void => {
+    if (Node.isIdentifier(t)) names.add(t.getText());
+    else if (Node.isParenthesizedExpression(t)) target(t.getExpression());
+    else if (Node.isArrayLiteralExpression(t))
+      for (const el of t.getElements()) target(Node.isSpreadElement(el) ? el.getExpression() : el);
+    else if (Node.isObjectLiteralExpression(t))
+      for (const p of t.getProperties()) {
+        if (Node.isShorthandPropertyAssignment(p)) names.add(p.getName());
+        else if (Node.isPropertyAssignment(p)) target(p.getInitializerOrThrow());
+        else if (Node.isSpreadAssignment(p)) target(p.getExpression());
+      }
+    else if (
+      Node.isBinaryExpression(t) &&
+      t.getOperatorToken().getKind() === SyntaxKind.EqualsToken
+    )
+      target(t.getLeft());
+  };
+  for (const n of sf.getDescendants()) {
+    if (Node.isBinaryExpression(n) && ASSIGN_OPS.has(n.getOperatorToken().getKind()))
+      target(n.getLeft());
+    else if (
+      (Node.isPrefixUnaryExpression(n) || Node.isPostfixUnaryExpression(n)) &&
+      (n.getOperatorToken() === SyntaxKind.PlusPlusToken ||
+        n.getOperatorToken() === SyntaxKind.MinusMinusToken)
+    )
+      target(n.getOperand());
+    else if (Node.isForOfStatement(n) || Node.isForInStatement(n)) {
+      const init = n.getInitializer();
+      if (!Node.isVariableDeclarationList(init)) target(init);
+    }
+  }
+  return names;
+}
+
+/**
+ * The module's bindings something reassigns (#1375): a read of one in an atom is ordered with the
+ * atom's calls and writes, so the lifter is told them.
+ */
+export function mutableOuterOf(
+  bindings: ReadonlyMap<string, ModuleBindingInfo> | undefined,
+): string[] {
+  return bindings === undefined
+    ? []
+    : [...bindings].filter(([, b]) => b.reassigned === true).map(([name]) => name);
+}
+
+/**
+ * The module's bindings, with each import whose exporting module reassigns the binding marked
+ * `reassigned` (#1375): an import is a live binding, so a read of it is ordered with the calls
+ * around it, as a read of the module's own reassigned binding is. Only relative imports of a module
+ * the file system has are resolved; a binding re-exported from elsewhere is left as it is.
+ */
+export function withImportedReassigned(
+  bindings: Map<string, ModuleBindingInfo>,
+  moduleSource: string,
+  filePath: string | undefined,
+  read: (file: string) => string | undefined = readIfThere,
+): Map<string, ModuleBindingInfo> {
+  if (filePath === undefined || !/\bimport\b/.test(moduleSource)) return bindings;
+  const project = new Project({
+    useInMemoryFileSystem: true,
+    skipAddingFilesFromTsConfig: true,
+    compilerOptions: { allowJs: false, noEmit: true },
+  });
+  const sf = project.createSourceFile("__module__.ts", moduleSource, { scriptKind: ScriptKind.TS });
+  const marked = new Map(bindings);
+  for (const decl of sf.getImportDeclarations()) {
+    if (decl.isTypeOnly()) continue;
+    const specifier = decl.getModuleSpecifierValue();
+    if (!specifier.startsWith(".")) continue;
+    const exporter = resolveRelative(filePath, specifier, read);
+    if (exporter === undefined) continue;
+    const reassigned = exportedReassigned(exporter);
+    for (const named of decl.getNamedImports()) {
+      if (named.isTypeOnly() || !reassigned.has(named.getName())) continue;
+      const local = (named.getAliasNode() ?? named.getNameNode()).getText();
+      const b = marked.get(local);
+      if (b !== undefined) marked.set(local, { ...b, reassigned: true });
+    }
+  }
+  return marked;
+}
+
+function readIfThere(file: string): string | undefined {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/** The source of the module a relative specifier names, trying TypeScript's own mappings. */
+function resolveRelative(
+  from: string,
+  specifier: string,
+  read: (file: string) => string | undefined,
+): string | undefined {
+  const base = resolve(dirname(from), specifier);
+  const tries = [
+    base,
+    base.replace(/\.js$/, ".ts"),
+    base.replace(/\.js$/, ".tsx"),
+    base.replace(/\.mjs$/, ".mts"),
+    `${base}.ts`,
+    `${base}.js`,
+    `${base}/index.ts`,
+    `${base}/index.js`,
+  ];
+  for (const file of tries) {
+    const text = read(file);
+    if (text !== undefined) return text;
+  }
+  return undefined;
+}
+
+/** The names a module exports whose binding it reassigns: `export let x`, `export { x as y }`. */
+function exportedReassigned(source: string): Set<string> {
+  const bindings = moduleBindingsOf(source);
+  const project = new Project({
+    useInMemoryFileSystem: true,
+    skipAddingFilesFromTsConfig: true,
+    compilerOptions: { allowJs: false, noEmit: true },
+  });
+  const sf = project.createSourceFile("__exporter__.ts", source, { scriptKind: ScriptKind.TS });
+  const out = new Set<string>();
+  const reassigned = (local: string): boolean => bindings.get(local)?.reassigned === true;
+  for (const stmt of sf.getVariableStatements()) {
+    if (!stmt.isExported()) continue;
+    for (const decl of stmt.getDeclarations()) {
+      const name = decl.getNameNode();
+      if (Node.isIdentifier(name) && reassigned(name.getText())) out.add(name.getText());
+    }
+  }
+  for (const decl of sf.getExportDeclarations()) {
+    if (decl.getModuleSpecifier() !== undefined || decl.isTypeOnly()) continue;
+    for (const spec of decl.getNamedExports()) {
+      const local = spec.getNameNode().getText();
+      if (reassigned(local)) out.add(spec.getAliasNode()?.getText() ?? local);
+    }
+  }
+  return out;
 }
 
 /** The names of the global object. */

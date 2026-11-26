@@ -71,6 +71,14 @@ export interface LiftOptions {
    * label only records *why* the use is unresolved.
    */
   readonly ambientGlobals?: readonly string[];
+  /**
+   * Names of bindings outside the atom that something reassigns: a module `let` the module writes,
+   * an imported live binding (#1375). The atom's context knows them; the atom alone does not. A read
+   * of one is a heap operation, ordered with the calls and writes around it, as a read of a binding
+   * the atom writes itself is: a call between two reads may change it. A name a scope of the atom
+   * declares is the atom's own and stays as it is.
+   */
+  readonly mutableOuter?: readonly string[];
 }
 
 // The platform primitives are the per-target base sets in base-set.ts (D5, #1282).
@@ -118,6 +126,7 @@ export function liftAtom(source: string, options: LiftOptions = {}): DucGraph {
   const ambient = new Set(options.ambientGlobals ?? KNOWN_PRIMITIVES);
   const builder = new Lifter(ambient);
   builder.collectImports(file);
+  builder.outerBindings(file, options.mutableOuter ?? []);
   builder.run(file);
   return builder.finish();
 }
@@ -1028,6 +1037,25 @@ class Lifter {
         record((named.getAliasNode() ?? named.getNameNode()).getText());
       }
     }
+  }
+
+  /** The mutable outer bindings the atom reads, where no scope of the atom declares the name. */
+  outerBindings(file: Node, names: readonly string[]): void {
+    if (names.length === 0) return;
+    const wanted = new Set(names);
+    const free = new Map<string, boolean>();
+    for (const id of file.getDescendantsOfKind(SyntaxKind.Identifier)) {
+      const name = id.getText();
+      if (!wanted.has(name) || isPropertyKey(id)) continue;
+      const parent = id.getParent();
+      if (
+        (Node.isPropertyAccessExpression(parent) && parent.getNameNode() === id) ||
+        (Node.isQualifiedName(parent) && parent.getRight() === id)
+      )
+        continue;
+      free.set(name, (free.get(name) ?? true) && !declaredWithin(id, file));
+    }
+    for (const [name, isFree] of free) if (isFree) this.bindings.add(name);
   }
 
   // --- driver ---
