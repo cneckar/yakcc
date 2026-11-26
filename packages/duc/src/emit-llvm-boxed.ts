@@ -634,6 +634,43 @@ function rawArgUses(source: DucGraph): Map<number, { deps: [string, number][] }>
  * object is never made); a caller that only reads the result's keys calls it so. The keys, or
  * undefined.
  */
+/**
+ * A template literal with no substitutions, as its source text (backticks included): the string it
+ * is (ECMA-262 13.15.1, its TV). Line terminators are LF (CR LF and CR are one LF), and each escape is
+ * what it means; `\\` before a line terminator is nothing.
+ */
+export function cookedTemplate(text: string): string {
+  const body = text.slice(1, -1).replace(/\r\n?/g, "\n");
+  let out = "";
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i] as string;
+    if (c !== "\\") {
+      out += c;
+      continue;
+    }
+    const e = body[++i] as string;
+    const simple: Record<string, string> = { n: "\n", t: "\t", r: "\r", b: "\b", f: "\f", v: "\v" };
+    if (e in simple) out += simple[e];
+    else if (e === "0" && !/[0-9]/.test(body[i + 1] ?? "")) out += "\0";
+    else if (e === "x") {
+      out += String.fromCharCode(Number.parseInt(body.slice(i + 1, i + 3), 16));
+      i += 2;
+    } else if (e === "u") {
+      if (body[i + 1] === "{") {
+        const end = body.indexOf("}", i);
+        out += String.fromCodePoint(Number.parseInt(body.slice(i + 2, end), 16));
+        i = end;
+      } else {
+        out += String.fromCharCode(Number.parseInt(body.slice(i + 1, i + 5), 16));
+        i += 4;
+      }
+    } else if (e === "\n" || e === "\u2028" || e === "\u2029") {
+      // A line continuation.
+    } else out += e;
+  }
+  return out;
+}
+
 export function recordKeys(source: DucGraph): readonly string[] | undefined {
   if (source.mode !== undefined) return undefined;
   const { graph: g } = loweringView(ecmaScriptView(source));
@@ -1622,6 +1659,8 @@ function lowerFunction(
       // `let x;`: undefined until written.
       if (text === "undefined" || text === "Uninitialized") return UNDEFINED;
       if (text.startsWith('"')) return str(JSON.parse(text) as string);
+      // A template with no substitutions (#1370: TypeScript's own): its cooked string.
+      if (text.startsWith("`")) return str(cookedTemplate(text));
       // A regex literal: its object, made when the function starts.
       if (text.startsWith("/")) {
         const r = fresh();
