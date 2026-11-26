@@ -159,6 +159,7 @@ const GLOBALS = new Set([
   // The runtime's own internalBinding layer (#1331): Node's bindings V8's role gives.
   "__yakccRuntimeBinding",
   "__yakccDefineGlobal",
+  "__yakccSetBuiltinRequire",
   "eval",
   "EvalError",
   "ReferenceError",
@@ -5987,12 +5988,13 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
       req.push(`  ret i64 %v${r}`);
       req.push(`next${r}:`);
     });
-    // Any other: Node's MODULE_NOT_FOUND error, thrown (a try around an optional require catches it).
     const from = m.constant(mod.id);
-    m.intrinsics.add("declare void @yk_module_not_found(i64, ptr, i64)");
+    // Any other: the module a boot program's realm gives for it (Node's library, #1361 P2), else
+    // Node's MODULE_NOT_FOUND error, thrown (a try around an optional require catches it).
+    m.intrinsics.add("declare i64 @yk_require_unresolved(i64, ptr, i64)");
     req.push(
-      `  call void @yk_module_not_found(i64 %spec, ptr ${from.ptr}, i64 ${from.length})`,
-      "  unreachable",
+      `  %other = call i64 @yk_require_unresolved(i64 %spec, ptr ${from.ptr}, i64 ${from.length})`,
+      "  ret i64 %other",
       "}",
       "",
     );

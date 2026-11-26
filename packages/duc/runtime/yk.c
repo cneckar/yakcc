@@ -8725,6 +8725,7 @@ static yk builtin_array_of(void *c, yk s, uint64_t argc, const yk *argv) {
   return yk_array_of(argc, argv);
 }
 static yk global_uncached(const char *name, uint64_t n);
+static yk builtin_set_builtin_require(void *c, yk s, uint64_t argc, const yk *argv);
 /* A global's value: a defined global's (__yakccDefineGlobal) as it is now; anything else (the
    runtime's own, fixed once made) from a cache by name, so a read in a loop makes nothing again. */
 static yk global_cache = 0;
@@ -8748,6 +8749,10 @@ static yk global_uncached(const char *name, uint64_t n) {
   if (n == 19 && memcmp(name, "__yakccDefineGlobal", 19) == 0) {
     static yk f;
     return f != 0 ? f : (f = yk_closure_new(builtin_define_global, 0, 0, NULL));
+  }
+  if (n == 24 && memcmp(name, "__yakccSetBuiltinRequire", 24) == 0) {
+    static yk f;
+    return f != 0 ? f : (f = yk_closure_new(builtin_set_builtin_require, 0, 0, NULL));
   }
   if (n == 10 && memcmp(name, "globalThis", 10) == 0) return global_this();
   if (n == 7 && memcmp(name, "Reflect", 7) == 0) return reflect_global();
@@ -9076,6 +9081,23 @@ int yk_string_is(yk v, const char *p, uint64_t n) {
 void yk_fail(const char *message) {
   fprintf(stderr, "%s\n", message);
   exit(70);
+}
+/* The require of a module none of the program's own modules is (#1361 P2): a boot program over
+   Node's library sets it (__yakccSetBuiltinRequire) to its realm's loader of the modules users may
+   require; without it, or when it gives nothing, Node's MODULE_NOT_FOUND. */
+static yk builtin_require_hook = 0;
+static yk builtin_set_builtin_require(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  builtin_require_hook = arg_or_undefined(argc, argv, 0);
+  return YK_UNDEFINED;
+}
+_Noreturn void yk_module_not_found(yk spec, const char *from, uint64_t n);
+yk yk_require_unresolved(yk spec, const char *from, uint64_t n) {
+  if (is_closure(builtin_require_hook) && is_string(spec)) {
+    yk got = call_value(builtin_require_hook, YK_UNDEFINED, 1, &spec);
+    if (got != YK_UNDEFINED) return got;
+  }
+  yk_module_not_found(spec, from, n);
 }
 /* require of a module the program does not have (#1370): Node's error, which a try catches (an
    optional dependency), its code MODULE_NOT_FOUND. */
