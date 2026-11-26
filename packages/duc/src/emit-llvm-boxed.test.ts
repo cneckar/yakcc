@@ -98,6 +98,11 @@ function disagreements(
 
 const PROGRAMS: [string, string, number][] = [
   [
+    "strings built a piece at a time (ropes, #1370): every read of the result, and of its parts",
+    "export function f(a, b) { let out = ''; const parts = []; for (let i = 0; i < 3000; i++) { out += String(i % 7 === 0 ? a : b) + ','; if (i % 1000 === 999) parts.push(out); } let mid = 'x'.repeat(300); mid = mid + 'é' + mid; const o = {}; o[out] = 1; const keyed = o[parts[2]]; let sum = 0; for (let i = 0; i < out.length; i += 97) sum += out.charCodeAt(i); return [out.length, parts.map((p) => p.length), out.slice(0, 40), out.slice(-20), out[5], out[out.length - 1], out.charCodeAt(1), sum, out === parts[2], parts[0] === parts[1].slice(0, parts[0].length), out.indexOf(String(b) + ',' + String(b)), out.startsWith(String(a)), keyed, JSON.stringify(mid).length, mid.length, mid[300], (mid + mid).split('é').length, [...(mid + 'z')].length, `${mid}${out}`.length]; }",
+    2,
+  ],
+  [
     "Set's union, intersection, difference, symmetricDifference and the three tests, on sets and set-likes (#1370)",
     "export function f(a, b) { const t = (g) => { try { return g(); } catch (e) { return e.name + ': ' + e.message; } }; const s = new Set([1, 2, 3, a, -0]); const o = new Set([3, 4, b, 2, 0]); const big = new Set([1, 2, 3, 4, 5, 6, 7, 8, a, b]); const like = { size: 2, has: (x) => x === 2 || x === 9, keys: () => [9, 2][Symbol.iterator]() }; const all = (x) => [[...s.union(x)], [...s.intersection(x)], [...s.difference(x)], [...s.symmetricDifference(x)], s.isSubsetOf(x), s.isSupersetOf(x), s.isDisjointFrom(x)]; return [all(o), all(big), all(like), all(new Set()), new Set([2]).isSubsetOf(like), t(() => s.union(5)), t(() => s.union({ size: NaN, has() {}, keys() {} })), t(() => s.union({ size: -1, has() {}, keys() {} })), t(() => s.intersection({ size: 1, has: 1, keys() {} })), t(() => s.union({ size: 1, has() {}, keys() { return 5; } }))]; }",
     2,

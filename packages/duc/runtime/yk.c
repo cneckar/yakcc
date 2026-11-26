@@ -581,7 +581,60 @@ yk yk_string_utf8(const char *p, uint64_t n) {
 
 static yk ascii(const char *p) { return yk_string_utf8(p, strlen(p)); }
 
-static yk_string *str(yk v) { return (yk_string *)PTR(v); }
+/*
+ * A rope (#1370): two strings joined without copying them, for code that builds a long string a
+ * piece at a time (`out += piece`, as TypeScript's emitter writes its output), which copying makes
+ * quadratic. Its first word is its length with ROPE_BIT set, a length no flat string has, so every
+ * inline read of a string's length or units (the native lowering's) takes its slow path for one. Its
+ * units are made once, when anything first reads them (str), and kept.
+ */
+#define ROPE_BIT 0x80000000u
+#define ROPE_MIN 256u
+typedef struct {
+  uint32_t len; /* ROPE_BIT | the length */
+  uint32_t depth;
+  yk left, right;
+  yk_string *flat;
+} yk_rope;
+static void *scratch(size_t n);
+static yk_string *flatten(yk_rope *r) {
+  if (r->flat != NULL) return r->flat;
+  uint32_t n = r->len & ~ROPE_BIT;
+  yk_string *s = new_string(n);
+  /* Left to right with a stack of its own (a chain of appends is as deep as it is long). */
+  size_t cap = 64, top = 0, at = 0;
+  yk *stack = malloc(cap * sizeof(yk));
+  if (stack == NULL) abort();
+  stack[top++] = r->right;
+  stack[top++] = r->left;
+  while (top > 0) {
+    yk_string *p = (yk_string *)PTR(stack[--top]);
+    if ((p->len & ROPE_BIT) != 0 && ((yk_rope *)p)->flat == NULL) {
+      if (top + 2 > cap) {
+        cap *= 2;
+        stack = realloc(stack, cap * sizeof(yk));
+        if (stack == NULL) abort();
+      }
+      stack[top++] = ((yk_rope *)p)->right;
+      stack[top++] = ((yk_rope *)p)->left;
+      continue;
+    }
+    if ((p->len & ROPE_BIT) != 0) p = ((yk_rope *)p)->flat;
+    memcpy(s->units + at, p->units, (size_t)p->len * 2);
+    at += p->len;
+  }
+  free(stack);
+  r->flat = s;
+  r->left = r->right = 0;
+  return s;
+}
+static yk_string *str(yk v) {
+  yk_string *s = (yk_string *)PTR(v);
+  if (__builtin_expect((s->len & ROPE_BIT) != 0, 0)) return flatten((yk_rope *)s);
+  return s;
+}
+/* A string's length, a rope's without making its units. */
+static uint32_t str_len(yk v) { return ((yk_string *)PTR(v))->len & ~ROPE_BIT; }
 static yk_array *arr(yk v) { return (yk_array *)PTR(v); }
 
 /* --- arrays --- */
@@ -695,6 +748,20 @@ static int buffer_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out
 
 /* --- ToString --- */
 
+/* Two strings as `+` joins them: one alone when the other is empty; a rope when long (#1370). */
+static yk concat(yk_string *a, yk_string *b);
+static yk concat_values(yk a, yk b) {
+  uint32_t la = str_len(a), lb = str_len(b);
+  if (lb == 0) return a;
+  if (la == 0) return b;
+  if ((uint64_t)la + lb > 536870888) range_error("Invalid string length");
+  if (la + lb < ROPE_MIN) return concat(str(a), str(b));
+  yk_rope *r = alloc(sizeof(yk_rope));
+  r->len = ROPE_BIT | (la + lb);
+  r->left = a;
+  r->right = b;
+  return BOX(T_STRING, (yk_string *)r);
+}
 static yk concat(yk_string *a, yk_string *b) {
   yk_string *s = new_string(a->len + b->len);
   memcpy(s->units, a->units, (size_t)a->len * 2);
@@ -1079,16 +1146,10 @@ int yk_truthy(yk v) {
 
 yk yk_add(yk a, yk b) {
   if (is_number(a) && is_number(b)) return yk_number(num(a) + num(b));
-  if (is_string(a) && is_string(b)) {
-    /* Two strings: one of them alone when the other is empty, else their concatenation. */
-    if (str(b)->len == 0) return a;
-    if (str(a)->len == 0) return b;
-    if ((uint64_t)str(a)->len + str(b)->len > 536870888) range_error("Invalid string length");
-    return concat(str(a), str(b));
-  }
+  if (is_string(a) && is_string(b)) return concat_values(a, b);
   a = to_primitive(a);
   b = to_primitive(b);
-  if (is_string(a) || is_string(b)) return concat(str(to_string(a)), str(to_string(b)));
+  if (is_string(a) || is_string(b)) return concat_values(to_string(a), to_string(b));
   if (numeric_pair(&a, &b)) return big_binary(a, b, '+');
   return yk_number(to_number(a) + to_number(b));
 }
