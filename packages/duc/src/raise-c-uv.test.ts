@@ -226,62 +226,67 @@ int main(void) {
       .slice(0, lines.length + 1);
   };
 
-  it("errors equal Node's; IDNA and addresses equal native (as raised)", () => {
-    const want = native();
-    const memory = createCMemory();
-    const system = createCSystem(memory);
-    const env = link(
-      new Map([...musl.atoms, ...uv.atoms, ...fixture.atoms]),
-      false,
-      memory,
-      [...musl.units, ...uv.units, fixture],
-      system.leaves as unknown as Record<string, Fn>,
-    );
-    env.yk_musl_init?.();
-    const cap = 1 << 16;
-    const out = memory.leaves.__ykAlloc(cap, 16);
-    const text = (n: number): string =>
-      Buffer.from(memory.get(out, Math.max(0, n))).toString("latin1");
-    const bad: string[] = [];
-    // The errors: as native, and (each code's name and message) as Node's.
-    const errs = text(Number((env.yk_uv_errors as Fn)(out, BigInt(cap)))).replaceAll("\n", "~");
-    if (errs !== want[0])
-      bad.push(`errors\n  shaved ${errs.slice(0, 300)}\n  C      ${want[0]?.slice(0, 300)}`);
-    const map = util.getSystemErrorMap();
-    for (const line of errs.split("~").filter(Boolean)) {
-      const [code, name, ...msg] = line.split(" ");
-      const n = map.get(Number(code));
-      if (n === undefined) {
-        if (code !== "-9999") bad.push(`error ${code} ${name}: not in Node's map`);
-        continue;
+  for (const lowered of [false, true])
+    it(`errors equal Node's; IDNA and addresses equal native (${lowered ? "lifted to a graph and lowered" : "as raised"})`, () => {
+      const want = native();
+      const memory = createCMemory();
+      const system = createCSystem(memory);
+      const env = link(
+        new Map([...musl.atoms, ...uv.atoms, ...fixture.atoms]),
+        lowered,
+        memory,
+        [...musl.units, ...uv.units, fixture],
+        system.leaves as unknown as Record<string, Fn>,
+      );
+      env.yk_musl_init?.();
+      const cap = 1 << 16;
+      const out = memory.leaves.__ykAlloc(cap, 16);
+      const text = (n: number): string =>
+        Buffer.from(memory.get(out, Math.max(0, n))).toString("latin1");
+      const bad: string[] = [];
+      // The errors: as native, and (each code's name and message) as Node's.
+      const errs = text(Number((env.yk_uv_errors as Fn)(out, BigInt(cap)))).replaceAll("\n", "~");
+      if (errs !== want[0])
+        bad.push(`errors\n  shaved ${errs.slice(0, 300)}\n  C      ${want[0]?.slice(0, 300)}`);
+      const map = util.getSystemErrorMap();
+      for (const line of errs.split("~").filter(Boolean)) {
+        const [code, name, ...msg] = line.split(" ");
+        const n = map.get(Number(code));
+        if (n === undefined) {
+          if (code !== "-9999") bad.push(`error ${code} ${name}: not in Node's map`);
+          continue;
+        }
+        if (
+          n[0] !== name ||
+          n[1] !== msg.join(" ") ||
+          util.getSystemErrorName(Number(code)) !== name
+        )
+          bad.push(`error ${code}: shaved ${name} "${msg.join(" ")}", Node ${n[0]} "${n[1]}"`);
       }
-      if (n[0] !== name || n[1] !== msg.join(" ") || util.getSystemErrorName(Number(code)) !== name)
-        bad.push(`error ${code}: shaved ${name} "${msg.join(" ")}", Node ${n[0]} "${n[1]}"`);
-    }
-    hosts.forEach((h, i) => {
-      const b = [...Buffer.from(h, "utf8"), 0];
-      let got: string;
-      try {
-        const r = Number((env.yk_uv_idna as Fn)(memory.put(b), BigInt(b.length - 1), out, 256n));
-        got = `${r}:${r > 0 ? hex(memory.get(out, r)) : ""}`;
-      } catch (e) {
-        got = `trap: ${(e as Error).message}`;
-      }
-      if (got !== want[1 + i])
-        bad.push(`idna ${JSON.stringify(h)}\n  shaved ${got}\n  C      ${want[1 + i]}`);
-    });
-    addrs.forEach(([f, a], i) => {
-      const b = [...Buffer.from(a, "latin1"), 0];
-      let got: string;
-      try {
-        got = text(Number((env.yk_uv_inet as Fn)(f, memory.put(b), out, 256n)));
-      } catch (e) {
-        got = `trap: ${(e as Error).message}`;
-      }
-      const w = want[1 + hosts.length + i];
-      if (got !== w) bad.push(`inet ${f} ${a}\n  shaved ${got}\n  C      ${w}`);
-    });
-    expect(bad.slice(0, 8)).toEqual([]);
-    expect(errs.split("~").length).toBeGreaterThan(70);
-  }, 900_000);
+      hosts.forEach((h, i) => {
+        const b = [...Buffer.from(h, "utf8"), 0];
+        let got: string;
+        try {
+          const r = Number((env.yk_uv_idna as Fn)(memory.put(b), BigInt(b.length - 1), out, 256n));
+          got = `${r}:${r > 0 ? hex(memory.get(out, r)) : ""}`;
+        } catch (e) {
+          got = `trap: ${(e as Error).message}`;
+        }
+        if (got !== want[1 + i])
+          bad.push(`idna ${JSON.stringify(h)}\n  shaved ${got}\n  C      ${want[1 + i]}`);
+      });
+      addrs.forEach(([f, a], i) => {
+        const b = [...Buffer.from(a, "latin1"), 0];
+        let got: string;
+        try {
+          got = text(Number((env.yk_uv_inet as Fn)(f, memory.put(b), out, 256n)));
+        } catch (e) {
+          got = `trap: ${(e as Error).message}`;
+        }
+        const w = want[1 + hosts.length + i];
+        if (got !== w) bad.push(`inet ${f} ${a}\n  shaved ${got}\n  C      ${w}`);
+      });
+      expect(bad.slice(0, 8)).toEqual([]);
+      expect(errs.split("~").length).toBeGreaterThan(70);
+    }, 900_000);
 });

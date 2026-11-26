@@ -219,75 +219,76 @@ int main(void) {
     }
   };
 
-  it("each operation gives the native bytes, and Node's Buffer's (as raised)", () => {
-    const want = native();
-    const memory = createCMemory();
-    const system = createCSystem(memory);
-    const env = link(
-      new Map([...musl.atoms, ...unit.atoms]),
-      false,
-      memory,
-      [...musl.units, unit],
-      system.leaves as unknown as Record<string, Fn>,
-    );
-    env.yk_musl_init?.();
-    const L = memory.leaves;
-    const out = L.__ykAlloc(1 << 15, 16);
-    /** A C long (i64). */
-    const W = (n: number): bigint => BigInt(n);
-    const call = (f: string, ...a: unknown[]): number => Number((env[f] as Fn)(...a));
-    const one = (c: Case): string => {
-      const px = memory.put([...c.x, 0]);
-      const py = memory.put([...c.y, 0]);
-      const xn = c.x.length;
-      const get = (p: number, n: number): string => (n > 0 ? hex(memory.get(p, n)) : "");
-      switch (c.op) {
-        case "b64": {
-          const size = call("yk_base64_decoded_size", px, W(xn));
-          const r = call("yk_base64_decode", px, W(xn), out, W(1 << 15));
-          return `${size} ${r}:${get(out, r)}`;
+  for (const lowered of [false, true])
+    it(`each operation gives the native bytes, and Node's Buffer's (${lowered ? "lifted to a graph and lowered" : "as raised"})`, () => {
+      const want = native();
+      const memory = createCMemory();
+      const system = createCSystem(memory);
+      const env = link(
+        new Map([...musl.atoms, ...unit.atoms]),
+        lowered,
+        memory,
+        [...musl.units, unit],
+        system.leaves as unknown as Record<string, Fn>,
+      );
+      env.yk_musl_init?.();
+      const L = memory.leaves;
+      const out = L.__ykAlloc(1 << 15, 16);
+      /** A C long (i64). */
+      const W = (n: number): bigint => BigInt(n);
+      const call = (f: string, ...a: unknown[]): number => Number((env[f] as Fn)(...a));
+      const one = (c: Case): string => {
+        const px = memory.put([...c.x, 0]);
+        const py = memory.put([...c.y, 0]);
+        const xn = c.x.length;
+        const get = (p: number, n: number): string => (n > 0 ? hex(memory.get(p, n)) : "");
+        switch (c.op) {
+          case "b64": {
+            const size = call("yk_base64_decoded_size", px, W(xn));
+            const r = call("yk_base64_decode", px, W(xn), out, W(1 << 15));
+            return `${size} ${r}:${get(out, r)}`;
+          }
+          case "hexd": {
+            const r = call("yk_hex_decode", px, W(xn), out, W(1 << 15));
+            return `${r}:${get(out, r)}`;
+          }
+          case "hexe": {
+            const r = call("yk_hex_encode", px, W(xn), out, W(1 << 15));
+            return `${r}:${get(out, r)}`;
+          }
+          case "swap":
+            return `${call("yk_swap", px, W(xn), c.a)}:${get(px, xn)}`;
+          case "ascii":
+            call("yk_force_ascii", px, out, W(xn));
+            return get(out, xn);
+          default: {
+            const w = c.op === "wsearch";
+            const yn = c.y.length;
+            return `${call("yk_search", px, W(w ? xn / 2 : xn), py, W(w ? yn / 2 : yn), W(c.a), c.b, w ? 1 : 0)}`;
+          }
         }
-        case "hexd": {
-          const r = call("yk_hex_decode", px, W(xn), out, W(1 << 15));
-          return `${r}:${get(out, r)}`;
+      };
+      const got = all.map((c) => {
+        try {
+          return one(c);
+        } catch (e) {
+          return `trap: ${(e as Error).message}`;
         }
-        case "hexe": {
-          const r = call("yk_hex_encode", px, W(xn), out, W(1 << 15));
-          return `${r}:${get(out, r)}`;
-        }
-        case "swap":
-          return `${call("yk_swap", px, W(xn), c.a)}:${get(px, xn)}`;
-        case "ascii":
-          call("yk_force_ascii", px, out, W(xn));
-          return get(out, xn);
-        default: {
-          const w = c.op === "wsearch";
-          const yn = c.y.length;
-          return `${call("yk_search", px, W(w ? xn / 2 : xn), py, W(w ? yn / 2 : yn), W(c.a), c.b, w ? 1 : 0)}`;
-        }
-      }
-    };
-    const got = all.map((c) => {
-      try {
-        return one(c);
-      } catch (e) {
-        return `trap: ${(e as Error).message}`;
-      }
-    });
-    const bad = got.flatMap((g, i) => {
-      const c = all[i] as Case;
-      const n = node(c);
-      return g === want[i] && (n === undefined || n === g)
-        ? []
-        : [
-            `${c.op} ${c.a} ${c.b} ${hex(c.x).slice(0, 60)} ${hex(c.y)}\n  shaved ${g.slice(0, 160)}\n  C++    ${want[i]?.slice(0, 160)}\n  Node   ${n?.slice(0, 160)}`,
-          ];
-    });
-    expect(bad.slice(0, 5)).toEqual([]);
-    expect(new Set(all.map((c) => c.op)).size).toBe(7);
-    // (The searches find their needles, forward and back, narrow and wide.)
-    for (const op of ["search", "wsearch"])
-      for (const b of [0, 1])
-        expect(got.some((g, i) => all[i]?.op === op && all[i]?.b === b && g !== "-1")).toBe(true);
-  }, 900_000);
+      });
+      const bad = got.flatMap((g, i) => {
+        const c = all[i] as Case;
+        const n = node(c);
+        return g === want[i] && (n === undefined || n === g)
+          ? []
+          : [
+              `${c.op} ${c.a} ${c.b} ${hex(c.x).slice(0, 60)} ${hex(c.y)}\n  shaved ${g.slice(0, 160)}\n  C++    ${want[i]?.slice(0, 160)}\n  Node   ${n?.slice(0, 160)}`,
+            ];
+      });
+      expect(bad.slice(0, 5)).toEqual([]);
+      expect(new Set(all.map((c) => c.op)).size).toBe(7);
+      // (The searches find their needles, forward and back, narrow and wide.)
+      for (const op of ["search", "wsearch"])
+        for (const b of [0, 1])
+          expect(got.some((g, i) => all[i]?.op === op && all[i]?.b === b && g !== "-1")).toBe(true);
+    }, 900_000);
 });

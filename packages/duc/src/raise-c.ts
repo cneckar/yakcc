@@ -693,6 +693,10 @@ function parseType(spelled: string, depth = 0): CType {
   if (/^enum /.test(raw)) {
     const e = unitTypedef(raw);
     if (e !== undefined) return parseType(e, depth + 1);
+    // An unnamed enumeration (`enum (unnamed enum at f.c:68:5)`, not a function type): an int, as
+    // clang lays one out (unsigned when no enumerator is negative, as the reads convert it).
+    if (/^enum (?:[\w:]*::)?\((?:unnamed|anonymous)(?: enum)? at [^()]*\)$/.test(raw))
+      return { k: "u32" };
   }
   // An anonymous member record (C++), desugared (`std::basic_string<char>::(anonymous union at
   // f.h:204:7)`): the record, tagged as its spelling says.
@@ -1020,6 +1024,11 @@ const LEAF_CALLS: Readonly<Record<string, (args: readonly string[]) => string>> 
   __builtin_signbit: (a) => `__ykBigToI32(__ykF64Bits(${a[0]}) >> 63n)`,
   // A branch hint: its value is its first argument's.
   __builtin_expect: (a) => `${a[0]}`,
+  // A prefetch is a hint; every atomic of a size up to 8 bytes is lock-free here.
+  __builtin_prefetch: () => "undefined",
+  __atomic_is_lock_free: (a) => `(${a[0]} <= 8n ? 1 : 0)`,
+  // alloca's memory, from the heap (it outlives the call: never freed, as no frame frees it here).
+  __builtin_alloca: (a) => `__ykAlloc(__ykBigToF64(${a[0]}), 16)`,
 };
 
 /** A callee: the declaration a call refers to. */
@@ -3738,6 +3747,7 @@ function raiseBody(
       const d = dispatch;
       // A goto from inside it to a label of the body: the loop in a block the goto leaves.
       const label = d.depth === 0 && gotoToTarget(d, s) ? `__dl${temps++}` : undefined;
+      const open = lines.length;
       if (label !== undefined) {
         push(`${label}: do {`);
         d.exitLabel = label;
@@ -3749,7 +3759,13 @@ function raiseBody(
         d.depth--;
         if (label !== undefined) {
           d.exitLabel = undefined;
-          push("} while (false);");
+          // (No goto in it breaks out, when the loop or switch dispatches them itself: a block.)
+          const used = lines.slice(open + 1).some((l) => l.includes(`break ${label};`));
+          if (used) push("} while (false);");
+          else {
+            lines[open] = "{";
+            push("}");
+          }
         }
       }
       return;
@@ -4928,7 +4944,7 @@ export function shaveCUnit(
       encoding: "utf8",
       maxBuffer: 1 << 30,
       stdio: ["ignore", "pipe", "ignore"],
-    }).length > 1_000_000;
+    }).length > 200_000;
   const indexed = large ? indexUnit(clang, args, file) : undefined;
   // The roots, as the filters name them; in an indexed unit, the index's own nodes (its ids).
   const roots = clangFunctions(file, filters, args, clang);
@@ -5960,7 +5976,10 @@ export function shaveCUnit(
     const same = [...(layouts ?? [])]
       .filter(
         ([key, l]) =>
-          /\(unnamed at /.test(key) && [...l.fields.keys()].join(",") === fields.join(","),
+          // (Each once: not again under its `::`-qualified key.)
+          !key.startsWith("::") &&
+          /\(unnamed at /.test(key) &&
+          [...l.fields.keys()].join(",") === fields.join(","),
       )
       .map(([key]) => key);
     // (Several with these fields, musl's `struct { union { .. } __u; }` typedefs: the one declared
@@ -6254,7 +6273,16 @@ export function shaveCUnit(
           }),
           externals: [...externals],
         });
-      } catch (e) {}
+      } catch (e) {
+        refused.set(
+          key,
+          e instanceof Error
+            ? process.env.YAKCC_RAISE_STACKS !== undefined
+              ? `${e.message}\n${e.stack}`
+              : e.message
+            : String(e),
+        );
+      }
     }
   }
   return {
@@ -6655,6 +6683,8 @@ function staticDefinition(
     }
     throw new RaiseCError(`the address of ${n.kind} in an initializer`);
   };
+  /** The bytes of the bit-fields initialized: offset -> its bits. */
+  const bitBytes = new Map<number, number>();
   const put = (e: ClangNode | undefined, ty: CType, offset: number): void => {
     const n = e === undefined || e.kind === "ImplicitValueInitExpr" ? undefined : stripParens(e);
     if (ty.k === "arr") {
@@ -6681,8 +6711,14 @@ function staticDefinition(
         if (f.bit !== undefined) {
           if (item !== undefined && item.kind !== "ImplicitValueInitExpr") {
             const c = scalar(item);
-            if (c.k !== "v" || (c.v !== 0n && c.v !== 0))
-              throw new RaiseCError(`an initializer of the bit-field "${name}"`);
+            if (c.k !== "v") throw new RaiseCError(`an initializer of the bit-field "${name}"`);
+            // Its bits, into the bytes they fall in (the record's other bit-fields share them).
+            const v = BigInt.asUintN(f.bit.width, BigInt(c.v));
+            for (let j = 0; j < f.bit.width; j++)
+              if (((v >> BigInt(j)) & 1n) === 1n) {
+                const at = offset * 8 + f.bit.start + j;
+                bitBytes.set(at >> 3, (bitBytes.get(at >> 3) ?? 0) | (1 << (at & 7)));
+              }
           }
         } else put(item, parseType(f.type), offset + f.offset);
         i++;
@@ -6707,6 +6743,7 @@ function staticDefinition(
     else init.push({ offset, data: { kind: c.kind, values: c.values } });
   };
   put(initOf(decl), t, 0);
+  for (const [at, value] of bitBytes) init.push({ offset: at, kind: "u8", value });
   return { size: sizeOf(t), align: alignOf(t), init };
 }
 

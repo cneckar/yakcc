@@ -54,3 +54,6 @@ the C/C++ front end to shave (#1367):
   loader reads `package.json` with. The fixture `src/__fixtures__/c/node-simdjson.cpp` reads a
   document as `src/node_modules.cc` does, through the on-demand API; the test builds its portable
   kernel.
+- `deps/uvwasi/` (uvwasi 0.0.23, MIT, `deps/uvwasi/LICENSE`): Node's WASI implementation, over
+  libuv. The fixture `src/__fixtures__/c/node-uvwasi.c` runs its computing parts: path
+  normalization, error names and mapping, and its structures as a guest reads them.

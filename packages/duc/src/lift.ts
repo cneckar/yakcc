@@ -808,6 +808,11 @@ function wrapForms(source: string): string[] {
 
 class Lifter {
   private readonly nodes: MutableNode[] = [];
+  /** The node each value is an output of (a graph of many nodes asks it of each call and write). */
+  private readonly producers = new Map<ValueId, MutableNode>();
+  private producer(v: ValueId): MutableNode | undefined {
+    return this.producers.get(v);
+  }
   private valueCounter = 0;
   private nodeCounter = 0;
   /** Flat current-value environment: name -> its current SSA value. */
@@ -949,6 +954,7 @@ class Lifter {
       ...(ordered ? { order: 1 as const } : {}),
     };
     this.nodes.push(node);
+    for (const v of outputs) this.producers.set(v, node);
     if (heap && outputs[0] !== undefined) this.env.set(HEAP, outputs[0]);
     return outputs;
   }
@@ -1224,9 +1230,19 @@ class Lifter {
     // A closure made before a later `var` it reads (`o.f = function () { return K }; … var K = 10`),
     // or in the `var`'s own initializer (`var m = function () { return m.cache }`), reads the binding
     // when it runs, not the value when it is made: the name is a cell from here.
+    // (Each statement's closures, found once: a scope of many declarations asks of each earlier one.)
+    const fnsOf: (Node[] | undefined)[] = [];
+    const closures = (k: number): Node[] => {
+      let f = fnsOf[k];
+      if (f === undefined) fnsOf[k] = f = functionsWithin(stmts[k] as Node);
+      return f;
+    };
+    let lastWithClosure = -1;
     for (const [j, stmt] of stmts.entries()) {
       if (!Node.isVariableStatement(stmt)) continue;
       const isVar = stmt.getDeclarationKind() === VariableDeclarationKind.Var;
+      for (let k = lastWithClosure + 1; k <= j; k++)
+        if (closures(k).length > 0) lastWithClosure = k;
       for (const decl of stmt.getDeclarations())
         for (const name of patternNames(decl.getNameNode())) {
           // A closure reads this binding only where no scope between it and this one declares
@@ -1235,19 +1251,18 @@ class Lifter {
             this.readNamesOf(fn).includes(name) && !declaredBetween(fn, name, stmt.getParent());
           const readEarlier =
             stmts
-              .slice(0, isVar ? j + 1 : j)
-              .some((earlier) => functionsWithin(earlier).some(readsThis)) ||
+              .slice(0, Math.min(isVar ? j + 1 : j, lastWithClosure + 1))
+              .some((_, k) => closures(k).some(readsThis)) ||
             // A closure in a let's or const's own initializer that reads it when it runs, after
             // the initializer (#1330): `const c = eos(s, () => c())`. One that is the initializer
             // itself is `function-self`.
-            (!isVar &&
-              functionsWithin(stmt).some((fn) => readsThis(fn) && constInitializedBy(fn) !== name));
+            (!isVar && closures(j).some((fn) => readsThis(fn) && constInitializedBy(fn) !== name));
           // A `let` or `const` too, read by a closure made before it, which runs after it is
           // initialized (#1297); or assigned by a closure in its own initializer (`let id =
           // setTimeout(() => { id = null })`). A const arrow calling itself is `function-self`.
           const writtenByOwn =
             !isVar &&
-            functionsWithin(stmt).some((fn) =>
+            closures(j).some((fn) =>
               assignmentTargets(fn).some((t) => Node.isIdentifier(t) && t.getText() === name),
             );
           if (readEarlier || writtenByOwn) this.hoistCell(name, cellsHere);
@@ -1932,11 +1947,10 @@ class Lifter {
     const flag = this.env.get(RETURN_DONE) as ValueId;
     // No path has returned yet (an exit so far was a throw), or an enclosing guard already tests
     // this flag (no return since): the rest runs unguarded.
+    const made = this.producer(flag);
     if (
       this.guardFlags.includes(flag) ||
-      this.nodes.some(
-        (n) => n.kind === "literal-source" && n.outputs[0] === flag && n.label === "false",
-      )
+      (made?.kind === "literal-source" && made.label === "false")
     ) {
       this.liftStatements(rest);
       return;
@@ -2682,9 +2696,7 @@ class Lifter {
       // when it is visible after the if (made before it, or a constant); otherwise a select keeps it.
       if (thenDead !== elseDead) {
         const live = thenDead ? elseValue : thenValue;
-        const constant = this.nodes.some(
-          (n) => n.kind === "literal-source" && n.outputs[0] === live,
-        );
+        const constant = this.producer(live)?.kind === "literal-source";
         if (valueIndex(live) < sidesStart || constant) {
           this.reportReturn(live);
           return;
@@ -2721,9 +2733,7 @@ class Lifter {
       // The heap token keeps the throwing side's: what follows waits for the branch (#1285).
       if (thenDead !== elseDead && name !== HEAP) {
         const live = thenDead ? elseValue : thenValue;
-        const constant = this.nodes.some(
-          (n) => n.kind === "literal-source" && n.outputs[0] === live,
-        );
+        const constant = this.producer(live)?.kind === "literal-source";
         if (valueIndex(live) < sidesStart || constant) {
           this.env.set(name, live);
           continue;
@@ -4346,9 +4356,8 @@ class Lifter {
    */
   private targetOfRead(lhs: Node, read: ValueId): ValueId[] | undefined {
     const n = Node.isParenthesizedExpression(lhs) ? lhs.getExpression() : lhs;
-    let node: MutableNode | undefined;
-    for (let i = this.nodes.length - 1; i >= 0 && node === undefined; i--)
-      if (this.nodes[i]?.outputs[0] === read) node = this.nodes[i];
+    const made = this.producer(read);
+    const node = made?.outputs[0] === read ? made : undefined;
     if (node === undefined || node.kind !== "op") return undefined;
     // A heap operation's last input is the token it is ordered after, which `emit` adds.
     const given = node.order === 1 ? node.inputs.slice(0, -1) : [...node.inputs];
@@ -4616,9 +4625,8 @@ class Lifter {
 
   /** Whether a value is a member read's result (`.m`, `?.m`, `[k]`, `super.m`): a method if called. */
   private isMemberRead(v: ValueId): boolean {
-    for (let i = this.nodes.length - 1; i >= 0; i--) {
-      const n = this.nodes[i] as DucNode;
-      if (!n.outputs.includes(v)) continue;
+    const n = this.producer(v);
+    if (n !== undefined) {
       const label = n.kind === "op" ? (n.label ?? "") : "";
       return (
         ((label.startsWith(".") || label.startsWith("?.")) &&
@@ -5534,8 +5542,9 @@ function hasJump(node: Node): boolean {
 
 /**
  * Whether evaluating an expression can only produce a value: no call or `new`, no member read (which
- * can throw on null or run a getter), no assignment, step, delete, await or yield. Operators on
- * values count as producing a value. Such an expression may be computed on every path, so a
+ * can throw on null or run a getter), no assignment, step, delete, await or yield, and no division,
+ * remainder or power (which throw on some bigints). Other operators on values count as producing a
+ * value. Such an expression may be computed on every path, so a
  * ternary of such arms is a select (D3); otherwise it is a branch.
  */
 function isInert(node: Node): boolean {
@@ -5557,6 +5566,14 @@ function isInert(node: Node): boolean {
     if (Node.isBinaryExpression(n)) {
       const k = n.getOperatorToken().getKind();
       if (k === SyntaxKind.EqualsToken || COMPOUND_ASSIGN.has(k)) return true;
+      // A division or remainder throws on a bigint zero, and a power on a negative bigint exponent:
+      // computed only on the paths that reach it.
+      if (
+        k === SyntaxKind.SlashToken ||
+        k === SyntaxKind.PercentToken ||
+        k === SyntaxKind.AsteriskAsteriskToken
+      )
+        return true;
     }
     if (
       (Node.isPrefixUnaryExpression(n) || Node.isPostfixUnaryExpression(n)) &&
@@ -5947,6 +5964,16 @@ function trailingIterateGuard(loop: Node): Node | undefined {
 
 /** The jumps of a loop that leave it or end its iteration: its own breaks and continues, and its returns. */
 function loopJumpsOf(loop: Node): Node[] {
+  // (Asked of one loop for each statement in it: found once per loop.)
+  const cached = LOOP_JUMPS.get(loop.compilerNode);
+  if (cached !== undefined) return cached;
+  const found = findLoopJumps(loop);
+  LOOP_JUMPS.set(loop.compilerNode, found);
+  return found;
+}
+const LOOP_JUMPS = new WeakMap<object, Node[]>();
+
+function findLoopJumps(loop: Node): Node[] {
   const own = (
     j: import("ts-morph").BreakStatement | import("ts-morph").ContinueStatement,
   ): boolean => {

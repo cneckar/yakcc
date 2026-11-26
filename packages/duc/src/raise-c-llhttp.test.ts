@@ -178,52 +178,55 @@ int main(void) {
       .slice(0, all.length);
   };
 
-  it("each parse's callbacks, data and outcome equal native (as raised)", () => {
-    const want = native();
-    const memory = createCMemory();
-    const system = createCSystem(memory);
-    const env = link(
-      new Map([...musl.atoms, ...llhttp.atoms, ...fixture.atoms]),
-      false,
-      memory,
-      [...musl.units, ...llhttp.units, fixture],
-      system.leaves as unknown as Record<string, Fn>,
-    );
-    env.yk_musl_init?.();
-    const cap = 1 << 16;
-    const out = memory.leaves.__ykAlloc(cap, 16);
-    const got = all.map((c) => {
-      const p = memory.put(c.bytes.length > 0 ? c.bytes : [0]);
-      try {
-        const n = Number(
-          (env.yk_http as Fn)(
-            p,
-            BigInt(c.bytes.length),
-            c.type,
-            c.step,
-            c.lenient,
-            out,
-            BigInt(cap),
-          ),
-        );
-        return hex(memory.get(out, n));
-      } catch (e) {
-        return `trap: ${(e as Error).message}`;
-      }
-    });
-    const text = (h: string | undefined): string =>
-      h?.startsWith("trap") ? h : Buffer.from(h ?? "", "hex").toString("latin1");
-    const bad = got.flatMap((g, i) =>
-      g === want[i]
-        ? []
-        : [
-            `${JSON.stringify({ ...all[i], bytes: Buffer.from(all[i]?.bytes ?? []).toString("latin1") })}\n  shaved ${text(g).slice(0, 300)}\n  C      ${text(want[i]).slice(0, 300)}`,
-          ],
-    );
-    expect(bad.slice(0, 5)).toEqual([]);
-    // (The parses reach every outcome: complete messages, and errors.)
-    const ends = new Set(want.map((w) => /end (\w+)/.exec(text(w))?.[1]));
-    expect(ends.has("HPE_OK")).toBe(true);
-    expect(ends.size).toBeGreaterThan(5);
-  }, 900_000);
+  // (As raised only: llhttp__internal__run, one function of ~2,000 locals and thousands of
+  // branches, does not lift to a graph within 8 GB yet: #1444.)
+  for (const lowered of [false])
+    it(`each parse's callbacks, data and outcome equal native (${lowered ? "lifted to a graph and lowered" : "as raised"})`, () => {
+      const want = native();
+      const memory = createCMemory();
+      const system = createCSystem(memory);
+      const env = link(
+        new Map([...musl.atoms, ...llhttp.atoms, ...fixture.atoms]),
+        lowered,
+        memory,
+        [...musl.units, ...llhttp.units, fixture],
+        system.leaves as unknown as Record<string, Fn>,
+      );
+      env.yk_musl_init?.();
+      const cap = 1 << 16;
+      const out = memory.leaves.__ykAlloc(cap, 16);
+      const got = all.map((c) => {
+        const p = memory.put(c.bytes.length > 0 ? c.bytes : [0]);
+        try {
+          const n = Number(
+            (env.yk_http as Fn)(
+              p,
+              BigInt(c.bytes.length),
+              c.type,
+              c.step,
+              c.lenient,
+              out,
+              BigInt(cap),
+            ),
+          );
+          return hex(memory.get(out, n));
+        } catch (e) {
+          return `trap: ${(e as Error).message}`;
+        }
+      });
+      const text = (h: string | undefined): string =>
+        h?.startsWith("trap") ? h : Buffer.from(h ?? "", "hex").toString("latin1");
+      const bad = got.flatMap((g, i) =>
+        g === want[i]
+          ? []
+          : [
+              `${JSON.stringify({ ...all[i], bytes: Buffer.from(all[i]?.bytes ?? []).toString("latin1") })}\n  shaved ${text(g).slice(0, 300)}\n  C      ${text(want[i]).slice(0, 300)}`,
+            ],
+      );
+      expect(bad.slice(0, 5)).toEqual([]);
+      // (The parses reach every outcome: complete messages, and errors.)
+      const ends = new Set(want.map((w) => /end (\w+)/.exec(text(w))?.[1]));
+      expect(ends.has("HPE_OK")).toBe(true);
+      expect(ends.size).toBeGreaterThan(5);
+    }, 900_000);
 });

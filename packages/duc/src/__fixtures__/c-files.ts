@@ -4,7 +4,7 @@
 // file its own unit; the functions and statics they reach, in turn. What none of the files
 // defines is left external (the C library's, shaved apart).
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { type ShavedUnit, shaveCUnit } from "../raise-c.js";
@@ -17,18 +17,33 @@ export interface ShavedFiles {
   readonly externals: string[];
 }
 
-/** The symbols each file defines, by its object's symbol table: name -> file. */
+/** The symbols each file defines, by its object's symbol table: name -> file (the first file's). */
 function definitions(files: readonly string[], args: readonly string[]): Map<string, string> {
   const out = new Map<string, string>();
   const work = mkdtempSync(join(tmpdir(), "yakcc-c-files-"));
   try {
-    for (const f of files) {
-      const obj = join(work, `${basename(f)}.o`);
-      execFileSync("clang", [...args, "-c", f, "-o", obj]);
+    // Compiled in parallel (one object per file, named by its index), then read in the files' order.
+    const q = (x: string): string => `'${x.replaceAll("'", "'\\''")}'`;
+    const script = join(work, "cc.sh");
+    writeFileSync(
+      script,
+      files
+        .map(
+          (f, i) =>
+            `clang ${args.map(q).join(" ")} -c ${q(f)} -o ${q(join(work, `${i}.o`))} 2>/dev/null`,
+        )
+        .join("\n"),
+    );
+    execFileSync("sh", ["-c", `xargs -d '\\n' -P "$(nproc)" -I{} sh -c {} < ${q(script)}`], {
+      stdio: "ignore",
+    });
+    for (const [i] of files.entries()) {
+      const obj = join(work, `${i}.o`);
+      if (!existsSync(obj)) throw new Error(`clang could not compile ${files[i]}`);
       const syms = execFileSync("nm", ["--defined-only", obj], { encoding: "utf8" });
       for (const line of syms.split("\n")) {
         const m = /^[0-9a-f]+ [TDRBC] (\w+)$/.exec(line.trim());
-        if (m !== null && !out.has(m[1] as string)) out.set(m[1] as string, f);
+        if (m !== null && !out.has(m[1] as string)) out.set(m[1] as string, files[i] as string);
       }
     }
   } finally {
@@ -50,23 +65,7 @@ export function shaveCFiles(
   const seen = new Set<string>();
   const todo = [...roots];
   const definedStatics = new Set<string>();
-  while (todo.length > 0) {
-    const name = todo.pop() as string;
-    if (seen.has(name) || atoms.has(name)) continue;
-    seen.add(name);
-    const file = defs.get(name);
-    if (file === undefined) {
-      externals.add(name);
-      continue;
-    }
-    let unit: ShavedUnit;
-    try {
-      unit = shaveCUnit(file, [name], args, "clang", basename(file));
-    } catch (e) {
-      // (A unit that fails as a whole, a static it cannot lay out: refused, and the rest on.)
-      refused.push(`${name} (${basename(file)}): ${(e as Error).message}`);
-      continue;
-    }
+  const take = (unit: ShavedUnit, file: string): void => {
     units.push(unit);
     for (const [k, r] of unit.refused) refused.push(`${k} (${basename(file)}): ${r}`);
     for (const [k, a] of unit.atoms) {
@@ -75,24 +74,53 @@ export function shaveCFiles(
     }
     for (const d of unit.statics.values())
       for (const item of d.init) if ("fn" in item && !atoms.has(item.fn)) todo.push(item.fn);
-    // Statics this unit uses that another file defines (zlib's tables): their definitions.
-    for (const key of unit.staticRefs) {
-      if (key.includes(":") || definedStatics.has(key)) continue;
-      definedStatics.add(key);
-      const f = defs.get(key);
-      if (f === undefined) continue;
-      let defining: ShavedUnit;
-      try {
-        defining = shaveCUnit(f, [], args, "clang", basename(f), [key]);
-      } catch (e) {
-        refused.push(`${key} (${basename(f)}): ${(e as Error).message}`);
+  };
+  // In waves: each file shaved once a wave, for every function of it the closure has reached (a
+  // file's parse is most of a unit's cost).
+  while (todo.length > 0) {
+    const byFile = new Map<string, string[]>();
+    while (todo.length > 0) {
+      const name = todo.pop() as string;
+      if (seen.has(name) || atoms.has(name)) continue;
+      seen.add(name);
+      const file = defs.get(name);
+      if (file === undefined) {
+        externals.add(name);
         continue;
       }
-      units.push(defining);
-      for (const [k, r] of defining.refused) refused.push(`${k} (${basename(f)}): ${r}`);
-      for (const [k, a] of defining.atoms) {
-        if (!atoms.has(k)) atoms.set(k, a);
-        for (const x of a.externals) if (!atoms.has(x)) todo.push(x);
+      byFile.set(file, [...(byFile.get(file) ?? []), name]);
+    }
+    const staticsByFile = new Map<string, string[]>();
+    if (process.env.YAKCC_PROGRESS !== undefined)
+      console.error(
+        `c-files: wave of ${byFile.size} files, ${[...byFile.values()].flat().length} names; ${atoms.size} atoms so far`,
+      );
+    for (const [file, names] of byFile) {
+      const t = Date.now();
+      let unit: ShavedUnit;
+      try {
+        unit = shaveCUnit(file, names, args, "clang", basename(file));
+      } catch (e) {
+        // (A unit that fails as a whole, a static it cannot lay out: refused, and the rest on.)
+        refused.push(`${names.join(", ")} (${basename(file)}): ${(e as Error).message}`);
+        continue;
+      }
+      take(unit, file);
+      if (process.env.YAKCC_PROGRESS !== undefined && Date.now() - t > 10_000)
+        console.error(`c-files: ${basename(file)} took ${Date.now() - t} ms`);
+      // Statics this unit uses that another file defines (zlib's tables): their definitions.
+      for (const key of unit.staticRefs) {
+        if (key.includes(":") || definedStatics.has(key)) continue;
+        definedStatics.add(key);
+        const f = defs.get(key);
+        if (f !== undefined) staticsByFile.set(f, [...(staticsByFile.get(f) ?? []), key]);
+      }
+    }
+    for (const [f, keys] of staticsByFile) {
+      try {
+        take(shaveCUnit(f, [], args, "clang", basename(f), keys), f);
+      } catch (e) {
+        refused.push(`${keys.join(", ")} (${basename(f)}): ${(e as Error).message}`);
       }
     }
   }
