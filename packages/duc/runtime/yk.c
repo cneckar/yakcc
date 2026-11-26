@@ -79,6 +79,7 @@ typedef struct {
   uint32_t digit_keys; /* 1 once a key starting with a digit was added (an index's may be one); 2
                           too once one was not an index below 128 */
   uint64_t small_ints[2]; /* the indices below 128 a key was added for (a bit stays when deleted) */
+  yk_array *hidden;       /* its non-enumerable own keys (Object.defineProperty's), or NULL */
 } yk_object;
 
 /* A BigInt: a sign and a magnitude, 32-bit limbs least significant first, no zero limb on top. */
@@ -903,6 +904,8 @@ _Noreturn void yk_throw(yk v);
 static yk proto_lookup(yk v, yk key);
 static yk tail_proto(yk v);
 static int has_own(yk v, yk key);
+static void set_hidden(yk_object *o, yk key, int hidden);
+static int is_hidden(yk_object *o, yk key);
 static yk object_to_string(yk v);
 static yk method_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
 static yk object_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
@@ -2460,6 +2463,7 @@ yk yk_delete(yk obj, yk key) {
         memmove(o->values + i, o->values + i + 1, (size_t)(o->len - i - 1) * sizeof(yk));
         o->len--;
         o->index = NULL; /* positions moved: made again when next needed */
+        set_hidden(o, k, 0);
         break;
       }
   } else if (is_array(obj)) {
@@ -3096,10 +3100,12 @@ static yk descriptor_of(yk v, yk key) {
     yk_accessor *a = (yk_accessor *)PTR(slot);
     yk keys[4] = {ascii("get"), ascii("set"), ascii("enumerable"), ascii("configurable")};
     yk vals[4] = {a->get != 0 ? a->get : YK_UNDEFINED, a->set != 0 ? a->set : YK_UNDEFINED, t, t};
+    if ((is_object(v) || is_closure(v)) && is_hidden(own_props(v), key)) vals[2] = YK_FALSE;
     return yk_object_of(4, keys, vals);
   }
   yk keys[4] = {ascii("value"), ascii("writable"), ascii("enumerable"), ascii("configurable")};
   yk vals[4] = {yk_get(v, key), t, t, t};
+  if ((is_object(v) || is_closure(v)) && is_hidden(own_props(v), key)) vals[2] = YK_FALSE;
   /* The non-enumerable own properties the runtime makes: an array's length; a function's name and
      length (read-only, configurable) and prototype (writable, not configurable). */
   if (is_array(v) && key_is(key, "length")) vals[2] = YK_FALSE, vals[3] = YK_FALSE;
@@ -3123,6 +3129,16 @@ static yk object_get_own_property_descriptors(void *c, yk s, uint64_t argc, cons
 static void define_from(yk v, yk key, yk desc) {
   key = to_property_key(key);
   if (!is_object(desc) && !is_closure(desc)) type_error("Property description must be an object");
+  /* Its enumerability: the descriptor's when it says, else a new property's is false (an existing
+     one keeps its own). */
+  int existed = has_own(v, key);
+  int says = yk_in(ascii("enumerable"), desc) == YK_TRUE;
+  int enumerable = says ? yk_truthy(yk_get(desc, ascii("enumerable"))) : 0;
+  if (is_object(v) || is_closure(v)) {
+    yk_object *o = own_props(v);
+    if (says) set_hidden(o, key, !enumerable);
+    else if (!existed) set_hidden(o, key, 1);
+  }
   yk g = yk_get(desc, ascii("get")), st = yk_get(desc, ascii("set"));
   if (g != YK_UNDEFINED || st != YK_UNDEFINED) {
     yk_object *o = is_array(v) ? (arr(v)->props == 0 ? (yk_object *)PTR(arr(v)->props = yk_object_of(0, NULL, NULL))
@@ -3284,6 +3300,40 @@ static yk_array *symbol_keys(yk_object *o) {
 }
 /* An object's own string keys, in OrdinaryOwnPropertyKeys' order: integer indexes ascending, then the
    others as they were added. */
+/* Whether an object's own key is not enumerable (defined so). */
+static int key_equal(yk a, yk b);
+static int is_hidden(yk_object *o, yk key) {
+  if (o->hidden == NULL) return 0;
+  for (uint32_t i = 0; i < o->hidden->len; i++)
+    if (key_equal(o->hidden->items[i], key)) return 1;
+  return 0;
+}
+static void push(yk_array *a, yk v);
+static void set_hidden(yk_object *o, yk key, int hidden) {
+  if (hidden == is_hidden(o, key)) return;
+  if (hidden) {
+    if (o->hidden == NULL) o->hidden = new_array(2);
+    push(o->hidden, key);
+    return;
+  }
+  yk_array *h = o->hidden;
+  for (uint32_t i = 0; i < h->len; i++)
+    if (key_equal(h->items[i], key)) {
+      h->items[i] = h->items[h->len - 1];
+      h->len--;
+      return;
+    }
+}
+static yk_array *ordered_keys(yk_object *o);
+/* An object's enumerable own string keys, in order (Object.keys, for…in, JSON, spread). */
+static yk_array *enumerable_keys(yk_object *o) {
+  yk_array *k = ordered_keys(o);
+  if (o->hidden == NULL || o->hidden->len == 0) return k;
+  yk_array *r = new_array(k->len);
+  for (uint32_t i = 0; i < k->len; i++)
+    if (!is_hidden(o, k->items[i])) push(r, k->items[i]);
+  return r;
+}
 static yk_array *ordered_keys(yk_object *o) {
   yk_array *r = new_array(o->len);
   uint32_t *idx = scratch((size_t)o->len * sizeof(uint32_t) + 4);
@@ -3378,7 +3428,7 @@ yk yk_iter_new(yk v, int32_t keys) {
   }
   if (keys) {
     if (is_object(v))
-      it->keys = ordered_keys((yk_object *)PTR(v));
+      it->keys = enumerable_keys((yk_object *)PTR(v));
     else {
       it->keys = new_array(4);
       uint32_t n = is_array(v) ? arr(v)->len : is_string(v) ? str(v)->len : 0;
@@ -4530,7 +4580,7 @@ static int json_write(yk_array *parts, yk v) {
   yk_object *o = (yk_object *)PTR(v);
   push(parts, ascii("{"));
   if (o->kind == 0) {
-    yk_array *keys = ordered_keys(o);
+    yk_array *keys = enumerable_keys(o);
     int first = 1;
     for (uint32_t i = 0; i < keys->len; i++) {
       yk value;
@@ -4590,7 +4640,7 @@ static yk object_parts(yk v, int which) {
   yk_array *r = new_array(4);
   if (is_object(v) && ((yk_object *)PTR(v))->kind == 0) {
     yk_object *o = (yk_object *)PTR(v);
-    yk_array *keys = ordered_keys(o);
+    yk_array *keys = enumerable_keys(o);
     for (uint32_t i = 0; i < keys->len; i++) {
       yk value;
       own_get(o, keys->items[i], &value);
@@ -7572,7 +7622,7 @@ static yk json_revive(yk holder, yk name, yk reviver) {
     yk_array *a = arr(val);
     for (uint32_t i = 0; i < a->len; i++) a->items[i] = json_revive(val, to_string(yk_number(i)), reviver);
   } else if (is_object(val)) {
-    yk_array *keys = ordered_keys((yk_object *)PTR(val));
+    yk_array *keys = enumerable_keys((yk_object *)PTR(val));
     for (uint32_t i = 0; i < keys->len; i++) {
       yk e = json_revive(val, keys->items[i], reviver);
       if (e == YK_UNDEFINED) yk_delete(val, keys->items[i]);
@@ -8367,7 +8417,8 @@ static yk util_get_own_non_index_properties(void *c, yk self, uint64_t argc, con
   if (o == NULL) return BOX(T_ARRAY, r);
   /* V8's PropertyFilter: 8 skips strings, 16 symbols; enumerability is not tracked (all are). */
   if (!(filter & 8)) {
-    yk_array *keys = ordered_keys(o);
+    /* 2 (ONLY_ENUMERABLE): the enumerable ones. */
+    yk_array *keys = (filter & 2) ? enumerable_keys(o) : ordered_keys(o);
     for (uint32_t i = 0; i < keys->len; i++) {
       uint32_t k;
       yk key = keys->items[i];
@@ -8848,7 +8899,7 @@ yk yk_spread_into(yk obj, yk src) {
   if (is_closure(src) && ((yk_closure *)PTR(src))->props == 0) return obj;
   yk_object *from = own_props(src);
   if (from->kind != 0) return obj;
-  yk_array *keys = ordered_keys(from);
+  yk_array *keys = enumerable_keys(from);
   for (uint32_t i = 0; i < keys->len; i++) {
     yk slot;
     own_get(from, keys->items[i], &slot);
@@ -9082,7 +9133,7 @@ void yk_write(FILE *out, yk v) {
     yk_write(out, BOX(T_ARRAY, typed_items_v(v)));
   } else if (is_object(v)) {
     yk_object *o = (yk_object *)PTR(v);
-    yk_array *keys = ordered_keys(o);
+    yk_array *keys = enumerable_keys(o);
     fprintf(out, "o%u", keys->len);
     for (uint32_t i = 0; i < keys->len; i++) {
       yk value;
