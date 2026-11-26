@@ -1249,4 +1249,132 @@ export function f(xs: number[]) {
       [[1], [3]],
     );
   });
+  it("an if whose only exits are throws takes no tail: the rest is lifted once, however long", () => {
+    const program = (rest: number) =>
+      `export function f(c: boolean, x: number) {
+  const log: number[] = [];
+  if (c) {
+    if (x > 2) {
+      throw new RangeError("big " + x);
+    }
+    log.push(x);
+  }
+${Array.from({ length: rest }, (_, i) => `  log.push(x + ${i});`).join("\n")}
+  return log;
+}`;
+    for (const rest of [1, 200]) {
+      const code = program(rest);
+      const g = liftAtom(code);
+      expect(g.nodes.filter((n) => n.origin?.kind === "ReturnSelect").length, code).toBe(0);
+      expect(g.nodes.filter((n) => n.label === ".push").length, code).toBe(rest + 1);
+      agrees(code, [
+        [true, 1],
+        [true, 3],
+        [false, 5],
+      ]);
+    }
+  }, 60_000);
+
+  it("a constructor whose branch throws on one side, with the heap joined after it (#1370)", () => {
+    agrees(
+      `export function f(a: number, b: number) {
+  class B {
+    v: number;
+    w: number;
+    constructor(o: { k?: number; c?: number } = {}, fl = 0) {
+      const { k, c } = o;
+      const has = c !== undefined;
+      if (k !== undefined) {
+        if (has) throw new Error("x");
+        this.v = k + fl;
+      } else {
+        this.v = fl;
+      }
+      this.w = this.v * 2;
+    }
+  }
+  return [new B({ k: a }, 1).w, new B().w];
+}`,
+      [
+        [3, 4],
+        [7, 8],
+      ],
+    );
+  });
+  it("in a loop body, an if whose only exits are throws takes no tail: for and while agree (#1292)", () => {
+    // raise-c's block lowering: a for loop with a continue and a throw, whose emitted form is a while
+    // loop with its update in the body.
+    agrees(
+      `export function f(kids: string[], forward: number[], jumps: number[]) {
+  const out: string[] = [];
+  for (let i = 0; i < kids.length; i++) {
+    for (const j of jumps) if (kids.slice(i, j).some((k) => k === "x")) out.push(i + ":" + j);
+    if (kids[i] !== "L") {
+      continue;
+    }
+    if (forward.includes(i)) throw new RangeError("both ways at " + i);
+    i = i + 1;
+  }
+  return out;
+}`,
+      [
+        [["a", "x", "L", "b", "L", "c"], [9], [2, 4]],
+        [["L", "a"], [0], [1]],
+        [[], [], []],
+      ],
+    );
+  });
+  it("cells passed only into getters are ordered by how the getters use them (#1292)", () => {
+    // Node's inspect_repl.js, reduced: a context object of getters, each reading or writing one of
+    // the function's cells. Outside the getters the cells are alike, and seven of them are too many
+    // orders to search: their order was the source's, and the emitted source's was another.
+    const code = `function createRepl(inspector) {
+  const { Debugger, HeapProfiler, Profiler, Runtime } = inspector;
+  const history = {};
+  let currentBacktrace;
+  let exitDebugRepl;
+  function initializeContext(context) {
+    copyOwnProperties(context, {
+      get pause() { return Debugger.pause(); },
+      get backtrace() { return currentBacktrace; },
+      get profileEnd() { return PromisePrototypeThen(Profiler.stop(), Profile.createAndRegister); },
+      takeHeapSnapshot(filename = "node.heapsnapshot") {
+        heapSnapshotPromise = new Promise((resolve, reject) => {
+          PromisePrototypeThen(HeapProfiler.takeHeapSnapshot({}), onResolve, onReject);
+        });
+      },
+      get repl() { exitDebugRepl = () => { repl.history = history.control; }; },
+      get version() {
+        return PromisePrototypeThen(Runtime.evaluate({ returnByValue: true }), ({ result }) => {});
+      },
+    });
+  }
+}`;
+    const g = liftAtom(code);
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+  });
+  it("a value a nested branch tests is made before the branch around it (#1292)", () => {
+    // Node's repl/utils.js: an arrow's default, tested in an if after an early return. The test of
+    // the inner if was not a need of the outer one, which could come first and read it unmade.
+    agrees(
+      `export function f(line: string, show?: boolean) {
+  const out: string[] = [];
+  const preview = (showCompletion = true) => {
+    if (line === "") {
+      return;
+    }
+    if (showCompletion) {
+      out.push(line);
+    }
+  };
+  preview(show);
+  return out;
+}`,
+      [
+        ["", true],
+        ["a", undefined],
+        ["b", false],
+      ],
+    );
+  });
 });

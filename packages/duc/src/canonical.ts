@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { blake3 } from "@noble/hashes/blake3.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
@@ -20,6 +20,14 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { ecmaScriptLabel } from "./ops.js";
 import { isRestParam, paramIndex } from "./params.js";
 import type { DiamondLabel, DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
+
+const UTF8 = new TextEncoder();
+/**
+ * SHA-256 of a text's UTF-8, as hex: the structural signatures' hash. In TypeScript, not `node:crypto`,
+ * so canonicalization (and a graph's root) builds natively, where `crypto` stops at its OpenSSL
+ * binding (#1370). The digest is the same, so no identity changes.
+ */
+const sha256Hex = (text: string): string => bytesToHex(sha256(UTF8.encode(text)));
 
 /**
  * Operations whose two operands can be swapped for every value of their operands (#1275, decision
@@ -184,12 +192,22 @@ function valueUseOf(closure: DucGraph, value: string, depth: number): string {
             : i < n.loop.carry.length
               ? n.loop.carry[i]
               : undefined;
+      // A nested closure's capture is its parameter of the same position (before it is renumbered):
+      // how that closure uses it, one step further (#1292). Cells passed only into getters and
+      // callbacks were told apart by nothing, and kept the order the source read them in.
+      const captured =
+        n.closure !== undefined && depth > 0
+          ? n.closure.nodes.find((p) => p.kind === "param-source" && p.label === String(i))
+              ?.outputs[0]
+          : undefined;
       const next =
         inner !== undefined
           ? `(${valueUseOf(closure, inner, depth)})`
-          : depth > 0 && n.outputs.length > 0 && n.closure === undefined && n.loop === undefined
-            ? `(${n.outputs.map((o) => valueUseOf(closure, o, depth - 1)).join(";")})`
-            : "";
+          : captured !== undefined
+            ? `(${valueUseOf(n.closure as DucGraph, captured, depth - 1)})`
+            : depth > 0 && n.outputs.length > 0 && n.closure === undefined && n.loop === undefined
+              ? `(${n.outputs.map((o) => valueUseOf(closure, o, depth - 1)).join(";")})`
+              : "";
       uses.push(
         `${n.kind}:${n.label ?? ""}:${at}:${structuralDiamond(n.diamond)?.symbol ?? ""}${next}`,
       );
@@ -601,7 +619,7 @@ export function canonicalizeGraph(
     ];
     if (node.loop !== undefined) fields.push(bodySummaryOf(node.loop.id));
     if (node.closure !== undefined) fields.push(graphIdentity(closureOf(node)));
-    const sig = createHash("sha256").update(canonicalJson(fields)).digest("hex");
+    const sig = sha256Hex(canonicalJson(fields));
     memo.set(node, sig);
     return sig;
   };
@@ -664,11 +682,9 @@ export function canonicalizeGraph(
           : `${key.get(outerProducer.node)}#${outerProducer.index}`;
       refined.set(
         node,
-        createHash("sha256")
-          .update(
-            canonicalJson(stands === null ? [key.get(node), used] : [key.get(node), used, stands]),
-          )
-          .digest("hex"),
+        sha256Hex(
+          canonicalJson(stands === null ? [key.get(node), used] : [key.get(node), used, stands]),
+        ),
       );
     }
     const count = new Set(refined.values()).size;
@@ -724,9 +740,7 @@ export function canonicalizeGraph(
         .map((n) => key.get(n) ?? "")
         .sort()
         .join(",");
-    const k = createHash("sha256")
-      .update(`${side("t")}|${side("e")}`)
-      .digest("hex");
+    const k = sha256Hex(`${side("t")}|${side("e")}`);
     contentsMemo.set(b.id, k);
     return k;
   };

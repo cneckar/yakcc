@@ -1281,10 +1281,14 @@ class Lifter {
       const rest = stmts.slice(i + 1);
       const full = cont === undefined ? undefined : [...rest, ...cont];
       if (this.bodyExits !== undefined) {
+        // Not an if whose only exits are throws (#1292): a throw ends its path, so the rest of the
+        // body is the rest of every path that goes on, as in a function. A for loop's update is not
+        // part of its body, but a while loop's is: taking the rest made them two graphs.
         if (
           Node.isIfStatement(stmt) &&
           full !== undefined &&
-          this.holdsLoopExit(stmt, this.bodyExits.node)
+          this.holdsLoopExit(stmt, this.bodyExits.node) &&
+          !this.throwsOnlyIn(stmt, this.bodyExits.node)
         ) {
           const elseNode = stmt.getElseStatement();
           this.liftIf(
@@ -1372,7 +1376,12 @@ class Lifter {
       if (this.liftStatement(stmt, blockCont)) return true;
       // An exit on some paths that no if could take the rest for: the rest runs only on the paths
       // that have not exited, under the return state (the fallback).
-      if (containsDirectExit(stmt) && rest.length > 0 && this.env.has(RETURN_DONE)) {
+      if (
+        containsDirectExit(stmt) &&
+        !(Node.isIfStatement(stmt) && throwsOnly(stmt)) &&
+        rest.length > 0 &&
+        this.env.has(RETURN_DONE)
+      ) {
         this.guardTail(rest);
         return false;
       }
@@ -1799,6 +1808,15 @@ class Lifter {
     }
   }
 
+  /** Whether every exit of a loop a statement holds, written or lowered, is a throw. */
+  private throwsOnlyIn(stmt: Node, loop: Node): boolean {
+    const jumps = new Set(loopJumpsOf(loop).map((j) => j.compilerNode));
+    const exits = stmt
+      .getDescendants()
+      .filter((d) => jumps.has(d.compilerNode) || this.loweredExits.has(d.compilerNode));
+    return exits.length > 0 && exits.every((d) => Node.isThrowStatement(d));
+  }
+
   /** Whether a statement holds an exit of the loop whose body is being lifted. */
   private holdsLoopExit(stmt: Node, loop: Node): boolean {
     return (
@@ -1894,6 +1912,11 @@ class Lifter {
     const both =
       !alwaysReturns(stmt.getThenStatement()) &&
       !(elseNode !== undefined && alwaysReturns(elseNode));
+    // An if whose only exits are throws, both of whose sides go on, needs no tail: a throw ends its
+    // path, so the rest after the if is the rest of every path that goes on (#1292). Taking the tail
+    // (twice) or not, by its size, made the same program two graphs: a long one emitted and lifted
+    // again crossed the size where a short one's source had not.
+    if (both && throwsOnly(stmt)) return false;
     const size = tail.reduce((n, t) => n + t.getText().length, 0);
     return !(both && this.returnFrames.length === 0 && size > 4000);
   }
@@ -2650,7 +2673,14 @@ class Lifter {
   ): void {
     const condValue = this.liftExpr(node.getExpression());
     // A return on some paths: the return state must exist before the branch, so the join carries it.
-    if (sides === undefined && containsDirectExit(node)) this.ensureReturnState();
+    // Not for an if whose only exits are throws (#1292): no path through it returns, and the rest of
+    // the function is the rest of the paths that go on.
+    if (
+      sides === undefined &&
+      containsDirectExit(node) &&
+      !(this.exitMode === "function" && throwsOnly(node))
+    )
+      this.ensureReturnState();
     const before = new Map(this.env);
     // Record the branch, and lift each side inside its own region, so the structure is kept.
     const id = `b${this.branchCount++}`;
@@ -6288,6 +6318,17 @@ function containsDirectExit(node: Node): boolean {
     node.getDescendantsOfKind(SyntaxKind.ThrowStatement).some((t) => !insideOpaque(t, node));
   exitCache.set(key, result);
   return result;
+}
+
+/** Whether a statement's exits are all throws: no return of its own, and no loop in it that returns. */
+function throwsOnly(node: Node): boolean {
+  return (
+    containsExitOrLoopReturn(node) &&
+    !containsDirectReturn(node) &&
+    ![...node.getDescendants()].some(
+      (d) => isLoopStatement(d) && !insideOpaqueNonLoop(d, node) && loopReturns(d),
+    )
+  );
 }
 
 /**
