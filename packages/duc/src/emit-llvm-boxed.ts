@@ -3070,7 +3070,10 @@ function lowerFunction(
       (p) => p.kind === "param-source" && Number(p.label ?? "0") >= n.inputs.length,
     );
     const rest = params.findIndex((p) => (p.label ?? "").endsWith("..."));
-    const length = rest < 0 ? params.length : rest;
+    const length = Math.min(
+      rest < 0 ? params.length : rest,
+      expectedArgumentCount(text) ?? Number.POSITIVE_INFINITY,
+    );
     m.intrinsics.add("declare i64 @yk_closure_meta(i64, ptr, i64, i64)");
     if (ownName !== undefined && /^[A-Za-z_$][\w$]*$/.test(ownName)) {
       const k = m.constant(ownName);
@@ -5823,6 +5826,60 @@ type Resolved =
   | { readonly ns: number }
   | { readonly cjs: number; readonly name: string }
   | { readonly builtin: string; readonly name: string };
+
+/**
+ * ExpectedArgumentCount (ECMA-262 15.1.5) from a function's source text: its parameters before the
+ * first with a default or a rest one; undefined when the text does not show its whole list.
+ */
+function expectedArgumentCount(text: string): number | undefined {
+  const arrow = /^(?:async\s+)?([A-Za-z_$][\w$]*)\s*=>/.exec(text);
+  if (arrow !== null) return 1;
+  const open = text.indexOf("(");
+  if (open < 0) return undefined;
+  let depth = 0;
+  let quote = "";
+  let count = 0;
+  let current = "";
+  for (let i = open + 1; i < text.length; i++) {
+    const c = text[i] as string;
+    if (quote !== "") {
+      if (c === "\\") i++;
+      else if (c === quote) quote = "";
+      current += c;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") quote = c;
+    if (c === "(" || c === "[" || c === "{") depth++;
+    if (c === "]" || c === "}") depth--;
+    if (c === ")") {
+      if (depth === 0) {
+        const p = current.trim();
+        return p === "" || /^\.\.\./.test(p) || topLevelDefault(p) ? count : count + 1;
+      }
+      depth--;
+    }
+    if (c === "," && depth === 0) {
+      const p = current.trim();
+      if (/^\.\.\./.test(p) || topLevelDefault(p)) return count;
+      count++;
+      current = "";
+      continue;
+    }
+    current += c;
+  }
+  return undefined;
+}
+/** Whether a parameter's text has a default of its own (an `=` outside its pattern's brackets). */
+function topLevelDefault(param: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < param.length; i++) {
+    const c = param[i];
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === "=" && depth === 0 && param[i + 1] !== ">" && param[i + 1] !== "=") return true;
+  }
+  return false;
+}
 
 /** A module id as a C symbol: `lib/parse.js` is `yk_module_lib_parse_js`. */
 export function moduleSymbol(id: string): string {
