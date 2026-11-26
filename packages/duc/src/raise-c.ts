@@ -2548,6 +2548,8 @@ function raiseBody(
     if (target.kind !== "DeclRefExpr") return undefined;
     const d = target.referencedDecl as ClangNode;
     if (mems.has(d.id ?? "") || inMemory.has(d.id ?? "")) return undefined;
+    // (A reference to an array, `for (auto &row : table)`'s: the array it names, in memory.)
+    if (isReferenceType(d.type?.qualType ?? "")) return undefined;
     if (isGlobal(d)) return constGlobal(d) ? globalRef(d) : undefined;
     return declName(d);
   };
@@ -4452,12 +4454,15 @@ function raiseBody(
     }
     throw new RaiseCError(`a case label, goto target or jump inside a ${s.kind} of a switch body`);
   };
+  /** Each open block's scope's block (a goto destroys the objects of those it leaves). */
+  const scopeBlocks = new WeakMap<string[], ClangNode>();
   /** A block, with its forward and backward gotos as blocks and loops. */
   const compound = (s: ClangNode): void => {
     const kids = s.inner ?? [];
     push("{");
     const scope: string[] = [];
     scopes.push(scope);
+    scopeBlocks.set(scope, s);
     // A forward goto to a label of this block, from inside a statement before it: the
     // statements from that one up to the label are a labelled block the goto breaks out of,
     // written `L: do { .. } while (false)` (the lifter's form of a block left by a jump).
@@ -4577,20 +4582,23 @@ function raiseBody(
       }
       case "GotoStmt": {
         const target = (s as { targetLabelDeclId?: string }).targetLabelDeclId ?? "";
-        // To a label of the function's own block (ICU's `goto error`): the objects of the blocks
-        // between destroyed first, the innermost's last made first, as leaving them does.
-        const body = (fn.inner ?? []).find((k) => k.kind === "CompoundStmt");
-        const atTop = (body?.inner ?? []).some(
-          (k) => k.kind === "LabelStmt" && (k as { declId?: string }).declId === target,
-        );
-        const inner = scopes.slice(1);
-        if (atTop && inner.some((sc) => sc !== "loop" && sc.length > 0)) {
-          for (let i = inner.length - 1; i >= 0; i--) {
-            const sc = inner[i] as string[] | "loop";
-            if (sc !== "loop") for (const x of [...sc].reverse()) push(`${x};`);
+        // Out of blocks with objects (ICU's `goto error`, `goto continue_outer`): the objects of
+        // each block it leaves, those not around its label, destroyed first, the innermost's
+        // last made first, as leaving them does.
+        const holds = (n: ClangNode): boolean =>
+          (n.kind === "LabelStmt" && (n as { declId?: string }).declId === target) ||
+          (n.inner ?? []).some(holds);
+        for (let i = scopes.length - 1; i >= 0; i--) {
+          const sc = scopes[i] as string[] | "loop";
+          if (sc === "loop") continue;
+          const block = scopeBlocks.get(sc);
+          if (block === undefined) {
+            if (sc.length > 0) throw new RaiseCError("a goto where objects would be destroyed");
+            continue;
           }
-        } else if (scopes.some((sc) => sc !== "loop" && sc.length > 0))
-          throw new RaiseCError("a goto where objects would be destroyed");
+          if (holds(block)) break;
+          for (const x of [...sc].reverse()) push(`${x};`);
+        }
         if (dispatch !== undefined) {
           const d = dispatch;
           const targetOf = (x: Dispatch): number | undefined =>
