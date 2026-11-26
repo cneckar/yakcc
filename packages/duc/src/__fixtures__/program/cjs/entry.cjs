@@ -27,5 +27,6 @@ exports.probe = (n) => {
     wrapped.hoisted,
     wrapped.keys,
     wrapped.own,
+    wrapped.ownMethods(n),
   ];
 };

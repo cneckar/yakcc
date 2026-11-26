@@ -98,6 +98,11 @@ function disagreements(
 
 const PROGRAMS: [string, string, number][] = [
   [
+    "substr (Annex B): start relative, length clamped (#1370)",
+    "export function f(a, b) { const s = String(a) + 'abcdef' + String(b); return [s.substr(2), s.substr(-3), s.substr(1, 3), s.substr(-4, 2), s.substr(2, -1), s.substr(0, Infinity), s.substr(NaN, 2), s.substr(100), s.substr(-100, 3), s.substr(typeof a === 'number' ? a : 1, typeof b === 'number' ? b : 2)]; }",
+    2,
+  ],
+  [
     "templates with no substitutions: their cooked strings, escapes and line continuations (#1370)",
     "export function f(a, b) { return [`\\${configDir}`, `a\\nb\\t\\x41\\u0042\\u{1F600}\\0\\\\\\``, `line\\\nnext`, `\\'\\\"`, `${a}` + `-` + String(b)]; }",
     2,
