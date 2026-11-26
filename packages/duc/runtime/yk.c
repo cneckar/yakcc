@@ -429,6 +429,8 @@ static void gc_consider(uintptr_t x) {
 }
 static void gc_scan(const void *lo, const void *hi) {
   uintptr_t a = ((uintptr_t)lo + sizeof(uintptr_t) - 1) & ~(uintptr_t)(sizeof(uintptr_t) - 1);
+  /* The heap's span, the same while marking: a word outside it is not considered at all. */
+  uintptr_t base = (uintptr_t)gc_heap, span = (uintptr_t)gc_top << GC_PAGE_SHIFT;
   for (const uintptr_t *w = (const uintptr_t *)a; (const void *)(w + 1) <= hi; w++) {
     uintptr_t x = *w;
 #if UINTPTR_MAX > 0xFFFFFFFFu
@@ -436,7 +438,7 @@ static void gc_scan(const void *lo, const void *hi) {
     if (top >= 0xFFFA) x &= 0x0000FFFFFFFFFFFFull;
     else if (top != 0) continue;
 #endif
-    gc_consider(x);
+    if (x - base < span) gc_consider(x);
   }
 }
 static void gc_drain(void) {
