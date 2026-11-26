@@ -31,3 +31,17 @@ console.log(
     },
   }),
 );
+// import() of Node's modules, a CommonJS module (its namespace the static import's) and its own.
+import("node:util").then(async (u) => {
+  // biome-ignore lint/style/useNodejsImportProtocol: an import() without node: is what is tested
+  const ev = await import("events");
+  const lib = await import("./lib.cjs");
+  const own = await import("./own.mjs");
+  console.log(
+    typeof u.format,
+    typeof u.default.inspect,
+    typeof ev.EventEmitter,
+    ev.default === ev.EventEmitter,
+  );
+  console.log(lib === cjsNs, lib.default === cjs, own.double(21), Object.keys(lib));
+});

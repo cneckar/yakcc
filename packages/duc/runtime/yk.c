@@ -82,7 +82,8 @@ typedef struct {
   yk_array *hidden;       /* its non-enumerable own keys (Object.defineProperty's), or NULL */
   uint32_t *cindex;       /* a Map's or Set's: each entry's position + 1, by its key's hash; NULL to rebuild */
   uint32_t cindex_cap;
-  uint32_t accessors; /* 1 once an accessor (or another internal slot) was set on it */
+  uint32_t accessors; /* bit 0: an accessor (or another internal slot) was set on it; bit 1: it is
+                         an ECMAScript module's namespace */
 } yk_object;
 
 /* A BigInt: a sign and a magnitude, 32-bit limbs least significant first, no zero limb on top. */
@@ -2307,7 +2308,7 @@ static int own_get(yk_object *o, yk key, yk *out) {
 }
 
 static void own_set(yk_object *o, yk key, yk value) {
-  if (TAG(value) == T_INTERNAL) o->accessors = 1;
+  if (TAG(value) == T_INTERNAL) o->accessors |= 1;
   int64_t found = own_find(o, key);
   if (found >= 0) {
     o->values[found] = value;
@@ -2390,6 +2391,7 @@ static yk ensure_prototype(yk f) {
   }
   yk key = ascii("constructor");
   p = yk_object_of(1, &key, &f);
+  set_hidden((yk_object *)PTR(p), key, 1); /* a prototype's constructor is not enumerable */
   own_set(own_props(f), ascii("prototype"), p);
   return p;
 }
@@ -2709,6 +2711,7 @@ yk yk_class_new(void *creator, yk parent, uint64_t n, const yk *kinds, const yk 
     name_method(members[i], name, kind == 2 ? "get " : kind == 3 ? "set " : NULL);
     if (kind == 1) own_set(target, name, members[i]);
     else define_accessor(target, name, kind == 2 ? members[i] : 0, kind == 3 ? members[i] : 0);
+    set_hidden(target, name, 1); /* a class's methods and accessors are not enumerable */
   }
   c->class_self = cls;
   /* The static fields and blocks run now, in order, with the class as their receiver. */
@@ -2883,7 +2886,7 @@ yk yk_set(yk obj, yk key, yk value) {
        lookup along it. */
     if (is_object(obj)) {
       yk v = obj;
-      while (v != 0 && is_object(v) && !((yk_object *)PTR(v))->accessors) v = ((yk_object *)PTR(v))->proto;
+      while (v != 0 && is_object(v) && !(((yk_object *)PTR(v))->accessors & 1)) v = ((yk_object *)PTR(v))->proto;
       if (v == 0 || !is_object(v)) {
         own_set((yk_object *)PTR(obj), k, value);
         return obj;
@@ -5211,10 +5214,15 @@ static yk object_parts(yk v, int which) {
   yk_array *r = new_array(4);
   /* An object's own enumerable keys: a plain one's, or a Map's, Set's or Date's set on it (not a
      buffer's or typed array's, whose elements are keys of their own). */
-  if (is_object(v) && !(((yk_object *)PTR(v))->kind >= 6 && ((yk_object *)PTR(v))->kind <= 8)) {
-    yk_object *o = (yk_object *)PTR(v);
+  /* A function's own enumerable properties are its props object's (its name and length are not
+     enumerable), read with the function as the receiver. */
+  if (is_closure(v) && ((yk_closure *)PTR(v))->props == 0) return BOX(T_ARRAY, r);
+  if ((is_object(v) && !(((yk_object *)PTR(v))->kind >= 6 && ((yk_object *)PTR(v))->kind <= 8)) || is_closure(v)) {
+    yk_object *o = is_closure(v) ? (yk_object *)PTR(((yk_closure *)PTR(v))->props) : (yk_object *)PTR(v);
     yk_array *keys = enumerable_keys(o);
     for (uint32_t i = 0; i < keys->len; i++) {
+      /* A function's prototype is never enumerable (an assignment to it keeps that). */
+      if (is_closure(v) && key_is(keys->items[i], "prototype")) continue;
       if (which == 0) {
         push(r, keys->items[i]); /* Object.keys reads no value: a getter is not run */
         continue;
@@ -5285,9 +5293,28 @@ yk yk_cjs_namespace(yk exports) {
   }
   return ns;
 }
-/* A CommonJS module's namespace, made once (an import's every read is the same object). */
+/* An ECMAScript module's namespace object, marked (import() gives it as it is). */
+yk yk_mark_namespace(yk ns) {
+  ((yk_object *)PTR(ns))->accessors |= 2;
+  return ns;
+}
+/* A CommonJS (or Node's) module's namespace, one per module.exports value: every import of it, static
+   or import(), gets the same object. */
+static yk cjs_namespaces;
+static int64_t collection_find(yk_object *o, yk key);
+static void collection_put(yk_object *o, yk key, yk value);
+static yk new_collection(int32_t kind);
+yk yk_cjs_namespace_of(yk exports) {
+  if (cjs_namespaces == 0) cjs_namespaces = new_collection(1);
+  yk_object *m = (yk_object *)PTR(cjs_namespaces);
+  int64_t i = collection_find(m, exports);
+  if (i >= 0) return arr(m->entries->items[i])->items[1];
+  yk ns = yk_cjs_namespace(exports);
+  collection_put(m, exports, ns);
+  return ns;
+}
 yk yk_cjs_namespace_once(yk *slot, yk exports) {
-  if (*slot == 0) *slot = yk_cjs_namespace(exports);
+  if (*slot == 0) *slot = yk_cjs_namespace_of(exports);
   return *slot;
 }
 static yk builtin_identity(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return argc > 0 ? argv[0] : YK_UNDEFINED; }
@@ -7164,10 +7191,14 @@ static yk promise_static_resolve(void *c, yk self, uint64_t argc, const yk *argv
 
 /* import(spec) (#1370): a promise of the module's namespace (an ECMAScript module's) or exports (a
    CommonJS module's), the module loaded by its require in a job (a throw rejects the promise). */
+yk yk_cjs_namespace_of(yk exports);
 static yk import_job(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)self, (void)argc, (void)argv;
   yk_closure *k = (yk_closure *)c;
-  return call_value(k->captures[0], YK_UNDEFINED, 1, &k->captures[1]);
+  yk got = call_value(k->captures[0], YK_UNDEFINED, 1, &k->captures[1]);
+  /* An ECMAScript module's namespace as it is; a CommonJS or Node's module's exports as a namespace. */
+  if (is_object(got) && (((yk_object *)PTR(got))->accessors & 2)) return got;
+  return yk_cjs_namespace_of(got);
 }
 yk yk_import(yk require, yk spec) {
   yk done = promise_static_resolve(NULL, YK_UNDEFINED, 0, NULL);
@@ -9380,6 +9411,11 @@ static yk global_uncached(const char *name, uint64_t n) {
     if (n == 5 && memcmp(name, "Error", 5) == 0) {
       own_set(own_props(v), ascii("captureStackTrace"), named(yk_closure_new(error_capture_stack_trace, 0, 0, NULL), ascii("captureStackTrace")));
       own_set(own_props(v), ascii("stackTraceLimit"), yk_number(10));
+    }
+    /* A built-in constructor's own functions (Array.from, Object.keys, …) are not enumerable. */
+    if (((yk_closure *)PTR(v))->props != 0) {
+      yk_object *props = (yk_object *)PTR(((yk_closure *)PTR(v))->props);
+      for (uint32_t i = 0; i < props->len; i++) set_hidden(props, props->keys[i], 1);
     }
   }
   static const char *const ctors[] = {"Object", "Array", "String", "Number", "Boolean", "Symbol", "BigInt",

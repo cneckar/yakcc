@@ -6222,6 +6222,9 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     const namespace: string[] = [];
     if (mod.esm !== undefined) {
       m.used.add("yk_set_named");
+      // Marked as a namespace: import() gives it as it is (a CommonJS module's exports it wraps).
+      m.intrinsics.add("declare i64 @yk_mark_namespace(i64)");
+      namespace.push("  %marked = call i64 @yk_mark_namespace(i64 %ex)");
       exportNames(i).forEach((name, k) => {
         const target = resolveExport(i, name);
         if (target === undefined) return;

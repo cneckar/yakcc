@@ -469,6 +469,11 @@ const PROGRAMS: [string, string, number][] = [
     "export function f(a, b) { const out = []; for (const o of [undefined, null, a === null ? undefined : null]) { try { o.k = b; out.push('wrote'); } catch (e) { out.push(e instanceof TypeError, e.message); } } return out; }",
     2,
   ],
+  [
+    "what is enumerable on functions and classes: a function's own properties, not its prototype; a class's static fields, not its methods; a prototype's methods; built-in constructors' functions (#1331)",
+    "export function f(a, b) { const fn = function () {}; fn.x = a; Object.defineProperty(fn, 'h', { value: 3 }); class A { static s() {} static f = b; m() {} get g() { return 1; } } class B extends A {} const arrow = () => 1; arrow.k = 1; return [Object.keys(fn), Object.values(fn), Object.entries(arrow), Object.keys(A), Object.keys(A.prototype), Object.keys(B), Object.keys(new A()), { ...fn }, Object.keys(Array), Object.keys(Object), Object.keys(Promise), Object.keys(Math.max), JSON.stringify(Object.keys(A.prototype.constructor))]; }",
+    2,
+  ],
 ];
 
 describe.skipIf(!canRun("x86_64-linux"))("boxed values, natively on this host (#1292)", () => {
