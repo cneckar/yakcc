@@ -216,7 +216,7 @@ static void *gc_free[GC_NCLASS];
 /* A block's index in its page: the offset times its class's reciprocal (exact below GC_PAGE), not a
    division. */
 static uint64_t gc_recip[GC_NCLASS];
-static size_t gc_since = 0, gc_threshold = (size_t)16 << 20, gc_floor = (size_t)16 << 20;
+static size_t gc_since = 0, gc_threshold = (size_t)32 << 20, gc_floor = (size_t)32 << 20;
 static int gc_state = 0; /* 0 not yet set up, 1 collecting, 2 allocating only, 3 never (no heap) */
 static uintptr_t gc_stack_top = 0;
 /* While a coroutine runs, where the main stack was left (its frames above are live). */
@@ -529,7 +529,9 @@ static void gc_collect(void) {
   }
   gc_since = 0;
   gc_live_last = live;
-  gc_threshold = live > gc_floor ? live : gc_floor;
+  /* The next collection after twice what is live is allocated again: the heap is at most three times
+     what is live, and each byte live is traced once per twice its size allocated. */
+  gc_threshold = 2 * live > gc_floor ? 2 * live : gc_floor;
 }
 #else
 static void *alloc(size_t n) { return bump(n); }
