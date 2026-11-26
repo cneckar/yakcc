@@ -630,17 +630,32 @@ export function regexMatcherSource(
     unicode
       ? "  let pos = start; if (pos > 0 && pos < n) { const lo0 = s.charCodeAt(pos); const hi0 = s.charCodeAt(pos - 1); if (lo0 >= 56320 && lo0 <= 57343 && hi0 >= 55296 && hi0 <= 56319) pos = pos - 1; }"
       : "  let pos = start;",
+    // The continuation that ends a match: made once, not at each position tried.
+    "  let found = -1;",
+    "  const done = (j) => { found = j; return true; };",
     "  while (pos <= n) {",
     `    let c0 = 0; while (c0 < ${caps}) { caps[c0] = -1; c0 = c0 + 1; }`,
-    "    let found = -1;",
-    `    if (${root}(pos, (j) => { found = j; return true; })) { caps[0] = pos; caps[1] = found; return caps.slice(); }`,
-    "    if (sticky) return null;",
+    "    found = -1;",
+    `    if (${root}(pos, done)) { caps[0] = pos; caps[1] = found; return caps.slice(); }`,
+    // Anchored at the input's start (every alternative begins with ^, no m): only position 0 can match.
+    anchoredAtStart(parsed.node) && !multiline
+      ? "    return null;"
+      : "    if (sticky) return null;",
     `    pos = pos + ${unicode ? "(pos < n && s.codePointAt(pos) > 65535 ? 2 : 1)" : "1"};`,
     "  }",
     "  return null;",
     "}",
   ].join("\n");
   return { source, parsed };
+}
+
+/** Whether every match must begin with ^ (a sequence's first item, or every alternative's). */
+function anchoredAtStart(node: Node): boolean {
+  if (node.t === "bol") return true;
+  if (node.t === "seq") return node.items.length > 0 && anchoredAtStart(node.items[0] as Node);
+  if (node.t === "alt") return node.alts.length > 0 && node.alts.every(anchoredAtStart);
+  if (node.t === "group") return anchoredAtStart(node.body);
+  return false;
 }
 
 /** A regex literal's matcher, as a graph: what a lowering emits for `/pattern/flags`. */
