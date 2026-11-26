@@ -1266,10 +1266,14 @@ class Lifter {
       const rest = stmts.slice(i + 1);
       const full = cont === undefined ? undefined : [...rest, ...cont];
       if (this.bodyExits !== undefined) {
+        // Not an if whose only exits are throws (#1292): a throw ends its path, so the rest of the
+        // body is the rest of every path that goes on, as in a function. A for loop's update is not
+        // part of its body, but a while loop's is: taking the rest made them two graphs.
         if (
           Node.isIfStatement(stmt) &&
           full !== undefined &&
-          this.holdsLoopExit(stmt, this.bodyExits.node)
+          this.holdsLoopExit(stmt, this.bodyExits.node) &&
+          !this.throwsOnlyIn(stmt, this.bodyExits.node)
         ) {
           const elseNode = stmt.getElseStatement();
           this.liftIf(
@@ -1787,6 +1791,15 @@ class Lifter {
     } finally {
       this.bodyExits = undefined;
     }
+  }
+
+  /** Whether every exit of a loop a statement holds, written or lowered, is a throw. */
+  private throwsOnlyIn(stmt: Node, loop: Node): boolean {
+    const jumps = new Set(loopJumpsOf(loop).map((j) => j.compilerNode));
+    const exits = stmt
+      .getDescendants()
+      .filter((d) => jumps.has(d.compilerNode) || this.loweredExits.has(d.compilerNode));
+    return exits.length > 0 && exits.every((d) => Node.isThrowStatement(d));
   }
 
   /** Whether a statement holds an exit of the loop whose body is being lifted. */

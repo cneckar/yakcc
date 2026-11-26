@@ -1301,4 +1301,27 @@ ${Array.from({ length: rest }, (_, i) => `  log.push(x + ${i});`).join("\n")}
       ],
     );
   });
+  it("in a loop body, an if whose only exits are throws takes no tail: for and while agree (#1292)", () => {
+    // raise-c's block lowering: a for loop with a continue and a throw, whose emitted form is a while
+    // loop with its update in the body.
+    agrees(
+      `export function f(kids: string[], forward: number[], jumps: number[]) {
+  const out: string[] = [];
+  for (let i = 0; i < kids.length; i++) {
+    for (const j of jumps) if (kids.slice(i, j).some((k) => k === "x")) out.push(i + ":" + j);
+    if (kids[i] !== "L") {
+      continue;
+    }
+    if (forward.includes(i)) throw new RangeError("both ways at " + i);
+    i = i + 1;
+  }
+  return out;
+}`,
+      [
+        [["a", "x", "L", "b", "L", "c"], [9], [2, 4]],
+        [["L", "a"], [0], [1]],
+        [[], [], []],
+      ],
+    );
+  });
 });
