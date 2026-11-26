@@ -34,6 +34,10 @@ export {
   verifyAttestation,
 } from "./verifier.js";
 
+// The L2 verifier as a verifier-as-block (#1421)
+export { issueL2Attestation } from "./l2.js";
+export type { L2Attestation, L2IssueResult, L2Payload } from "./l2.js";
+
 // The DUC mechanization as a verifier-as-block (#1167)
 export {
   DUC_PINNED_TOOLCHAIN,

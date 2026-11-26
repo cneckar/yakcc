@@ -720,6 +720,9 @@ importers:
       '@yakcc/duc':
         specifier: workspace:*
         version: link:../duc
+      '@yakcc/verify-l2':
+        specifier: workspace:*
+        version: link:../verify-l2
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -896,6 +899,28 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^4.1.5
         version: 4.1.5(vitest@4.1.5)
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@22.19.17)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@22.19.17)(esbuild@0.28.0)(tsx@4.22.3))
+
+  packages/verify-l2:
+    dependencies:
+      '@noble/hashes':
+        specifier: ^2.2.0
+        version: 2.2.0
+      '@yakcc/duc':
+        specifier: workspace:*
+        version: link:../duc
+      z3-solver:
+        specifier: 5.4.1
+        version: 5.4.1
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      '@yakcc/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       vitest:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@22.19.17)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@22.19.17)(esbuild@0.28.0)(tsx@4.22.3))
@@ -2167,6 +2192,9 @@ packages:
     resolution: {integrity: sha512-8H89CH2dKL5SCU99OCqdU9BGjmPkSJqaPurywj5XMo7eMFGUFD3vsNhdEKnEh4mK4LgGje3/QDTTSIIGst0G0Q==}
     engines: {node: '>=22.12.0', npm: '>=9.6.5', pnpm: '>=7.1.0'}
     hasBin: true
+
+  async-mutex@0.3.2:
+    resolution: {integrity: sha512-HuTK7E7MT7jZEh1P9GtRW9+aTWiDWWi9InbZ5hjxrnRa39KS4BW04+xLBhYNS2aXhHUIKZSw3gj4Pn1pj+qGAA==}
 
   asynckit@0.4.0:
     resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
@@ -4457,6 +4485,10 @@ packages:
     resolution: {integrity: sha512-4LCcse/U2MHZ63HAJVE+v71o7yOdIe4cZ70Wpf8D/IyjDKYQLV5GD46B+hSTjJsvV5PztjvHoU580EftxjDZFQ==}
     engines: {node: '>=12.20'}
 
+  z3-solver@5.4.1:
+    resolution: {integrity: sha512-HyRpufMZ1NuaYfnxzc34qw9tLzwoUipv8ySfRewnCwXaKVuT5LHs313+edFfaWs0MLmk1v9yg4V44QqtdFLtDg==}
+    engines: {node: '>=16'}
+
   zod-to-json-schema@3.25.2:
     resolution: {integrity: sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA==}
     peerDependencies:
@@ -5730,6 +5762,10 @@ snapshots:
       - tsx
       - uploadthing
       - yaml
+
+  async-mutex@0.3.2:
+    dependencies:
+      tslib: 2.8.1
 
   asynckit@0.4.0: {}
 
@@ -7973,8 +8009,7 @@ snapshots:
       '@ts-morph/common': 0.29.0
       code-block-writer: 13.0.3
 
-  tslib@2.8.1:
-    optional: true
+  tslib@2.8.1: {}
 
   tsup@8.5.1(postcss@8.5.12)(tsx@4.22.3)(typescript@5.9.3):
     dependencies:
@@ -8294,6 +8329,10 @@ snapshots:
       yargs-parser: 20.2.9
 
   yocto-queue@1.2.2: {}
+
+  z3-solver@5.4.1:
+    dependencies:
+      async-mutex: 0.3.2
 
   zod-to-json-schema@3.25.2(zod@4.4.3):
     dependencies:

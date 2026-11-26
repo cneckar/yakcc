@@ -13,6 +13,7 @@ export default defineConfig({
     alias: {
       "@yakcc/contracts": resolve(__dirname, "../contracts/src/index.ts"),
       "@yakcc/duc": resolve(__dirname, "../duc/src/index.ts"),
+      "@yakcc/verify-l2": resolve(__dirname, "../verify-l2/src/index.ts"),
     },
   },
   test: {
