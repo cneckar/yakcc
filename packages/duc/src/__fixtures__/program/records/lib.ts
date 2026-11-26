@@ -23,3 +23,9 @@ export function step(a: number, b: number): { a: number; b: number } {
   const s = (a + b) | 0;
   return { a: s, b: rot(s ^ b, 7) };
 }
+
+// An export named as an Object.prototype member: an import of it is this function (#1370).
+// biome-ignore lint/suspicious/noShadowRestrictedNames: the name is what is tested (#1370)
+export function valueOf(x: number): number {
+  return x * 2;
+}

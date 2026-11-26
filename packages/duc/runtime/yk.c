@@ -650,6 +650,7 @@ yk yk_closure_new(yk_code code, int32_t has_this, uint64_t n, const yk *captures
 static int own_get(yk_object *o, yk key, yk *out);
 static int64_t own_find_chars(yk_object *o, const char *p, uint32_t n);
 static int chain_get(yk obj, yk key, yk *out);
+static yk substring(yk_string *s, uint32_t a, uint32_t b);
 static yk resolve_slot(yk slot, yk receiver);
 static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
 static int array_more_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
@@ -1648,13 +1649,15 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
     }
     if (o->kind >= 6 && o->kind <= 8) {
       yk out;
-      if (o->proto != 0 && chain_get(recv, key, &f) && !is_thunk(f = resolve_slot(f, recv)))
+      /* Its own property or its chain's first (a subclass's method; one set on it, #1370). */
+      if (chain_get(recv, key, &f) && !is_thunk(f = resolve_slot(f, recv)))
         return call_value(f, recv, argc, argv); /* a subclass's own method (Buffer's toString) */
       if (buffer_method(recv, key, argc, argv, &out)) return out;
     }
     if (o->kind == 1 || o->kind == 2) {
       yk out;
-      if (o->proto != 0 && chain_get(recv, key, &f) && !is_thunk(f = resolve_slot(f, recv)))
+      /* Its own property (TypeScript's multi-map sets add on a Map) or its chain's first. */
+      if (chain_get(recv, key, &f) && !is_thunk(f = resolve_slot(f, recv)))
         return call_value(f, recv, argc, argv); /* a subclass's own method */
       if (collection_method(o, recv, key, argc, argv, &out)) return out;
     } else if (chain_get(recv, key, &f) && !is_thunk(f = resolve_slot(f, recv)))
@@ -1678,6 +1681,9 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
   }
   if (is_array(recv)) {
     yk out;
+    /* A method set on the array itself comes before Array.prototype's (#1370). */
+    if (arr(recv)->props != 0 && own_get((yk_object *)PTR(arr(recv)->props), key, &out))
+      return call_value(resolve_slot(out, recv), recv, argc, argv);
     if (array_callback_method(recv, key, argc, argv, &out)) return out;
     if (key_is(key, "values") || key == symbol_iterator()) return builtin_iter_new(recv, 1, 0);
     if (key_is(key, "keys")) return builtin_iter_new(recv, 0, 0);
@@ -1754,9 +1760,76 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
       for (uint64_t i = 0; i < argc; i++) r = concat(str(r), str(to_string(argv[i])));
       return r;
     }
-    if (key_is(key, "trimStart") || key_is(key, "trimEnd")) {
+    if (key_is(key, "substring")) {
+      /* Both ends clamped to [0, length] (NaN as 0), swapped when the start is the larger. */
+      double a = arg0 == YK_UNDEFINED ? 0 : to_number(arg0), b = arg1 == YK_UNDEFINED ? s0->len : to_number(arg1);
+      a = a != a ? 0 : a < 0 ? 0 : a > s0->len ? s0->len : trunc(a);
+      b = b != b ? 0 : b < 0 ? 0 : b > s0->len ? s0->len : trunc(b);
+      if (a > b) { double t = a; a = b; b = t; }
+      return substring(s0, (uint32_t)a, (uint32_t)b);
+    }
+    if (key_is(key, "charAt")) {
+      double d = arg0 == YK_UNDEFINED ? 0 : to_number(arg0);
+      d = d != d ? 0 : trunc(d);
+      return d < 0 || d >= s0->len ? ascii("") : substring(s0, (uint32_t)d, (uint32_t)d + 1);
+    }
+    if (key_is(key, "isWellFormed") || key_is(key, "toWellFormed")) {
+      /* A lone surrogate: not well formed; toWellFormed puts U+FFFD in its place. */
+      int to = key_is(key, "toWellFormed"), ok = 1;
+      yk_string *r = to ? new_string(s0->len) : NULL;
+      for (uint32_t i = 0; i < s0->len; i++) {
+        uint16_t c = s0->units[i];
+        int lone = 0;
+        if (c >= 0xD800 && c <= 0xDBFF) {
+          if (i + 1 < s0->len && s0->units[i + 1] >= 0xDC00 && s0->units[i + 1] <= 0xDFFF) {
+            if (to) r->units[i] = c, r->units[i + 1] = s0->units[i + 1];
+            i++;
+            continue;
+          }
+          lone = 1;
+        } else if (c >= 0xDC00 && c <= 0xDFFF) lone = 1;
+        if (lone) ok = 0;
+        if (to) r->units[i] = lone ? 0xFFFD : c;
+      }
+      return to ? string_of(r) : yk_bool(ok);
+    }
+    {
+      /* Annex B's HTML methods: the string in a tag, an attribute's quotes as &quot;. */
+      static const char *const html[][3] = {{"anchor", "a", "name"}, {"big", "big", NULL}, {"blink", "blink", NULL},
+                                            {"bold", "b", NULL}, {"fixed", "tt", NULL}, {"fontcolor", "font", "color"},
+                                            {"fontsize", "font", "size"}, {"italics", "i", NULL}, {"link", "a", "href"},
+                                            {"small", "small", NULL}, {"strike", "strike", NULL}, {"sub", "sub", NULL},
+                                            {"sup", "sup", NULL}};
+      for (size_t h = 0; h < sizeof html / sizeof html[0]; h++) {
+        if (!key_is(key, html[h][0])) continue;
+        yk open = concat(str(ascii("<")), str(ascii(html[h][1])));
+        if (html[h][2] != NULL) {
+          yk_string *v = str(to_string(arg0));
+          yk q = ascii("");
+          uint32_t last = 0;
+          for (uint32_t i = 0; i < v->len; i++)
+            if (v->units[i] == '"') {
+              q = concat(str(q), str(substring(v, last, i)));
+              q = concat(str(q), str(ascii("&quot;")));
+              last = i + 1;
+            }
+          q = concat(str(q), str(substring(v, last, v->len)));
+          open = concat(str(open), str(ascii(" ")));
+          open = concat(str(open), str(ascii(html[h][2])));
+          open = concat(str(open), str(ascii("=\"")));
+          open = concat(str(open), str(q));
+          open = concat(str(open), str(ascii("\"")));
+        }
+        open = concat(str(open), str(ascii(">")));
+        open = concat(str(open), s0);
+        open = concat(str(open), str(ascii("</")));
+        open = concat(str(open), str(ascii(html[h][1])));
+        return concat(str(open), str(ascii(">")));
+      }
+    }
+    if (key_is(key, "trimStart") || key_is(key, "trimEnd") || key_is(key, "trimLeft") || key_is(key, "trimRight")) {
       uint32_t a = 0, b = s0->len;
-      if (key_is(key, "trimStart")) while (a < b && is_space(s0->units[a])) a++;
+      if (key_is(key, "trimStart") || key_is(key, "trimLeft")) while (a < b && is_space(s0->units[a])) a++;
       else while (b > a && is_space(s0->units[b - 1])) b--;
       yk_string *r = new_string(b - a);
       memcpy(r->units, s0->units + a, (size_t)(b - a) * 2);
@@ -1818,6 +1891,18 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
       double d = to_number(arg0);
       d = d != d ? 0 : trunc(d);
       return d < 0 || d >= s->len ? yk_number(NAN) : yk_number(s->units[(int64_t)d]);
+    }
+    if (key_is(key, "substr")) {
+      /* Annex B's substr(start, length): start as slice's, then at most length units. */
+      int64_t a = relative(arg0, s->len, 0), n = s->len - a;
+      if (arg1 != YK_UNDEFINED) {
+        double l = to_number(arg1);
+        l = l != l ? 0 : trunc(l);
+        if (l < (double)n) n = l <= 0 ? 0 : (int64_t)l;
+      }
+      yk_string *r = new_string((uint32_t)n);
+      memcpy(r->units, s->units + a, (size_t)n * 2);
+      return string_of(r);
     }
     if (key_is(key, "slice")) {
       int64_t a = relative(arg0, s->len, 0), b = relative(arg1, s->len, s->len);
@@ -4638,7 +4723,9 @@ static yk builtin_array_is_array(void *c, yk self, uint64_t argc, const yk *argv
 
 static yk object_parts(yk v, int which) {
   yk_array *r = new_array(4);
-  if (is_object(v) && ((yk_object *)PTR(v))->kind == 0) {
+  /* An object's own enumerable keys: a plain one's, or a Map's, Set's or Date's set on it (not a
+     buffer's or typed array's, whose elements are keys of their own). */
+  if (is_object(v) && !(((yk_object *)PTR(v))->kind >= 6 && ((yk_object *)PTR(v))->kind <= 8)) {
     yk_object *o = (yk_object *)PTR(v);
     yk_array *keys = enumerable_keys(o);
     for (uint32_t i = 0; i < keys->len; i++) {
