@@ -5974,7 +5974,8 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     if (
       mod.esm !== undefined &&
       mod.statements.some(
-        (st) => st.kind === "statement" && st.graph.nodes.some((n) => n.label === "AwaitExpression"),
+        (st) =>
+          st.kind === "statement" && st.graph.nodes.some((n) => n.label === "AwaitExpression"),
       )
     )
       asyncModules.add(i);
@@ -6304,21 +6305,20 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     // still being evaluated, as ECMA-262's does); an async one's evaluation is waited for.
     const isAsync = asyncModules.has(i);
     const depLines: string[] = (mod.esm?.deps ?? []).flatMap((d, k) => {
-          const t = index.get(d);
-          if (t !== undefined) return [`  %dep${k} = call i64 ${g(t, "init")}()`];
-          if (!d.startsWith("node:"))
-            throw new LlvmEmitError(`the module ${d} is not in the program`);
-          const lines: string[] = [];
-          let n = 0;
-          emitBuiltin(
-            d,
-            i,
-            `%dep${k}`,
-            () => `%dep${k}.${n++}`,
-            (l) => lines.push(`  ${l}`),
-          );
-          return lines;
-        });
+      const t = index.get(d);
+      if (t !== undefined) return [`  %dep${k} = call i64 ${g(t, "init")}()`];
+      if (!d.startsWith("node:")) throw new LlvmEmitError(`the module ${d} is not in the program`);
+      const lines: string[] = [];
+      let n = 0;
+      emitBuiltin(
+        d,
+        i,
+        `%dep${k}`,
+        () => `%dep${k}.${n++}`,
+        (l) => lines.push(`  ${l}`),
+      );
+      return lines;
+    });
     if (isAsync) {
       (mod.esm?.deps ?? []).forEach((d, k) => {
         const t = index.get(d);
