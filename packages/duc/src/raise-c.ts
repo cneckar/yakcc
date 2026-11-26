@@ -633,6 +633,9 @@ function parseType(spelled: string, depth = 0): CType {
     .replace(/\*\s+(?=[*)\[])/g, "*")
     .replace(/\(\s+\*/g, "(*")
     .trim();
+  // A pointer to a member function (C++, `const char *(Locale::*)()`): a function's address.
+  if (/^[^(]*\((?:[A-Za-z_][\w:<>, ]*)::\*\)\s*\(.*\)$/.test(raw))
+    return { k: "ptr", to: { k: "fn" } };
   // A pointer to a function, and a pointer to one (`void (**)(int)`).
   // (The declarator at the top level: a function's parameters can be such pointers too, `int
   // (const H *, int (*)(void *))` is a function.)
@@ -716,7 +719,21 @@ function parseType(spelled: string, depth = 0): CType {
     return t;
   }
   const ptr = /^(.*?)\s*\*$/.exec(raw);
-  if (ptr !== null) return { k: "ptr", to: parseType(ptr[1] as string, depth + 1) };
+  if (ptr !== null) {
+    // (A pointer to an opaque type, `const UNormalizer2 *` of a declared, undefined struct: an
+    // address only, as a void * is.)
+    try {
+      return { k: "ptr", to: parseType(ptr[1] as string, depth + 1) };
+    } catch (e) {
+      if (
+        e instanceof RaiseCError &&
+        /is not raised yet$/.test(e.message) &&
+        /^\w+$/.test((ptr[1] as string).trim())
+      )
+        return { k: "ptr", to: { k: "void" } };
+      throw e;
+    }
+  }
   const builtin = BUILTIN[raw];
   if (builtin !== undefined) return builtin;
   if (/^(struct|union|class) /.test(raw)) return { k: "rec", name: raw };
@@ -2661,8 +2678,24 @@ function raiseBody(
         return read(place(e));
       }
       case "UnaryOperator": {
-        const t = typeOf(e);
         const op = e.opcode ?? "";
+        // A pointer to a member function (C++, `&Locale::getLanguage`): the function's address (a
+        // non-virtual one's; a virtual one's would be its vtable slot).
+        {
+          const m = op === "&" ? stripParens(k0) : undefined;
+          const md = m?.kind === "DeclRefExpr" ? (m.referencedDecl as ClangNode) : undefined;
+          if (md?.kind === "CXXMethodDecl") {
+            if (unitCxx?.isVirtual(md.id ?? "") === true)
+              throw new RaiseCError("a pointer to a virtual member function");
+            const key =
+              resolve({ name: md.name ?? "", kind: "CXXMethodDecl", type: "", id: md.id }) ??
+              outside(md.id);
+            if (key === undefined)
+              throw new RaiseCError(`the method ${md.name} is not in the unit`);
+            return `__ykFnAddr(${key})`;
+          }
+        }
+        const t = typeOf(e);
         if (op === "++" || op === "--") {
           const p = place(k0);
           const sign = op === "++" ? "+" : "-";
@@ -2858,6 +2891,20 @@ function raiseBody(
       case "CXXMemberCallExpr": {
         const ret = claimRet(e);
         const m = stripCasts(k0);
+        // Through a pointer to a member function (`(obj.*pmf)(..)`, `(p->*pmf)(..)`): the function
+        // at its address, the object its `this`.
+        if (m.kind === "BinaryOperator" && (m.opcode === ".*" || m.opcode === "->*")) {
+          const [lhs, rhs] = (m.inner ?? []) as [ClangNode, ClangNode];
+          let self: string;
+          if (m.opcode === "->*") self = expr(lhs);
+          else {
+            const p = place(lhs);
+            if (p.k !== "mem") throw new RaiseCError("a member pointer's object not in memory");
+            self = p.addr;
+          }
+          const o = temp({ k: "f64" });
+          return `((${o} = ${self}), __ykFnAt(${expr(rhs)})(${[...ret.slot(), o, ...kids.slice(1).map(argOf)].join(", ")}))`;
+        }
         if (m.kind !== "MemberExpr") throw new RaiseCError(`a method call through ${m.kind}`);
         const base = (m.inner ?? [])[0] as ClangNode;
         let self: string;
@@ -5388,23 +5435,25 @@ export function shaveCUnit(
   const typedefScopes = new Map<string, Map<string, string>>();
   // C++: classes, from the index. (A large C unit is indexed too, and stays C: its records are
   // returned as C's are, the same in every unit.)
+  /** A function's symbol (its mangled name), through its redeclarations, by its id. */
+  const symbolOfId = (fnId: string): string | undefined => {
+    if (indexed === undefined) return undefined;
+    let first = fnId;
+    for (let g = 0; indexed.previous.has(first) && g < 1000; g++)
+      first = indexed.previous.get(first) as string;
+    for (let at: string | undefined = first, g = 0; at !== undefined && g < 1000; g++) {
+      const m = indexed.byId.get(at)?.mangled;
+      if (m !== undefined) return m;
+      at = indexed.next.get(at);
+    }
+    return undefined;
+  };
   const cxx: CxxUnit | undefined =
     indexed === undefined || !isCxx
       ? undefined
       : {
-          mangledOf: (fnId) => {
-            // (A unit shaved alone names nothing another unit defines.)
-            if (!bySymbol) return undefined;
-            let first = fnId;
-            for (let g = 0; indexed.previous.has(first) && g < 1000; g++)
-              first = indexed.previous.get(first) as string;
-            for (let at: string | undefined = first, g = 0; at !== undefined && g < 1000; g++) {
-              const m = indexed.byId.get(at)?.mangled;
-              if (m !== undefined) return m;
-              at = indexed.next.get(at);
-            }
-            return undefined;
-          },
+          // (A unit shaved alone names nothing another unit defines.)
+          mangledOf: (fnId) => (bySymbol ? symbolOfId(fnId) : undefined),
           isStaticMember: (fnId) => {
             let id: string | undefined = fnId;
             for (let k = 0; k < 8 && id !== undefined; k++) {
@@ -5762,10 +5811,12 @@ export function shaveCUnit(
                   );
                   if (m !== undefined) id = m.id;
                 }
+                // (Defined in another unit, C++ of several: its symbol, which that unit defines.)
                 const fnKey =
                   id === undefined
                     ? undefined
-                    : resolve({ name, kind: "CXXMethodDecl", type: "", id });
+                    : (resolve({ name, kind: "CXXMethodDecl", type: "", id }) ??
+                      (bySymbol ? symbolOfId(id) : undefined));
                 if (fnKey === undefined) throw new RaiseCError(`the overrider ${text}`);
                 init.push({ offset, fn: fnKey });
               }
@@ -6717,6 +6768,8 @@ function staticDefinition(
         return scalar(kids[kids.length - 1] as ClangNode);
       case "IntegerLiteral":
         return { k: "v", v: BigInt(e.value ?? "0") };
+      case "CXXNullPtrLiteralExpr":
+        return { k: "v", v: 0n };
       // A constant condition's choice (`flags & X ? a : b`, OpenSSL's cipher tables).
       case "ConditionalOperator": {
         const c = scalar(k0);
