@@ -5,13 +5,18 @@
 // Node's Math bit for bit. Needs no clang: the shaved atoms are committed (`atoms/math.ts`), and a
 // test checks them against a fresh shave when clang is present.
 import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import fc from "fast-check";
 import { ts } from "ts-morph";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
+import { canRun, harness } from "./__fixtures__/native-harness.js";
 import { MATH_ATOM_SOURCES } from "./atoms/math.js";
 import { shaveMathAtoms } from "./atoms/shave-math.js";
 import { graphIdentity } from "./canonical.js";
 import { closureOf } from "./closure.js";
+import { emitLlvmBoxed } from "./emit-llvm-boxed.js";
 import { emitTypeScript } from "./emit-ts.js";
 import { liftFidelity } from "./fidelity.js";
 import { LEAF_FUNCTIONS, isLeafFunction, leafFunctionsJs } from "./leaves.js";
@@ -243,6 +248,56 @@ describe("the atoms, as lowered graphs, are Node's Math bit for bit", () => {
       expect(bad.slice(0, 5)).toEqual([]);
     });
 });
+
+describe.skipIf(!canRun("x86_64-linux"))(
+  "the atoms, lowered natively, are Node's Math bit for bit (#1362)",
+  () => {
+    const work = mkdtempSync(join(tmpdir(), "yakcc-math-"));
+    afterAll(() => rmSync(work, { recursive: true, force: true }));
+    const edges = [
+      0,
+      -0,
+      1,
+      -1,
+      0.5,
+      2,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      Number.MIN_VALUE,
+      1e300,
+    ];
+    const sample = [
+      ...edges,
+      ...fc.sample(
+        fc.oneof(
+          fc.double(),
+          fc.double({ min: -10, max: 10 }),
+          fc.bigInt({ min: 0n, max: 2n ** 64n - 1n }).map(doubleOf),
+        ),
+        { numRuns: 300, seed: 1370 },
+      ),
+    ];
+    const math = Math as unknown as Record<string, Fn>;
+    for (const ref of OPERATION_REFERENCES.values())
+      it(ref.label, () => {
+        const params = ref.arity === 1 ? "x" : "x, y";
+        const g = liftAtom(`export function f(${params}) { return ${ref.label}(${params}); }`);
+        const calls = sample.map((x, i) =>
+          ref.arity === 1 ? [x] : [x, sample[(i * 7 + 3) % sample.length] as number],
+        );
+        const { results } = harness(emitLlvmBoxed(g), work)(calls);
+        const native = math[ref.atom] as Fn;
+        const bad = calls
+          .map((args, i) => [args, results[i], native(...args)] as const)
+          .filter(([, got, want]) => !Object.is(got, want))
+          .map(
+            ([args, got, want]) => `${ref.label}(${args.join(", ")}) = ${String(got)}, not ${want}`,
+          );
+        expect(bad.slice(0, 5)).toEqual([]);
+      }, 120_000);
+  },
+);
 
 describe("the leaves' reference implementations", () => {
   it("every leaf function the registry names has a reference implementation", () => {

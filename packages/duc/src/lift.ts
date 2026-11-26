@@ -442,6 +442,23 @@ function labelled(l: import("ts-morph").LabeledStatement): Node {
 }
 
 /**
+ * The atom's source with the statements that never run dropped, as the lifter reads it
+ * (dropUnreachable): what a check of the source against the graph compares with (#1292).
+ */
+export function reachableSource(file: SourceFile): SourceFile {
+  let sf = file;
+  for (let round = 0; round < 64; round++) {
+    const text = dropUnreachable(sf);
+    if (text === undefined) break;
+    sf = sf.getProject().createSourceFile(sf.getBaseName(), text, {
+      overwrite: true,
+      scriptKind: ScriptKind.TS,
+    });
+  }
+  return sf;
+}
+
+/**
  * The statements after a `return`, `throw`, `break` or `continue` in the same list, which never run,
  * dropped (#1292): what the graph holds, and so what the emitter writes back. Left in, a write there
  * (`throw e; n--;`) makes `n` a binding the atom writes, which the emitted source does not. A function
@@ -683,6 +700,15 @@ function forUpdateAsTail(sf: SourceFile): string | undefined {
       return target?.compilerNode === loop.compilerNode;
     });
     if (own.length === 0) continue;
+    // A continue inside a try is a completion of the closures the try lowers to, which then
+    // continues the loop itself (#1330): the update written there would be a closure's write of the
+    // loop's binding. It stays in the header.
+    const inTry = (j: Node): boolean => {
+      for (let p = j.getParent(); p !== undefined && p !== loop; p = p.getParent())
+        if (Node.isTryStatement(p)) return true;
+      return false;
+    };
+    if (own.some(inTry)) continue;
     const step = `${update.getText()};`;
     const edits: { from: number; to: number; text: string }[] = [
       // The header's update goes, with the space before it: `for (a; b; c)` is `for (a; b; )`.
@@ -4905,13 +4931,17 @@ function closureLocals(fn: Node): Set<string> {
  */
 function cellNames(scope: Node): Set<string> {
   // A try statement's blocks are closures once it is lowered (Lifter.lowerTry): they count as nested.
-  // So does a class's static block: a closure run with the class as its receiver (#1368).
+  // So does a class's static block: a closure run with the class as its receiver (#1368); and a
+  // field's initializer, run with the instance when it is made (#1330: `id = ++ID` in minimatch).
+  const fieldInit = (d: Node): boolean =>
+    Node.isPropertyDeclaration(d) && d.getInitializer() !== undefined;
   const nested = scope
     .getDescendants()
     .filter(
       (d) =>
         isFunctionLikeNode(d) ||
         Node.isClassStaticBlockDeclaration(d) ||
+        fieldInit(d) ||
         (Node.isBlock(d) && Node.isTryStatement(d.getParent())) ||
         Node.isCatchClause(d),
     );
@@ -4919,7 +4949,8 @@ function cellNames(scope: Node): Set<string> {
   const insideNested = (n: Node): boolean => {
     for (const a of n.getAncestors()) {
       if (a.compilerNode === scope.compilerNode) return false;
-      if (isFunctionLikeNode(a) || Node.isClassStaticBlockDeclaration(a)) return true;
+      if (isFunctionLikeNode(a) || Node.isClassStaticBlockDeclaration(a) || fieldInit(a))
+        return true;
     }
     return false;
   };
@@ -4955,7 +4986,7 @@ function cellNames(scope: Node): Set<string> {
   const out = new Set<string>();
   for (const fn of nested) {
     const locals = closureLocals(fn);
-    if (!isFunctionLikeNode(fn) && !Node.isClassStaticBlockDeclaration(fn)) {
+    if (!isFunctionLikeNode(fn) && !Node.isClassStaticBlockDeclaration(fn) && !fieldInit(fn)) {
       // A var in a try statement's block is the function's: the block's closure assigns it.
       for (const list of fn.getDescendantsOfKind(SyntaxKind.VariableDeclarationList)) {
         if (list.getDeclarationKind() !== "var" || isInsideNestedFunction(list, fn)) continue;
@@ -6295,6 +6326,24 @@ function alwaysReturns(node: Node): boolean {
     const elseNode = node.getElseStatement();
     return (
       elseNode !== undefined && alwaysReturns(node.getThenStatement()) && alwaysReturns(elseNode)
+    );
+  }
+  // A switch with a default, no break of its own, and every clause with statements ending in an
+  // exit: every value reaches a clause that exits (an empty clause falls into the next), so the
+  // statement after it never runs (#1330: cjs-module-lexer's nested switches on characters).
+  if (Node.isSwitchStatement(node)) {
+    const clauses = node.getCaseBlock().getClauses();
+    const last = clauses[clauses.length - 1];
+    return (
+      clauses.some((c) => Node.isDefaultClause(c)) &&
+      last !== undefined &&
+      last.getStatements().length > 0 &&
+      clauses.every(
+        (c) => c.getStatements().length === 0 || c.getStatements().some(alwaysReturns),
+      ) &&
+      !node
+        .getDescendantsOfKind(SyntaxKind.BreakStatement)
+        .some((b) => b.getLabel() === undefined && breakTarget(b) === node)
     );
   }
   return false;

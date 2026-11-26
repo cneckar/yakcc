@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { BINDINGS, memberLayer } from "./bindings.js";
 import {
   NODE_LIB,
+  UNDEFINED_IN_NODE,
   WRAPPER_PARAMS,
   boundNames,
   nodeModuleIds,
@@ -52,6 +53,15 @@ describe("the names a module runs with bound", () => {
       expect(tools.has(name), name).toBe(true);
     expect(boundNames("path")).toBe(WRAPPER_PARAMS);
   });
+
+  it("a name Node does not define passes the gate only on the allowlist, with its reason (#1173)", async () => {
+    for (const names of Object.values(UNDEFINED_IN_NODE))
+      for (const [name, reason] of Object.entries(names)) expect(reason, name).not.toBe("");
+    const r = await shaveNodeModule("internal/deps/cjs-module-lexer/lexer");
+    expect(r.unexplained).toEqual({});
+    expect(r.allowed).toEqual({ syntaxError: 1 });
+    expect(r.clean).toBe(r.atoms);
+  }, 300_000);
 });
 
 describe("milestone modules shave through the real pipeline, every atom passing the gate", () => {

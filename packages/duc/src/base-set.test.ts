@@ -59,4 +59,10 @@ describe("per-target base sets (#1282)", () => {
       expect(NODE.primitives[name], name).toEqual({});
     expect(NODE.primitives.fetch).toEqual({ capability: "network" });
   });
+
+  it("the global object's methods from Object.prototype are globals: a bare toString (#1331)", () => {
+    for (const name of ["toString", "valueOf", "hasOwnProperty"])
+      expect(ECMASCRIPT.primitives[name], name).toEqual({});
+    expect(NODE.primitives.toString).toEqual({});
+  });
 });

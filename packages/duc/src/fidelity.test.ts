@@ -81,3 +81,18 @@ describe("lift fidelity (#1173)", () => {
     expect(sourceFreeNames("globalThis.x = 1;").has("globalThis")).toBe(true);
   });
 });
+
+describe("what never runs is not read (#1292)", () => {
+  it("a call after a return is no read of the source's, as it is no node of the graph's", () => {
+    // esbuild's helper, written after the function it names, in undici's bundle.
+    const source = `function connect(c) {
+  const s = open(c);
+  return s;
+  function write(x) { s.push(x); }
+  __name(write, "write");
+}`;
+    expect(sourceFreeNames(source).has("__name")).toBe(false);
+    expect(sourceFreeNames(source).has("open")).toBe(true);
+    expect(liftFidelity(source, liftAtom(source)).holds).toBe(true);
+  });
+});
