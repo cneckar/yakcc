@@ -634,8 +634,16 @@ function parseType(spelled: string, depth = 0): CType {
     .replace(/\(\s+\*/g, "(*")
     .trim();
   // A pointer to a function, and a pointer to one (`void (**)(int)`).
-  const fnPtr = /\((\*+)((?:\[\d*\])*)\)\s*\(.*\)$/.exec(raw);
-  if (fnPtr !== null) {
+  // (The declarator at the top level: a function's parameters can be such pointers too, `int
+  // (const H *, int (*)(void *))` is a function.)
+  const fnPtr = [...raw.matchAll(/\((\*+)((?:\[\d*\])*)\)\s*\(.*\)$/g)].find((m) => {
+    let depth = 0;
+    for (let i = 0; i < (m.index ?? 0); i++)
+      if (raw[i] === "(" || raw[i] === "<") depth++;
+      else if (raw[i] === ")" || raw[i] === ">") depth--;
+    return depth === 0;
+  });
+  if (fnPtr !== undefined) {
     let t: CType = { k: "fn" };
     for (let i = 0; i < (fnPtr[1] as string).length; i++) t = { k: "ptr", to: t };
     // An array of them (`void (*[3])(int)`): its dimensions, outermost first.
@@ -1029,6 +1037,11 @@ const LEAF_CALLS: Readonly<Record<string, (args: readonly string[]) => string>> 
   __builtin_expect: (a) => `${a[0]}`,
   // A prefetch is a hint; every atomic of a size up to 8 bytes is lock-free here.
   __builtin_prefetch: () => "undefined",
+  // A fence orders one thread's memory against others': one thread here.
+  __c11_atomic_thread_fence: () => "undefined",
+  __c11_atomic_signal_fence: () => "undefined",
+  __atomic_thread_fence: () => "undefined",
+  __atomic_signal_fence: () => "undefined",
   __atomic_is_lock_free: (a) => `(${a[0]} <= 8n ? 1 : 0)`,
   // alloca's memory, from the heap (it outlives the call: never freed, as no frame frees it here).
   __builtin_alloca: (a) => `__ykAlloc(__ykBigToF64(${a[0]}), 16)`,
@@ -4190,6 +4203,8 @@ function raiseBody(
             lastUnion = all64 ? fields : undefined;
             continue;
           }
+          // (A function declared in a block, `extern int getentropy(void *, size_t);`: no code.)
+          if (d.kind === "FunctionDecl") continue;
           if (d.kind !== "VarDecl") throw new RaiseCError(`the declaration ${d.kind}`);
           const t = ctype(d.type);
           // A static whose initializer runs code (C++: `static std::u32string s = U"";`):
@@ -6578,6 +6593,13 @@ function staticDefinition(
         return scalar(kids[kids.length - 1] as ClangNode);
       case "IntegerLiteral":
         return { k: "v", v: BigInt(e.value ?? "0") };
+      // A constant condition's choice (`flags & X ? a : b`, OpenSSL's cipher tables).
+      case "ConditionalOperator": {
+        const c = scalar(k0);
+        if (c.k !== "v")
+          throw new RaiseCError("a condition in an initializer that is not a number");
+        return scalar(kids[c.v !== 0n && c.v !== 0 ? 1 : 2] as ClangNode);
+      }
       case "DeclRefExpr": {
         const d = e.referencedDecl as ClangNode;
         const v = d.kind === "EnumConstantDecl" ? unitEnumValue(d.name ?? "", d.id) : undefined;
@@ -7173,6 +7195,28 @@ function flattenEnteredSwitches(n: ClangNode): ClangNode {
       }
     });
     kids = out;
+    // A label first in an endless loop's body (`for (;;) { redo: .. }`, OpenSSL's RSA key
+    // generation, entered by a goto after the loop): the loop's own, as going to it is.
+    kids = kids.map((k) => {
+      const parts = k.inner ?? [];
+      const body = parts[parts.length - 1];
+      const endless =
+        (k.kind === "ForStmt" &&
+          parts.length === 5 &&
+          parts.slice(0, 4).every((x) => x === null || x === undefined || x.kind === undefined)) ||
+        false;
+      const first = body?.kind === "CompoundStmt" ? (body.inner ?? [])[0] : undefined;
+      if (!endless || body === undefined || first?.kind !== "LabelStmt") return k;
+      changed = true;
+      const loop = {
+        ...k,
+        inner: [
+          ...parts.slice(0, 4),
+          { ...body, inner: [...(first.inner ?? []), ...(body.inner ?? []).slice(1)] },
+        ],
+      } as ClangNode;
+      return { ...first, inner: [loop] } as ClangNode;
+    });
     // A while loop the statements before it enter (see enterLoop), each in turn.
     for (let i = 0; i < kids.length; i++) {
       if (kids[i]?.kind !== "WhileStmt") continue;
