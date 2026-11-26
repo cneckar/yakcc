@@ -1353,4 +1353,28 @@ ${Array.from({ length: rest }, (_, i) => `  log.push(x + ${i});`).join("\n")}
     const g = liftAtom(code);
     expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
   });
+  it("a value a nested branch tests is made before the branch around it (#1292)", () => {
+    // Node's repl/utils.js: an arrow's default, tested in an if after an early return. The test of
+    // the inner if was not a need of the outer one, which could come first and read it unmade.
+    agrees(
+      `export function f(line: string, show?: boolean) {
+  const out: string[] = [];
+  const preview = (showCompletion = true) => {
+    if (line === "") {
+      return;
+    }
+    if (showCompletion) {
+      out.push(line);
+    }
+  };
+  preview(show);
+  return out;
+}`,
+      [
+        ["", true],
+        ["a", undefined],
+        ["b", false],
+      ],
+    );
+  });
 });
