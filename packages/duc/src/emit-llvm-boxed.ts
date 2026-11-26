@@ -3511,7 +3511,15 @@ function lowerFunction(
     if (/^\.[\w$]+=$/.test(lbl) && ins.length === 2) {
       const obj = operand(ins[0] as ValueId);
       const value = operand(ins[1] as ValueId);
-      set(out, call("yk_set", `i64 ${obj}, i64 ${keyOf(lbl.slice(1, -1))}, i64 ${value}`));
+      // With its site's cache, as a named read has (#1370).
+      const site = `@yk.ic.${m.icSites++}`;
+      m.globals.push(`${site} = internal global i32 0`);
+      m.intrinsics.add("declare i64 @yk_set_ic(i64, i64, i64, ptr)");
+      const r = fresh();
+      emit(
+        `${r} = call i64 @yk_set_ic(i64 ${obj}, i64 ${keyOf(lbl.slice(1, -1))}, i64 ${value}, ptr ${site})`,
+      );
+      set(out, r);
       return;
     }
     if (lbl === "ElementAccess" && ins.length === 2) {

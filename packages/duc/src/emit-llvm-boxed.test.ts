@@ -98,6 +98,11 @@ function disagreements(
 
 const PROGRAMS: [string, string, number][] = [
   [
+    "named writes and reads with their site caches: setters along the chain, own accessors, shadowing, objects of other shapes at one site (#1370)",
+    "export function f(a, b) { const log = []; const proto = { set x(v) { log.push('set ' + v); }, get y() { return 'proto y'; } }; const objs = [Object.create(proto), { x: 1, y: 2 }, { y: 3, x: 4, z: 5 }, Object.create(proto), { get x() { return 'getter'; }, set x(v) { log.push('own ' + v); } }]; const out = []; for (let i = 0; i < objs.length; i++) { const o = objs[i]; o.x = String(a) + i; out.push([o.x, o.y, o.z, Object.keys(o)]); } const shapes = [{ k: 1 }, { j: 0, k: 2 }, { k: 3 }, { i: 0, j: 0, k: 4 }]; let s = 0; for (const o of shapes) { s += o.k; o.k = o.k * 10; } return [out, log, s, shapes.map((o) => o.k), b]; }",
+    2,
+  ],
+  [
     "strings built a piece at a time (ropes, #1370): every read of the result, and of its parts",
     "export function f(a, b) { let out = ''; const parts = []; for (let i = 0; i < 3000; i++) { out += String(i % 7 === 0 ? a : b) + ','; if (i % 1000 === 999) parts.push(out); } let mid = 'x'.repeat(300); mid = mid + 'é' + mid; const o = {}; o[out] = 1; const keyed = o[parts[2]]; let sum = 0; for (let i = 0; i < out.length; i += 97) sum += out.charCodeAt(i); return [out.length, parts.map((p) => p.length), out.slice(0, 40), out.slice(-20), out[5], out[out.length - 1], out.charCodeAt(1), sum, out === parts[2], parts[0] === parts[1].slice(0, parts[0].length), out.indexOf(String(b) + ',' + String(b)), out.startsWith(String(a)), keyed, JSON.stringify(mid).length, mid.length, mid[300], (mid + mid).split('é').length, [...(mid + 'z')].length, `${mid}${out}`.length]; }",
     2,
