@@ -82,6 +82,7 @@ typedef struct {
   yk_array *hidden;       /* its non-enumerable own keys (Object.defineProperty's), or NULL */
   uint32_t *cindex;       /* a Map's or Set's: each entry's position + 1, by its key's hash; NULL to rebuild */
   uint32_t cindex_cap;
+  uint32_t accessors; /* 1 once an accessor (or another internal slot) was set on it */
 } yk_object;
 
 /* A BigInt: a sign and a magnitude, 32-bit limbs least significant first, no zero limb on top. */
@@ -1772,6 +1773,27 @@ static int html_method(yk_string *s0, yk key, yk arg0, yk *out) {
 }
 /* A method call by a key the lowered code keeps (its string, made once). */
 yk yk_call_method_k(yk recv, yk key, uint64_t argc, const yk *argv) { return call_method_key(recv, key, argc, argv); }
+/* A method call by name with its site's cache (#1370): a plain object's own method, at the index
+   its key was last found at (objects made alike have it at the same place), called at once; any
+   other call is call_method_key's. */
+yk yk_call_method_ic(yk recv, yk key, uint32_t *site, uint64_t argc, const yk *argv) {
+  if (is_object(recv)) {
+    yk_object *o = (yk_object *)PTR(recv);
+    if (o->kind == 0) {
+      uint32_t i = *site;
+      if (!(i < o->len && o->keys[i] == key)) {
+        uint32_t n = o->len < 32 ? o->len : 32;
+        for (i = 0; i < n; i++)
+          if (o->keys[i] == key) break;
+        if (i == n) return call_method_key(recv, key, argc, argv);
+        *site = i;
+      }
+      yk f = o->values[i];
+      if (is_closure(f) && !is_thunk(f)) return call_value(f, recv, argc, argv);
+    }
+  }
+  return call_method_key(recv, key, argc, argv);
+}
 /* s.charCodeAt(i) (#1369): a string's unit at a number index, at once; else the method call. */
 yk yk_char_code_at(yk recv, yk key, yk i) {
   if (is_string(recv) && is_number(i)) {
@@ -2269,6 +2291,7 @@ static int own_get(yk_object *o, yk key, yk *out) {
 }
 
 static void own_set(yk_object *o, yk key, yk value) {
+  if (TAG(value) == T_INTERNAL) o->accessors = 1;
   int64_t found = own_find(o, key);
   if (found >= 0) {
     o->values[found] = value;
@@ -2819,6 +2842,16 @@ yk yk_set(yk obj, yk key, yk value) {
   }
   if (is_object(obj) || is_closure(obj)) {
     yk k = to_property_key(key), slot;
+    /* No object along the chain has an accessor: the property is the object's own, with no
+       lookup along it. */
+    if (is_object(obj)) {
+      yk v = obj;
+      while (v != 0 && is_object(v) && !((yk_object *)PTR(v))->accessors) v = ((yk_object *)PTR(v))->proto;
+      if (v == 0 || !is_object(v)) {
+        own_set((yk_object *)PTR(obj), k, value);
+        return obj;
+      }
+    }
     /* A setter along the chain is called; otherwise the property is the object's own. */
     if (chain_get(obj, k, &slot) && is_accessor(slot)) {
       yk setter = ((yk_accessor *)PTR(slot))->set;
