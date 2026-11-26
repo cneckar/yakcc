@@ -798,6 +798,15 @@ function parseType(spelled: string, depth = 0): CType {
   // A record named without its tag (C++: `impl::DecNum`, partly qualified; `div_t`, a C typedef's
   // unnamed struct, which takes the typedef's name).
   if (/^[A-Za-z_][\w:]*$/.test(raw)) {
+    // (An enumeration a class declares, `StandardPlural::Form`: its underlying type; a typedef
+    // one declares, `Bignum::Chunk`: its type.)
+    const asEnum = unitTypedef(`enum ${raw}`);
+    if (asEnum !== undefined) return parseType(asEnum, depth + 1);
+    const last = raw.split("::").pop() ?? raw;
+    if (last !== raw) {
+      const member = unitTypedef(last);
+      if (member !== undefined && member !== raw) return parseType(member, depth + 1);
+    }
     for (const tag of ["class", "struct", "union"])
       if (unitLayout(`${tag} ${raw}`) !== undefined) return { k: "rec", name: `${tag} ${raw}` };
     // (A C typedef's unnamed record, which the layout dump names by the typedef alone:
@@ -1335,6 +1344,11 @@ export interface CxxUnit {
   readonly isVirtual: (methodId: string) => boolean;
   /** A class's type_info (RTTI): its static's key. */
   readonly typeinfoOf: (record: string) => string;
+  /**
+   * Whether code generation calls a method directly from a function (by their symbols and the
+   * method's id): a qualified call, `Format::operator==(that)`, which the AST does not mark.
+   */
+  readonly calledDirectly: (callerSymbol: string, methodId: string) => boolean;
   /** Whether a member function is final, or its class is (a call of it is not dispatched). */
   readonly isFinal: (methodId: string) => boolean;
   /** A function's parameter's default argument (its expression), by the function's id. */
@@ -3880,7 +3894,8 @@ function raiseBody(
       id !== undefined &&
       !qualified &&
       unitCxx?.isVirtual(id) === true &&
-      unitCxx.isFinal(id) !== true
+      unitCxx.isFinal(id) !== true &&
+      !unitCxx.calledDirectly(symbolOf(fn), id)
     ) {
       const slot = unitCxx.slotOf(id);
       if (slot === undefined) throw new RaiseCError(`the vtable slot of ${name}`);
@@ -4492,6 +4507,7 @@ function raiseBody(
         return;
       // `cpuid` (clang's cpuid.h, `__cpuid` and `__cpuid_count`): each register from the leaf.
       case "GCCAsmStmt": {
+        if (isEmptyAsm(s)) return;
         if (!isCpuid(s)) throw new RaiseCError("an asm statement other than cpuid");
         const [leafOf, subOf] = kids.slice(4) as [ClangNode, ClangNode?];
         const leaf = temp({ k: "u32" });
@@ -5331,6 +5347,7 @@ export function shaveCUnit(
       stdio: ["ignore", "pipe", "ignore"],
     }).length > 200_000;
   const indexed = large ? indexUnit(clang, args, file) : undefined;
+  unitFile = file;
   const isCxx = /\+\+$/.test(clang) || /\.(cc|cpp|cxx)$/.test(file);
   // The roots, as the filters name them; in an indexed unit, the index's own nodes (its ids).
   // (C++: a filter can be a symbol, the mangled name another unit calls a function by.)
@@ -6086,7 +6103,9 @@ export function shaveCUnit(
                   plain = plain.replace(/<[^<>()]*>(?=::)/g, "");
                 }
                 const head = plain.slice(0, plain.indexOf("("));
-                const owner = head.split("::").slice(-2, -1)[0] ?? "";
+                // (Its return type before its scope, `int N::eq`, not part of its class's name.)
+                const owner =
+                  (head.split("::").slice(-2, -1)[0] ?? "").split(/[\s*&]+/).pop() ?? "";
                 const name = head.split("::").pop() ?? "";
                 const want = memberKey(name, plain.slice(plain.indexOf("(")));
                 let id: string | undefined;
@@ -6114,6 +6133,10 @@ export function shaveCUnit(
             return key;
           },
           typeinfoOf: (record) => typeinfoOf(record),
+          calledDirectly: (caller, methodId) => {
+            const m = symbolOfId(methodId);
+            return m !== undefined && irCalls(caller).includes(m);
+          },
         };
   // The unit's vtables, as clang lays them out (its code generation dumps them): each class's
   // entries from its address point, and the slot of each virtual function it declares.
@@ -7521,6 +7544,34 @@ let cpuidHeader: string | undefined;
  * sub, ..)`): four outputs and the leaf (and subleaf), spelled at an `__asm` of clang's
  * cpuid.h (a JSON dump has no asm text).
  */
+/**
+ * Whether an asm statement's template is empty (`asm volatile("" : : "rm"(p) : "memory")`, ICU's
+ * U_ALIASING_BARRIER): an optimizer's barrier, no instruction. (Its text, at its spelling's offset
+ * in its file, as clang's JSON does not carry it.)
+ */
+const asmSources = new Map<string, string>();
+/** The file of the unit being shaved: where a location without its own file is. */
+let unitFile = "";
+function isEmptyAsm(s: ClangNode): boolean {
+  type Loc = { offset?: number; file?: string; spellingLoc?: Loc };
+  const begin = (s as { range?: { begin?: Loc } }).range?.begin;
+  const loc = begin?.spellingLoc ?? begin;
+  const file = loc?.file ?? (begin?.spellingLoc === undefined ? unitFile : undefined);
+  if (loc?.offset === undefined || file === undefined || file === "") return false;
+  let text = asmSources.get(file);
+  if (text === undefined) {
+    try {
+      text = readFileSync(file, "latin1");
+    } catch {
+      text = "";
+    }
+    asmSources.set(file, text);
+  }
+  return /^(?:__)?asm(?:__)?\s*(?:(?:__)?volatile(?:__)?\s*)?\(\s*""\s*[:)]/.test(
+    text.slice(loc.offset, loc.offset + 120),
+  );
+}
+
 function isCpuid(s: ClangNode): boolean {
   const n = (s.inner ?? []).length;
   if (n !== 5 && n !== 6) return false;
