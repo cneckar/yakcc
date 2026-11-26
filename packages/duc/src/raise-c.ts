@@ -30,6 +30,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  utimesSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -117,13 +118,24 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
     .digest("hex")
     .slice(0, 32);
   const path = join(dir, `${key}.json`);
+  // (And past 12 GB in all, the least recently used: ICU's 456 dumps are 80 MB each.)
+  const kept: { file: string; size: number; used: number }[] = [];
   for (const old of readdirSync(dir))
     try {
-      if (Date.now() - statSync(join(dir, old)).atimeMs > 86_400_000)
-        rmSync(join(dir, old), { force: true });
+      const o = statSync(join(dir, old));
+      const used = Math.max(o.atimeMs, o.mtimeMs);
+      if (Date.now() - used > 86_400_000) rmSync(join(dir, old), { force: true });
+      else if (old.endsWith(".json")) kept.push({ file: join(dir, old), size: o.size, used });
     } catch {
       // another process's, gone
     }
+  let total = kept.reduce((n, k) => n + k.size, 0);
+  for (const k of kept.sort((a, b) => a.used - b.used)) {
+    if (total <= 12 * 2 ** 30) break;
+    if (k.file === path) continue;
+    rmSync(k.file, { force: true });
+    total -= k.size;
+  }
   if (!existsSync(path)) {
     const part = `${path}.${process.pid}.part`;
     const out = openSync(part, "w");
@@ -136,6 +148,14 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
       closeSync(out);
     }
     renameSync(part, path);
+  } else {
+    // (Used now: kept before older ones.)
+    const now = new Date();
+    try {
+      utimesSync(path, now, now);
+    } catch {
+      // removed meanwhile by another process: read below fails as a missing dump would
+    }
   }
   const decls: IndexedDecl[] = [];
   const byName = new Map<string, IndexedDecl[]>();
