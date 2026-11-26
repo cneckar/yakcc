@@ -205,6 +205,7 @@ typedef struct {
   uint8_t cls;
   uint32_t n;   /* small: its blocks; large, first: its pages; large, other: back to the first */
   uint64_t used[64], mark[64];
+  uint64_t noscan[64]; /* blocks that hold no values (a string's units, a buffer's bytes): marked, not scanned */
 } gc_page;
 typedef struct {
   size_t start, len;
@@ -403,15 +404,17 @@ static void gc_consider(uintptr_t x) {
   if (g->kind == 2) {
     if (g->mark[0] & 1) return;
     g->mark[0] |= 1;
+    if (g->noscan[0] & 1) return;
     p = gc_heap + (pi << GC_PAGE_SHIFT);
     n = (size_t)g->n << GC_PAGE_SHIFT;
   } else if (g->kind == 1) {
     uint32_t size = gc_sizes[g->cls];
-    uint32_t b = (uint32_t)((off & (GC_PAGE - 1)) / size);
+    uint32_t b = (uint32_t)(((off & (GC_PAGE - 1)) * gc_recip[g->cls]) >> 32);
     if (b >= g->n) return;
     uint64_t bit = (uint64_t)1 << (b & 63);
     if (!(g->used[b >> 6] & bit) || (g->mark[b >> 6] & bit)) return;
     g->mark[b >> 6] |= bit;
+    if (g->noscan[b >> 6] & bit) return;
     p = gc_heap + (pi << GC_PAGE_SHIFT) + (size_t)b * size;
     n = size;
   } else
@@ -503,6 +506,7 @@ static void gc_collect(void) {
         live += k << GC_PAGE_SHIFT;
       } else {
         g->used[0] = 0;
+        g->noscan[0] = 0;
         gc_put_pages(pi, k);
       }
       pi += k - 1;
@@ -511,6 +515,7 @@ static void gc_collect(void) {
       int any = 0;
       for (int w = 0; w < 64; w++) {
         g->used[w] &= g->mark[w];
+        g->noscan[w] &= g->used[w];
         g->mark[w] = 0;
         if (g->used[w]) any = 1;
       }
@@ -535,8 +540,22 @@ static void gc_collect(void) {
      what is live, and each byte live is traced once per twice its size allocated. */
   gc_threshold = 2 * live > gc_floor ? 2 * live : gc_floor;
 }
+/* A block that will hold no values (#1370): marked when reached, never scanned for pointers. */
+static void *alloc_noscan(size_t n) {
+  uint8_t *p = alloc(n);
+  if (p < gc_heap || p >= gc_heap + (gc_top << GC_PAGE_SHIFT)) return p;
+  size_t off = (size_t)(p - gc_heap);
+  gc_page *g = &gc_pages[off >> GC_PAGE_SHIFT];
+  if (g->kind == 2) g->noscan[0] |= 1;
+  else if (g->kind == 1) {
+    uint32_t b = (uint32_t)(((off & (GC_PAGE - 1)) * gc_recip[g->cls]) >> 32);
+    g->noscan[b >> 6] |= (uint64_t)1 << (b & 63);
+  }
+  return p;
+}
 #else
 static void *alloc(size_t n) { return bump(n); }
+static void *alloc_noscan(size_t n) { return bump(n); }
 static uintptr_t gc_main_sp = 0;
 #endif
 /* Memory that is freed and holds no values (scratch buffers): the C library's. */
@@ -553,7 +572,7 @@ static void *grow(void *p, size_t old, size_t n) {
 }
 
 static yk_string *new_string(uint32_t len) {
-  yk_string *s = alloc(sizeof(yk_string) + (size_t)len * 2);
+  yk_string *s = alloc_noscan(sizeof(yk_string) + (size_t)len * 2);
   s->len = len;
   return s;
 }
@@ -7205,7 +7224,7 @@ static yk new_kind(int32_t kind, void *ext) {
 static yk new_buffer(uint32_t len) {
   yk_buffer *b = alloc(sizeof(yk_buffer));
   b->len = len;
-  b->data = alloc(len + 1);
+  b->data = alloc_noscan(len + 1);
   memset(b->data, 0, len + 1);
   return new_kind(K_BUFFER, b);
 }
