@@ -13,6 +13,44 @@ let api = {};
   }
   // biome-ignore lint/suspicious/noShadowRestrictedNames: the name is what is tested (#1370)
   const toString = "own";
+  // Methods set on a Map, a Set and an array themselves (TypeScript's multi-map): called as
+  // theirs, before their prototype's, and listed as their own keys.
+  function multiMapAdd(key, value) {
+    let values = this.get(key);
+    if (values !== undefined) values.push(value);
+    else {
+      values = [value];
+      this.set(key, values);
+    }
+    return values;
+  }
+  function ownMethods(n) {
+    const m = new Map();
+    m.add = multiMapAdd;
+    m.add("a", n);
+    m.add("a", n + 1);
+    m.add("b", 0);
+    const s = new Set();
+    s.tag = "t";
+    s.has2 = function (x) {
+      return this.has(x);
+    };
+    s.add(n);
+    const a = [1, 2, 3];
+    a.extra = function () {
+      return this.length * 10;
+    };
+    return [
+      [...m],
+      Object.keys(m),
+      s.tag,
+      s.has2(n),
+      s.has2(n + 1),
+      Object.keys(s),
+      a.extra(),
+      m.size,
+    ];
+  }
   function bump(k) {
     counter += k;
     return counter;
@@ -34,6 +72,7 @@ let api = {};
     viaShorthand: self.module === module,
     hoisted: typeof later,
     keys: Object.keys(module),
+    ownMethods,
     own: [hasProperty({ a: 1 }, "a"), hasProperty({}, "a"), toString, typeof hasOwnProperty],
   };
   function later() {}

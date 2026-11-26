@@ -1648,13 +1648,15 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
     }
     if (o->kind >= 6 && o->kind <= 8) {
       yk out;
-      if (o->proto != 0 && chain_get(recv, key, &f) && !is_thunk(f = resolve_slot(f, recv)))
+      /* Its own property or its chain's first (a subclass's method; one set on it, #1370). */
+      if (chain_get(recv, key, &f) && !is_thunk(f = resolve_slot(f, recv)))
         return call_value(f, recv, argc, argv); /* a subclass's own method (Buffer's toString) */
       if (buffer_method(recv, key, argc, argv, &out)) return out;
     }
     if (o->kind == 1 || o->kind == 2) {
       yk out;
-      if (o->proto != 0 && chain_get(recv, key, &f) && !is_thunk(f = resolve_slot(f, recv)))
+      /* Its own property (TypeScript's multi-map sets add on a Map) or its chain's first. */
+      if (chain_get(recv, key, &f) && !is_thunk(f = resolve_slot(f, recv)))
         return call_value(f, recv, argc, argv); /* a subclass's own method */
       if (collection_method(o, recv, key, argc, argv, &out)) return out;
     } else if (chain_get(recv, key, &f) && !is_thunk(f = resolve_slot(f, recv)))
@@ -1678,6 +1680,9 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
   }
   if (is_array(recv)) {
     yk out;
+    /* A method set on the array itself comes before Array.prototype's (#1370). */
+    if (arr(recv)->props != 0 && own_get((yk_object *)PTR(arr(recv)->props), key, &out))
+      return call_value(resolve_slot(out, recv), recv, argc, argv);
     if (array_callback_method(recv, key, argc, argv, &out)) return out;
     if (key_is(key, "values") || key == symbol_iterator()) return builtin_iter_new(recv, 1, 0);
     if (key_is(key, "keys")) return builtin_iter_new(recv, 0, 0);
@@ -1818,6 +1823,18 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
       double d = to_number(arg0);
       d = d != d ? 0 : trunc(d);
       return d < 0 || d >= s->len ? yk_number(NAN) : yk_number(s->units[(int64_t)d]);
+    }
+    if (key_is(key, "substr")) {
+      /* Annex B's substr(start, length): start as slice's, then at most length units. */
+      int64_t a = relative(arg0, s->len, 0), n = s->len - a;
+      if (arg1 != YK_UNDEFINED) {
+        double l = to_number(arg1);
+        l = l != l ? 0 : trunc(l);
+        if (l < (double)n) n = l <= 0 ? 0 : (int64_t)l;
+      }
+      yk_string *r = new_string((uint32_t)n);
+      memcpy(r->units, s->units + a, (size_t)n * 2);
+      return string_of(r);
     }
     if (key_is(key, "slice")) {
       int64_t a = relative(arg0, s->len, 0), b = relative(arg1, s->len, s->len);
@@ -4638,7 +4655,9 @@ static yk builtin_array_is_array(void *c, yk self, uint64_t argc, const yk *argv
 
 static yk object_parts(yk v, int which) {
   yk_array *r = new_array(4);
-  if (is_object(v) && ((yk_object *)PTR(v))->kind == 0) {
+  /* An object's own enumerable keys: a plain one's, or a Map's, Set's or Date's set on it (not a
+     buffer's or typed array's, whose elements are keys of their own). */
+  if (is_object(v) && !(((yk_object *)PTR(v))->kind >= 6 && ((yk_object *)PTR(v))->kind <= 8)) {
     yk_object *o = (yk_object *)PTR(v);
     yk_array *keys = enumerable_keys(o);
     for (uint32_t i = 0; i < keys->len; i++) {
