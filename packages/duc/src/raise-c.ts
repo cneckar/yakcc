@@ -2939,8 +2939,38 @@ function raiseBody(
         const direct =
           callee.kind === "DeclRefExpr" &&
           (d?.kind === "FunctionDecl" || d?.kind === "CXXMethodDecl");
-        if (!direct && ct.k === "ptr" && ct.to.k === "fn")
-          return `__ykFnAt(${expr(k0)})(${args.join(", ")})`;
+        // A call of a variadic function: the arguments past its parameters (promoted by clang)
+        // are packed into 8-byte slots, and the slots' address is its last argument, `__va`.
+        const packVariadic = (
+          fixed: number,
+        ): { callArgs: string[]; pack: string[]; area: string } => {
+          const area = temp({ k: "f64" });
+          const extras = kids.slice(1 + fixed);
+          const pack = [
+            `(${area} = __ykAlloc(${Math.max(8, 8 * extras.length)}, 8))`,
+            ...extras.map((x, i) => {
+              const xt = typeOf(x);
+              const slot = i === 0 ? area : `(${area} + ${8 * i})`;
+              const v = args[fixed + i] as string;
+              if (xt.k === "f64") return `__ykStoreF64(${slot}, ${v})`;
+              if (wide(xt)) return `__ykStore64(${slot}, ${v})`;
+              if (xt.k === "ptr" || xt.k === "i32" || xt.k === "u32")
+                return `__ykStore64(${slot}, __ykNumToBig(${v}))`;
+              throw new RaiseCError(`a variable argument of ${xt.k}`);
+            }),
+          ];
+          return { callArgs: [...args.slice(0, fixed), area], pack, area };
+        };
+        if (!direct && ct.k === "ptr" && ct.to.k === "fn") {
+          const at = `__ykFnAt(${expr(k0)})`;
+          // (Variadic through the pointer, `(ERR_new(), .., ERR_set_error)(lib, r, fmt, ..)`: as a
+          // direct call packs them.)
+          const fixedThere = variadicParams(k0.type?.desugaredQualType ?? k0.type?.qualType ?? "");
+          if (fixedThere === undefined) return `${at}(${args.join(", ")})`;
+          const v = packVariadic(fixedThere);
+          const r = temp(typeOf(e).k === "void" ? { k: "i32" } : typeOf(e));
+          return `(${v.pack.join(", ")}, (${r} = ${at}(${v.callArgs.join(", ")})), __ykFree(${v.area}), ${r})`;
+        }
         // The checked arithmetic builtins: the exact result (as a bigint), stored at the third
         // argument in its type, and whether that changed it.
         const checked = (
@@ -2983,30 +3013,11 @@ function raiseBody(
         }
         if (name === "__builtin_va_end") return "undefined";
         if (name === "__builtin_va_copy") return `__ykStore64(${args[0]}, __ykLoad64(${args[1]}))`;
-        // A call of a variadic function: the arguments past its parameters (promoted by clang)
-        // are packed into 8-byte slots, and the slots' address is its last argument, `__va`.
         const fixed = variadicParams(d.type?.qualType ?? "");
         let callArgs = args;
         let pack: string[] = [];
         let area = "";
-        if (fixed !== undefined) {
-          area = temp({ k: "f64" });
-          const extras = kids.slice(1 + fixed);
-          pack = [
-            `(${area} = __ykAlloc(${Math.max(8, 8 * extras.length)}, 8))`,
-            ...extras.map((x, i) => {
-              const xt = typeOf(x);
-              const slot = i === 0 ? area : `(${area} + ${8 * i})`;
-              const v = args[1 + fixed + i - 1] as string;
-              if (xt.k === "f64") return `__ykStoreF64(${slot}, ${v})`;
-              if (wide(xt)) return `__ykStore64(${slot}, ${v})`;
-              if (xt.k === "ptr" || xt.k === "i32" || xt.k === "u32")
-                return `__ykStore64(${slot}, __ykNumToBig(${v}))`;
-              throw new RaiseCError(`a variable argument of ${xt.k}`);
-            }),
-          ];
-          callArgs = [...args.slice(0, fixed), area];
-        }
+        if (fixed !== undefined) ({ callArgs, pack, area } = packVariadic(fixed));
         const index = callOrder.get(e);
         const key = resolve({
           name,
