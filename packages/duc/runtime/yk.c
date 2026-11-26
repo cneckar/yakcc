@@ -8914,6 +8914,17 @@ void yk_fail(const char *message) {
   fprintf(stderr, "%s\n", message);
   exit(70);
 }
+/* require of a module the program does not have (#1370): Node's error, which a try catches (an
+   optional dependency), its code MODULE_NOT_FOUND. */
+_Noreturn void yk_module_not_found(yk spec, const char *from, uint64_t n) {
+  yk message = concat(str(ascii("Cannot find module '")), str(to_string(spec)));
+  message = concat(str(message), str(ascii("' (required from ")));
+  message = concat(str(message), str(yk_string_utf8(from, n)));
+  message = concat(str(message), str(ascii(")")));
+  yk e = make_error("Error", message);
+  yk_set(e, ascii("code"), ascii("MODULE_NOT_FOUND"));
+  yk_throw(e);
+}
 
 /* --- Math, with JavaScript's results --- */
 

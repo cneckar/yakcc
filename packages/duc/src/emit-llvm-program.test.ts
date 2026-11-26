@@ -7,6 +7,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -169,6 +170,22 @@ describe.skipIf(!canRun("x86_64-linux"))("programs, natively (#1333)", () => {
       (...x: unknown[]) => unknown
     >;
     const want = calls.map(([m, a]) => ref[m]?.(...a));
+    expect(got.map((g, i) => same(g, want[i]) || [calls[i], g, want[i]])).toEqual(
+      calls.map(() => true),
+    );
+  }, 600_000);
+
+  it("CommonJS modules: required by path, an optional dependency that does not resolve (#1370)", () => {
+    const run = nativeProgram("cjs", here("./__fixtures__/program/cjs/entry.cjs"));
+    const ref = createRequire(import.meta.url)("./__fixtures__/program/cjs/entry.cjs") as {
+      probe: (n: number) => unknown;
+    };
+    const calls: [string, unknown[]][] = [
+      ["probe", [3]],
+      ["probe", [10]],
+    ];
+    const got = run(calls);
+    const want = calls.map(([, a]) => ref.probe(a[0] as number));
     expect(got.map((g, i) => same(g, want[i]) || [calls[i], g, want[i]])).toEqual(
       calls.map(() => true),
     );

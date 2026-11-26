@@ -5859,8 +5859,15 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
       req.push(`  ret i64 %v${r}`);
       req.push(`next${r}:`);
     });
-    const missing = m.constant(`Error: Cannot find module (required from ${mod.id})`, true);
-    req.push(`  call void @yk_fail(ptr ${missing.ptr})`, "  unreachable", "}", "");
+    // Any other: Node's MODULE_NOT_FOUND error, thrown (a try around an optional require catches it).
+    const from = m.constant(mod.id);
+    m.intrinsics.add("declare void @yk_module_not_found(i64, ptr, i64)");
+    req.push(
+      `  call void @yk_module_not_found(i64 %spec, ptr ${from.ptr}, i64 ${from.length})`,
+      "  unreachable",
+      "}",
+      "",
+    );
     m.functions.push(req.join("\n"));
     // An ECMAScript module's exports object is its namespace: each export's value, once its body
     // has run.
