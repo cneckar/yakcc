@@ -477,31 +477,61 @@ async function walkNodeStrict(
  * @see DEC-V2-GLUE-AWARE-SHAVE-001
  */
 /**
- * Whether the DUC lifter lifts a source to a graph with no opaque node, in it or in its closures:
+ * Whether the DUC lifter lifts a node's source to a graph with no opaque node, in it or in its closures:
  * then the graph, not the strict-subset predicate, decides that it is an atom (DEC-SHAVE-GRAPH-DECIDES-001).
  * An import or require binding is never one: it is a link, not a computation.
  */
-function liftsWhole(source: string, alone = true): boolean {
-  if (/^\s*import\s/.test(source)) return false;
-  let graph: ReturnType<typeof liftAtom>;
+function liftsWhole(node: RecursionNode, alone = true): boolean {
+  if (/^\s*import\s/.test(node.source)) return false;
+  const facts = liftFacts(node);
+  return alone ? facts.wholeAlone : facts.whole;
+}
+
+/**
+ * What lifting a node's source tells, lifted once per node: the slice asks it of a node at each level
+ * above it, both whether it parses alone and whether it lifts whole, and lifting each subtree again at
+ * every level was quadratic in the file's depth (#1368).
+ */
+interface LiftFacts {
+  /** Whether the source lifts or fails for a reason other than its syntax (see parsesAlone). */
+  readonly parses: boolean;
+  /** Whether it lifts to a graph with no opaque node, in it or in its closures. */
+  readonly whole: boolean;
+  /** Whether it does and the graph computes something, not only references names. */
+  readonly wholeAlone: boolean;
+}
+
+const LIFTED = new WeakMap<RecursionNode, LiftFacts>();
+
+function liftFacts(node: RecursionNode): LiftFacts {
+  const kept = LIFTED.get(node);
+  if (kept !== undefined) return kept;
+  let facts: LiftFacts;
   try {
-    graph = liftAtom(source);
-  } catch {
-    return false;
+    const graph = liftAtom(node.source);
+    // Dynamic code (eval, the Function constructor) has a meaning no graph holds.
+    const dynamic = (n: (typeof graph.nodes)[number]): boolean =>
+      n.diamond !== undefined && (n.diamond.symbol === "eval" || n.diamond.symbol === "Function");
+    const opaque = (g: typeof graph): boolean =>
+      g.nodes.some(
+        (n) =>
+          (n.label ?? "").includes("#") ||
+          dynamic(n) ||
+          (n.closure !== undefined && opaque(n.closure)),
+      );
+    const whole = !opaque(graph);
+    // Stored alone, a graph that only references names is not worth an atom; inside a parent that
+    // lifts whole it is fine (`return generator;`).
+    facts = {
+      parses: true,
+      whole,
+      wholeAlone: whole && graph.nodes.some((n) => n.kind !== "diamond-source"),
+    };
+  } catch (e) {
+    facts = { parses: !(e instanceof DucLiftError), whole: false, wholeAlone: false };
   }
-  // Dynamic code (eval, the Function constructor) has a meaning no graph holds.
-  const dynamic = (n: (typeof graph.nodes)[number]): boolean =>
-    n.diamond !== undefined && (n.diamond.symbol === "eval" || n.diamond.symbol === "Function");
-  const opaque = (g: typeof graph): boolean =>
-    g.nodes.some(
-      (n) =>
-        (n.label ?? "").includes("#") ||
-        dynamic(n) ||
-        (n.closure !== undefined && opaque(n.closure)),
-    );
-  // Stored alone, a graph that only references names is not worth an atom; inside a parent that
-  // lifts whole it is fine (`return generator;`).
-  return !opaque(graph) && (!alone || graph.nodes.some((n) => n.kind !== "diamond-source"));
+  LIFTED.set(node, facts);
+  return facts;
 }
 
 /**
@@ -510,9 +540,9 @@ function liftsWhole(source: string, alone = true): boolean {
  * own source is what tells).
  */
 function liftsWholeNode(node: RecursionNode, alone = true): boolean {
-  if (node.kind === "atom") return liftsWhole(node.source, alone);
+  if (node.kind === "atom") return liftsWhole(node, alone);
   const branch = node as BranchNode;
-  return branch.children.every(childLiftsWhole) && liftsWhole(branch.source, alone);
+  return branch.children.every(childLiftsWhole) && liftsWhole(branch, alone);
 }
 
 /**
@@ -522,21 +552,25 @@ function liftsWholeNode(node: RecursionNode, alone = true): boolean {
  * own children still do (#1173).
  */
 function childLiftsWhole(node: RecursionNode): boolean {
+  const kept = CHILD_LIFTS_WHOLE.get(node);
+  if (kept !== undefined) return kept;
   // A statement that jumps out of itself (`return`, `break`, `continue`) means something only in
-  // its parent, and is never dead there; like a fragment, its own children decide.
-  if (parsesAlone(node.source) && !JUMP.test(node.source)) return liftsWholeNode(node, false);
-  return node.kind === "atom" || (node as BranchNode).children.every(childLiftsWhole);
+  // its parent, and is never dead there; like a fragment, its own children decide. Either way its
+  // children decide first: when one does not lift whole, neither does the node, and lifting it
+  // first lifted each ancestor of a construct no graph holds (#1368).
+  const result =
+    (node.kind === "atom" || (node as BranchNode).children.every(childLiftsWhole)) &&
+    (JUMP.test(node.source) || !parsesAlone(node) || liftsWhole(node, false));
+  CHILD_LIFTS_WHOLE.set(node, result);
+  return result;
 }
+
+const CHILD_LIFTS_WHOLE = new WeakMap<RecursionNode, boolean>();
 
 const JUMP = /\b(?:return|break|continue)\b/;
 
-function parsesAlone(source: string): boolean {
-  try {
-    liftAtom(source);
-    return true;
-  } catch (e) {
-    return !(e instanceof DucLiftError);
-  }
+function parsesAlone(node: RecursionNode): boolean {
+  return liftFacts(node).parses;
 }
 
 async function walkNodeGlueAware(

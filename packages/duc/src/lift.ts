@@ -473,21 +473,23 @@ function parsedAlone(text: string): SourceFile {
  * initialized) is left as it is. Undefined when nothing is dropped.
  */
 function dropUnreachable(sf: SourceFile): string | undefined {
-  const jump = (st: Node): boolean =>
-    Node.isReturnStatement(st) ||
-    Node.isThrowStatement(st) ||
-    Node.isBreakStatement(st) ||
-    Node.isContinueStatement(st);
+  const file = sf.compilerNode;
+  const jump = (st: ts.Node): boolean =>
+    ts.isReturnStatement(st) ||
+    ts.isThrowStatement(st) ||
+    ts.isBreakStatement(st) ||
+    ts.isContinueStatement(st);
   const edits: { start: number; end: number; text: string }[] = [];
-  const lists = [sf, ...sf.getDescendants()].filter(
-    (n) =>
-      Node.isSourceFile(n) || Node.isBlock(n) || Node.isCaseClause(n) || Node.isDefaultClause(n),
-  ) as (SourceFile | import("ts-morph").Block | import("ts-morph").CaseClause)[];
+  // The lists are found on the compiler's nodes, and only a list with dead statements is read as
+  // ts-morph's: wrapping every node of each source the slicer lifts cost more than lifting it (#1368).
+  const lists: (readonly ts.Statement[])[] = [file.statements];
+  forEachCompilerDescendant(file, (n) => {
+    if (ts.isBlock(n) || ts.isCaseClause(n) || ts.isDefaultClause(n)) lists.push(n.statements);
+  });
   for (const list of lists) {
-    const statements = list.getStatements();
-    const at = statements.findIndex(jump);
-    if (at === -1 || at === statements.length - 1) continue;
-    const dead = statements.slice(at + 1);
+    const at = list.findIndex(jump);
+    if (at === -1 || at === list.length - 1) continue;
+    const dead = list.slice(at + 1).map((st) => wrappedNode(sf, st));
     const binds = dead.some(
       (st) =>
         Node.isClassDeclaration(st) ||
@@ -531,14 +533,22 @@ function dropUnreachable(sf: SourceFile): string | undefined {
  * block (#1368). Undefined when every body is one already.
  */
 function braceLoopBodies(sf: SourceFile): string | undefined {
-  const bodies = sf
-    .getDescendants()
-    .filter(isLoopStatement)
-    .map((l) => (l as import("ts-morph").WhileStatement).getStatement())
-    .filter((b) => !Node.isBlock(b));
+  const file = sf.compilerNode;
+  const bodies: ts.Statement[] = [];
+  forEachCompilerDescendant(file, (n) => {
+    if (
+      (ts.isForStatement(n) ||
+        ts.isForOfStatement(n) ||
+        ts.isForInStatement(n) ||
+        ts.isWhileStatement(n) ||
+        ts.isDoStatement(n)) &&
+      !ts.isBlock(n.statement)
+    )
+      bodies.push(n.statement);
+  });
   if (bodies.length === 0) return undefined;
   const edits = bodies.flatMap((b) => [
-    { at: b.getStart(), text: "{ " },
+    { at: b.getStart(file), text: "{ " },
     { at: b.getEnd(), text: " }" },
   ]);
   // From the end, so earlier positions hold; at one position, a close before an open.
@@ -5319,6 +5329,27 @@ function topLevelDeclaredNames(stmt: Node): string[] {
   if ((Node.isFunctionDeclaration(stmt) || Node.isClassDeclaration(stmt)) && stmt.getName())
     return [stmt.getName() as string];
   return [];
+}
+
+/**
+ * Each node under `node`, in order, read from the compiler's nodes: ts-morph's getDescendants wraps
+ * every node it passes, and a pass over each source the slicer lifts paid that for the whole source
+ * (#1368).
+ */
+function forEachCompilerDescendant(node: ts.Node, visit: (n: ts.Node) => void): void {
+  const walk = (n: ts.Node): undefined => {
+    visit(n);
+    ts.forEachChild(n, walk);
+    return undefined;
+  };
+  ts.forEachChild(node, walk);
+}
+
+/** The ts-morph node of a compiler node of `sf`. */
+function wrappedNode(sf: SourceFile, node: ts.Node): Node {
+  return (sf as unknown as { _getNodeFromCompilerNode(n: ts.Node): Node })._getNodeFromCompilerNode(
+    node,
+  );
 }
 
 function patternNames(nameNode: Node): string[] {
