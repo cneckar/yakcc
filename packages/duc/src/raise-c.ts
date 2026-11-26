@@ -3052,11 +3052,20 @@ function raiseBody(
         const a = temp({ k: "f64" });
         // (Its initializer, before the placement argument: none, when that comes first.)
         const init = /nothrow_t/.test(kids[0]?.type?.qualType ?? "") ? undefined : kids[0];
+        // (A record made by a call, `new MeasureUnitImpl(other.copy(status))`: in place, C++17's
+        // elision, no constructor between.)
+        const madeBy = init === undefined ? undefined : stripParens(init);
         const made =
           init === undefined
             ? "undefined"
             : t.to.k === "rec"
-              ? construct(a, init)
+              ? madeBy !== undefined &&
+                madeBy.kind !== "CXXConstructExpr" &&
+                madeBy.kind !== "CXXTemporaryObjectExpr" &&
+                madeBy.kind !== "InitListExpr" &&
+                madeBy.kind !== "ParenListExpr"
+                ? copyFrom(a, t.to, init).join(", ")
+                : construct(a, init)
               : storeAt(a, t.to, expr(init));
         return `((${a} = __ykAlloc(${Math.max(1, sizeOf(t.to))}, ${Math.max(8, alignOf(t.to))})), ${made}, ${a})`;
       }
@@ -7259,7 +7268,9 @@ function staticDefinition(
         return { k: "v", v: BigInt(v) };
       }
       case "ImplicitCastExpr":
-      case "CStyleCastExpr": {
+      case "CStyleCastExpr":
+      case "CXXStaticCastExpr":
+      case "CXXFunctionalCastExpr": {
         const ck = e.castKind ?? "";
         if (ck === "ArrayToPointerDecay" || ck === "FunctionToPointerDecay") return address(k0);
         const v = scalar(k0);
