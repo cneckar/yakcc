@@ -4,7 +4,7 @@
  * linked. yk.c includes this instead of the system's headers when built with -DYK_NOLIBC, with
  * -ffreestanding -fno-builtin -fno-math-errno, and the program links with -nostdlib -static.
  *
- * What it gives: the system calls (write, read, mmap, munmap, clock_gettime, getpid, exit_group);
+ * What it gives: the system calls (write, read, mmap, munmap, clock_gettime, getpid, getppid, exit_group);
  * an allocator on mmap; the string and memory functions; buffered stdio on file descriptors;
  * snprintf and strtod, both exact (a double's decimal digits from its integer value, a decimal's
  * double by rounding its exact value, half to even, with big integers); the math functions the
@@ -87,13 +87,13 @@ static inline long yk_sys(long n, long a, long b, long c, long d, long e, long f
 /* Each architecture's numbers: x86_64's; the generic table's (AArch64, RISC-V); ARM EABI's. */
 #if defined(__x86_64__)
 enum { SYS_read = 0, SYS_write = 1, SYS_mmap = 9, SYS_munmap = 11, SYS_getpid = 39,
-       SYS_clock_gettime = 228, SYS_exit_group = 231 };
+       SYS_getppid = 110, SYS_clock_gettime = 228, SYS_exit_group = 231 };
 #elif defined(__arm__)
 enum { SYS_read = 3, SYS_write = 4, SYS_mmap = 192 /* mmap2 */, SYS_munmap = 91, SYS_getpid = 20,
-       SYS_clock_gettime = 403 /* clock_gettime64 */, SYS_exit_group = 248 };
+       SYS_getppid = 64, SYS_clock_gettime = 403 /* clock_gettime64 */, SYS_exit_group = 248 };
 #else
 enum { SYS_read = 63, SYS_write = 64, SYS_mmap = 222, SYS_munmap = 215, SYS_getpid = 172,
-       SYS_clock_gettime = 113, SYS_exit_group = 94 };
+       SYS_getppid = 173, SYS_clock_gettime = 113, SYS_exit_group = 94 };
 #endif
 
 typedef long ssize_t;
@@ -141,6 +141,7 @@ YK_NOLIBC_API int clock_gettime(clockid_t clock, struct timespec *ts) {
 #endif
 }
 YK_NOLIBC_API int getpid(void) { return (int)yk_sys(SYS_getpid, 0, 0, 0, 0, 0, 0); }
+YK_NOLIBC_API int getppid(void) { return (int)yk_sys(SYS_getppid, 0, 0, 0, 0, 0, 0); }
 static _Noreturn void yk_exit_group(int code) {
   for (;;) yk_sys(SYS_exit_group, code, 0, 0, 0, 0, 0);
 }

@@ -436,6 +436,11 @@ export function nodeBootProgram(
     "internal/errors",
     // process.emitWarning's (bootstrap/node.js), loaded at its first warning.
     "internal/process/warning",
+    // process.nextTick's (bootstrap/node.js's setupTaskQueue), and process as an EventEmitter.
+    "internal/process/task_queues",
+    "events",
+    // A warning's writer (internal/process/warning's writeOut).
+    "internal/console/global",
   ])
     visit(id);
   visit(main.id, main.source);
@@ -497,6 +502,13 @@ export const NODE_BOOT = "yakcc:node-boot";
 /** The runtime's `Math` value, made by the boot module before any library code runs. */
 const MATH_VALUE =
   '// Math as a value (primordials copies its members): each member Math\'s own operation, the\n// approximated ones V8\'s shaved atoms (#1362); hypot, approximated with no atom yet, is absent.\nconst MathObject = {\n  E: Math.E,\n  LN10: Math.LN10,\n  LN2: Math.LN2,\n  LOG10E: Math.LOG10E,\n  LOG2E: Math.LOG2E,\n  PI: Math.PI,\n  SQRT1_2: Math.SQRT1_2,\n  SQRT2: Math.SQRT2,\n  abs: (a0) => Math.abs(a0),\n  acos: (a0) => Math.acos(a0),\n  acosh: (a0) => Math.acosh(a0),\n  asin: (a0) => Math.asin(a0),\n  asinh: (a0) => Math.asinh(a0),\n  atan: (a0) => Math.atan(a0),\n  atanh: (a0) => Math.atanh(a0),\n  atan2: (a0, a1) => Math.atan2(a0, a1),\n  ceil: (a0) => Math.ceil(a0),\n  cbrt: (a0) => Math.cbrt(a0),\n  expm1: (a0) => Math.expm1(a0),\n  cos: (a0) => Math.cos(a0),\n  cosh: (a0) => Math.cosh(a0),\n  exp: (a0) => Math.exp(a0),\n  floor: (a0) => Math.floor(a0),\n  log: (a0) => Math.log(a0),\n  log1p: (a0) => Math.log1p(a0),\n  log2: (a0) => Math.log2(a0),\n  log10: (a0) => Math.log10(a0),\n  max: (...a) => Math.max(...a),\n  min: (...a) => Math.min(...a),\n  pow: (a0, a1) => Math.pow(a0, a1),\n  random: () => Math.random(),\n  round: (a0) => Math.round(a0),\n  sign: (a0) => Math.sign(a0),\n  sin: (a0) => Math.sin(a0),\n  sinh: (a0) => Math.sinh(a0),\n  sqrt: (a0) => Math.sqrt(a0),\n  tan: (a0) => Math.tan(a0),\n  tanh: (a0) => Math.tanh(a0),\n  trunc: (a0) => Math.trunc(a0),\n  // Exact, so given here: ToUint32\'s leading zeros; Int32 multiplication; the nearest float32.\n  clz32: (x) => {\n    let v = x >>> 0;\n    if (v === 0) return 32;\n    let n = 0;\n    while ((v & 0x80000000) === 0) {\n      v = v << 1;\n      n++;\n    }\n    return n;\n  },\n  imul: (a, b) => {\n    const ah = (a >>> 16) & 0xffff;\n    const al = a & 0xffff;\n    const bh = (b >>> 16) & 0xffff;\n    const bl = b & 0xffff;\n    return (al * bl + (((ah * bl + al * bh) << 16) >>> 0)) | 0;\n  },\n  fround: (x) => new Float32Array([x])[0],\n};\nObject.defineProperty(MathObject, Symbol.toStringTag, { value: "Math", configurable: true });\n__yakccDefineGlobal("Math", MathObject);\n';
+
+/** Async hooks' provider types (src/async_wrap.h's NODE_ASYNC_PROVIDER_TYPES), as Node v22.23.5 numbers them. */
+const ASYNC_PROVIDERS: Readonly<Record<string, number>> = Object.fromEntries(
+  "NONE DIRHANDLE DNSCHANNEL ELDHISTOGRAM FILEHANDLE FILEHANDLECLOSEREQ BLOBREADER FSEVENTWRAP FSREQCALLBACK FSREQPROMISE GETADDRINFOREQWRAP GETNAMEINFOREQWRAP HEAPSNAPSHOT HTTP2SESSION HTTP2STREAM HTTP2PING HTTP2SETTINGS HTTPINCOMINGMESSAGE HTTPCLIENTREQUEST JSSTREAM JSUDPWRAP MESSAGEPORT PIPECONNECTWRAP PIPESERVERWRAP PIPEWRAP PROCESSWRAP PROMISE QUERYWRAP QUIC_ENDPOINT QUIC_LOGSTREAM QUIC_PACKET QUIC_SESSION QUIC_STREAM QUIC_UDP SHUTDOWNWRAP SIGNALWRAP STATWATCHER STREAMPIPE TCPCONNECTWRAP TCPSERVERWRAP TCPWRAP TTYWRAP UDPSENDWRAP UDPWRAP SIGINTWATCHDOG WORKER WORKERCPUPROFILE WORKERCPUUSAGE WORKERHEAPSNAPSHOT WORKERHEAPSTATISTICS WRITEWRAP ZLIB CHECKPRIMEREQUEST PBKDF2REQUEST KEYPAIRGENREQUEST KEYGENREQUEST KEYEXPORTREQUEST CIPHERREQUEST DERIVEBITSREQUEST HASHREQUEST RANDOMBYTESREQUEST RANDOMPRIMEREQUEST SCRYPTREQUEST SIGNREQUEST TLSWRAP VERIFYREQUEST"
+    .split(" ")
+    .map((name, i) => [name, i]),
+);
 
 /** The boot module's source: Node's realm set up over the table, then `main` loaded. */
 /** A library module's requires of a computed name: every module the name can be. */
@@ -623,6 +635,99 @@ const runtime = {
     exitCodes: { kNoFailure: 0, kGenericUserError: 1 },
   },
 };
+// The microtask queue and the tick callback (src/node_task_queue.cc), V8's and Node's C++'s parts of
+// process.nextTick (#1361 P2): the microtasks are the runtime's jobs; the tick callback is run when
+// the runtime's jobs are done and again after (__yakccSetTickHook), as Node runs it after a callback.
+let tickCallback;
+runtime.task_queue = {
+  tickInfo: new Int32Array(2),
+  runMicrotasks: () => __yakccRunMicrotasks(),
+  setTickCallback: (f) => { tickCallback = f; },
+  enqueueMicrotask: (f) => queueMicrotask(f),
+  promiseRejectEvents: {
+    kPromiseRejectWithNoHandler: 0,
+    kPromiseHandlerAddedAfterReject: 1,
+    kPromiseRejectAfterResolved: 2,
+    kPromiseResolveAfterResolved: 3,
+  },
+  setPromiseRejectCallback: () => {},
+};
+// Async hooks' state (src/async_wrap.cc, Environment::AsyncHooks): the fields and the stack of
+// [execution id, trigger id] pairs, as Node keeps them; the main script runs as id 1, triggered by 0.
+const asyncFields = new Uint32Array(9);
+asyncFields[6] = 1; // kCheck
+const asyncIds = new Float64Array(4);
+asyncIds[0] = 1; // kExecutionAsyncId: the main script's
+asyncIds[2] = 1; // kAsyncIdCounter
+asyncIds[3] = -1; // kDefaultTriggerAsyncId
+const asyncIdsStack = new Float64Array(16 * 2);
+const asyncResources = [];
+const asyncStackMore = [];
+const asyncHooksSetUp = {};
+runtime.async_wrap = {
+  async_hook_fields: asyncFields,
+  async_id_fields: asyncIds,
+  async_ids_stack: asyncIdsStack,
+  execution_async_resources: asyncResources,
+  constants: {
+    kInit: 0, kBefore: 1, kAfter: 2, kDestroy: 3, kPromiseResolve: 4, kTotals: 5, kCheck: 6, kStackLength: 7,
+    kUsesExecutionAsyncResource: 8, kExecutionAsyncId: 0, kTriggerAsyncId: 1, kAsyncIdCounter: 2,
+    kDefaultTriggerAsyncId: 3,
+  },
+  Providers: ${JSON.stringify(ASYNC_PROVIDERS)},
+  // AsyncHooks::push_async_context, past the stack the library writes itself.
+  pushAsyncContext: (asyncId, triggerId, resource) => {
+    const offset = asyncFields[7];
+    if (offset * 2 < asyncIdsStack.length) {
+      asyncIdsStack[offset * 2] = asyncIds[0];
+      asyncIdsStack[offset * 2 + 1] = asyncIds[1];
+    } else asyncStackMore[offset] = [asyncIds[0], asyncIds[1]];
+    asyncFields[7] = offset + 1;
+    asyncIds[0] = asyncId;
+    asyncIds[1] = triggerId;
+    if (resource !== undefined) asyncResources[offset] = resource;
+  },
+  // AsyncHooks::pop_async_context: whether the stack is still not empty.
+  popAsyncContext: (asyncId) => {
+    if (asyncFields[7] === 0) return false;
+    if (asyncFields[6] > 0 && asyncIds[0] !== asyncId)
+      throw new Error("async hook stack has become corrupted (actual: " + asyncIds[0] + ", expected: " + asyncId + ")");
+    const offset = asyncFields[7] - 1;
+    if (offset * 2 < asyncIdsStack.length) {
+      asyncIds[0] = asyncIdsStack[offset * 2];
+      asyncIds[1] = asyncIdsStack[offset * 2 + 1];
+    } else {
+      asyncIds[0] = asyncStackMore[offset][0];
+      asyncIds[1] = asyncStackMore[offset][1];
+    }
+    asyncFields[7] = offset;
+    asyncResources.length = Math.min(asyncResources.length, offset);
+    return offset > 0;
+  },
+  executionAsyncResource: (index) => asyncResources[index],
+  clearAsyncIdStack: () => {
+    asyncIds[0] = 0;
+    asyncIds[1] = 0;
+    asyncFields[7] = 0;
+    asyncResources.length = 0;
+  },
+  setupHooks: (hooks) => { Object.assign(asyncHooksSetUp, hooks); },
+  setCallbackTrampoline: () => {},
+  // A destroy hook is called for an id queued, once the runtime's jobs are done.
+  queueDestroyAsyncId: (asyncId) => {
+    if (typeof asyncHooksSetUp.destroy === "function") queueMicrotask(() => asyncHooksSetUp.destroy(asyncId));
+  },
+  registerDestroyHook: () => {},
+  // Promise hooks need the runtime's promises to call them: none are set yet.
+  getPromiseHooks: () => [undefined, undefined, undefined, undefined],
+  setPromiseHooks: () => {},
+};
+// V8's continuation-preserved embedder data (--experimental-async-context-frame, off by default).
+let continuationData;
+runtime.async_context_frame = {
+  getContinuationPreservedEmbedderData: () => continuationData,
+  setContinuationPreservedEmbedderData: (v) => { continuationData = v; },
+};
 // env_properties.h's symbols: the util binding's private ones, and the symbols binding.
 runtime.symbols = perIsolateSymbols;
 runtime.util = { privateSymbols };
@@ -642,6 +747,60 @@ function getLinkedBinding(name) {
   throw new Error("No such binding: " + name);
 }
 table.get("internal/bootstrap/realm")(process, getLinkedBinding, getInternalBinding, primordials);
+// process as an EventEmitter (bootstrap/node.js's setupProcessObject): its prototype one that
+// inherits EventEmitter's; 'warning' heard as pre_execution.js has it; 'exit' emitted when the
+// runtime's jobs are done (per_thread.js), the exit code process.exitCode's.
+{
+  const EventEmitter = loaders.requireBuiltin("events");
+  Object.setPrototypeOf(process, Object.create(EventEmitter.prototype));
+  EventEmitter.call(process);
+  Object.defineProperty(process, Symbol.toStringTag, {
+    enumerable: false,
+    writable: true,
+    configurable: false,
+    value: "process",
+  });
+  // stdout and stderr as streams to Node's Console: the runtime's writes, synchronous as
+  // fs.SyncWriteStream's are, with an emitter's events. (Node's own tty.WriteStream and
+  // SyncWriteStream need the tty_wrap and fs bindings: #1367.)
+  for (const stream of [process.stdout, process.stderr]) {
+    const write = stream.write;
+    Object.setPrototypeOf(stream, Object.create(EventEmitter.prototype));
+    EventEmitter.call(stream);
+    stream.write = (chunk, encoding, callback) => {
+      write(typeof chunk === "string" ? chunk : String(chunk));
+      const done = typeof encoding === "function" ? encoding : callback;
+      if (typeof done === "function") process.nextTick(done, null);
+      return true;
+    };
+    stream.writable = true;
+    stream.isTTY = false;
+  }
+  // Node's global console bound to them, as pre_execution.js binds it (a library module's console,
+  // internal/console/global: warnings are written through it).
+  loaders
+    .requireBuiltin("internal/console/constructor")
+    .initializeGlobalConsole(loaders.requireBuiltin("internal/console/global"));
+  process._exiting = false;
+  process.on("warning", (...args) => loaders.requireBuiltin("internal/process/warning").onWarning(...args));
+  __yakccOnExit(() => {
+    if (process._exiting) return;
+    process._exiting = true;
+    process.emit("exit", process.exitCode || 0);
+  });
+}
+// process.nextTick, as bootstrap/node.js sets it up: internal/process/task_queues', its tick
+// callback run when the runtime's jobs are done (and again after, while ticks are scheduled).
+{
+  const { setupTaskQueue } = loaders.requireBuiltin("internal/process/task_queues");
+  const { nextTick, runNextTicks } = setupTaskQueue();
+  process.nextTick = nextTick;
+  process._tickCallback = runNextTicks;
+  const tickInfo = runtime.task_queue.tickInfo;
+  __yakccSetTickHook(() => {
+    if ((tickInfo[0] === 1 || tickInfo[1] === 1) && tickCallback !== undefined) tickCallback();
+  });
+}
 // process.emitWarning, as bootstrap/node.js sets it: internal/process/warning's, loaded when first used.
 process.emitWarning = (...args) => loaders.requireBuiltin("internal/process/warning").emitWarning(...args);
 // console, as Node's prints: each line formatted by internal/util/inspect's formatWithOptions.
