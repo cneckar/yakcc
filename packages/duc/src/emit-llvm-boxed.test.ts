@@ -375,6 +375,11 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "Object.defineProperty's enumerability: a new property's default, the descriptor's, kept on redefine and assignment, cleared by delete (#1370)",
+    "export function f(a, b) { const o = { x: 1 }; Object.defineProperty(o, '__esModule', { value: true, writable: true, configurable: true }); Object.defineProperty(o, 'shown', { value: 2, enumerable: true }); Object.defineProperty(o, 'g', { get() { return 3; }, enumerable: false }); Object.defineProperty(o, 'x', { value: 10 }); o.__esModule = 'still hidden'; const keys1 = Object.keys(o); const forIn = []; for (const k in o) forIn.push(k); const json = JSON.stringify(o); const spread = { ...o }; const assigned = Object.assign({}, o); delete o.__esModule; o.__esModule = 'back'; const p = Object.create({}, { a: { value: 1 }, b: { value: 2, enumerable: true } }); return [keys1, forIn, json, Object.keys(spread), Object.keys(assigned), Object.getOwnPropertyNames(o), Object.keys(o), o.g, Object.getOwnPropertyDescriptor(o, 'g').enumerable, Object.getOwnPropertyDescriptor(o, 'shown').enumerable, Object.keys(p), p.a, a, b]; }",
+    2,
+  ],
+  [
     "Math.random, with arguments it ignores (undici's random(max)): a number in [0, 1) (#1331)",
     "export function f(a, b) { const r = Math.random(a); const q = Math.random(); return [typeof r, r >= 0 && r < 1, q >= 0 && q < 1, r !== q || r === q]; }",
     2,
