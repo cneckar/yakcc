@@ -1151,4 +1151,102 @@ export function f(xs: number[]) {
       ],
     );
   });
+
+  it("two cells equal in themselves, told apart by what is written into them, are two invariants of a loop (#1292)", () => {
+    agrees(
+      `export function f(xs: number[], ys: number[]) {
+  const seen: number[] = [];
+  function scan(scope: number): number[] {
+    const out: number[] = [];
+    for (const x of xs) {
+      if (x === scope || owners.has(x) || inline.has(x)) continue;
+      out.push(x);
+    }
+    return out;
+  }
+  const owners = new Map(ys.map((y) => [y, 1]));
+  const inline = new Set<number>();
+  for (const y of ys) {
+    const mark = (v: number): void => {
+      inline.add(v + 1);
+      seen.push(owners.get(v) ?? 0);
+    };
+    mark(y);
+  }
+  return [scan(0), seen];
+}`,
+      [
+        [
+          [0, 1, 2, 3, 4, 5],
+          [1, 3],
+        ],
+        [[], [2]],
+      ],
+    );
+  });
+
+  it("a switch clause that throws inside a loop is the loop's exit, as the if it lowers to is (#1292)", () => {
+    agrees(
+      `export function f(src: string) {
+  let depth = 0;
+  let pos = 0;
+  const out: number[] = [];
+  while (pos < src.length) {
+    const ch = src.charCodeAt(pos++);
+    switch (ch) {
+      case 40:
+        depth++;
+        break;
+      case 41:
+        if (depth === 0) throw new SyntaxError("unexpected ) at " + pos);
+        depth--;
+        out.push(pos);
+    }
+  }
+  return [depth, out];
+}`,
+      [["(a)(b)"], ["((x)"], ["a)"], [""]],
+    );
+  });
+
+  it("a class member sliced out with a computed name that does work keeps that work (#1368)", () => {
+    const member = "[(_a = new WeakMap(), Symbol.asyncIterator)]() {\n  return g(_a);\n}";
+    const g = liftAtom(member);
+    expect(liftFidelity(member, g).holds).toBe(true);
+    const names = JSON.stringify(g);
+    expect(names).toContain("WeakMap");
+    expect(names).toContain("asyncIterator");
+  });
+  it("statements after a throw never run: a write there does not make its name one the atom writes (#1292)", () => {
+    const dead = `export function f(ch: number) {
+  while (pos++ < end) {
+    switch (ch) {
+      case 125:
+        throw new Error("unexpected }");
+        if (depth-- === 0) {
+        }
+    }
+  }
+  if (depth) throw new Error("unterminated");
+}`;
+    const live = dead.replace(/\n\s*if \(depth-- === 0\) \{\n\s*\}/, "");
+    const g = liftAtom(dead);
+    expect(graphIdentity(g)).toBe(graphIdentity(liftAtom(live)));
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+  });
+
+  it("after a return, a function declaration is still hoisted and a var still binds its name (#1292)", () => {
+    agrees(
+      `export function f(n: number) {
+  if (n > 2) {
+    return twice(n);
+    var label = "big";
+  }
+  label = "small";
+  return [twice(n), label];
+  function twice(x: number) { return 2 * x; }
+}`,
+      [[1], [3]],
+    );
+  });
 });

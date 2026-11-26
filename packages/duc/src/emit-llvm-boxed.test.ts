@@ -300,6 +300,81 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "a method call reads its member once: a getter's count; of undefined or null, the read's TypeError (#1369)",
+    "export function f(a, b) { let reads = 0; const o = { get m() { reads++; return (x) => 'm' + x; } }; const t = (g) => { try { return g(); } catch (e) { return e.name + ': ' + e.message; } }; const u = typeof a === 'string' ? null : undefined; const r = [o.m(1), o.m(b), reads, t(() => u.toString()), t(() => u.charCodeAt(0)), String(a).charCodeAt(0), [1, 2].map(String).join()]; const fn = o.m; return [...r, fn(3), reads]; }",
+    2,
+  ],
+  [
+    "++ and -- on numbers inline, else ToNumeric; charCodeAt on strings at once, else the method (#1369)",
+    "export function f(a, b) { let x = a; x++; let y = b; y--; let s = '7'; s++; let z = { valueOf() { return 4; } }; z++; let big = 9n; big--; let o = null; o++; let u; u--; const str = typeof a === 'string' ? a : 'h\u00e9\ud83d\ude00'; const box = { charCodeAt: (i) => 'own ' + i }; return [x, y, s, z, big, o, u, str.charCodeAt(0), str.charCodeAt(1.7), str.charCodeAt(-1), str.charCodeAt(99), str.charCodeAt('2'), str.charCodeAt(NaN), box.charCodeAt(3), [1, 2].charCodeAt === undefined]; }",
+    2,
+  ],
+  [
+    "integer reads of objects with digit keys: small indices, larger ones, non-index digit keys, deletes, the chain (#1369)",
+    "export function f(a, b) { const t = { 0: 'z', 5: 'five', 127: 'top', 34: 'q' }; const big = { 128: 'b', 7: 's' }; const odd = { '05': 'x', '1e3': 'y' }; const tail = Object.create({ 9: 'proto', 200: 'far' }); tail[3] = 'own'; const n = typeof a === 'number' ? a : 5; const d = { 2: 'two' }; delete d[2]; d.k = 1; return [t[0], t[n], t[127], t[128], t[34], t[33], big[128], big[7], big[8], odd[5], odd[1000], odd['05'], tail[3], tail[9], tail[200], tail[4], d[2], t[1.5], t[-1]]; }",
+    2,
+  ],
+  [
+    "templates: substitutions' ToString in order, more than eight, a Symbol's TypeError; typeof's strings (#1369)",
+    "export function f(a, b) { const log = []; const o = (k) => ({ toString() { log.push(k); return '<' + k + '>'; } }); const t = (g) => { try { return g(); } catch (e) { return e.name; } }; const many = `${1}${2}${3}${4}${5}${6}${7}${8}${9}${a}${b}`; const types = [a, b, 1n, null, undefined, () => 0, Symbol(), {}, true].map((x) => typeof x); return [`x${o(1)}y${o(2)}z`, log.join(), many, `${''}`, `a${a}`, t(() => `${Symbol('s')}`), types, typeof a === 'number', types[0] === typeof a]; }",
+    2,
+  ],
+  [
+    "string builders: a loop's string only appended to, on some paths, with any values, nested, left by break (#1369)",
+    "export function f(a, b) { const log = []; const o = { toString() { log.push('ts'); return 'O'; }, valueOf() { log.push('vo'); return 7; } }; const items = [1, 'x', null, undefined, true, 2n, o, [1, 2], { k: 1 }, -0, 1.5]; let s = ''; for (const v of items) s += v; let t = '['; for (let i = 0; i < 6; i++) { if (i % 2 === 0) t += i; else if (i === 3) continue; t = t + ',' ; } let u = 'u'; let w = ''; for (let i = 0; i < 3; i++) { for (let j = 0; j < 3; j++) { w += j; if (j === 1) break; } u += i + ':'; } let p = 'z'; for (let i = 0; i < 3; i++) p = i + p; let q = ''; let k = 0; while (q.length < 5) q += k++; const sym = (() => { try { let e = ''; for (const x of [1, Symbol('s')]) e += x; return e; } catch (err) { return err.name; } })(); let big = ''; for (let i = 0; i < 2000; i++) big += String.fromCharCode(97 + (i % 26)); return [s, log.join(), t, u, w, p, q, sym, big.length, big.slice(0, 30), big.slice(-5), String(a) + b]; }",
+    2,
+  ],
+  [
+    "a generator's loop appending across yields; === and !== against undefined, null, true and false (#1369)",
+    "export function f(a, b) { function* g() { let acc = '>'; for (let i = 0; i < 3; i++) { acc += i; yield acc; } return acc + '!'; } const vals = [undefined, null, true, false, 0, '', NaN, 'undefined', a, b]; return [[...g()], g().next(), vals.map((v) => [v === undefined, v !== null, v === true, false === v, v !== undefined, null === v])]; }",
+    2,
+  ],
+  [
+    "index and length reads in loops: arrays (holes), strings, typed arrays of every kind and offset, any key (#1369)",
+    "export function f(a, b) { const buf = new ArrayBuffer(32); const u8 = new Uint8Array(buf); for (let i = 0; i < 32; i++) u8[i] = i * 7 + 1; const views = [u8, new Uint8Array(buf, 3, 5), new Uint32Array(buf, 4, 3), new Int16Array(buf), new Float64Array(buf, 8, 2), new BigUint64Array(buf, 16, 1), new Uint8ClampedArray([300, -5])]; const holey = [1, , 3]; holey[6] = 'six'; const str = 'h\u00e9\u0100\ud83d\ude00' + a; const fn = (x, y) => x; const things = [[10, 20, 30], holey, str, ...views, { length: 'own', 0: 'zero', 2: 'two' }, fn, Object.assign([7, 8], { k: 1 })]; const keys = [0, 1, 2, 5, 6, 7, -1, -0, 1.5, NaN, 4294967295, 2 ** 40, '1', 'length', true]; const out = []; for (const t of things) { const row = [t.length]; for (const k of keys) { const v = t[k]; row.push(typeof v === 'bigint' ? String(v) + 'n' : v); } out.push(row); } return out; }",
+    2,
+  ],
+  [
+    "charCodeAt in a loop: every index kind, other receivers, an own method (#1369)",
+    "export function f(a, b) { const recv = ['h\u00e9\ud83d\ude00' + a, '', 12345, { charCodeAt: (i) => 'own' + i }]; const idx = [0, 1, 2, 3, 99, -1, -0, 1.9, NaN, '1', undefined, 2 ** 33]; const out = []; for (const r of recv) for (const i of idx) { let v; try { v = r.charCodeAt(i); } catch (e) { v = e.name; } out.push(v); } return out; }",
+    2,
+  ],
+  [
+    "Math.imul inline on any values; loop carries kept to an integer range, and ones that leave it (#1369)",
+    "export function f(a, b) { const xs = [0, 1, -1, 2 ** 31, 2 ** 32 + 5, -(2 ** 33), 1.9, -1.9, NaN, Infinity, 1e300, '7', null, undefined, true, a, b]; const prods = []; for (const x of xs) for (const y of [3, -7, 2 ** 31 - 1, 1e20, 'q']) prods.push(Math.imul(x, y)); let h = 2166136261; for (let i = 0; i < 1000; i = (i + 1) >>> 0) { h = (h ^ i) >>> 0; h = Math.imul(h, 16777619) >>> 0; h = ((h << 13) | (h >>> 19)) >>> 0; } let s = 0; for (let i = 0; i < 50; i++) s = (s + 0x7fffffff) | 0; let w = 1; for (let i = 0; i < 40; i++) w = w * 3; let m = 5; for (let i = 0; i < 4; i++) m = i % 2 ? m >>> 1 : 'x' + m; let k = -1; for (let i = 0; i < 3; i++) k = k >>> 0; let big = 0n; try { for (let i = 0; i < 2; i++) big = big | 1n; } catch (e) { big = e.name; } return [prods, h, s, w, m, k, String(big)]; }",
+    2,
+  ],
+  [
+    "a loop carried from a parameter: in its integer range or not (out of range, negative, fraction, -0, NaN, strings); % of integers (#1369)",
+    "export function f(a, b) { function sum(x, y, n) { for (let i = 0; i < n; i++) { x = ((x + i) >>> 0) % 65521; y = ((y + x) | 0) % 7; } return [x, y, Object.is(y, -0)]; } function keep(h, n) { for (let i = 0; i < n; i++) h = (h ^ i) >>> 0; return h; } const vals = [0, 1, 65520, 2 ** 31, 2 ** 32 - 1, 2 ** 32 + 3, -1, -(2 ** 31), 1.5, -0, NaN, Infinity, '12', null, a, b]; const out = []; for (const v of vals) out.push(sum(v, v, 5), sum(v, -5, 3), keep(v, 4)); const mods = []; for (const [p, q] of [[7, 3], [0, 5], [5, 0], [-7, 3], [7, -3], [-0, 3], [2 ** 32 - 1, 65521], [1.5, 1]]) mods.push(p % q, Object.is(p % q, -0)); return [out, mods]; }",
+    2,
+  ],
+  [
+    "join: its length at the start, each element's ToString in order (one that grows the array), holes, null; JSON strings with and without escapes (#1369)",
+    "export function f(a, b) { const t = (g) => { try { return g(); } catch (e) { return e.name; } }; const arr = [1, null, , undefined, 'x', [2, [3, 4]], { toString() { arr.push('late'); return 'O'; } }, -0, 1e21, b]; const j1 = arr.join(); const j2 = arr.join(' | '); const big = Array.from({ length: 50000 }, (_, i) => i % 7).join(''); return [j1, j2, arr.length, [].join(), [a].join('-'), [null].join(), big.length, big.slice(0, 9), JSON.parse('\"plain text\"'), JSON.parse('[\"a\\\\b\", \"\\\\u00e9\\\\n\", \"\"]'), JSON.parse('{\"k\": \"v\", \"\": 1}'), t(() => JSON.parse('\"tab\\there\"')), t(() => JSON.parse('\"open'))]; }",
+    2,
+  ],
+  [
+    "constructors whose branch throws on one side, the heap joined after: derived and plain (#1370)",
+    "export function f(a, b) { class A { constructor(n) { this.n = n; } } class B extends A { constructor(o = {}, fl = 0) { super(1); const { k, c } = o; const has = c !== undefined; if (k !== undefined) { if (has) throw new Error('x'); this.v = k + fl; } else if (has) { this.v = c; } else { this.v = fl; } this.w = this.v * 2; } } class C { constructor(o = {}, fl = 0) { const { k, c } = o; const has = c !== undefined; if (k !== undefined) { if (has) throw new Error('y'); this.v = k + fl; } else { this.v = fl; } this.w = this.v * 2; } } const t = (g) => { try { return g(); } catch (e) { return e.message; } }; return [new B({ k: a }, 1).w, new B({ c: b }).w, new B().w, new C({ k: a }, 1).w, new C().w, t(() => new B({ k: a, c: b })), t(() => new C({ k: a, c: b }))]; }",
+    2,
+  ],
+  [
+    "toString(radix) of integers and not; typed arrays' integer stores of any number (#1369)",
+    "export function f(a, b) { const xs = [0, -0, 1, -1, 255, 4096, -(2 ** 31), 2 ** 53 - 1, -(2 ** 53) + 1, 2 ** 53, 1e21, 0.5, -3.75, 1 / 3, a]; const radix = xs.flatMap((x) => [2, 8, 16, 36].map((r) => x.toString(r))); const vals = [0, 1, -1, 255, 256, -129, 65535, 65536, 2 ** 31, 2 ** 32 + 7, -(2 ** 32) - 3, 1.9, -1.9, 2 ** 53, 1e19, -1e19, NaN, Infinity, -Infinity]; const kinds = [Uint8Array, Int8Array, Uint16Array, Int16Array, Uint32Array, Int32Array]; const stored = kinds.map((K) => { const t = new K(vals.length); vals.forEach((v, i) => { t[i] = v; }); return Array.from(t); }); return [radix, stored]; }",
+    2,
+  ],
+  [
+    "reads of objects with many keys across deletes, re-adds and overwrites; a prototype with many methods (#1369)",
+    "export function f(a, b) { const o = {}; for (let i = 0; i < 20; i++) o['k' + i] = i; const r = []; for (let pass = 0; pass < 3; pass++) { for (let i = 0; i < 20; i += 3) r.push(o['k' + i]); delete o['k' + (pass * 2)]; o['k' + (pass * 2)] = 'again' + pass; o.k19 = pass; } class P { m0() { return 0; } m1() { return 1; } m2() { return 2; } m3() { return 3; } m4() { return 4; } m5() { return 5; } m6() { return 6; } m7() { return 7; } m8() { return 8; } m9() { return 9; } } const x = new P(); const calls = []; for (let i = 0; i < 3; i++) { calls.push(x.m9(), x.m0(), x.m5()); if (i === 1) P.prototype.m5 = () => 'swapped'; } return [r, Object.keys(o).length, o.k0, o.k2, o.k4, calls, a, b]; }",
+    2,
+  ],
+  [
+    "integers on their int64s: shifts by 32 and more, signed and unsigned, wrapping sums, sums past 2^32 into bitwise, compares (#1369)",
+    "export function f(a, b) { let h = 0; let u = 4294967295; let s = -2147483648; const out = []; for (let i = 0; i < 40; i = (i + 1) | 0) { h = (h + (i << i)) | 0; u = (u + i) >>> 0; s = (s - i) | 0; const big = (u >>> 0) + (u >>> 0); out.push([h, u, s, big | 0, big >>> 3, s >> (i + 1), s >>> i, (u ^ s) | 0, u < s, u >= (s >>> 0), (i % 7) === 3, h !== s]); } return [out.slice(28), typeof a === 'number' ? ((a | 0) + (b | 0)) | 0 : 0]; }",
+    2,
+  ],
+  [
     "Math.random, with arguments it ignores (undici's random(max)): a number in [0, 1) (#1331)",
     "export function f(a, b) { const r = Math.random(a); const q = Math.random(); return [typeof r, r >= 0 && r < 1, q >= 0 && q < 1, r !== q || r === q]; }",
     2,

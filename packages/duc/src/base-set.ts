@@ -129,10 +129,33 @@ export const ECMASCRIPT: BaseSet = {
   },
 };
 
+/** The web platform's data classes Node also has as globals: values, with no authority of their own. */
+const WEB_DATA_CLASSES = [
+  "Headers",
+  "Request",
+  "Response",
+  "FormData",
+  "File",
+  "DOMException",
+  "ReadableStream",
+  "WritableStream",
+  "TransformStream",
+  "ByteLengthQueuingStrategy",
+  "CountQueuingStrategy",
+  "TextEncoderStream",
+  "TextDecoderStream",
+  "CompressionStream",
+  "DecompressionStream",
+  "MessageChannel",
+  "MessagePort",
+  "MessageEvent",
+  "CustomEvent",
+] as const;
+
 /** Node.js: ECMAScript, plus the host's data APIs and its authority-bearing APIs, and its modules. */
 export const NODE: BaseSet = {
   target: "node",
-  version: 3,
+  version: 4,
   modules: {
     ...pure([
       "assert",
@@ -187,6 +210,9 @@ export const NODE: BaseSet = {
       "Event",
       "EventTarget",
       "Blob",
+      // Node's globals since 18, as the web's (#1368): the Fetch API's data classes, WHATWG streams,
+      // DOMException and the message channels. A request is made by `fetch`, which carries `network`.
+      ...WEB_DATA_CLASSES,
     ]),
     // `AbortSignal.timeout` arms a timer.
     AbortSignal: { members: { timeout: { capability: "timers" } } },
@@ -221,7 +247,7 @@ export const NODE: BaseSet = {
  */
 export const WEB: BaseSet = {
   target: "web",
-  version: 1,
+  version: 2,
   primitives: {
     ...ECMASCRIPT.primitives,
     ...pure([
@@ -237,6 +263,7 @@ export const WEB: BaseSet = {
       "Event",
       "EventTarget",
       "Blob",
+      ...WEB_DATA_CLASSES,
     ]),
     // The global object, by its web names: what is reached through it carries its own labels.
     self: {},
