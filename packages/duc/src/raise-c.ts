@@ -693,6 +693,10 @@ function parseType(spelled: string, depth = 0): CType {
   if (/^enum /.test(raw)) {
     const e = unitTypedef(raw);
     if (e !== undefined) return parseType(e, depth + 1);
+    // An unnamed enumeration (`enum (unnamed enum at f.c:68:5)`, not a function type): an int, as
+    // clang lays one out (unsigned when no enumerator is negative, as the reads convert it).
+    if (/^enum (?:[\w:]*::)?\((?:unnamed|anonymous)(?: enum)? at [^()]*\)$/.test(raw))
+      return { k: "u32" };
   }
   // An anonymous member record (C++), desugared (`std::basic_string<char>::(anonymous union at
   // f.h:204:7)`): the record, tagged as its spelling says.
@@ -6267,7 +6271,14 @@ export function shaveCUnit(
           externals: [...externals],
         });
       } catch (e) {
-        refused.set(key, e instanceof Error ? e.message : String(e));
+        refused.set(
+          key,
+          e instanceof Error
+            ? process.env.YAKCC_RAISE_STACKS !== undefined
+              ? `${e.message}\n${e.stack}`
+              : e.message
+            : String(e),
+        );
       }
     }
   }
