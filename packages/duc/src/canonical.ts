@@ -192,12 +192,22 @@ function valueUseOf(closure: DucGraph, value: string, depth: number): string {
             : i < n.loop.carry.length
               ? n.loop.carry[i]
               : undefined;
+      // A nested closure's capture is its parameter of the same position (before it is renumbered):
+      // how that closure uses it, one step further (#1292). Cells passed only into getters and
+      // callbacks were told apart by nothing, and kept the order the source read them in.
+      const captured =
+        n.closure !== undefined && depth > 0
+          ? n.closure.nodes.find((p) => p.kind === "param-source" && p.label === String(i))
+              ?.outputs[0]
+          : undefined;
       const next =
         inner !== undefined
           ? `(${valueUseOf(closure, inner, depth)})`
-          : depth > 0 && n.outputs.length > 0 && n.closure === undefined && n.loop === undefined
-            ? `(${n.outputs.map((o) => valueUseOf(closure, o, depth - 1)).join(";")})`
-            : "";
+          : captured !== undefined
+            ? `(${valueUseOf(n.closure as DucGraph, captured, depth - 1)})`
+            : depth > 0 && n.outputs.length > 0 && n.closure === undefined && n.loop === undefined
+              ? `(${n.outputs.map((o) => valueUseOf(closure, o, depth - 1)).join(";")})`
+              : "";
       uses.push(
         `${n.kind}:${n.label ?? ""}:${at}:${structuralDiamond(n.diamond)?.symbol ?? ""}${next}`,
       );

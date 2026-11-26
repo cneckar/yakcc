@@ -1324,4 +1324,33 @@ ${Array.from({ length: rest }, (_, i) => `  log.push(x + ${i});`).join("\n")}
       ],
     );
   });
+  it("cells passed only into getters are ordered by how the getters use them (#1292)", () => {
+    // Node's inspect_repl.js, reduced: a context object of getters, each reading or writing one of
+    // the function's cells. Outside the getters the cells are alike, and seven of them are too many
+    // orders to search: their order was the source's, and the emitted source's was another.
+    const code = `function createRepl(inspector) {
+  const { Debugger, HeapProfiler, Profiler, Runtime } = inspector;
+  const history = {};
+  let currentBacktrace;
+  let exitDebugRepl;
+  function initializeContext(context) {
+    copyOwnProperties(context, {
+      get pause() { return Debugger.pause(); },
+      get backtrace() { return currentBacktrace; },
+      get profileEnd() { return PromisePrototypeThen(Profiler.stop(), Profile.createAndRegister); },
+      takeHeapSnapshot(filename = "node.heapsnapshot") {
+        heapSnapshotPromise = new Promise((resolve, reject) => {
+          PromisePrototypeThen(HeapProfiler.takeHeapSnapshot({}), onResolve, onReject);
+        });
+      },
+      get repl() { exitDebugRepl = () => { repl.history = history.control; }; },
+      get version() {
+        return PromisePrototypeThen(Runtime.evaluate({ returnByValue: true }), ({ result }) => {});
+      },
+    });
+  }
+}`;
+    const g = liftAtom(code);
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+  });
 });
