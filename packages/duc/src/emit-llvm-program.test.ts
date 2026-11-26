@@ -232,6 +232,17 @@ describe.skipIf(!canRun("x86_64-linux"))("programs, natively (#1333)", () => {
     expect(native.status).toBe(0);
   }, 600_000);
 
+  it("zod 4 (yakcc's closure): schemas built, parsed and refused as Node's (#1368, #1361 P2)", () => {
+    const entry = here("./__fixtures__/program/zod/entry.mjs");
+    const exe = join(work, "zod-run");
+    buildProgram(entry, exe, { root: here("../../..") });
+    const native = spawnSync(exe, [], { encoding: "utf8", timeout: 60_000 });
+    const node = spawnSync(process.execPath, [entry], { encoding: "utf8", timeout: 60_000 });
+    expect(native.stderr).toBe("");
+    expect(native.stdout).toBe(node.stdout);
+    expect(native.status).toBe(0);
+  }, 1_200_000);
+
   it("@yakcc/contracts' canonicalize and contract id (BLAKE3 from @noble/hashes), from their sources, equal Node's", () => {
     const run = nativeProgram("contract-id", here("./__fixtures__/program/contract-id-entry.ts"));
     const specs = fc.sample(spec, { numRuns: 100, seed: 1333 });

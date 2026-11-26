@@ -2448,6 +2448,7 @@ static yk builtin_aggregate_error(void *, yk, uint64_t, const yk *);
 static int is_adoptable_builtin(yk f);
 static yk builtin_map(void *c, yk s, uint64_t argc, const yk *argv);
 static yk builtin_set(void *c, yk s, uint64_t argc, const yk *argv);
+static yk builtin_object(void *c, yk s, uint64_t argc, const yk *argv);
 yk yk_new(yk f, uint64_t argc, const yk *argv);
 static int is_error_constructor(yk f) {
   if (!is_closure(f)) return 0;
@@ -2560,6 +2561,11 @@ yk yk_super_construct(void *closure, yk self, uint64_t argc, const yk *argv) {
   yk cls = ((yk_closure *)closure)->class_self;
   yk parent = cls == 0 ? 0 : ((yk_closure *)PTR(cls))->parent;
   if (parent == 0) type_error("'super' keyword unexpected here");
+  if (((yk_closure *)PTR(parent))->code == builtin_object) {
+    /* Object as the parent (class X extends Object): the receiver is the ordinary object new made. */
+    init_fields(cls, self);
+    return self;
+  }
   if (is_error_constructor(parent)) {
     /* An Error subclass: the receiver is made an error, with the parent's name and message. */
     yk made = ((yk_closure *)PTR(parent))->code(NULL, YK_UNDEFINED, argc, argv);
@@ -2666,7 +2672,7 @@ yk yk_class_new(void *creator, yk parent, uint64_t n, const yk *kinds, const yk 
     type_error("Class extends value is not a constructor or null");
   if (parent != 0 && !is_error_constructor(parent)) {
     yk_closure *p = (yk_closure *)PTR(parent);
-    if (!p->is_class && !p->has_this && !is_adoptable_builtin(parent))
+    if (!p->is_class && !p->has_this && !is_adoptable_builtin(parent) && p->code != builtin_object)
       type_error("extending this constructor is not in the runtime yet");
   }
   yk cls = 0;
@@ -9672,9 +9678,24 @@ static int is_adoptable_builtin(yk f) {
 }
 /* a instanceof F, for the constructors the runtime has: Array, and the Error family. */
 yk yk_instanceof(yk v, yk f) {
+  /* InstanceofOperator: a value's own @@hasInstance first (one defined on the function). */
+  if (is_closure(f) && ((yk_closure *)PTR(f))->props != 0) {
+    yk h;
+    if (own_get((yk_object *)PTR(((yk_closure *)PTR(f))->props), well_known_symbol(1), &h) &&
+        is_closure(h = resolve_slot(h, f)))
+      return yk_bool(yk_truthy(call_value(h, f, 1, &v)));
+  }
   if (!is_closure(f)) type_error("Right-hand side of 'instanceof' is not callable");
   yk_code code = ((yk_closure *)PTR(f))->code;
   if (code == builtin_array) return yk_bool(is_array(v));
+  if (code == builtin_object) {
+    /* Object.prototype along the value's chain: any object but one made with a null prototype. */
+    if (!is_object(v) && !is_closure(v) && !is_array(v)) return YK_FALSE;
+    yk op = intrinsic_proto(I_OBJECT);
+    for (yk o = prototype_of(v); is_object(o); o = prototype_of(o))
+      if (o == op) return YK_TRUE;
+    return YK_FALSE;
+  }
   if (type_of_code(code) >= 0) return yk_bool(typed_of(v) != NULL && typed_of(v)->type == type_of_code(code));
   if (code == builtin_array_buffer) return yk_bool(buffer_of(v) != NULL);
   if (code == builtin_data_view) return yk_bool(dataview_of(v) != NULL);
