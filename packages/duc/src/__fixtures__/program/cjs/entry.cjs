@@ -7,4 +7,16 @@ try {
 } catch {
   optional = undefined;
 }
-exports.probe = (n) => [lib.twice(n), lib.twice(n + 1), lib.count(), typeof optional];
+exports.probe = (n) => {
+  const g = lib.upTo(3);
+  return [
+    lib.twice(n),
+    lib.twice(n + 1),
+    lib.count(),
+    typeof optional,
+    [...lib.upTo(n)],
+    g.next(),
+    [...g],
+    lib.upTo.name,
+  ];
+};

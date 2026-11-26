@@ -5814,7 +5814,20 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         init.push(
           `  %fn${k} = call i64 @yk_class_name(i64 %f${k}, ptr ${nm.ptr}, i64 ${nm.length})`,
         );
-        init.push(`  store i64 %f${k}, ptr ${g(i, `b.${name}`)}`);
+        // An async function's or a generator's: the runtime runs it as a coroutine (as a closure's).
+        const modeCode =
+          st.graph.mode === "async"
+            ? 1
+            : st.graph.mode === "generator"
+              ? 2
+              : st.graph.mode === "async generator"
+                ? 3
+                : 0;
+        if (modeCode !== 0) {
+          m.used.add("yk_closure_mode");
+          init.push(`  %fm${k} = call i64 @yk_closure_mode(i64 %f${k}, i32 ${modeCode})`);
+        }
+        init.push(`  store i64 %f${modeCode !== 0 ? "m" : ""}${k}, ptr ${g(i, `b.${name}`)}`);
       }
     });
     mod.statements.forEach((st, k) => {
