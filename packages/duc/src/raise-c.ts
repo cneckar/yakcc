@@ -1020,6 +1020,11 @@ const LEAF_CALLS: Readonly<Record<string, (args: readonly string[]) => string>> 
   __builtin_signbit: (a) => `__ykBigToI32(__ykF64Bits(${a[0]}) >> 63n)`,
   // A branch hint: its value is its first argument's.
   __builtin_expect: (a) => `${a[0]}`,
+  // A prefetch is a hint; every atomic of a size up to 8 bytes is lock-free here.
+  __builtin_prefetch: () => "undefined",
+  __atomic_is_lock_free: (a) => `(${a[0]} <= 8n ? 1 : 0)`,
+  // alloca's memory, from the heap (it outlives the call: never freed, as no frame frees it here).
+  __builtin_alloca: (a) => `__ykAlloc(__ykBigToF64(${a[0]}), 16)`,
 };
 
 /** A callee: the declaration a call refers to. */
@@ -6662,6 +6667,8 @@ function staticDefinition(
     }
     throw new RaiseCError(`the address of ${n.kind} in an initializer`);
   };
+  /** The bytes of the bit-fields initialized: offset -> its bits. */
+  const bitBytes = new Map<number, number>();
   const put = (e: ClangNode | undefined, ty: CType, offset: number): void => {
     const n = e === undefined || e.kind === "ImplicitValueInitExpr" ? undefined : stripParens(e);
     if (ty.k === "arr") {
@@ -6688,8 +6695,14 @@ function staticDefinition(
         if (f.bit !== undefined) {
           if (item !== undefined && item.kind !== "ImplicitValueInitExpr") {
             const c = scalar(item);
-            if (c.k !== "v" || (c.v !== 0n && c.v !== 0))
-              throw new RaiseCError(`an initializer of the bit-field "${name}"`);
+            if (c.k !== "v") throw new RaiseCError(`an initializer of the bit-field "${name}"`);
+            // Its bits, into the bytes they fall in (the record's other bit-fields share them).
+            const v = BigInt.asUintN(f.bit.width, BigInt(c.v));
+            for (let j = 0; j < f.bit.width; j++)
+              if (((v >> BigInt(j)) & 1n) === 1n) {
+                const at = offset * 8 + f.bit.start + j;
+                bitBytes.set(at >> 3, (bitBytes.get(at >> 3) ?? 0) | (1 << (at & 7)));
+              }
           }
         } else put(item, parseType(f.type), offset + f.offset);
         i++;
@@ -6714,6 +6727,7 @@ function staticDefinition(
     else init.push({ offset, data: { kind: c.kind, values: c.values } });
   };
   put(initOf(decl), t, 0);
+  for (const [at, value] of bitBytes) init.push({ offset: at, kind: "u8", value });
   return { size: sizeOf(t), align: alignOf(t), init };
 }
 
