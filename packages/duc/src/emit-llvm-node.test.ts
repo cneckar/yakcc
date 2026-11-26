@@ -12,7 +12,13 @@ import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { canRun } from "./__fixtures__/native-harness.js";
 import { buildRecord } from "./build.js";
-import { NODE_BINDINGS, NODE_ENV, nodeBootProgram, nodeLibraryProgram } from "./program.js";
+import {
+  NODE_BINDINGS,
+  NODE_ENV,
+  nodeBootProgram,
+  nodeLibraryProgram,
+  programRecord,
+} from "./program.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const lib = join(here, "../../node-platform/vendor/node-v22.23.5/lib");
@@ -125,3 +131,32 @@ console.log(heard, em.listenerCount("x"), em.eventNames(), em.emit("none"));
 try { em.emit("error", new Error("unhandled")); } catch (e) { console.log(e.message); }
 console.dir({ deep: { er: { est: { x: 1 } } } }, { depth: 0 });
 `;
+
+describe.skipIf(!canRun("x86_64-linux"))("a user program over Node's library (#1361 P2)", () => {
+  it("its requires of Node's modules are the library's, its own module its own", () => {
+    const entry = join(here, "__fixtures__/program/node-user/entry.cjs");
+    const user = programRecord(entry, join(here, ".."));
+    const record = nodeBootProgram(
+      lib,
+      { id: "main", source: "" },
+      {
+        bindings,
+        user,
+        include: ["internal/util/comparisons", "internal/v8/startup_snapshot"],
+        ...(process.env.YAKCC_LIFT_CACHE !== undefined
+          ? { liftCache: process.env.YAKCC_LIFT_CACHE }
+          : {}),
+      },
+    );
+    const ids = record.modules.map((m) => m.id);
+    for (const id of ["path", "events", "util", "querystring", user.entry])
+      expect(ids).toContain(id);
+    const exe = join(work, "node-user");
+    buildRecord(record, exe);
+    const r = spawnSync(exe, [], { encoding: "utf8" });
+    const want = spawnSync(process.execPath, [entry], { encoding: "utf8" });
+    expect(r.stderr).toBe(want.stderr);
+    expect(r.stdout).toBe(want.stdout);
+    expect(r.status).toBe(0);
+  }, 1_200_000);
+});

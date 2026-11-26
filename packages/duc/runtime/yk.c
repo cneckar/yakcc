@@ -80,6 +80,8 @@ typedef struct {
                           too once one was not an index below 128 */
   uint64_t small_ints[2]; /* the indices below 128 a key was added for (a bit stays when deleted) */
   yk_array *hidden;       /* its non-enumerable own keys (Object.defineProperty's), or NULL */
+  uint32_t *cindex;       /* a Map's or Set's: each entry's position + 1, by its key's hash; NULL to rebuild */
+  uint32_t cindex_cap;
 } yk_object;
 
 /* A BigInt: a sign and a magnitude, 32-bit limbs least significant first, no zero limb on top. */
@@ -216,7 +218,7 @@ static void *gc_free[GC_NCLASS];
 /* A block's index in its page: the offset times its class's reciprocal (exact below GC_PAGE), not a
    division. */
 static uint64_t gc_recip[GC_NCLASS];
-static size_t gc_since = 0, gc_threshold = (size_t)16 << 20, gc_floor = (size_t)16 << 20;
+static size_t gc_since = 0, gc_threshold = (size_t)32 << 20, gc_floor = (size_t)32 << 20;
 static int gc_state = 0; /* 0 not yet set up, 1 collecting, 2 allocating only, 3 never (no heap) */
 static uintptr_t gc_stack_top = 0;
 /* While a coroutine runs, where the main stack was left (its frames above are live). */
@@ -529,7 +531,9 @@ static void gc_collect(void) {
   }
   gc_since = 0;
   gc_live_last = live;
-  gc_threshold = live > gc_floor ? live : gc_floor;
+  /* The next collection after twice what is live is allocated again: the heap is at most three times
+     what is live, and each byte live is traced once per twice its size allocated. */
+  gc_threshold = 2 * live > gc_floor ? 2 * live : gc_floor;
 }
 #else
 static void *alloc(size_t n) { return bump(n); }
@@ -581,7 +585,83 @@ yk yk_string_utf8(const char *p, uint64_t n) {
 
 static yk ascii(const char *p) { return yk_string_utf8(p, strlen(p)); }
 
-static yk_string *str(yk v) { return (yk_string *)PTR(v); }
+/*
+ * A rope (#1370): two strings joined without copying them, for code that builds a long string a
+ * piece at a time (`out += piece`, as TypeScript's emitter writes its output), which copying makes
+ * quadratic. Its first word is its length with ROPE_BIT set, a length no flat string has, so every
+ * inline read of a string's length or units (the native lowering's) takes its slow path for one. Its
+ * units are made once, when anything first reads them (str), and kept.
+ */
+#define ROPE_BIT 0x80000000u
+#define ROPE_MIN 256u
+typedef struct {
+  uint32_t len; /* ROPE_BIT | the length */
+  uint32_t depth;
+  yk left, right;
+  yk_string *flat;
+} yk_rope;
+static void *scratch(size_t n);
+static yk_string *flatten(yk_rope *r) {
+  if (r->flat != NULL) return r->flat;
+  uint32_t n = r->len & ~ROPE_BIT;
+  yk_string *s = new_string(n);
+  /* Left to right with a stack of its own (a chain of appends is as deep as it is long). */
+  size_t cap = 64, top = 0, at = 0;
+  yk *stack = malloc(cap * sizeof(yk));
+  if (stack == NULL) abort();
+  stack[top++] = r->right;
+  stack[top++] = r->left;
+  while (top > 0) {
+    yk_string *p = (yk_string *)PTR(stack[--top]);
+    if ((p->len & ROPE_BIT) != 0 && ((yk_rope *)p)->flat == NULL) {
+      if (top + 2 > cap) {
+        cap *= 2;
+        stack = realloc(stack, cap * sizeof(yk));
+        if (stack == NULL) abort();
+      }
+      stack[top++] = ((yk_rope *)p)->right;
+      stack[top++] = ((yk_rope *)p)->left;
+      continue;
+    }
+    if ((p->len & ROPE_BIT) != 0) p = ((yk_rope *)p)->flat;
+    memcpy(s->units + at, p->units, (size_t)p->len * 2);
+    at += p->len;
+  }
+  free(stack);
+  r->flat = s;
+  r->left = r->right = 0;
+  return s;
+}
+static yk_string *str(yk v) {
+  yk_string *s = (yk_string *)PTR(v);
+  if (__builtin_expect((s->len & ROPE_BIT) != 0, 0)) return flatten((yk_rope *)s);
+  return s;
+}
+/* A string's length, a rope's without making its units. */
+static uint32_t str_len(yk v) { return ((yk_string *)PTR(v))->len & ~ROPE_BIT; }
+/* A string's unit at i < its length: a rope's found down its parts when that takes few steps (the
+   last unit of a chain of appends is one step away: a writer asking whether its output ends in a
+   space, as TypeScript's does after each write), else made flat. */
+static uint16_t str_unit(yk v, uint32_t i) {
+  uint32_t i0 = i;
+  yk_string *s = (yk_string *)PTR(v);
+  for (int steps = 0; (s->len & ROPE_BIT) != 0 && steps < 64; steps++) {
+    yk_rope *r = (yk_rope *)s;
+    if (r->flat != NULL) {
+      s = r->flat;
+      break;
+    }
+    uint32_t ll = str_len(r->left);
+    if (i < ll) s = (yk_string *)PTR(r->left);
+    else {
+      i -= ll;
+      s = (yk_string *)PTR(r->right);
+    }
+  }
+  /* Too deep: the whole string made flat (once: its every unit is then a step away). */
+  if ((s->len & ROPE_BIT) != 0) return str(v)->units[i0];
+  return s->units[i];
+}
 static yk_array *arr(yk v) { return (yk_array *)PTR(v); }
 
 /* --- arrays --- */
@@ -650,6 +730,7 @@ yk yk_closure_new(yk_code code, int32_t has_this, uint64_t n, const yk *captures
 static int own_get(yk_object *o, yk key, yk *out);
 static int64_t own_find_chars(yk_object *o, const char *p, uint32_t n);
 static int chain_get(yk obj, yk key, yk *out);
+static yk number_format(double x, int which, yk arg);
 static yk substring(yk_string *s, uint32_t a, uint32_t b);
 static yk resolve_slot(yk slot, yk receiver);
 static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
@@ -694,6 +775,20 @@ static int buffer_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out
 
 /* --- ToString --- */
 
+/* Two strings as `+` joins them: one alone when the other is empty; a rope when long (#1370). */
+static yk concat(yk_string *a, yk_string *b);
+static yk concat_values(yk a, yk b) {
+  uint32_t la = str_len(a), lb = str_len(b);
+  if (lb == 0) return a;
+  if (la == 0) return b;
+  if ((uint64_t)la + lb > 536870888) range_error("Invalid string length");
+  if (la + lb < ROPE_MIN) return concat(str(a), str(b));
+  yk_rope *r = alloc(sizeof(yk_rope));
+  r->len = ROPE_BIT | (la + lb);
+  r->left = a;
+  r->right = b;
+  return BOX(T_STRING, (yk_string *)r);
+}
 static yk concat(yk_string *a, yk_string *b) {
   yk_string *s = new_string(a->len + b->len);
   memcpy(s->units, a->units, (size_t)a->len * 2);
@@ -1070,7 +1165,7 @@ int yk_truthy(yk v) {
     double d = num(v);
     return d == d && d != 0;
   }
-  if (is_string(v)) return str(v)->len > 0;
+  if (is_string(v)) return str_len(v) > 0;
   if (is_reference(v)) return 1;
   if (is_bigint(v)) return ((yk_bigint *)PTR(v))->len != 0;
   return v == YK_TRUE;
@@ -1078,16 +1173,10 @@ int yk_truthy(yk v) {
 
 yk yk_add(yk a, yk b) {
   if (is_number(a) && is_number(b)) return yk_number(num(a) + num(b));
-  if (is_string(a) && is_string(b)) {
-    /* Two strings: one of them alone when the other is empty, else their concatenation. */
-    if (str(b)->len == 0) return a;
-    if (str(a)->len == 0) return b;
-    if ((uint64_t)str(a)->len + str(b)->len > 536870888) range_error("Invalid string length");
-    return concat(str(a), str(b));
-  }
+  if (is_string(a) && is_string(b)) return concat_values(a, b);
   a = to_primitive(a);
   b = to_primitive(b);
-  if (is_string(a) || is_string(b)) return concat(str(to_string(a)), str(to_string(b)));
+  if (is_string(a) || is_string(b)) return concat_values(to_string(a), to_string(b));
   if (numeric_pair(&a, &b)) return big_binary(a, b, '+');
   return yk_number(to_number(a) + to_number(b));
 }
@@ -1407,7 +1496,7 @@ yk yk_get(yk obj, yk key) {
         yk r;
         if (object_index_get(obj, i, &r)) return r;
       } else if (is_string(obj)) {
-        if (i < str(obj)->len) return unit_string(str(obj)->units[i]);
+        if (i < str_len(obj)) return unit_string(str_unit(obj, (uint32_t)i));
       } else if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 7) {
         yk r;
         if (typed_fast_get(obj, i, &r)) return r;
@@ -1426,9 +1515,33 @@ yk yk_get(yk obj, yk key) {
         }
     }
   } else if (is_string(obj) && is_string(key) && key == length_key()) {
-    return yk_number(str(obj)->len);
+    return yk_number(str_len(obj));
   }
   return yk_get_slow(obj, key);
+}
+/* A named read with its site's cache (#1370): the index of the key in the last object the site
+   found it own in, tried first; a plain object's own keys scanned (all of them) else, the index
+   kept; anything else yk_get's. */
+yk yk_get_ic(yk obj, yk key, uint32_t *site) {
+  if (is_object(obj)) {
+    yk_object *o = (yk_object *)PTR(obj);
+    if (o->kind == 0) {
+      uint32_t i = *site;
+      if (i < o->len && o->keys[i] == key) {
+        yk v = o->values[i];
+        return TAG(v) != T_INTERNAL ? v : resolve_slot(v, obj);
+      }
+      uint32_t n = o->len < 32 ? o->len : 32;
+      for (i = 0; i < n; i++)
+        if (o->keys[i] == key) {
+          *site = i;
+          yk v = o->values[i];
+          return TAG(v) != T_INTERNAL ? v : resolve_slot(v, obj);
+        }
+      if (o->len <= 32) return yk_get_slow(obj, key); /* not its own: its chain's */
+    }
+  }
+  return yk_get(obj, key);
 }
 static __attribute__((noinline)) yk yk_get_slow(yk obj, yk key) {
   /* An element by an integer index: an array's (not a hole), a typed array's, in range. */
@@ -1462,10 +1575,10 @@ static __attribute__((noinline)) yk yk_get_slow(yk obj, yk key) {
     yk_throw(make_error("TypeError", concat(str(m), str(ascii("')")))));
   }
   if (is_string(obj)) {
-    yk_string *s = str(obj);
-    if (key_is(key, "length")) return yk_number(s->len);
+    /* Its length and a unit, a rope's without making it flat. */
+    if (key_is(key, "length")) return yk_number(str_len(obj));
     int64_t i = index_of_key(key);
-    if (i >= 0 && i < s->len) return unit_string(s->units[i]);
+    if (i >= 0 && i < str_len(obj)) return unit_string(str_unit(obj, (uint32_t)i));
     return i >= 0 ? YK_UNDEFINED : proto_lookup(obj, key);
   }
   if (is_array(obj)) {
@@ -1598,8 +1711,7 @@ yk yk_char_code_at(yk recv, yk key, yk i) {
   if (is_string(recv) && is_number(i)) {
     double d = num(i);
     d = d != d ? 0 : trunc(d);
-    yk_string *s = str(recv);
-    return d < 0 || d >= s->len ? yk_number(NAN) : yk_number(s->units[(int64_t)d]);
+    return d < 0 || d >= str_len(recv) ? yk_number(NAN) : yk_number(str_unit(recv, (uint32_t)d));
   }
   return call_method_key(recv, key, 1, &i);
 }
@@ -1875,6 +1987,12 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
       return BOX(T_ARRAY, r);
     }
   }
+  if (is_string(recv) && key_is(key, "charCodeAt")) {
+    /* Not made flat for one unit (a rope's last, most often). */
+    double d = to_number(arg0);
+    d = d != d ? 0 : trunc(d);
+    return d < 0 || d >= str_len(recv) ? yk_number(NAN) : yk_number(str_unit(recv, (uint32_t)d));
+  }
   if (is_string(recv)) {
     yk_string *s = str(recv);
     if (key_is(key, "codePointAt")) {
@@ -1967,6 +2085,8 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
     return to_string(recv);
   }
   if ((is_number(recv) || is_bool(recv) || is_bigint(recv)) && key_is(key, "valueOf")) return recv;
+  if (is_number(recv) && (key_is(key, "toFixed") || key_is(key, "toPrecision") || key_is(key, "toExponential")))
+    return number_format(num(recv), key_is(key, "toFixed") ? 0 : key_is(key, "toPrecision") ? 1 : 2, arg0);
   {
     /* A method the program put on an intrinsic prototype (not one of the runtime's thunks). */
     yk f = proto_lookup(recv, key);
@@ -2380,6 +2500,7 @@ yk yk_super_construct(void *closure, yk self, uint64_t argc, const yk *argv) {
     yk made = yk_new(parent, adder ? 0 : argc, argv);
     yk_object *o = (yk_object *)PTR(self), *b = (yk_object *)PTR(made);
     o->kind = b->kind, o->entries = b->entries, o->ext = b->ext, o->regex = b->regex, o->error = b->error;
+    o->cindex = NULL;
     for (uint32_t i = 0; i < b->len; i++) own_set(o, b->keys[i], b->values[i]);
     if (adder) {
       /* The entries go in through the receiver's set / add, a subclass's override included. */
@@ -2646,6 +2767,20 @@ static int protected_call(yk f, uint64_t argc, const yk *argv, yk *result) {
 /* obj[key] = value. The graph's write yields the object, as written. */
 yk yk_set(yk obj, yk key, yk value) {
   if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 7 && buffer_set(obj, key, value)) return obj;
+  if (is_object(obj) && is_string(key)) {
+    /* An own data property of a plain object: written at once (a setter is the chain's only when
+       the object has no own property of the name). */
+    yk_object *o = (yk_object *)PTR(obj);
+    if (o->kind == 0) {
+      uint32_t n = o->len < 32 ? o->len : 32;
+      for (uint32_t i = 0; i < n; i++)
+        if (o->keys[i] == key) {
+          if (TAG(o->values[i]) == T_INTERNAL) break;
+          o->values[i] = value;
+          return obj;
+        }
+    }
+  }
   if (is_object(obj) || is_closure(obj)) {
     yk k = to_property_key(key), slot;
     /* A setter along the chain is called; otherwise the property is the object's own. */
@@ -2686,6 +2821,29 @@ yk yk_set(yk obj, yk key, yk value) {
   return obj;
 }
 
+/* A named write with its site's cache (#1370): an own data property of a plain object (where the
+   site last found its key, else by a scan) written at once, with no walk of the chain for a setter
+   (one is the chain's only when the object has no own property of the name); else yk_set's. */
+yk yk_set_ic(yk obj, yk key, yk value, uint32_t *site) {
+  if (is_object(obj)) {
+    yk_object *o = (yk_object *)PTR(obj);
+    if (o->kind == 0) {
+      uint32_t i = *site;
+      if (!(i < o->len && o->keys[i] == key)) {
+        uint32_t n = o->len < 32 ? o->len : 32;
+        for (i = 0; i < n && o->keys[i] != key; i++) {
+        }
+        if (i == n) return yk_set(obj, key, value);
+        *site = i;
+      }
+      if (TAG(o->values[i]) != T_INTERNAL) {
+        o->values[i] = value;
+        return obj;
+      }
+    }
+  }
+  return yk_set(obj, key, value);
+}
 yk yk_set_named(yk obj, const char *name, uint64_t n, yk value) {
   return yk_set(obj, interned(name, n), value);
 }
@@ -3049,7 +3207,7 @@ static int has_own(yk v, yk key) {
   if (is_string(v)) {
     if (key_is(key, "length")) return 1;
     int64_t i = index_of_key(key);
-    return i >= 0 && i < str(v)->len;
+    return i >= 0 && i < str_len(v);
   }
   return 0;
 }
@@ -4513,17 +4671,65 @@ static yk new_collection(int32_t kind) {
   return v;
 }
 
-static int64_t collection_find(yk_object *o, yk key) {
-  for (uint32_t i = 0; i < o->entries->len; i++) {
-    yk k = o->kind == 1 ? arr(o->entries->items[i])->items[0] : o->entries->items[i];
-    if (same_value_zero(k, key)) return i;
+/* A key's hash for SameValueZero (#1370): a number's by its value (-0 as +0, every NaN one), a
+   string's by its units, a BigInt's one for them all (they compare by value), anything else's by
+   identity. */
+static uint32_t key_hash(yk key);
+static uint32_t svz_hash(yk k) {
+  if (is_number(k)) {
+    double d = num(k);
+    if (d == 0) d = 0;
+    uint64_t b;
+    if (d != d) b = 0x7ff8000000000000ull;
+    else memcpy(&b, &d, 8);
+    b *= 0x9E3779B97F4A7C15ull;
+    return (uint32_t)(b ^ (b >> 32));
   }
-  return -1;
+  if (is_string(k)) return key_hash(k);
+  if (is_bigint(k)) return 0x5bd1e995u;
+  uint64_t h = (k ^ (k >> 29)) * 0x9E3779B97F4A7C15ull;
+  return (uint32_t)(h ^ (h >> 32));
+}
+static yk collection_key(yk_object *o, uint32_t i) {
+  return o->kind == 1 ? arr(o->entries->items[i])->items[0] : o->entries->items[i];
+}
+static void collection_index_put(yk_object *o, uint32_t i) {
+  uint32_t mask = o->cindex_cap - 1;
+  for (uint32_t j = svz_hash(collection_key(o, i)) & mask;; j = (j + 1) & mask)
+    if (o->cindex[j] == 0) {
+      o->cindex[j] = i + 1;
+      return;
+    }
+}
+static void collection_index_build(yk_object *o) {
+  uint32_t cap = 16;
+  while (cap < o->entries->len * 4) cap *= 2;
+  o->cindex = alloc((size_t)cap * sizeof(uint32_t));
+  o->cindex_cap = cap;
+  for (uint32_t i = 0; i < o->entries->len; i++) collection_index_put(o, i);
+}
+/* An entry's position by its key, or -1: by the hash index from 8 entries on (#1370: a Map of a
+   compiler's symbols is looked up millions of times), else by a scan. */
+static int64_t collection_find(yk_object *o, yk key) {
+  uint32_t n = o->entries->len;
+  if (n < 8) {
+    for (uint32_t i = 0; i < n; i++)
+      if (same_value_zero(collection_key(o, i), key)) return i;
+    return -1;
+  }
+  if (o->cindex == NULL) collection_index_build(o);
+  uint32_t mask = o->cindex_cap - 1;
+  for (uint32_t j = svz_hash(key) & mask;; j = (j + 1) & mask) {
+    uint32_t at = o->cindex[j];
+    if (at == 0) return -1;
+    if (same_value_zero(collection_key(o, at - 1), key)) return at - 1;
+  }
 }
 
 static void collection_remove(yk_object *o, int64_t i) {
   memmove(o->entries->items + i, o->entries->items + i + 1, (size_t)(o->entries->len - i - 1) * sizeof(yk));
   o->entries->len--;
+  o->cindex = NULL; /* the positions after it moved: made again when next needed */
 }
 
 static yk_array *iterable_items(yk v);
@@ -4540,8 +4746,135 @@ static void collection_put(yk_object *o, yk key, yk value) {
     }
   } else if (i < 0)
     push(o->entries, key);
+  /* A new entry into the index, while it is at most a quarter full; else it is made again. */
+  if (i < 0 && o->cindex != NULL) {
+    if (o->entries->len * 4 > o->cindex_cap) o->cindex = NULL;
+    else collection_index_put(o, o->entries->len - 1);
+  }
 }
 
+
+/* ES2025's Set methods (union, intersection, …): the other is set-like (GetSetRecord: a size that is
+   a number, callable has and keys), its keys walked by its own keys(), and the order of the result
+   as the spec builds it. */
+static int set_method(yk_object *o, yk key, yk other, yk *out) {
+  static const char *const names[] = {"union", "intersection", "difference", "symmetricDifference",
+                                      "isSubsetOf", "isSupersetOf", "isDisjointFrom"};
+  int which = -1;
+  for (int k = 0; k < 7; k++)
+    if (key_is(key, names[k])) which = k;
+  if (which < 0) return 0;
+  char msg[96];
+  if (!is_object(other) && !is_closure(other)) {
+    snprintf(msg, sizeof msg, "Set.prototype.%s argument must be an object", names[which]);
+    type_error(msg);
+  }
+  yk rawsize = yk_get(other, ascii("size"));
+  double size = to_number(rawsize);
+  if (size != size) type_error("The .size property is NaN");
+  size = trunc(size);
+  if (size < 0) {
+    yk m = concat(str(ascii("'")), str(to_string(yk_number(size))));
+    yk_throw(make_error("RangeError", concat(str(m), str(ascii("' is an invalid size")))));
+  }
+  yk has = yk_get(other, ascii("has")), keys = yk_get(other, ascii("keys"));
+  if (!is_closure(has)) type_error("string \"has\" is not a function");
+  if (!is_closure(keys)) type_error("string \"keys\" is not a function");
+  double mine = o->entries->len;
+  yk_array *ks = NULL;
+  /* The other's keys, as its keys() gives them (iterated by its next). */
+#define OTHER_KEYS()                                                                     \
+  do {                                                                                     \
+    ks = new_array(4);                                                                     \
+    yk it = call_value(keys, other, 0, NULL);                                              \
+    if (!is_object(it) && !is_closure(it)) type_error("Result of the keys method is not an object"); \
+    yk next_key = ascii("next");                                                           \
+    for (;;) {                                                                             \
+      yk r = call_method_key(it, next_key, 0, NULL);                                       \
+      if (!is_object(r)) type_error("Iterator result is not an object");                  \
+      if (yk_truthy(yk_get(r, ascii("done")))) break;                                      \
+      yk v = yk_get(r, ascii("value"));                                                    \
+      push(ks, is_number(v) && num(v) == 0 ? yk_number(0) : v);                            \
+    }                                                                                      \
+  } while (0)
+#define OTHER_HAS(e) yk_truthy(call_value(has, other, 1, &(e)))
+  yk r = new_collection(2);
+  yk_object *ro = (yk_object *)PTR(r);
+  switch (which) {
+  case 0: /* union */
+    for (uint32_t j = 0; j < o->entries->len; j++) collection_put(ro, o->entries->items[j], YK_UNDEFINED);
+    OTHER_KEYS();
+    for (uint32_t j = 0; j < ks->len; j++) collection_put(ro, ks->items[j], YK_UNDEFINED);
+    return *out = r, 1;
+  case 1: /* intersection */
+    if (mine <= size) {
+      for (uint32_t j = 0; j < o->entries->len; j++) {
+        yk e = o->entries->items[j];
+        if (OTHER_HAS(e)) collection_put(ro, e, YK_UNDEFINED);
+      }
+    } else {
+      OTHER_KEYS();
+      for (uint32_t j = 0; j < ks->len; j++)
+        if (collection_find(o, ks->items[j]) >= 0) collection_put(ro, ks->items[j], YK_UNDEFINED);
+    }
+    return *out = r, 1;
+  case 2: /* difference */
+    for (uint32_t j = 0; j < o->entries->len; j++) collection_put(ro, o->entries->items[j], YK_UNDEFINED);
+    if (mine <= size) {
+      for (uint32_t j = 0; j < o->entries->len; j++) {
+        yk e = o->entries->items[j];
+        int64_t at;
+        if (OTHER_HAS(e) && (at = collection_find(ro, e)) >= 0) collection_remove(ro, at);
+      }
+    } else {
+      OTHER_KEYS();
+      for (uint32_t j = 0; j < ks->len; j++) {
+        int64_t at = collection_find(ro, ks->items[j]);
+        if (at >= 0) collection_remove(ro, at);
+      }
+    }
+    return *out = r, 1;
+  case 3: /* symmetricDifference */
+    for (uint32_t j = 0; j < o->entries->len; j++) collection_put(ro, o->entries->items[j], YK_UNDEFINED);
+    OTHER_KEYS();
+    for (uint32_t j = 0; j < ks->len; j++) {
+      yk k = ks->items[j];
+      int64_t at;
+      if (collection_find(o, k) >= 0) {
+        if ((at = collection_find(ro, k)) >= 0) collection_remove(ro, at);
+      } else
+        collection_put(ro, k, YK_UNDEFINED);
+    }
+    return *out = r, 1;
+  case 4: /* isSubsetOf */
+    if (mine > size) return *out = YK_FALSE, 1;
+    for (uint32_t j = 0; j < o->entries->len; j++) {
+      yk e = o->entries->items[j];
+      if (!OTHER_HAS(e)) return *out = YK_FALSE, 1;
+    }
+    return *out = YK_TRUE, 1;
+  case 5: /* isSupersetOf */
+    if (mine < size) return *out = YK_FALSE, 1;
+    OTHER_KEYS();
+    for (uint32_t j = 0; j < ks->len; j++)
+      if (collection_find(o, ks->items[j]) < 0) return *out = YK_FALSE, 1;
+    return *out = YK_TRUE, 1;
+  default: /* isDisjointFrom */
+    if (mine <= size) {
+      for (uint32_t j = 0; j < o->entries->len; j++) {
+        yk e = o->entries->items[j];
+        if (OTHER_HAS(e)) return *out = YK_FALSE, 1;
+      }
+    } else {
+      OTHER_KEYS();
+      for (uint32_t j = 0; j < ks->len; j++)
+        if (collection_find(o, ks->items[j]) >= 0) return *out = YK_FALSE, 1;
+    }
+    return *out = YK_TRUE, 1;
+  }
+#undef OTHER_KEYS
+#undef OTHER_HAS
+}
 static int collection_method(yk_object *o, yk recv, yk key, uint64_t argc, const yk *argv, yk *out) {
   yk a0 = argc > 0 ? argv[0] : YK_UNDEFINED, a1 = argc > 1 ? argv[1] : YK_UNDEFINED;
   int64_t i;
@@ -4559,6 +4892,7 @@ static int collection_method(yk_object *o, yk recv, yk key, uint64_t argc, const
   }
   if (key_is(key, "clear")) {
     o->entries->len = 0;
+    o->cindex = NULL;
     return *out = YK_UNDEFINED, 1;
   }
   /* keys / values / entries: the items, as an array (iterable, as the iterators they stand for). */
@@ -4576,6 +4910,7 @@ static int collection_method(yk_object *o, yk recv, yk key, uint64_t argc, const
     }
     return *out = BOX(T_ARRAY, r), 1;
   }
+  if (o->kind == 2 && set_method(o, key, a0, out)) return 1;
   if (key_is(key, "forEach")) {
     for (uint32_t j = 0; j < o->entries->len; j++) {
       yk e = o->entries->items[j];
@@ -8725,6 +9060,7 @@ static yk builtin_array_of(void *c, yk s, uint64_t argc, const yk *argv) {
   return yk_array_of(argc, argv);
 }
 static yk global_uncached(const char *name, uint64_t n);
+static yk builtin_set_builtin_require(void *c, yk s, uint64_t argc, const yk *argv);
 /* A global's value: a defined global's (__yakccDefineGlobal) as it is now; anything else (the
    runtime's own, fixed once made) from a cache by name, so a read in a loop makes nothing again. */
 static yk global_cache = 0;
@@ -8748,6 +9084,10 @@ static yk global_uncached(const char *name, uint64_t n) {
   if (n == 19 && memcmp(name, "__yakccDefineGlobal", 19) == 0) {
     static yk f;
     return f != 0 ? f : (f = yk_closure_new(builtin_define_global, 0, 0, NULL));
+  }
+  if (n == 24 && memcmp(name, "__yakccSetBuiltinRequire", 24) == 0) {
+    static yk f;
+    return f != 0 ? f : (f = yk_closure_new(builtin_set_builtin_require, 0, 0, NULL));
   }
   if (n == 10 && memcmp(name, "globalThis", 10) == 0) return global_this();
   if (n == 7 && memcmp(name, "Reflect", 7) == 0) return reflect_global();
@@ -9077,6 +9417,23 @@ void yk_fail(const char *message) {
   fprintf(stderr, "%s\n", message);
   exit(70);
 }
+/* The require of a module none of the program's own modules is (#1361 P2): a boot program over
+   Node's library sets it (__yakccSetBuiltinRequire) to its realm's loader of the modules users may
+   require; without it, or when it gives nothing, Node's MODULE_NOT_FOUND. */
+static yk builtin_require_hook = 0;
+static yk builtin_set_builtin_require(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  builtin_require_hook = arg_or_undefined(argc, argv, 0);
+  return YK_UNDEFINED;
+}
+_Noreturn void yk_module_not_found(yk spec, const char *from, uint64_t n);
+yk yk_require_unresolved(yk spec, const char *from, uint64_t n) {
+  if (is_closure(builtin_require_hook) && is_string(spec)) {
+    yk got = call_value(builtin_require_hook, YK_UNDEFINED, 1, &spec);
+    if (got != YK_UNDEFINED) return got;
+  }
+  yk_module_not_found(spec, from, n);
+}
 /* require of a module the program does not have (#1370): Node's error, which a try catches (an
    optional dependency), its code MODULE_NOT_FOUND. */
 _Noreturn void yk_module_not_found(yk spec, const char *from, uint64_t n) {
@@ -9087,6 +9444,176 @@ _Noreturn void yk_module_not_found(yk spec, const char *from, uint64_t n) {
   yk e = make_error("Error", message);
   yk_set(e, ascii("code"), ascii("MODULE_NOT_FOUND"));
   yk_throw(e);
+}
+
+/* A finite double's exact decimal digits (no leading zeros; "0" for zero) and how many of them are
+   before the point (which may be negative or past the digits): x = mantissa * 2^e, and for e < 0
+   mantissa * 5^-e scaled by 10^e. */
+static char *exact_digits(double x, int *point) {
+  int e;
+  double m = frexp(x, &e); /* x = m * 2^e, 0.5 <= m < 1 */
+  uint64_t mant = (uint64_t)ldexp(m, 53);
+  e -= 53;
+  /* The number, base 10^9, least significant limb first. */
+  size_t cap = 140, n = 1;
+  uint32_t *v = alloc(cap * sizeof(uint32_t));
+  v[0] = (uint32_t)(mant % 1000000000u);
+  if (mant >= 1000000000u) {
+    v[n++] = (uint32_t)(mant / 1000000000u % 1000000000u);
+    if (mant >= 1000000000000000000ull) v[n++] = (uint32_t)(mant / 1000000000000000000ull);
+  }
+  int shift = e >= 0 ? e : -e;
+  uint32_t by = e >= 0 ? 2 : 5;
+  for (int i = 0; i < shift; i++) {
+    uint64_t carry = 0;
+    for (size_t j = 0; j < n; j++) {
+      uint64_t t = (uint64_t)v[j] * by + carry;
+      v[j] = (uint32_t)(t % 1000000000u);
+      carry = t / 1000000000u;
+    }
+    if (carry != 0) v[n++] = (uint32_t)carry;
+  }
+  char *d = alloc(n * 9 + 2);
+  int len = snprintf(d, 12, "%u", v[n - 1]);
+  for (size_t j = n - 1; j-- > 0;) len += snprintf(d + len, 12, "%09u", v[j]);
+  int lead = 0;
+  while (lead < len - 1 && d[lead] == '0') lead++;
+  *point = (len - lead) - (e >= 0 ? 0 : -e);
+  return d + lead;
+}
+/* digits[0..keep) rounded at digits[keep] as Number's formatting does (a tie to the larger): the
+   kept digits in out, and 1 when the rounding carried into a new leading digit. */
+static int round_digits(const char *digits, int len, int keep, char *out) {
+  for (int i = 0; i < keep; i++) out[i] = i < len ? digits[i] : '0';
+  out[keep] = 0;
+  if (keep < 0 || keep >= len || digits[keep] < '5') return 0;
+  for (int i = keep - 1; i >= 0; i--) {
+    if (out[i] != '9') {
+      out[i]++;
+      return 0;
+    }
+    out[i] = '0';
+  }
+  memmove(out + 1, out, (size_t)keep + 1);
+  out[0] = '1';
+  return 1;
+}
+/* Number.prototype.toFixed (0), toPrecision (1) and toExponential (2), ECMA-262 21.1.3. */
+static yk number_format(double x, int which, yk arg) {
+  static const char *const names[3] = {"toFixed() digits argument", "toPrecision() argument", "toExponential() argument"};
+  double f = arg == YK_UNDEFINED ? (which == 1 ? NAN : 0) : trunc(to_number(arg));
+  if (f != f && !(which == 1 && arg == YK_UNDEFINED)) f = 0;
+  if (which == 1 && arg == YK_UNDEFINED) return to_string(yk_number(x));
+  if (!isfinite(x)) return to_string(yk_number(x));
+  int lo = which == 1 ? 1 : 0;
+  if (!(f >= lo && f <= 100)) {
+    char msg[96];
+    snprintf(msg, sizeof msg, "%s must be between %d and 100", names[which], lo);
+    range_error(msg);
+  }
+  int digits_n = (int)f;
+  if (which == 0 && fabs(x) >= 1e21) return to_string(yk_number(x));
+  int neg = x < 0;
+  double a = fabs(x);
+  int point = 1;
+  const char *d = a == 0 ? "0" : exact_digits(a, &point);
+  int len = (int)strlen(d);
+  char *buf = alloc((size_t)len + 260), *r = alloc((size_t)len + 260);
+  int o = 0;
+  if (neg) buf[o++] = '-';
+  if (which == 0) {
+    /* n / 10^f nearest x: the digits through f places after the point. */
+    int keep = point + digits_n;
+    if (a == 0 || keep <= 0) {
+      int up = a != 0 && keep == 0 && d[0] >= '5';
+      buf[o++] = up && digits_n == 0 ? '1' : '0';
+      if (digits_n > 0) {
+        buf[o++] = '.';
+        for (int i = 0; i < digits_n; i++) buf[o++] = (up && i == digits_n - 1) ? '1' : '0';
+      }
+      buf[o] = 0;
+      return ascii(buf);
+    }
+    int carry = round_digits(d, len, keep, r);
+    int ip = point + carry; /* digits before the point */
+    int rl = keep + carry;
+    if (ip <= 0) {
+      buf[o++] = '0';
+    } else
+      for (int i = 0; i < ip; i++) buf[o++] = r[i];
+    if (digits_n > 0) {
+      buf[o++] = '.';
+      for (int i = 0; i < digits_n; i++) {
+        int at = ip + i;
+        buf[o++] = at >= 0 && at < rl ? r[at] : '0';
+      }
+    }
+    buf[o] = 0;
+    return ascii(buf);
+  }
+  /* toExponential with no digits given: as many as the shortest round-trip needs. */
+  if (which == 2 && arg == YK_UNDEFINED) {
+    if (a == 0) return ascii(neg ? "-0e+0" : "0e+0");
+    yk_string *sh = str(number_to_string(a));
+    char t[64], sc[64];
+    for (uint32_t i = 0; i < sh->len && i < 63; i++) sc[i] = (char)sh->units[i];
+    sc[sh->len < 63 ? sh->len : 63] = 0;
+    int k = 0, dot = -1, exp10 = 0;
+    for (uint32_t i = 0; i < sh->len; i++) {
+      uint16_t c = sh->units[i];
+      if (c == 'e') {
+        exp10 = atoi(sc + i + 1 + (sc[i + 1] == '+'));
+        break;
+      }
+      if (c == '.') dot = k;
+      else t[k++] = (char)c;
+    }
+    int intdigits = dot < 0 ? k : dot;
+    int first = 0;
+    while (first < k - 1 && t[first] == '0') first++;
+    int e10 = exp10 + intdigits - first - 1;
+    int last = k;
+    while (last > first + 1 && t[last - 1] == '0') last--;
+    buf[o++] = t[first];
+    if (last > first + 1) {
+      buf[o++] = '.';
+      for (int i = first + 1; i < last; i++) buf[o++] = t[i];
+    }
+    o += snprintf(buf + o, 16, "e%c%d", e10 < 0 ? '-' : '+', abs(e10));
+    return ascii(buf);
+  }
+  int sig = which == 1 ? digits_n : digits_n + 1;
+  int e10;
+  if (a == 0) {
+    for (int i = 0; i < sig; i++) r[i] = '0';
+    r[sig] = 0;
+    e10 = 0;
+  } else {
+    int carry = round_digits(d, len, sig, r);
+    e10 = point - 1 + carry;
+    r[sig] = 0;
+  }
+  if (which == 2 || e10 < -6 || e10 >= sig) {
+    buf[o++] = r[0];
+    if (sig > 1) {
+      buf[o++] = '.';
+      for (int i = 1; i < sig; i++) buf[o++] = r[i];
+    }
+    o += snprintf(buf + o, 16, "e%c%d", e10 < 0 ? '-' : '+', abs(e10));
+  } else if (e10 >= 0) {
+    for (int i = 0; i <= e10; i++) buf[o++] = r[i];
+    if (sig > e10 + 1) {
+      buf[o++] = '.';
+      for (int i = e10 + 1; i < sig; i++) buf[o++] = r[i];
+    }
+  } else {
+    buf[o++] = '0';
+    buf[o++] = '.';
+    for (int i = 0; i < -e10 - 1; i++) buf[o++] = '0';
+    for (int i = 0; i < sig; i++) buf[o++] = r[i];
+  }
+  buf[o] = 0;
+  return ascii(buf);
 }
 
 /* --- Math, with JavaScript's results --- */

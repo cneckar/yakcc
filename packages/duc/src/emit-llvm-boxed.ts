@@ -159,6 +159,7 @@ const GLOBALS = new Set([
   // The runtime's own internalBinding layer (#1331): Node's bindings V8's role gives.
   "__yakccRuntimeBinding",
   "__yakccDefineGlobal",
+  "__yakccSetBuiltinRequire",
   "eval",
   "EvalError",
   "ReferenceError",
@@ -432,6 +433,8 @@ function atomFunction(m: ModuleBuilder, atom: string): string {
 /** The module being built: its constants, the runtime functions it calls, its functions. */
 class ModuleBuilder {
   readonly globals: string[] = [];
+  /** Named member reads' caches made so far (yk.ic.N). */
+  icSites = 0;
   readonly used = new Set<string>();
   /** The LLVM intrinsics the functions call, declared once. */
   readonly intrinsics = new Set<string>();
@@ -1242,7 +1245,14 @@ function lowerFunction(
             c.label === "ElementAccess" &&
             c.inputs.length === 2 &&
             resolve(c.inputs[0] as ValueId) === out &&
-            resolve(c.inputs[1] as ValueId) !== out,
+            resolve(c.inputs[1] as ValueId) !== out &&
+            // Not a method's callee (`[9, 2][Symbol.iterator]()`): the call takes the array as this.
+            !(uses.get(resolve(c.outputs[0] as ValueId)) ?? []).some(
+              (u) =>
+                u.kind === "op" &&
+                u.label === "CallExpression" &&
+                resolve(u.inputs[0] as ValueId) === resolve(c.outputs[0] as ValueId),
+            ),
         )
       )
         continue;
@@ -1598,6 +1608,18 @@ function lowerFunction(
    * A property name as a key (#1369): the module's one string of it, made at its first use and kept
    * in a global (one per name), so a read, a write or a call by name makes and hashes no string.
    */
+  /**
+   * A named member read with its site's cache (#1370): the index its key was last found at in an
+   * object's own keys, tried first (objects made alike have it at the same place).
+   */
+  const getNamed = (obj: string, key: string): string => {
+    const site = `@yk.ic.${m.icSites++}`;
+    m.globals.push(`${site} = internal global i32 0`);
+    m.intrinsics.add("declare i64 @yk_get_ic(i64, i64, ptr)");
+    const r = fresh();
+    emit(`${r} = call i64 @yk_get_ic(i64 ${obj}, i64 ${key}, ptr ${site})`);
+    return r;
+  };
   const keyOf = (name: string): string => {
     let g0 = m.keys.get(name);
     if (g0 === undefined) {
@@ -1844,7 +1866,10 @@ function lowerFunction(
   ): string => {
     // Code with little numeric work (a library's function): the runtime's operation, not an inline
     // fast path beside it, so the module stays small and compiles fast (#1369).
-    if (compact && !proven && !inLoop(emitting)) return slow();
+    // Strict equality keeps its few instructions everywhere: library code compares numbers
+    // (`node.kind === SyntaxKind.X`) more than it does anything else (#1370).
+    const equality = emitting?.label === "===" || emitting?.label === "!==";
+    if (compact && !proven && !inLoop(emitting) && !equality) return slow();
     if (proven && guard === undefined) {
       // Every operand a proven number: the double operation alone.
       return fast(
@@ -2636,8 +2661,13 @@ function lowerFunction(
     const sp = unboxPtr(obj);
     const slen = fresh();
     emit(`${slen} = load i32, ptr ${sp}`);
+    // A rope's length word has its top bit set (not flat: the runtime's).
+    const flatS = fresh();
+    emit(`${flatS} = icmp sgt i32 ${slen}, -1`);
+    const inS0 = fresh();
+    emit(`${inS0} = icmp ult i32 ${i}, ${slen}`);
     const inS = fresh();
-    emit(`${inS} = icmp ult i32 ${i}, ${slen}`);
+    emit(`${inS} = and i1 ${flatS}, ${inS0}`);
     const strIn = freshLabel("getstrin");
     emit(`br i1 ${inS}, label %${strIn}, label %${slowL}`);
     block(strIn);
@@ -2774,8 +2804,13 @@ function lowerFunction(
     emit(`br i1 ${either}, label %${fastL}, label %${slowL}`);
     block(fastL);
     const p = unboxPtr(obj);
+    const n0 = fresh();
+    emit(`${n0} = load i32, ptr ${p}`);
+    // A string's length: a rope's with its top bit cleared.
+    const masked = fresh();
+    emit(`${masked} = and i32 ${n0}, 2147483647`);
     const n = fresh();
-    emit(`${n} = load i32, ptr ${p}`);
+    emit(`${n} = select i1 ${isS}, i32 ${masked}, i32 ${n0}`);
     const f = fresh();
     emit(`${f} = uitofp i32 ${n} to double`);
     const b = fresh();
@@ -3467,14 +3502,24 @@ function lowerFunction(
         out,
         lbl === ".length" && (!compact || inLoop(n))
           ? lengthRead(obj, key)
-          : call("yk_get", `i64 ${obj}, i64 ${key}`),
+          : lbl === ".length"
+            ? call("yk_get", `i64 ${obj}, i64 ${key}`)
+            : getNamed(obj, key),
       );
       return;
     }
     if (/^\.[\w$]+=$/.test(lbl) && ins.length === 2) {
       const obj = operand(ins[0] as ValueId);
       const value = operand(ins[1] as ValueId);
-      set(out, call("yk_set", `i64 ${obj}, i64 ${keyOf(lbl.slice(1, -1))}, i64 ${value}`));
+      // With its site's cache, as a named read has (#1370).
+      const site = `@yk.ic.${m.icSites++}`;
+      m.globals.push(`${site} = internal global i32 0`);
+      m.intrinsics.add("declare i64 @yk_set_ic(i64, i64, i64, ptr)");
+      const r = fresh();
+      emit(
+        `${r} = call i64 @yk_set_ic(i64 ${obj}, i64 ${keyOf(lbl.slice(1, -1))}, i64 ${value}, ptr ${site})`,
+      );
+      set(out, r);
       return;
     }
     if (lbl === "ElementAccess" && ins.length === 2) {
@@ -4054,8 +4099,13 @@ function lowerFunction(
           const sp = unboxPtr(recv);
           const len = fresh();
           emit(`${len} = load i32, ptr ${sp}`);
+          // A rope (its length word's top bit set): the runtime's.
+          const flat = fresh();
+          emit(`${flat} = icmp sgt i32 ${len}, -1`);
+          const inL0 = fresh();
+          emit(`${inL0} = icmp ult i32 ${i}, ${len}`);
           const inL = fresh();
-          emit(`${inL} = icmp ult i32 ${i}, ${len}`);
+          emit(`${inL} = and i1 ${flat}, ${inL0}`);
           const ok = fresh();
           emit(`${ok} = and i1 ${whole}, ${inL}`);
           const l3 = freshLabel("cchit");
@@ -5987,12 +6037,13 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
       req.push(`  ret i64 %v${r}`);
       req.push(`next${r}:`);
     });
-    // Any other: Node's MODULE_NOT_FOUND error, thrown (a try around an optional require catches it).
     const from = m.constant(mod.id);
-    m.intrinsics.add("declare void @yk_module_not_found(i64, ptr, i64)");
+    // Any other: the module a boot program's realm gives for it (Node's library, #1361 P2), else
+    // Node's MODULE_NOT_FOUND error, thrown (a try around an optional require catches it).
+    m.intrinsics.add("declare i64 @yk_require_unresolved(i64, ptr, i64)");
     req.push(
-      `  call void @yk_module_not_found(i64 %spec, ptr ${from.ptr}, i64 ${from.length})`,
-      "  unreachable",
+      `  %other = call i64 @yk_require_unresolved(i64 %spec, ptr ${from.ptr}, i64 ${from.length})`,
+      "  ret i64 %other",
       "}",
       "",
     );
