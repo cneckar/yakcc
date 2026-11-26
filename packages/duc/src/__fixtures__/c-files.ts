@@ -18,7 +18,11 @@ export interface ShavedFiles {
 }
 
 /** The symbols each file defines, by its object's symbol table: name -> file (the first file's). */
-function definitions(files: readonly string[], args: readonly string[]): Map<string, string> {
+function definitions(
+  files: readonly string[],
+  args: readonly string[],
+  clang = "clang",
+): Map<string, string> {
   const out = new Map<string, string>();
   const work = mkdtempSync(join(tmpdir(), "yakcc-c-files-"));
   try {
@@ -56,8 +60,11 @@ export function shaveCFiles(
   files: readonly string[],
   roots: readonly string[],
   args: readonly string[],
+  /** The compiler: clang (C), clang++ (C++, whose functions link by their mangled names). */
+  clang = "clang",
 ): ShavedFiles {
-  const defs = definitions(files, args);
+  const defs = definitions(files, args, clang);
+  const cxx = /\+\+$/.test(clang);
   const atoms = new Map<string, { source: string; externals: readonly string[] }>();
   const units: ShavedUnit[] = [];
   const refused: string[] = [];
@@ -108,7 +115,7 @@ export function shaveCFiles(
       const t = Date.now();
       let unit: ShavedUnit;
       try {
-        unit = shaveCUnit(file, names, args, "clang", basename(file));
+        unit = shaveCUnit(file, names, args, clang, basename(file), [], cxx);
       } catch (e) {
         // (A unit that fails as a whole, a static it cannot lay out: refused, and the rest on.)
         refused.push(`${names.join(", ")} (${basename(file)}): ${(e as Error).message}`);
@@ -122,7 +129,7 @@ export function shaveCFiles(
     pendingStatics.clear();
     for (const [f, keys] of staticsByFile) {
       try {
-        take(shaveCUnit(f, [], args, "clang", basename(f), keys), f);
+        take(shaveCUnit(f, [], args, clang, basename(f), keys, cxx), f);
       } catch (e) {
         refused.push(`${keys.join(", ")} (${basename(f)}): ${(e as Error).message}`);
       }

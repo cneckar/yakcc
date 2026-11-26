@@ -50,6 +50,11 @@ the C/C++ front end to shave (#1367):
 - `deps/uv/` (libuv 1.51.0, MIT, `deps/uv/LICENSE` and `LICENSE-extra`): Node's event loop library,
   `include/` and `src/`. The fixture `src/__fixtures__/c/node-uv.c` runs its computing parts: the
   error names and messages, IDNA, and address text.
+- `deps/icu-small/` (ICU 78.3, Unicode-3.0, `deps/icu-small/LICENSE`): Node's `full-icu` subset of
+  ICU4C, as Node ships it (`common/`, `i18n/`, `stubdata/`, `tools/`, and the data,
+  `source/data/in/icudt78l.dat.bz2`); `tools/icu/` holds Node's `icu-generic.gyp` (its defines and
+  sources), `icu_small.json` and the version file. Node compiles the data into the program as the
+  symbol `icudt78_dat` (genccode); the fixture gives ICU the same bytes, by `udata_setCommonData`.
 - `deps/simdjson/` (simdjson 4.5.0, Apache-2.0, `deps/simdjson/LICENSE`): the parser Node's module
   loader reads `package.json` with. The fixture `src/__fixtures__/c/node-simdjson.cpp` reads a
   document as `src/node_modules.cc` does, through the on-demand API; the test builds its portable
