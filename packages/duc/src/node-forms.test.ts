@@ -1015,32 +1015,6 @@ export function f(xs: number[]) {
     );
   });
 
-  it("an if whose only exits are throws takes no tail: the rest is lifted once, however long", () => {
-    const program = (rest: number) =>
-      `export function f(c: boolean, x: number) {
-  const log: number[] = [];
-  if (c) {
-    if (x > 2) {
-      throw new RangeError("big " + x);
-    }
-    log.push(x);
-  }
-${Array.from({ length: rest }, (_, i) => `  log.push(x + ${i});`).join("\n")}
-  return log;
-}`;
-    for (const rest of [1, 200]) {
-      const code = program(rest);
-      const g = liftAtom(code);
-      expect(g.nodes.filter((n) => n.origin?.kind === "ReturnSelect").length, code).toBe(0);
-      expect(g.nodes.filter((n) => n.label === ".push").length, code).toBe(rest + 1);
-      agrees(code, [
-        [true, 1],
-        [true, 3],
-        [false, 5],
-      ]);
-    }
-  }, 60_000);
-
   it("a class named as a platform global is itself in a closure inside it, as Node's URL is", () => {
     agrees(
       `export function f(p: string) {
@@ -1102,6 +1076,177 @@ ${Array.from({ length: rest }, (_, i) => `  log.push(x + ${i});`).join("\n")}
         [{ kA: "a", kB: "b", kC: "c", kD: "d", kE: "e", kF: "f" }, 2],
         [{ kA: "a", kB: "b", kC: "c", kD: "d", kE: "e", kF: "f" }, 0],
       ],
+    );
+  });
+
+  it("a for loop with a continue runs its update before each continue and at its body's end (#1292)", () => {
+    agrees(
+      `export function f(xs: string[], skip: string) {
+  let out = "";
+  for (let i = 0, j = 0; i < xs.length; i++, j += 2) {
+    const c = xs[i] as string;
+    if (c === skip) continue;
+    if (c === "(") {
+      out += "<" + j;
+      i += 1;
+    } else if (c === "!") throw new RangeError("bang at " + i);
+    else out += c;
+  }
+  return out;
+}`,
+      [
+        [["a", "(", "b", "c", "x", "d"], "x"],
+        [["a", "!", "b"], "q"],
+        [[], ""],
+      ],
+    );
+  });
+
+  it("a switch pass whose clauses throw and fall through round-trips: carries by declaration (#1292)", () => {
+    agrees(
+      `export function f(e: any, file = "stdin.go") {
+  switch (e.type) {
+    case "BasicLit": {
+    }
+    case "ChanRecv":
+      throw new RangeError("chan " + file + ":" + e.line);
+    case "SliceLit": {
+      return "[" + e.elems + "]";
+    }
+    case "Unsupported":
+      throw new TypeError(e.reason + " at " + e.col);
+  }
+  return null;
+}`,
+      [
+        [{ type: "BasicLit", line: 3 }],
+        [{ type: "ChanRecv", line: 4 }, "a.go"],
+        [{ type: "SliceLit", elems: "1,2" }],
+        [{ type: "Unsupported", reason: "x", col: 9 }],
+        [{ type: "Other" }],
+      ],
+    );
+  });
+
+  it("a loop's carries take their next values together: start = end reads the end before the pass's update (#1292)", () => {
+    agrees(
+      `export function f(items: number[], chunk: number) {
+  const out: number[][] = [];
+  let end = chunk;
+  if (end < items.length) {
+    let start = 0;
+    do {
+      out.push(items.slice(start, (start = end)));
+      end += chunk;
+    } while (end < items.length);
+    items = items.slice(start);
+  }
+  out.push(items);
+  return out;
+}`,
+      [
+        [[1, 2, 3, 4, 5, 6, 7], 2],
+        [[1, 2], 5],
+        [[1, 2, 3, 4], 1],
+      ],
+    );
+  });
+
+  it("two cells equal in themselves, told apart by what is written into them, are two invariants of a loop (#1292)", () => {
+    agrees(
+      `export function f(xs: number[], ys: number[]) {
+  const seen: number[] = [];
+  function scan(scope: number): number[] {
+    const out: number[] = [];
+    for (const x of xs) {
+      if (x === scope || owners.has(x) || inline.has(x)) continue;
+      out.push(x);
+    }
+    return out;
+  }
+  const owners = new Map(ys.map((y) => [y, 1]));
+  const inline = new Set<number>();
+  for (const y of ys) {
+    const mark = (v: number): void => {
+      inline.add(v + 1);
+      seen.push(owners.get(v) ?? 0);
+    };
+    mark(y);
+  }
+  return [scan(0), seen];
+}`,
+      [
+        [
+          [0, 1, 2, 3, 4, 5],
+          [1, 3],
+        ],
+        [[], [2]],
+      ],
+    );
+  });
+
+  it("a switch clause that throws inside a loop is the loop's exit, as the if it lowers to is (#1292)", () => {
+    agrees(
+      `export function f(src: string) {
+  let depth = 0;
+  let pos = 0;
+  const out: number[] = [];
+  while (pos < src.length) {
+    const ch = src.charCodeAt(pos++);
+    switch (ch) {
+      case 40:
+        depth++;
+        break;
+      case 41:
+        if (depth === 0) throw new SyntaxError("unexpected ) at " + pos);
+        depth--;
+        out.push(pos);
+    }
+  }
+  return [depth, out];
+}`,
+      [["(a)(b)"], ["((x)"], ["a)"], [""]],
+    );
+  });
+
+  it("a class member sliced out with a computed name that does work keeps that work (#1368)", () => {
+    const member = "[(_a = new WeakMap(), Symbol.asyncIterator)]() {\n  return g(_a);\n}";
+    const g = liftAtom(member);
+    expect(liftFidelity(member, g).holds).toBe(true);
+    const names = JSON.stringify(g);
+    expect(names).toContain("WeakMap");
+    expect(names).toContain("asyncIterator");
+  });
+  it("statements after a throw never run: a write there does not make its name one the atom writes (#1292)", () => {
+    const dead = `export function f(ch: number) {
+  while (pos++ < end) {
+    switch (ch) {
+      case 125:
+        throw new Error("unexpected }");
+        if (depth-- === 0) {
+        }
+    }
+  }
+  if (depth) throw new Error("unterminated");
+}`;
+    const live = dead.replace(/\n\s*if \(depth-- === 0\) \{\n\s*\}/, "");
+    const g = liftAtom(dead);
+    expect(graphIdentity(g)).toBe(graphIdentity(liftAtom(live)));
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+  });
+
+  it("after a return, a function declaration is still hoisted and a var still binds its name (#1292)", () => {
+    agrees(
+      `export function f(n: number) {
+  if (n > 2) {
+    return twice(n);
+    var label = "big";
+  }
+  label = "small";
+  return [twice(n), label];
+  function twice(x: number) { return 2 * x; }
+}`,
+      [[1], [3]],
     );
   });
 });

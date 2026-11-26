@@ -363,7 +363,7 @@ export function validateProofManifestL3(value: unknown): ProofManifest {
     // Explicit rejection of L2-tier kinds: they belong to deferred validators.
     if (L2_DEFERRED_KINDS.has(kind as ArtifactKind)) {
       throw new TypeError(
-        `validateProofManifestL3: artifacts[${i}].kind is "${kind}" — smt_cert and fuzz_bounds_witness are L2 kinds; use the L2 validator (deferred, DEC-TRIPLET-L0-ONLY-019). L3 manifests may only contain lean_proof, coq_proof, property_tests, or property_spec.`,
+        `validateProofManifestL3: artifacts[${i}].kind is "${kind}" — smt_cert and fuzz_bounds_witness are L2 kinds; use validateProofManifestL2 (DEC-PROOF-L2-VALIDATOR-001). L3 manifests may only contain lean_proof, coq_proof, property_tests, or property_spec.`,
       );
     }
 
@@ -404,4 +404,107 @@ export function validateProofManifestL3(value: unknown): ProofManifest {
   }
 
   return obj as unknown as ProofManifest;
+}
+
+// ---------------------------------------------------------------------------
+// L2 validator (#1421)
+// ---------------------------------------------------------------------------
+
+// @decision DEC-PROOF-L2-VALIDATOR-001
+// title: validateProofManifestL2: an smt_cert with its checker and theories, over the L0 floor
+// status: decided (#1421 slice 6)
+// rationale:
+//   L2 refines L1 refines L0 (VERIFICATION.md), so an L2 manifest keeps the L0 floor: at least one
+//   property_tests artifact. It adds at least one smt_cert: the L2 record @yakcc/verify-l2 writes
+//   (every obligation's query hash and outcome, the encoder and solver versions, the budgets and
+//   any loop invariants). Its `checker` names the encoder and solver, part of the attestation
+//   identity as an L3 checker is; its `theory` names the SMT theories the queries use. Because
+//   manifest artifacts are hashed into proof_root, the record is committed by the block's root with
+//   no format change. Whether the record holds is not decided here: a verifier re-runs it
+//   (@yakcc/proof-verifier's L2 verifier) and attests. L3 kinds are refused, as the L3 validator
+//   refuses L2 kinds. L1's totality check is still deferred (DEC-TRIPLET-L0-ONLY-019), so L2 does
+//   not yet imply totality; the record claims partial correctness only.
+
+const L2_ALLOWED_KINDS = new Set<ArtifactKind>([
+  "smt_cert",
+  "fuzz_bounds_witness",
+  "property_tests",
+  "property_spec",
+]);
+
+/**
+ * Validate and narrow an unknown value to ProofManifest for L2 blocks.
+ *
+ * L2 validation rules:
+ * 1. A non-null object with a non-empty "artifacts" array; each artifact has a string "kind" and a
+ *    relative "path" under proof/ (the L3 path rules).
+ * 2. Kinds are smt_cert, fuzz_bounds_witness, property_tests or property_spec. lean_proof and
+ *    coq_proof (L3) are refused.
+ * 3. At least one property_tests artifact (the L0 floor).
+ * 4. At least one smt_cert, each with a non-empty "checker" and a non-empty "theory" array of
+ *    non-empty strings.
+ */
+export function validateProofManifestL2(value: unknown): ProofManifest {
+  const fail = (message: string): never => {
+    throw new TypeError(`validateProofManifestL2: ${message}`);
+  };
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    fail("expected a non-null object");
+  }
+  const obj = value as Record<string, unknown>;
+  if (!Array.isArray(obj.artifacts)) fail('field "artifacts" must be an array');
+  const artifacts = obj.artifacts as unknown[];
+  if (artifacts.length === 0) fail("manifest must contain at least one artifact");
+
+  let propertyTests = 0;
+  let certs = 0;
+  for (const [i, entry] of artifacts.entries()) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      fail(`artifacts[${i}] must be a non-null object`);
+    }
+    const artifact = entry as Record<string, unknown>;
+    if (typeof artifact.kind !== "string") fail(`artifacts[${i}] missing required field "kind"`);
+    if (typeof artifact.path !== "string") fail(`artifacts[${i}].path must be a string`);
+    const kind = artifact.kind as ArtifactKind;
+    if (kind === "lean_proof" || kind === "coq_proof") {
+      fail(
+        `artifacts[${i}].kind is "${kind}", an L3 kind; use validateProofManifestL3 (DEC-PROOF-L3-VALIDATOR-001)`,
+      );
+    }
+    if (!L2_ALLOWED_KINDS.has(kind)) fail(`artifacts[${i}].kind is "${kind}", an unrecognized artifact kind`);
+    const pathErr = validateL3ArtifactPath(artifact.path as string);
+    if (pathErr !== undefined) fail(`artifacts[${i}].path: ${pathErr}`);
+    if (kind === "property_tests") propertyTests++;
+    if (kind === "smt_cert") {
+      certs++;
+      if (typeof artifact.checker !== "string" || artifact.checker.length === 0) {
+        fail(
+          `artifacts[${i}] (kind="smt_cert") needs a non-empty "checker" naming the encoder and solver (e.g. "verify-l2/3 z3 4.15.4"); it is part of the attestation identity`,
+        );
+      }
+      const theory = artifact.theory;
+      if (
+        !Array.isArray(theory) ||
+        theory.length === 0 ||
+        theory.some((t) => typeof t !== "string" || t.length === 0)
+      ) {
+        fail(`artifacts[${i}] (kind="smt_cert") needs a non-empty "theory" array of SMT theory tags`);
+      }
+    }
+  }
+  if (propertyTests === 0) fail("manifest must keep the L0 floor: at least one property_tests artifact");
+  if (certs === 0) fail("manifest must contain at least one smt_cert artifact (the L2 record)");
+  return obj as unknown as ProofManifest;
+}
+
+/**
+ * The manifest validator for a block's declared level: L2 blocks by {@link validateProofManifestL2},
+ * every other level by {@link validateProofManifestL0}, as before. (L1's validator is deferred, and
+ * L3 blocks keep their parallel path through validateProofManifestL3.)
+ */
+export function validateProofManifestForLevel(
+  level: "L0" | "L1" | "L2" | "L3",
+  value: unknown,
+): ProofManifest {
+  return level === "L2" ? validateProofManifestL2(value) : validateProofManifestL0(value);
 }

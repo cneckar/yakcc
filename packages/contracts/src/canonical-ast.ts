@@ -284,38 +284,42 @@ function emitCanonical(root: Node, renames: Map<string, string>): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Compute a canonical AST hash for a TypeScript source fragment.
- *
- * The hash is deterministic: two source strings that are structurally equivalent
- * modulo comments, whitespace normalization, and local identifier renaming will
- * produce the same hash.
- *
- * @param source - The TypeScript source text to hash.
- * @param sourceRange - Optional byte range `[start, end)` within `source`.
- *   When provided, `canonicalAstHash` walks the AST to find the smallest single
- *   Node covering the range and hashes only that node. If the range straddles
- *   multiple top-level nodes, `CanonicalAstParseError` is thrown.
- *
- * @throws {CanonicalAstParseError} If the source contains TypeScript errors, or
- *   if `sourceRange` spans multiple AST nodes, or if `sourceRange` is outside
- *   the source bounds.
+ * The large sources parsed lately, each with its parse (or the syntax error it throws). A shave hashes
+ * many ranges of one file (each candidate's statements, each fragment that needs its scope), and
+ * parsing and checking the whole file for each was quadratic in its size (#1368). The hash reads the
+ * tree and never changes it, so one parse serves every range. Small sources are not kept: parsing
+ * them is cheap, and they would push the file out.
  */
-export function canonicalAstHash(
-  source: string,
-  sourceRange?: { readonly start: number; readonly end: number },
-): CanonicalAstHash {
-  // Validate range bounds eagerly before parsing.
-  if (sourceRange !== undefined) {
-    if (
-      sourceRange.start < 0 ||
-      sourceRange.end > source.length ||
-      sourceRange.start > sourceRange.end
-    ) {
-      throw new CanonicalAstParseError("range-out-of-bounds", []);
-    }
-  }
+const PARSED = new Map<string, SourceFile | CanonicalAstParseError>();
+const PARSED_KEEP = 2;
+const PARSED_MIN_LENGTH = 4096;
 
-  // Phase 1: Parse the source in-memory with ts-morph.
+function parsed(source: string): SourceFile {
+  const kept = PARSED.get(source);
+  if (kept !== undefined) {
+    // Most recently used last.
+    PARSED.delete(source);
+    PARSED.set(source, kept);
+    if (kept instanceof CanonicalAstParseError) throw kept;
+    return kept;
+  }
+  let result: SourceFile | CanonicalAstParseError;
+  try {
+    result = parseAndGate(source);
+  } catch (e) {
+    if (!(e instanceof CanonicalAstParseError)) throw e;
+    result = e;
+  }
+  if (source.length >= PARSED_MIN_LENGTH) {
+    PARSED.set(source, result);
+    if (PARSED.size > PARSED_KEEP) PARSED.delete(PARSED.keys().next().value as string);
+  }
+  if (result instanceof CanonicalAstParseError) throw result;
+  return result;
+}
+
+/** The source parsed in memory, or a CanonicalAstParseError when it has a syntax error. */
+function parseAndGate(source: string): SourceFile {
   // noLib: the gate below keeps only syntax and grammar errors (1xxx), which do not depend on the
   // standard library, and loading lib.d.ts for every hash was most of the time a shave spent.
   const project = new Project({
@@ -361,6 +365,43 @@ export function canonicalAstHash(
       messages,
     );
   }
+  return file;
+}
+
+/**
+ * Compute a canonical AST hash for a TypeScript source fragment.
+ *
+ * The hash is deterministic: two source strings that are structurally equivalent
+ * modulo comments, whitespace normalization, and local identifier renaming will
+ * produce the same hash.
+ *
+ * @param source - The TypeScript source text to hash.
+ * @param sourceRange - Optional byte range `[start, end)` within `source`.
+ *   When provided, `canonicalAstHash` walks the AST to find the smallest single
+ *   Node covering the range and hashes only that node. If the range straddles
+ *   multiple top-level nodes, `CanonicalAstParseError` is thrown.
+ *
+ * @throws {CanonicalAstParseError} If the source contains TypeScript errors, or
+ *   if `sourceRange` spans multiple AST nodes, or if `sourceRange` is outside
+ *   the source bounds.
+ */
+export function canonicalAstHash(
+  source: string,
+  sourceRange?: { readonly start: number; readonly end: number },
+): CanonicalAstHash {
+  // Validate range bounds eagerly before parsing.
+  if (sourceRange !== undefined) {
+    if (
+      sourceRange.start < 0 ||
+      sourceRange.end > source.length ||
+      sourceRange.start > sourceRange.end
+    ) {
+      throw new CanonicalAstParseError("range-out-of-bounds", []);
+    }
+  }
+
+  // Phase 1: Parse the source and gate it on syntax errors (once per large source; see parsed()).
+  const file = parsed(source);
 
   // Phase 2: Determine root node.
   const root: Node = sourceRange !== undefined ? findEnclosingNode(file, sourceRange) : file;

@@ -29,6 +29,7 @@
 #define _GNU_SOURCE /* ucontext: an async function's or a generator's own stack (#1295) */
 #include <math.h>
 #include <setjmp.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -75,6 +76,10 @@ typedef struct {
   void *privates;    /* its private members (#1330): a yk_object no enumeration sees, or NULL */
   uint32_t *index;   /* with 8 keys or more: each key's position + 1, by its hash; NULL to rebuild */
   uint32_t index_cap;
+  uint32_t digit_keys; /* 1 once a key starting with a digit was added (an index's may be one); 2
+                          too once one was not an index below 128 */
+  uint64_t small_ints[2]; /* the indices below 128 a key was added for (a bit stays when deleted) */
+  yk_array *hidden;       /* its non-enumerable own keys (Object.defineProperty's), or NULL */
 } yk_object;
 
 /* A BigInt: a sign and a magnitude, 32-bit limbs least significant first, no zero limb on top. */
@@ -208,6 +213,9 @@ static size_t gc_npages = 0, gc_top = 0;
 static gc_run *gc_runs = NULL;
 static size_t gc_nruns = 0, gc_capruns = 0;
 static void *gc_free[GC_NCLASS];
+/* A block's index in its page: the offset times its class's reciprocal (exact below GC_PAGE), not a
+   division. */
+static uint64_t gc_recip[GC_NCLASS];
 static size_t gc_since = 0, gc_threshold = (size_t)16 << 20, gc_floor = (size_t)16 << 20;
 static int gc_state = 0; /* 0 not yet set up, 1 collecting, 2 allocating only, 3 never (no heap) */
 static uintptr_t gc_stack_top = 0;
@@ -243,6 +251,7 @@ static void gc_setup(void) {
     while (gc_sizes[c] < sz) c++;
     gc_class_of[sz / 16] = (uint8_t)c;
   }
+  for (uint32_t c = 0; c < GC_NCLASS; c++) gc_recip[c] = ((uint64_t)1 << 32) / gc_sizes[c] + 1;
   /* YK_GC_STRESS: collect every 64 KiB, so a value the roots miss is found by the tests. */
   const char *stress = getenv("YK_GC_STRESS");
   if (stress != NULL && stress[0] == '1') gc_threshold = gc_floor = (size_t)1 << 16;
@@ -299,7 +308,9 @@ static void gc_put_pages(size_t start, size_t k) {
 static void gc_collect(void);
 static void gc_report(void);
 
-static void *alloc(size_t n) {
+/* Anything but a small block from a free list while no collection is due: set-up, collection, a
+   fresh page, a large block. */
+static __attribute__((noinline)) void *alloc_slow(size_t n) {
   if (gc_state == 0) gc_setup();
   if (gc_state == 3) return bump(n);
   if (gc_state == 1 && gc_since >= gc_threshold) gc_collect();
@@ -342,11 +353,32 @@ static void *alloc(size_t n) {
   gc_free[c] = *(void **)p;
   size_t off = (uint8_t *)p - gc_heap;
   gc_page *g = &gc_pages[off >> GC_PAGE_SHIFT];
-  uint32_t b = (uint32_t)((off & (GC_PAGE - 1)) / size);
+  uint32_t b = (uint32_t)(((off & (GC_PAGE - 1)) * gc_recip[c]) >> 32);
   g->used[b >> 6] |= (uint64_t)1 << (b & 63);
   memset(p, 0, size);
   gc_since += size;
   return p;
+}
+/* A block of at least n bytes, zeroed: most often a small one from its class's free list, here (a
+   leaf, no frame); anything else alloc_slow's. */
+static void *alloc(size_t n) {
+  size_t m = n + 1; /* one past the end is inside */
+  if ((gc_state == 2 || (gc_state == 1 && gc_since < gc_threshold)) && m <= GC_LARGE) {
+    uint32_t c = gc_class_of[(m + 15) / 16];
+    uint8_t *p = gc_free[c];
+    if (p != NULL) {
+      uint32_t size = gc_sizes[c];
+      gc_free[c] = *(void **)p;
+      size_t off = (size_t)(p - gc_heap);
+      gc_page *g = &gc_pages[off >> GC_PAGE_SHIFT];
+      uint32_t b = (uint32_t)(((off & (GC_PAGE - 1)) * gc_recip[c]) >> 32);
+      g->used[b >> 6] |= (uint64_t)1 << (b & 63);
+      memset(p, 0, size);
+      gc_since += size;
+      return p;
+    }
+  }
+  return alloc_slow(n);
 }
 
 /* Marking: an explicit stack of blocks to scan. */
@@ -737,6 +769,20 @@ static yk number_to_radix(double value, int radix) {
   static const char chars[] = "0123456789abcdefghijklmnopqrstuvwxyz";
   if (value != value) return ascii("NaN");
   if (isinf(value)) return ascii(value < 0 ? "-Infinity" : "Infinity");
+  /* An integer below 2^53 (a byte's hex, most often): its digits by integer division. */
+  if (value == (double)(int64_t)value && fabs(value) < 9007199254740992.0) {
+    char t[72];
+    int64_t v = (int64_t)value;
+    uint64_t u = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v;
+    int i = (int)sizeof t;
+    t[--i] = 0;
+    do {
+      t[--i] = chars[u % (uint64_t)radix];
+      u /= (uint64_t)radix;
+    } while (u != 0);
+    if (v < 0) t[--i] = '-';
+    return ascii(t + i);
+  }
   enum { kBufferSize = 2200 };
   char buffer[kBufferSize];
   int integer_cursor = kBufferSize / 2;
@@ -791,12 +837,33 @@ static yk number_to_radix(double value, int radix) {
 }
 
 static yk array_join(yk_array *a, yk_string *sep) {
-  yk s = ascii("");
-  for (uint32_t i = 0; i < a->len; i++) {
-    if (i > 0) s = concat(str(s), sep);
-    if (!is_nullish(a->items[i])) s = concat(str(s), str(to_string(a->items[i])));
+  /* Its length when the join starts; each element's ToString in order (undefined and null: ""),
+     then one string of them (each kept in a block the collector sees). */
+  uint32_t len = a->len;
+  if (len == 0) return ascii("");
+  if (len == 1) return a->len > 0 && !is_nullish(a->items[0]) ? to_string(a->items[0]) : ascii("");
+  yk *parts = alloc((size_t)len * sizeof(yk));
+  uint64_t total = (uint64_t)sep->len * (len - 1);
+  for (uint32_t i = 0; i < len; i++) {
+    yk v = i < a->len ? a->items[i] : YK_UNDEFINED;
+    parts[i] = is_nullish(v) ? 0 : to_string(v);
+    if (parts[i] != 0) total += str(parts[i])->len;
   }
-  return s;
+  if (total > 536870888) range_error("Invalid string length");
+  yk_string *r = new_string((uint32_t)total);
+  uint64_t at = 0;
+  for (uint32_t i = 0; i < len; i++) {
+    if (i > 0) {
+      memcpy(r->units + at, sep->units, (size_t)sep->len * 2);
+      at += sep->len;
+    }
+    if (parts[i] != 0) {
+      yk_string *t = str(parts[i]);
+      memcpy(r->units + at, t->units, (size_t)t->len * 2);
+      at += t->len;
+    }
+  }
+  return string_of(r);
 }
 
 static yk to_primitive(yk v);
@@ -837,6 +904,8 @@ _Noreturn void yk_throw(yk v);
 static yk proto_lookup(yk v, yk key);
 static yk tail_proto(yk v);
 static int has_own(yk v, yk key);
+static void set_hidden(yk_object *o, yk key, int hidden);
+static int is_hidden(yk_object *o, yk key);
 static yk object_to_string(yk v);
 static yk method_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
 static yk object_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
@@ -1008,6 +1077,13 @@ int yk_truthy(yk v) {
 
 yk yk_add(yk a, yk b) {
   if (is_number(a) && is_number(b)) return yk_number(num(a) + num(b));
+  if (is_string(a) && is_string(b)) {
+    /* Two strings: one of them alone when the other is empty, else their concatenation. */
+    if (str(b)->len == 0) return a;
+    if (str(a)->len == 0) return b;
+    if ((uint64_t)str(a)->len + str(b)->len > 536870888) range_error("Invalid string length");
+    return concat(str(a), str(b));
+  }
   a = to_primitive(a);
   b = to_primitive(b);
   if (is_string(a) || is_string(b)) return concat(str(to_string(a)), str(to_string(b)));
@@ -1034,10 +1110,12 @@ yk yk_neg(yk a) {
 yk yk_pos(yk a) { return yk_number(to_number(a)); }
 yk yk_not(yk a) { return yk_bool(!yk_truthy(a)); }
 yk yk_inc(yk a) {
+  if (is_number(a)) return yk_number(num(a) + 1);
   a = to_primitive(a);
   return is_bigint(a) ? big_add_small(a, 1) : yk_number(to_number(a) + 1);
 }
 yk yk_dec(yk a) {
+  if (is_number(a)) return yk_number(num(a) - 1);
   a = to_primitive(a);
   return is_bigint(a) ? big_add_small(a, -1) : yk_number(to_number(a) - 1);
 }
@@ -1113,25 +1191,102 @@ yk yk_gt(yk a, yk b) { return yk_bool(less_than(b, a) == 1); }
 yk yk_le(yk a, yk b) { return yk_bool(less_than(b, a) == 0); }
 yk yk_ge(yk a, yk b) { return yk_bool(less_than(a, b) == 0); }
 
+static yk interned(const char *name, uint64_t n);
+/* A string builder (#1369): a loop's variable that the loop only appends to (`out += x`), its value
+   kept here while the loop runs. Until the value is a string, an append is +'s (a number's sum, say);
+   from then on a string's units, appended in place (each append ToPrimitive then ToString of the
+   operand, as + is). The loop's result is yk_sb_finish's. */
+typedef struct {
+  int32_t internal; /* 5: a string builder */
+  uint32_t len, cap;
+  yk value;          /* while not yet a string: the value */
+  yk_string *buffer; /* once a string: its units (cap of them) */
+} yk_sb;
+yk yk_sb_new(yk value) {
+  yk_sb *b = alloc(sizeof(yk_sb));
+  b->internal = 5;
+  b->value = value;
+  return BOX(T_INTERNAL, b);
+}
+static void sb_reserve(yk_sb *b, uint64_t need) {
+  if (need > 536870888) range_error("Invalid string length");
+  if (b->buffer != NULL && need <= b->cap) return;
+  uint64_t cap = b->cap < 16 ? 16 : b->cap;
+  while (cap < need) cap *= 2;
+  if (cap > 536870888) cap = 536870888;
+  yk_string *n = new_string((uint32_t)cap);
+  if (b->buffer != NULL) memcpy(n->units, b->buffer->units, (size_t)b->len * 2);
+  b->buffer = n;
+  b->cap = (uint32_t)cap;
+}
+yk yk_sb_append(yk h, yk x) {
+  yk_sb *b = (yk_sb *)PTR(h);
+  if (b->buffer == NULL) {
+    if (!is_string(b->value)) {
+      b->value = yk_add(b->value, x);
+      return h;
+    }
+    yk_string *v = str(b->value);
+    sb_reserve(b, (uint64_t)v->len * 2);
+    memcpy(b->buffer->units, v->units, (size_t)v->len * 2);
+    b->len = v->len;
+    b->value = YK_UNDEFINED;
+  }
+  yk_string *t = str(is_string(x) ? x : to_string(to_primitive(x)));
+  sb_reserve(b, (uint64_t)b->len + t->len);
+  memcpy(b->buffer->units + b->len, t->units, (size_t)t->len * 2);
+  b->len += t->len;
+  return h;
+}
+yk yk_sb_finish(yk h) {
+  yk_sb *b = (yk_sb *)PTR(h);
+  if (b->buffer == NULL) return b->value;
+  yk_string *r = new_string(b->len);
+  memcpy(r->units, b->buffer->units, (size_t)b->len * 2);
+  return string_of(r);
+}
+
+/* typeof's result: one string per type, made once. */
 yk yk_typeof(yk v) {
-  if (is_number(v)) return ascii("number");
-  if (is_string(v)) return ascii("string");
-  if (is_bool(v)) return ascii("boolean");
-  if (v == YK_UNDEFINED) return ascii("undefined");
-  if (is_closure(v)) return ascii("function");
-  if (is_bigint(v)) return ascii("bigint");
-  if (is_symbol(v)) return ascii("symbol");
-  return ascii("object");
+  static yk made[8]; /* each made once (the collector sees this table) */
+#define YK_TYPE(k, s) (made[k] != 0 ? made[k] : (made[k] = interned(s, sizeof s - 1)))
+  if (is_number(v)) return YK_TYPE(0, "number");
+  if (is_string(v)) return YK_TYPE(1, "string");
+  if (is_bool(v)) return YK_TYPE(2, "boolean");
+  if (v == YK_UNDEFINED) return YK_TYPE(3, "undefined");
+  if (is_closure(v)) return YK_TYPE(4, "function");
+  if (is_bigint(v)) return YK_TYPE(5, "bigint");
+  if (is_symbol(v)) return YK_TYPE(6, "symbol");
+  return YK_TYPE(7, "object");
+#undef YK_TYPE
 }
 
 /* A template literal: its strings (n + 1) around its substitutions (n), each by ToString. */
 yk yk_template(uint64_t n, const yk *strings, const yk *subs) {
-  yk s = strings[0];
+  if (n == 0) return strings[0];
+  /* Each substitution's string (in order: a ToString may throw or run code), then one string of
+     them all. The strings are kept on this stack or in a block the collector sees. */
+  yk small[8];
+  yk *parts = n <= 8 ? small : alloc((size_t)n * sizeof(yk));
+  uint64_t total = str(strings[0])->len;
   for (uint64_t i = 0; i < n; i++) {
-    s = concat(str(s), str(to_string(subs[i])));
-    s = concat(str(s), str(strings[i + 1]));
+    parts[i] = to_string(subs[i]);
+    total += str(parts[i])->len + str(strings[i + 1])->len;
   }
-  return s;
+  if (total > 536870888) range_error("Invalid string length");
+  yk_string *r = new_string((uint32_t)total);
+  uint64_t at = 0;
+  for (uint64_t i = 0; i <= n; i++) {
+    yk_string *a = str(strings[i]);
+    memcpy(r->units + at, a->units, (size_t)a->len * 2);
+    at += a->len;
+    if (i < n) {
+      yk_string *b = str(parts[i]);
+      memcpy(r->units + at, b->units, (size_t)b->len * 2);
+      at += b->len;
+    }
+  }
+  return string_of(r);
 }
 
 /* --- properties --- */
@@ -1167,7 +1322,128 @@ static inline __attribute__((always_inline)) int key_is(yk key, const char *name
   return 1;
 }
 
+static inline __attribute__((always_inline)) int typed_fast_get(yk obj, uint32_t i, yk *out);
+static __attribute__((noinline)) yk yk_get_slow(yk obj, yk key);
+static int64_t own_find_chars(yk_object *o, const char *p, uint32_t n);
+static yk resolve_slot(yk slot, yk receiver);
+/* A key added to an object: whether it starts with a digit (an index's may), and which index below 128
+   it is. */
+static void note_digit_key(yk_object *o, yk key) {
+  if (!is_string(key)) return;
+  yk_string *s = str(key);
+  if (s->len == 0 || s->units[0] < '0' || s->units[0] > '9') return;
+  uint32_t v = 0;
+  int index = s->len <= 3 && (s->len == 1 || s->units[0] != '0');
+  for (uint32_t i = 0; i < s->len && index; i++) {
+    if (s->units[i] < '0' || s->units[i] > '9') index = 0;
+    else v = v * 10 + (s->units[i] - '0');
+  }
+  if (index && v < 128) {
+    o->small_ints[v >> 6] |= (uint64_t)1 << (v & 63);
+    o->digit_keys |= 1;
+  } else
+    o->digit_keys |= 3;
+}
+/* Whether an object may have a key for index i (a key starting with a digit, and i's if below 128). */
+static int digit_key_maybe(const yk_object *o, uint64_t i) {
+  if (o->digit_keys == 0) return 0;
+  if (o->digit_keys & 2) return 1;
+  return i < 128 && ((o->small_ints[i >> 6] >> (i & 63)) & 1);
+}
+/* An index read of a plain object (a table by code point): by the index's digits along a chain of
+   plain objects, no string made; a miss there is undefined (no built-in has such a name). 0 when
+   the chain is not all plain objects. */
+static int object_index_get(yk obj, uint32_t i, yk *out) {
+  char t[12];
+  int at = (int)sizeof t; /* the index's digits, made when an object may have them */
+  yk v = obj;
+  for (; v != 0 && is_object(v); v = ((yk_object *)PTR(v))->proto) {
+    yk_object *c = (yk_object *)PTR(v);
+    if (c->kind != 0) return 0;
+    if (!digit_key_maybe(c, i)) continue;
+    if (at == (int)sizeof t) {
+      uint32_t u = i;
+      do {
+        t[--at] = (char)('0' + u % 10);
+        u /= 10;
+      } while (u != 0);
+    }
+    int64_t k = own_find_chars(c, t + at, (uint32_t)(sizeof t - at));
+    if (k >= 0) return *out = resolve_slot(c->values[k], obj), 1;
+  }
+  if (v != 0) return 0;
+  *out = YK_UNDEFINED;
+  return 1;
+}
+/* One code unit's string: below 256, the one string of it (made once; the collector keeps the table). */
+yk yk_units[256]; /* the lowering reads it too (emit-llvm-boxed.ts's indexRead) */
+static yk unit_string(uint16_t u) {
+  yk *units = yk_units;
+  if (u < 256 && units[u] != 0) return units[u];
+  yk_string *c = new_string(1);
+  c->units[0] = u;
+  yk r = string_of(c);
+  if (u < 256) units[u] = r;
+  return r;
+}
+static yk interned(const char *name, uint64_t n);
+/* The one string "length" (the lowered code's reads of .length use it too). */
+static yk length_key(void) {
+  static yk k;
+  return k != 0 ? k : (k = interned("length", 6));
+}
+/* A property read: its common cases here (a small function, no frame to set up), the rest in
+   yk_get_slow. */
 yk yk_get(yk obj, yk key) {
+  if (is_number(key)) {
+    double d = num(key);
+    if (d >= 0 && d < 4294967295.0 && d == (double)(uint32_t)d) {
+      uint32_t i = (uint32_t)d;
+      if (is_array(obj)) {
+        yk_array *a = arr(obj);
+        if (i < a->len && (a->holes == NULL || !array_hole(a, i))) return a->items[i];
+      } else if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 0) {
+        yk r;
+        if (object_index_get(obj, i, &r)) return r;
+      } else if (is_string(obj)) {
+        if (i < str(obj)->len) return unit_string(str(obj)->units[i]);
+      } else if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 7) {
+        yk r;
+        if (typed_fast_get(obj, i, &r)) return r;
+      }
+    }
+  } else if (is_object(obj)) {
+    yk_object *o = (yk_object *)PTR(obj);
+    if (o->kind == 0) {
+      uint32_t n = o->len < 32 ? o->len : 32; /* names are made once: the key itself, by pointer */
+      for (uint32_t i = 0; i < n; i++)
+        if (o->keys[i] == key) {
+          yk v = o->values[i];
+          /* A data property's value as it is; an accessor (an internal box) through resolve_slot. */
+          if (TAG(v) != T_INTERNAL) return v;
+          return resolve_slot(v, obj);
+        }
+    }
+  } else if (is_string(obj) && is_string(key) && key == length_key()) {
+    return yk_number(str(obj)->len);
+  }
+  return yk_get_slow(obj, key);
+}
+static __attribute__((noinline)) yk yk_get_slow(yk obj, yk key) {
+  /* An element by an integer index: an array's (not a hole), a typed array's, in range. */
+  if (is_number(key)) {
+    double d = num(key);
+    if (d >= 0 && d < 4294967295.0 && d == (double)(uint32_t)d) {
+      uint32_t i = (uint32_t)d;
+      if (is_array(obj)) {
+        yk_array *a = arr(obj);
+        if (i < a->len && !array_hole(a, i)) return a->items[i];
+      } else if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 7) {
+        yk r;
+        if (typed_fast_get(obj, i, &r)) return r;
+      }
+    }
+  }
   /* A plain object's own property by the very key (names are made once, so a read by name finds the
      key the object was made with): its value, before anything else is asked. */
   if (is_object(obj)) {
@@ -1188,11 +1464,7 @@ yk yk_get(yk obj, yk key) {
     yk_string *s = str(obj);
     if (key_is(key, "length")) return yk_number(s->len);
     int64_t i = index_of_key(key);
-    if (i >= 0 && i < s->len) {
-      yk_string *c = new_string(1);
-      c->units[0] = s->units[i];
-      return string_of(c);
-    }
+    if (i >= 0 && i < s->len) return unit_string(s->units[i]);
     return i >= 0 ? YK_UNDEFINED : proto_lookup(obj, key);
   }
   if (is_array(obj)) {
@@ -1245,6 +1517,7 @@ yk yk_get(yk obj, yk key) {
         for (; v != 0 && is_object(v); v = ((yk_object *)PTR(v))->proto) {
           yk_object *c = (yk_object *)PTR(v);
           if (c->kind != 0) break;
+          if (!digit_key_maybe(c, (uint64_t)d)) continue; /* no key of it can be this index's */
           int64_t at = own_find_chars(c, t + i, (uint32_t)(sizeof t - i));
           if (at >= 0) return resolve_slot(c->values[at], obj);
         }
@@ -1319,6 +1592,16 @@ static yk make_error(const char *name, yk message);
 _Noreturn void yk_throw(yk v);
 /* A method call by a key the lowered code keeps (its string, made once). */
 yk yk_call_method_k(yk recv, yk key, uint64_t argc, const yk *argv) { return call_method_key(recv, key, argc, argv); }
+/* s.charCodeAt(i) (#1369): a string's unit at a number index, at once; else the method call. */
+yk yk_char_code_at(yk recv, yk key, yk i) {
+  if (is_string(recv) && is_number(i)) {
+    double d = num(i);
+    d = d != d ? 0 : trunc(d);
+    yk_string *s = str(recv);
+    return d < 0 || d >= s->len ? yk_number(NAN) : yk_number(s->units[(int64_t)d]);
+  }
+  return call_method_key(recv, key, 1, &i);
+}
 yk yk_call_method(yk recv, const char *name, uint64_t n, uint64_t argc, const yk *argv) {
   return call_method_key(recv, interned(name, n), argc, argv);
 }
@@ -1332,6 +1615,8 @@ static int inherits_thunk(yk recv, yk key) {
   return is_thunk(proto_lookup(recv, key));
 }
 static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
+  /* The member read the call makes first: of undefined or null, its TypeError. */
+  if (is_nullish(recv)) yk_get(recv, key);
   yk arg0 = argc > 0 ? argv[0] : YK_UNDEFINED;
   yk arg1 = argc > 1 ? argv[1] : YK_UNDEFINED;
   if (is_symbol(recv)) {
@@ -1679,18 +1964,32 @@ static void own_index_build(yk_object *o) {
   for (uint32_t i = 0; i < o->len; i++) own_index_put(o, i);
 }
 /* A key's position among an object's own, or -1: by its index once it has 8 keys or more. */
+/* The positions own_find last found in objects of 8 keys or more, by object and key (#1369): a hit
+   is that key still at that position (an object holds a key once), so no hash is computed. */
+static struct {
+  yk_object *o;
+  yk key;
+  uint32_t at;
+} own_found[512];
 static int64_t own_find(yk_object *o, yk key) {
   if (o->len < 8) {
     for (uint32_t i = 0; i < o->len; i++)
       if (key_equal(o->keys[i], key)) return i;
     return -1;
   }
+  uint32_t slot = (uint32_t)((((uintptr_t)o >> 4) ^ (key >> 3) ^ (key >> 13)) & 511);
+  if (own_found[slot].o == o && own_found[slot].key == key && own_found[slot].at < o->len &&
+      o->keys[own_found[slot].at] == key)
+    return own_found[slot].at;
   if (o->index == NULL) own_index_build(o);
   uint32_t mask = o->index_cap - 1;
   for (uint32_t j = key_hash(key) & mask;; j = (j + 1) & mask) {
     uint32_t at = o->index[j];
     if (at == 0) return -1;
-    if (key_equal(o->keys[at - 1], key)) return at - 1;
+    if (key_equal(o->keys[at - 1], key)) {
+      own_found[slot].o = o, own_found[slot].key = key, own_found[slot].at = at - 1;
+      return at - 1;
+    }
   }
 }
 /* A key given as its characters (an integer's digits): its position among an object's own, or -1. */
@@ -1744,6 +2043,7 @@ static void own_set(yk_object *o, yk key, yk value) {
   }
   o->keys[o->len] = key;
   o->values[o->len++] = value;
+  note_digit_key(o, key);
   /* The index takes the new key while it is at most a quarter full; else it is made again. */
   if (o->index != NULL) {
     if (o->len * 4 > o->index_cap) o->index = NULL;
@@ -2163,6 +2463,7 @@ yk yk_delete(yk obj, yk key) {
         memmove(o->values + i, o->values + i + 1, (size_t)(o->len - i - 1) * sizeof(yk));
         o->len--;
         o->index = NULL; /* positions moved: made again when next needed */
+        set_hidden(o, k, 0);
         break;
       }
   } else if (is_array(obj)) {
@@ -2173,16 +2474,33 @@ yk yk_delete(yk obj, yk key) {
 }
 yk yk_delete_named(yk obj, const char *name, uint64_t n) { return yk_delete(obj, yk_string_utf8(name, n)); }
 
+/* An object literal whose keys the lowering knows are distinct strings: its arrays filled at once. */
+yk yk_object_of_distinct(uint64_t n, const yk *keys, const yk *values) {
+  /* One block: the object, then its keys, then its values (a later key past cap grows them apart). */
+  uint32_t cap = n < 4 ? 4 : (uint32_t)n;
+  yk_object *o = alloc(sizeof(yk_object) + (size_t)cap * 2 * sizeof(yk));
+  o->keys = (yk *)(o + 1);
+  o->values = o->keys + cap;
+  memcpy(o->keys, keys, (size_t)n * sizeof(yk));
+  memcpy(o->values, values, (size_t)n * sizeof(yk));
+  o->len = (uint32_t)n;
+  for (uint64_t i = 0; i < n; i++) note_digit_key(o, keys[i]);
+  o->cap = cap;
+  return BOX(T_OBJECT, o);
+}
 /* An object literal: its keys (by ToPropertyKey) and values, in source order. */
 yk yk_object_of(uint64_t n, const yk *keys, const yk *values) {
-  yk_object *o = alloc(sizeof(yk_object));
-  o->len = o->cap = 0;
+  uint32_t cap = n < 4 ? 4 : (uint32_t)n;
+  yk_object *o = alloc(sizeof(yk_object) + (size_t)cap * 2 * sizeof(yk));
+  o->len = 0;
   o->error = 0;
   o->kind = 0;
   o->proto = 0;
   o->regex = NULL;
   o->entries = NULL;
-  o->keys = o->values = NULL;
+  o->keys = (yk *)(o + 1);
+  o->values = o->keys + cap;
+  o->cap = cap;
   o->index = NULL;
   o->index_cap = 0;
   o->privates = NULL;
@@ -2782,10 +3100,12 @@ static yk descriptor_of(yk v, yk key) {
     yk_accessor *a = (yk_accessor *)PTR(slot);
     yk keys[4] = {ascii("get"), ascii("set"), ascii("enumerable"), ascii("configurable")};
     yk vals[4] = {a->get != 0 ? a->get : YK_UNDEFINED, a->set != 0 ? a->set : YK_UNDEFINED, t, t};
+    if ((is_object(v) || is_closure(v)) && is_hidden(own_props(v), key)) vals[2] = YK_FALSE;
     return yk_object_of(4, keys, vals);
   }
   yk keys[4] = {ascii("value"), ascii("writable"), ascii("enumerable"), ascii("configurable")};
   yk vals[4] = {yk_get(v, key), t, t, t};
+  if ((is_object(v) || is_closure(v)) && is_hidden(own_props(v), key)) vals[2] = YK_FALSE;
   /* The non-enumerable own properties the runtime makes: an array's length; a function's name and
      length (read-only, configurable) and prototype (writable, not configurable). */
   if (is_array(v) && key_is(key, "length")) vals[2] = YK_FALSE, vals[3] = YK_FALSE;
@@ -2809,6 +3129,16 @@ static yk object_get_own_property_descriptors(void *c, yk s, uint64_t argc, cons
 static void define_from(yk v, yk key, yk desc) {
   key = to_property_key(key);
   if (!is_object(desc) && !is_closure(desc)) type_error("Property description must be an object");
+  /* Its enumerability: the descriptor's when it says, else a new property's is false (an existing
+     one keeps its own). */
+  int existed = has_own(v, key);
+  int says = yk_in(ascii("enumerable"), desc) == YK_TRUE;
+  int enumerable = says ? yk_truthy(yk_get(desc, ascii("enumerable"))) : 0;
+  if (is_object(v) || is_closure(v)) {
+    yk_object *o = own_props(v);
+    if (says) set_hidden(o, key, !enumerable);
+    else if (!existed) set_hidden(o, key, 1);
+  }
   yk g = yk_get(desc, ascii("get")), st = yk_get(desc, ascii("set"));
   if (g != YK_UNDEFINED || st != YK_UNDEFINED) {
     yk_object *o = is_array(v) ? (arr(v)->props == 0 ? (yk_object *)PTR(arr(v)->props = yk_object_of(0, NULL, NULL))
@@ -2970,6 +3300,40 @@ static yk_array *symbol_keys(yk_object *o) {
 }
 /* An object's own string keys, in OrdinaryOwnPropertyKeys' order: integer indexes ascending, then the
    others as they were added. */
+/* Whether an object's own key is not enumerable (defined so). */
+static int key_equal(yk a, yk b);
+static int is_hidden(yk_object *o, yk key) {
+  if (o->hidden == NULL) return 0;
+  for (uint32_t i = 0; i < o->hidden->len; i++)
+    if (key_equal(o->hidden->items[i], key)) return 1;
+  return 0;
+}
+static void push(yk_array *a, yk v);
+static void set_hidden(yk_object *o, yk key, int hidden) {
+  if (hidden == is_hidden(o, key)) return;
+  if (hidden) {
+    if (o->hidden == NULL) o->hidden = new_array(2);
+    push(o->hidden, key);
+    return;
+  }
+  yk_array *h = o->hidden;
+  for (uint32_t i = 0; i < h->len; i++)
+    if (key_equal(h->items[i], key)) {
+      h->items[i] = h->items[h->len - 1];
+      h->len--;
+      return;
+    }
+}
+static yk_array *ordered_keys(yk_object *o);
+/* An object's enumerable own string keys, in order (Object.keys, for…in, JSON, spread). */
+static yk_array *enumerable_keys(yk_object *o) {
+  yk_array *k = ordered_keys(o);
+  if (o->hidden == NULL || o->hidden->len == 0) return k;
+  yk_array *r = new_array(k->len);
+  for (uint32_t i = 0; i < k->len; i++)
+    if (!is_hidden(o, k->items[i])) push(r, k->items[i]);
+  return r;
+}
 static yk_array *ordered_keys(yk_object *o) {
   yk_array *r = new_array(o->len);
   uint32_t *idx = scratch((size_t)o->len * sizeof(uint32_t) + 4);
@@ -3064,7 +3428,7 @@ yk yk_iter_new(yk v, int32_t keys) {
   }
   if (keys) {
     if (is_object(v))
-      it->keys = ordered_keys((yk_object *)PTR(v));
+      it->keys = enumerable_keys((yk_object *)PTR(v));
     else {
       it->keys = new_array(4);
       uint32_t n = is_array(v) ? arr(v)->len : is_string(v) ? str(v)->len : 0;
@@ -4216,7 +4580,7 @@ static int json_write(yk_array *parts, yk v) {
   yk_object *o = (yk_object *)PTR(v);
   push(parts, ascii("{"));
   if (o->kind == 0) {
-    yk_array *keys = ordered_keys(o);
+    yk_array *keys = enumerable_keys(o);
     int first = 1;
     for (uint32_t i = 0; i < keys->len; i++) {
       yk value;
@@ -4276,7 +4640,7 @@ static yk object_parts(yk v, int which) {
   yk_array *r = new_array(4);
   if (is_object(v) && ((yk_object *)PTR(v))->kind == 0) {
     yk_object *o = (yk_object *)PTR(v);
-    yk_array *keys = ordered_keys(o);
+    yk_array *keys = enumerable_keys(o);
     for (uint32_t i = 0; i < keys->len; i++) {
       yk value;
       own_get(o, keys->items[i], &value);
@@ -5733,9 +6097,11 @@ static void coro_resume(coro *co, yk value, int mode) {
   handler *saved = handlers;
   co->transfer = value;
   co->mode = mode;
+  /* Its stack is made before it is current: a collection in that alloc is still on the stack it
+     was called from, which it scans as that (from gc_main_sp only once the switch is made). */
+  if (co->state == 0) co->stack = alloc(CORO_STACK); /* on the heap: a suspended coroutine's frames are scanned */
   current_coro = co;
   if (co->state == 0) {
-    co->stack = alloc(CORO_STACK); /* on the heap: a suspended coroutine's frames are scanned */
     getcontext(&co->ctx);
     co->ctx.uc_stack.ss_sp = co->stack;
     co->ctx.uc_stack.ss_size = CORO_STACK;
@@ -6167,6 +6533,19 @@ static yk promise_static_resolve(void *c, yk self, uint64_t argc, const yk *argv
   (void)c, (void)self;
   return promise_resolve(argc > 0 ? argv[0] : YK_UNDEFINED);
 }
+
+/* import(spec) (#1370): a promise of the module's namespace (an ECMAScript module's) or exports (a
+   CommonJS module's), the module loaded by its require in a job (a throw rejects the promise). */
+static yk import_job(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)self, (void)argc, (void)argv;
+  yk_closure *k = (yk_closure *)c;
+  return call_value(k->captures[0], YK_UNDEFINED, 1, &k->captures[1]);
+}
+yk yk_import(yk require, yk spec) {
+  yk done = promise_static_resolve(NULL, YK_UNDEFINED, 0, NULL);
+  yk load = yk_closure_new(import_job, 0, 2, (yk[]){require, to_string(spec)});
+  return call_method_key(done, ascii("then"), 1, &load);
+}
 static yk promise_static_reject(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
   yk p = promise_new();
@@ -6334,6 +6713,29 @@ typedef struct {
   int32_t type;
 } yk_view;
 
+/* The lowering reads these fields itself (emit-llvm-boxed.ts's indexRead and lengthRead, as LLVM
+   struct types): each struct's fields up to those keep this order and these types. */
+struct yk_array_mirror { uint32_t len, cap; yk *items; yk props; uint8_t *holes; };
+struct yk_object_mirror { uint32_t len, cap; yk *keys, *values; int32_t error, kind; yk proto; yk *regex; yk_array *entries; void *ext; };
+struct yk_view_mirror { yk buffer; uint32_t offset, length; int32_t type; };
+struct yk_buffer_mirror { uint32_t len; uint8_t *data; };
+_Static_assert(offsetof(yk_array, len) == offsetof(struct yk_array_mirror, len) &&
+                   offsetof(yk_array, items) == offsetof(struct yk_array_mirror, items) &&
+                   offsetof(yk_array, holes) == offsetof(struct yk_array_mirror, holes),
+               "yk_array's layout is the lowering's");
+_Static_assert(offsetof(yk_object, kind) == offsetof(struct yk_object_mirror, kind) &&
+                   offsetof(yk_object, ext) == offsetof(struct yk_object_mirror, ext),
+               "yk_object's layout is the lowering's");
+_Static_assert(offsetof(yk_view, buffer) == offsetof(struct yk_view_mirror, buffer) &&
+                   offsetof(yk_view, offset) == offsetof(struct yk_view_mirror, offset) &&
+                   offsetof(yk_view, length) == offsetof(struct yk_view_mirror, length) &&
+                   offsetof(yk_view, type) == offsetof(struct yk_view_mirror, type),
+               "yk_view's layout is the lowering's");
+_Static_assert(offsetof(yk_buffer, data) == offsetof(struct yk_buffer_mirror, data),
+               "yk_buffer's layout is the lowering's");
+_Static_assert(offsetof(yk_string, len) == 0 && offsetof(yk_string, units) == 4,
+               "a string's length, then its units");
+
 enum { TA_I8, TA_U8, TA_U8C, TA_I16, TA_U16, TA_I32, TA_U32, TA_F32, TA_F64, TA_BI64, TA_BU64, TA_COUNT };
 static const char *const ta_names[TA_COUNT] = {"Int8Array",   "Uint8Array",    "Uint8ClampedArray",
                                                "Int16Array",  "Uint16Array",   "Int32Array",
@@ -6342,6 +6744,7 @@ static const char *const ta_names[TA_COUNT] = {"Int8Array",   "Uint8Array",    "
 static const uint32_t ta_size[TA_COUNT] = {1, 1, 1, 2, 2, 4, 4, 4, 8, 8, 8};
 #define K_BUFFER 6
 #define K_TYPED 7
+_Static_assert(K_TYPED == 7 && TA_U32 == 6 && TA_U8 == 1, "the kinds and element types the lowering reads");
 #define K_DATAVIEW 8
 
 static yk_object *object_of_kind(yk v, int32_t kind) {
@@ -6395,6 +6798,8 @@ static uint32_t to_index(yk v, const char *what) {
 
 /* The bits of ToUint32 of a double (modulo 2^32). */
 static uint32_t double_to_u32(double d) {
+  /* Below 2^63 in magnitude: its int64's low 32 bits (ToUint32's modulo), with no fmod. */
+  if (fabs(d) < 9.2e18) return (uint32_t)(int64_t)d;
   if (d != d || isinf(d)) return 0;
   d = fmod(trunc(d), 4294967296.0);
   if (d < 0) d += 4294967296.0;
@@ -6662,6 +7067,21 @@ static yk builtin_text_encoder(void *c, yk s, uint64_t argc, const yk *argv) {
 }
 
 /* A property of a buffer or a view: its element, or its own accessors' values; 0 if none. */
+static inline __attribute__((always_inline)) int typed_fast_get(yk obj, uint32_t i, yk *out) {
+  /* The caller knows obj is a typed array (an object of its kind). */
+  yk_view *t = (yk_view *)((yk_object *)PTR(obj))->ext;
+  if (i >= t->length) return 0;
+  /* The common element types at once; the others through ta_get. */
+  uint8_t *p = ((yk_buffer *)((yk_object *)PTR(t->buffer))->ext)->data + t->offset;
+  if (t->type == TA_U32) {
+    uint32_t x;
+    memcpy(&x, p + (size_t)i * 4, 4);
+    return *out = yk_number(x), 1;
+  }
+  if (t->type == TA_U8) return *out = yk_number(p[i]), 1;
+  *out = ta_get(t, i);
+  return 1;
+}
 static int buffer_get(yk obj, yk key, yk *out) {
   yk_view *t = typed_of(obj);
   if (t != NULL) {
@@ -7080,6 +7500,17 @@ static int json_word(json_reader *r, const char *w) {
 }
 static yk json_string(json_reader *r) {
   r->i++; /* the opening quote */
+  /* With no escape before its closing quote: its units copied at once. */
+  for (uint32_t j = r->i; j < r->s->len; j++) {
+    uint16_t c = r->s->units[j];
+    if (c == '\\' || c < 0x20) break;
+    if (c == '"') {
+      yk_string *s = new_string(j - r->i);
+      memcpy(s->units, r->s->units + r->i, (size_t)(j - r->i) * 2);
+      r->i = j + 1;
+      return string_of(s);
+    }
+  }
   yk_array *units = new_array(8);
   for (;;) {
     if (r->i >= r->s->len) json_error(r);
@@ -7204,7 +7635,7 @@ static yk json_revive(yk holder, yk name, yk reviver) {
     yk_array *a = arr(val);
     for (uint32_t i = 0; i < a->len; i++) a->items[i] = json_revive(val, to_string(yk_number(i)), reviver);
   } else if (is_object(val)) {
-    yk_array *keys = ordered_keys((yk_object *)PTR(val));
+    yk_array *keys = enumerable_keys((yk_object *)PTR(val));
     for (uint32_t i = 0; i < keys->len; i++) {
       yk e = json_revive(val, keys->items[i], reviver);
       if (e == YK_UNDEFINED) yk_delete(val, keys->items[i]);
@@ -7999,7 +8430,8 @@ static yk util_get_own_non_index_properties(void *c, yk self, uint64_t argc, con
   if (o == NULL) return BOX(T_ARRAY, r);
   /* V8's PropertyFilter: 8 skips strings, 16 symbols; enumerability is not tracked (all are). */
   if (!(filter & 8)) {
-    yk_array *keys = ordered_keys(o);
+    /* 2 (ONLY_ENUMERABLE): the enumerable ones. */
+    yk_array *keys = (filter & 2) ? enumerable_keys(o) : ordered_keys(o);
     for (uint32_t i = 0; i < keys->len; i++) {
       uint32_t k;
       yk key = keys->items[i];
@@ -8159,20 +8591,57 @@ static yk error_capture_stack_trace(void *c, yk s, uint64_t argc, const yk *argv
 /* Globals a program defines for the runtime (__yakccDefineGlobal): Math as the boot module makes it. */
 static yk defined_globals;
 static yk global_this(void);
+/* __yakccDefineGlobal(name, value, lazy): a global the boot defines; lazy, value is a function the
+   first read calls, its result the global's value from then on (Node's lazily loaded globals, such
+   as Buffer). */
+static yk lazy_globals = 0;
 static yk builtin_define_global(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
   if (defined_globals == 0) defined_globals = yk_object_of(0, NULL, NULL);
   yk name = to_string(arg_or_undefined(argc, argv, 0)), value = arg_or_undefined(argc, argv, 1);
+  if (argc > 2 && yk_truthy(argv[2])) {
+    if (lazy_globals == 0) lazy_globals = yk_object_of(0, NULL, NULL);
+    own_set((yk_object *)PTR(lazy_globals), name, value);
+    own_set((yk_object *)PTR(defined_globals), name, value);
+    return YK_UNDEFINED;
+  }
+  if (lazy_globals != 0) yk_delete(lazy_globals, name);
   own_set((yk_object *)PTR(defined_globals), name, value);
   own_set((yk_object *)PTR(global_this()), name, value);
   return value;
+}
+/* A defined global's value: a lazy one's made now, once. */
+static yk defined_value(yk name, yk v) {
+  yk f;
+  if (lazy_globals == 0 || !own_get((yk_object *)PTR(lazy_globals), name, &f)) return v;
+  yk_delete(lazy_globals, name);
+  yk made = call_value(f, YK_UNDEFINED, 0, NULL);
+  own_set((yk_object *)PTR(defined_globals), name, made);
+  own_set((yk_object *)PTR(global_this()), name, made);
+  return made;
 }
 /* Array.of(...items). */
 static yk builtin_array_of(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
   return yk_array_of(argc, argv);
 }
+static yk global_uncached(const char *name, uint64_t n);
+/* A global's value: a defined global's (__yakccDefineGlobal) as it is now; anything else (the
+   runtime's own, fixed once made) from a cache by name, so a read in a loop makes nothing again. */
+static yk global_cache = 0;
 yk yk_global(const char *name, uint64_t n) {
+  if (defined_globals != 0) {
+    yk v, key = interned(name, n);
+    if (own_get((yk_object *)PTR(defined_globals), key, &v)) return defined_value(key, v);
+  }
+  if (global_cache == 0) global_cache = yk_object_of(0, NULL, NULL);
+  yk key = interned(name, n), v;
+  if (own_get((yk_object *)PTR(global_cache), key, &v)) return v;
+  v = global_uncached(name, n);
+  own_set((yk_object *)PTR(global_cache), key, v);
+  return v;
+}
+static yk global_uncached(const char *name, uint64_t n) {
   if (defined_globals != 0) {
     yk v;
     if (own_get((yk_object *)PTR(defined_globals), interned(name, n), &v)) return v;
@@ -8443,7 +8912,7 @@ yk yk_spread_into(yk obj, yk src) {
   if (is_closure(src) && ((yk_closure *)PTR(src))->props == 0) return obj;
   yk_object *from = own_props(src);
   if (from->kind != 0) return obj;
-  yk_array *keys = ordered_keys(from);
+  yk_array *keys = enumerable_keys(from);
   for (uint32_t i = 0; i < keys->len; i++) {
     yk slot;
     own_get(from, keys->items[i], &slot);
@@ -8508,6 +8977,17 @@ int yk_string_is(yk v, const char *p, uint64_t n) {
 void yk_fail(const char *message) {
   fprintf(stderr, "%s\n", message);
   exit(70);
+}
+/* require of a module the program does not have (#1370): Node's error, which a try catches (an
+   optional dependency), its code MODULE_NOT_FOUND. */
+_Noreturn void yk_module_not_found(yk spec, const char *from, uint64_t n) {
+  yk message = concat(str(ascii("Cannot find module '")), str(to_string(spec)));
+  message = concat(str(message), str(ascii("' (required from ")));
+  message = concat(str(message), str(yk_string_utf8(from, n)));
+  message = concat(str(message), str(ascii(")")));
+  yk e = make_error("Error", message);
+  yk_set(e, ascii("code"), ascii("MODULE_NOT_FOUND"));
+  yk_throw(e);
 }
 
 /* --- Math, with JavaScript's results --- */
@@ -8666,7 +9146,7 @@ void yk_write(FILE *out, yk v) {
     yk_write(out, BOX(T_ARRAY, typed_items_v(v)));
   } else if (is_object(v)) {
     yk_object *o = (yk_object *)PTR(v);
-    yk_array *keys = ordered_keys(o);
+    yk_array *keys = enumerable_keys(o);
     fprintf(out, "o%u", keys->len);
     for (uint32_t i = 0; i < keys->len; i++) {
       yk value;

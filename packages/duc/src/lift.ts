@@ -291,10 +291,20 @@ function normalizeJumps(
     }),
 ): SourceFile {
   let sf = file;
+  for (let round = 0; round < 64; round++) {
+    const text = dropUnreachable(sf);
+    if (text === undefined) break;
+    sf = reparse(text);
+  }
   const braced = braceLoopBodies(sf);
   if (braced !== undefined) sf = reparse(braced);
   for (let round = 0; round < 64; round++) {
     const text = perPassForBinding(sf);
+    if (text === undefined) break;
+    sf = reparse(text);
+  }
+  for (let round = 0; round < 64; round++) {
+    const text = forUpdateAsTail(sf);
     if (text === undefined) break;
     sf = reparse(text);
   }
@@ -346,6 +356,47 @@ function declaredBetween(node: Node, name: string, scope: Node | undefined): boo
   return false;
 }
 
+/**
+ * A loop's carried names in the order they are declared (#1292), not the order the loop first
+ * assigns them: the emitted loop declares its carries, in order, just before it, and assigns each
+ * where its next value is ready, so only the declarations' order is the same in both. A name with no
+ * declaration in sight (a binding outside the atom) keeps its place after the declared ones.
+ */
+function byDeclaration(loop: Node, names: readonly string[]): string[] {
+  const at = (name: string): number => {
+    for (let p: Node | undefined = loop.getParent(); p !== undefined; p = p.getParent()) {
+      if (
+        Node.isBlock(p) ||
+        Node.isSourceFile(p) ||
+        Node.isCaseClause(p) ||
+        Node.isDefaultClause(p)
+      ) {
+        for (const st of p.getStatements()) {
+          if (Node.isVariableStatement(st))
+            for (const d of st.getDeclarations())
+              if (patternNames(d.getNameNode()).includes(name)) return d.getStart();
+        }
+      } else if (isFunctionLikeNode(p)) {
+        for (const param of (p as FunctionLike).getParameters())
+          if (patternNames(param.getNameNode()).includes(name)) return param.getStart();
+        return Number.POSITIVE_INFINITY;
+      } else if (Node.isForStatement(p) || Node.isForOfStatement(p) || Node.isForInStatement(p)) {
+        const init = p.getInitializer();
+        if (init !== undefined && Node.isVariableDeclarationList(init))
+          for (const d of init.getDeclarations())
+            if (patternNames(d.getNameNode()).includes(name)) return d.getStart();
+      }
+    }
+    return Number.POSITIVE_INFINITY;
+  };
+  const position = new Map(names.map((name) => [name, at(name)] as const));
+  return [...names].sort(
+    (a, b) =>
+      (position.get(a) as number) - (position.get(b) as number) ||
+      names.indexOf(a) - names.indexOf(b),
+  );
+}
+
 /** A constructor's parameter properties: parameters with an accessibility or `readonly`. */
 function parameterProperties(
   ctor: import("ts-morph").ConstructorDeclaration,
@@ -388,6 +439,67 @@ function labelled(l: import("ts-morph").LabeledStatement): Node {
   let st: Node = l.getStatement();
   while (Node.isLabeledStatement(st)) st = st.getStatement();
   return st;
+}
+
+/**
+ * The statements after a `return`, `throw`, `break` or `continue` in the same list, which never run,
+ * dropped (#1292): what the graph holds, and so what the emitter writes back. Left in, a write there
+ * (`throw e; n--;`) makes `n` a binding the atom writes, which the emitted source does not. A function
+ * declaration there is hoisted and stays; a `var` keeps its binding without its initializer. A list
+ * whose dead statements declare a `let`, `const` or `class` (a binding of the block's, though never
+ * initialized) is left as it is. Undefined when nothing is dropped.
+ */
+function dropUnreachable(sf: SourceFile): string | undefined {
+  const jump = (st: Node): boolean =>
+    Node.isReturnStatement(st) ||
+    Node.isThrowStatement(st) ||
+    Node.isBreakStatement(st) ||
+    Node.isContinueStatement(st);
+  const edits: { start: number; end: number; text: string }[] = [];
+  const lists = [sf, ...sf.getDescendants()].filter(
+    (n) =>
+      Node.isSourceFile(n) || Node.isBlock(n) || Node.isCaseClause(n) || Node.isDefaultClause(n),
+  ) as (SourceFile | import("ts-morph").Block | import("ts-morph").CaseClause)[];
+  for (const list of lists) {
+    const statements = list.getStatements();
+    const at = statements.findIndex(jump);
+    if (at === -1 || at === statements.length - 1) continue;
+    const dead = statements.slice(at + 1);
+    const binds = dead.some(
+      (st) =>
+        Node.isClassDeclaration(st) ||
+        (Node.isVariableStatement(st) && st.getDeclarationKind() !== VariableDeclarationKind.Var),
+    );
+    if (binds) continue;
+    const kept = dead.flatMap((st) => {
+      if (Node.isFunctionDeclaration(st)) return [st.getText()];
+      if (Node.isVariableStatement(st))
+        return [
+          `var ${st
+            .getDeclarations()
+            .flatMap((d) => patternNames(d.getNameNode()))
+            .join(", ")};`,
+        ];
+      return [];
+    });
+    edits.push({
+      start: dead[0]?.getStart() ?? 0,
+      end: dead[dead.length - 1]?.getEnd() ?? 0,
+      text: kept.join(" "),
+    });
+  }
+  if (edits.length === 0) return undefined;
+  // Outermost first: a nested list's edit inside a dropped range goes with it.
+  edits.sort((a, b) => a.start - b.start || b.end - a.end);
+  const outer: typeof edits = [];
+  for (const e of edits) {
+    const last = outer[outer.length - 1];
+    if (last !== undefined && e.start < last.end) continue;
+    outer.push(e);
+  }
+  let text = sf.getFullText();
+  for (const e of outer.reverse()) text = text.slice(0, e.start) + e.text + text.slice(e.end);
+  return text;
 }
 
 /**
@@ -528,6 +640,60 @@ function perPassForBinding(sf: SourceFile): string | undefined {
       text: ` ${names.map((name) => `let ${name} = ${fresh.get(name)};`).join(" ")}`,
     });
     edits.push({ from: close, to: close, text: ` ${copyBack} ` });
+    edits.sort((a, b) => b.from - a.from);
+    let out = text;
+    for (const e of edits) out = out.slice(0, e.from) + e.text + out.slice(e.to);
+    return out;
+  }
+  return undefined;
+}
+
+/**
+ * A `for` loop with a `continue` of its own, written with its update as the body's last statement
+ * and before each such `continue` (#1292): `for (i = 0; c; i++) { if (a) continue; B }` is
+ * `for (i = 0; c; ) { if (a) { i++; continue; } B i++; }`. That is when JavaScript runs it, and it
+ * is how a loop with no `continue` is lifted already (the update is its body's tail): a loop
+ * emitted from either is a `while` whose body ends with the update, which lifts the same. A loop
+ * whose body or update holds a function or class is left as it is. Undefined when no loop needs it.
+ */
+function forUpdateAsTail(sf: SourceFile): string | undefined {
+  const text = sf.getFullText();
+  for (const loop of sf.getDescendantsOfKind(SyntaxKind.ForStatement)) {
+    const update = loop.getIncrementor();
+    const body = loop.getStatement();
+    if (update === undefined || !Node.isBlock(body)) continue;
+    // A closure in the body holds its pass's bindings: the update writes the next pass's copy, so it
+    // stays in the header (the closure would see it otherwise). So does one in the update.
+    const closureIn = (n: Node): boolean =>
+      n
+        .getDescendants()
+        .some(
+          (d) => isFunctionLikeNode(d) || Node.isClassExpression(d) || Node.isClassDeclaration(d),
+        );
+    if (closureIn(update) || closureIn(body)) continue;
+    const own = body.getDescendantsOfKind(SyntaxKind.ContinueStatement).filter((j) => {
+      const label = j.getLabel()?.getText();
+      const target =
+        label === undefined
+          ? ownLoop(j)
+          : (() => {
+              const l = labelTarget(j, label);
+              return l === undefined ? undefined : labelled(l);
+            })();
+      return target?.compilerNode === loop.compilerNode;
+    });
+    if (own.length === 0) continue;
+    const step = `${update.getText()};`;
+    const edits: { from: number; to: number; text: string }[] = [
+      // The header's update goes, with the space before it: `for (a; b; c)` is `for (a; b; )`.
+      { from: update.getStart(), to: update.getEnd(), text: "" },
+      ...own.map((j) => ({
+        from: j.getStart(),
+        to: j.getEnd(),
+        text: `{ ${step} ${j.getText()} }`,
+      })),
+      { from: body.getEnd() - 1, to: body.getEnd() - 1, text: ` ${step} ` },
+    ];
     edits.sort((a, b) => b.from - a.from);
     let out = text;
     for (const e of edits) out = out.slice(0, e.from) + e.text + out.slice(e.to);
@@ -1206,12 +1372,7 @@ class Lifter {
       if (this.liftStatement(stmt, blockCont)) return true;
       // An exit on some paths that no if could take the rest for: the rest runs only on the paths
       // that have not exited, under the return state (the fallback).
-      if (
-        containsDirectExit(stmt) &&
-        !(Node.isIfStatement(stmt) && throwsOnly(stmt)) &&
-        rest.length > 0 &&
-        this.env.has(RETURN_DONE)
-      ) {
+      if (containsDirectExit(stmt) && rest.length > 0 && this.env.has(RETURN_DONE)) {
         this.guardTail(rest);
         return false;
       }
@@ -1590,6 +1751,12 @@ class Lifter {
       ...(lowered?.getDescendantsOfKind(SyntaxKind.ReturnStatement) ?? []),
       ...(lowered?.getDescendantsOfKind(SyntaxKind.BreakStatement) ?? []),
       ...(lowered?.getDescendantsOfKind(SyntaxKind.ContinueStatement) ?? []),
+      // A throw too, as a loop's own throw is (loopJumpsOf), outside a try the lowering holds: a
+      // switch's clause that throws is an exit of the loop around it, as the if it lowers to is when
+      // written (#1292).
+      ...(lowered?.getDescendantsOfKind(SyntaxKind.ThrowStatement) ?? []).filter(
+        (t) => outermostTry(t, lowered as Node) === undefined,
+      ),
     ])
       if (!isInsideNestedFunction(r, lowered as Node) && !insideLoop(r, lowered as Node))
         this.loweredExits.add(r.compilerNode);
@@ -1727,11 +1894,6 @@ class Lifter {
     const both =
       !alwaysReturns(stmt.getThenStatement()) &&
       !(elseNode !== undefined && alwaysReturns(elseNode));
-    // An if whose only exits are throws, both of whose sides go on, needs no tail: a throw ends its
-    // path, so the rest after the if is the rest of every path that goes on (#1292). Taking the tail
-    // (twice) or not, by its size, made the same program two graphs: a long one emitted and lifted
-    // again crossed the size where a short one's source had not.
-    if (both && throwsOnly(stmt)) return false;
     const size = tail.reduce((n, t) => n + t.getText().length, 0);
     return !(both && this.returnFrames.length === 0 && size > 4000);
   }
@@ -2488,14 +2650,7 @@ class Lifter {
   ): void {
     const condValue = this.liftExpr(node.getExpression());
     // A return on some paths: the return state must exist before the branch, so the join carries it.
-    // Not for an if whose only exits are throws (#1292): no path through it returns, and the rest of
-    // the function is the rest of the paths that go on.
-    if (
-      sides === undefined &&
-      containsDirectExit(node) &&
-      !(this.exitMode === "function" && throwsOnly(node))
-    )
-      this.ensureReturnState();
+    if (sides === undefined && containsDirectExit(node)) this.ensureReturnState();
     const before = new Map(this.env);
     // Record the branch, and lift each side inside its own region, so the structure is kept.
     const id = `b${this.branchCount++}`;
@@ -2888,7 +3043,10 @@ class Lifter {
     // The heap token is the last carry: the exit flags and a do loop's first-pass flag are ordinary
     // names when the emitted loop is lifted again, and come before it there too.
     const carried = [
-      ...assigned.filter((name) => this.env.has(name)),
+      ...byDeclaration(
+        node,
+        assigned.filter((name) => this.env.has(name)),
+      ),
       ...exitNames,
       ...(firstName !== undefined ? [firstName] : []),
       ...([cond, body, incrementor].some((part) => part !== undefined && this.touchesHeap(part))
@@ -3103,7 +3261,7 @@ class Lifter {
       !assigned.includes(existing.getText())
     )
       assigned.unshift(existing.getText());
-    const carried = [...assigned, ...exitNames, HEAP];
+    const carried = [...byDeclaration(node, assigned), ...exitNames, HEAP];
     const inits = carried.map((name) => this.env.get(name) as ValueId);
 
     const saved = this.env;
@@ -5144,7 +5302,15 @@ function findPrimaryFunction(file: Node): FunctionLike | undefined {
         Node.isConstructorDeclaration(member) ||
         Node.isGetAccessorDeclaration(member) ||
         Node.isSetAccessorDeclaration(member)) &&
-      member.getBody() !== undefined
+      member.getBody() !== undefined &&
+      // A computed name that does work (`[(a = new WeakMap(), Symbol.iterator)]() {..}`, as the
+      // TypeScript lowering writes a class's private state) runs where the class is defined: the
+      // atom is the class with that member, not only the member's function (#1368).
+      !(
+        !Node.isConstructorDeclaration(member) &&
+        Node.isComputedPropertyName(member.getNameNode()) &&
+        !isInert((member.getNameNode() as import("ts-morph").ComputedPropertyName).getExpression())
+      )
     )
       return member;
   }
@@ -6122,17 +6288,6 @@ function containsDirectExit(node: Node): boolean {
     node.getDescendantsOfKind(SyntaxKind.ThrowStatement).some((t) => !insideOpaque(t, node));
   exitCache.set(key, result);
   return result;
-}
-
-/** Whether a statement's exits are all throws: no return of its own, and no loop in it that returns. */
-function throwsOnly(node: Node): boolean {
-  return (
-    containsExitOrLoopReturn(node) &&
-    !containsDirectReturn(node) &&
-    ![...node.getDescendants()].some(
-      (d) => isLoopStatement(d) && !insideOpaqueNonLoop(d, node) && loopReturns(d),
-    )
-  );
 }
 
 /**

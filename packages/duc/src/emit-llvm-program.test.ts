@@ -7,6 +7,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -140,6 +141,64 @@ describe.skipIf(!canRun("x86_64-linux"))("programs, natively (#1333)", () => {
     expect(got.map((g, i) => same(g, want[i]) || [calls[i], g, want[i]])).toEqual(
       calls.map(() => true),
     );
+  }, 600_000);
+
+  it("record results: a function's object literal read by key without being made (#1369)", async () => {
+    const run = nativeProgram("records", here("./__fixtures__/program/records/entry.ts"));
+    const calls: [string, unknown[]][] = [
+      ["sums", [0]],
+      ["sums", [500]],
+      ["mixed", [3, 4]],
+      ["mixed", ["a", 2]],
+      ["mixed", [null, undefined]],
+      ["hashLoop", [0, 50]],
+      ["hashLoop", [4294967295, 50]],
+      ["hashLoop", [-5, 9]],
+      ["hashLoop", [2 ** 40, 9]],
+      ["hashLoop", [1.5, 9]],
+      ["hashLoop", ["q", 9]],
+      ["hashLoop", [Number.NaN, 3]],
+      ["hashLoop", [-0, 3]],
+      [
+        "stepAll",
+        [[1, 4294967295, -3, 2 ** 31, -(2 ** 31) - 1, 1.5, "z", Number.NaN, -0, null, 7]],
+      ],
+    ];
+    const got = run(calls);
+    const ref = (await import("./__fixtures__/program/records/entry.js")) as unknown as Record<
+      string,
+      (...x: unknown[]) => unknown
+    >;
+    const want = calls.map(([m, a]) => ref[m]?.(...a));
+    expect(got.map((g, i) => same(g, want[i]) || [calls[i], g, want[i]])).toEqual(
+      calls.map(() => true),
+    );
+  }, 600_000);
+
+  it("CommonJS modules: required by path, an optional dependency that does not resolve (#1370)", () => {
+    const run = nativeProgram("cjs", here("./__fixtures__/program/cjs/entry.cjs"));
+    const ref = createRequire(import.meta.url)("./__fixtures__/program/cjs/entry.cjs") as {
+      probe: (n: number) => unknown;
+    };
+    const calls: [string, unknown[]][] = [
+      ["probe", [3]],
+      ["probe", [10]],
+    ];
+    const got = run(calls);
+    const want = calls.map(([, a]) => ref.probe(a[0] as number));
+    expect(got.map((g, i) => same(g, want[i]) || [calls[i], g, want[i]])).toEqual(
+      calls.map(() => true),
+    );
+  }, 600_000);
+
+  it("import(): a module loaded in a job, its namespace the promise's; a missing one rejects (#1370)", () => {
+    const entry = here("./__fixtures__/program/dynamic/entry.js");
+    const exe = join(work, "dynamic-run");
+    buildProgram(entry, exe, { root: here("../../..") });
+    const native = spawnSync(exe, [], { encoding: "utf8", timeout: 60_000 });
+    const node = spawnSync(process.execPath, [entry], { encoding: "utf8", timeout: 60_000 });
+    expect(native.stderr).toBe("");
+    expect(native.stdout).toBe(node.stdout);
   }, 600_000);
 
   it("@yakcc/contracts' canonicalize and contract id (BLAKE3 from @noble/hashes), from their sources, equal Node's", () => {

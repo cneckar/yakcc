@@ -505,3 +505,26 @@ describe("canonicalAstHash – compound integration: full production sequence", 
     expect(h1).not.toBe(h4);
   });
 });
+
+describe("canonicalAstHash – a large source is parsed once for all its ranges (#1368)", () => {
+  const fn = (i: number) => `export function f${i}(a: number): number {\n  return a + ${i};\n}\n`;
+  const large = Array.from({ length: 200 }, (_, i) => fn(i)).join("");
+
+  it("each range hashes as it did, however many ranges of the source are hashed", () => {
+    expect(large.length).toBeGreaterThan(4096);
+    const start = large.indexOf("export function f7(");
+    const range = { start, end: start + fn(7).trimEnd().length };
+    const first = canonicalAstHash(large, range);
+    for (let i = 0; i < 5; i++) canonicalAstHash(large, { start: 0, end: fn(0).trimEnd().length });
+    expect(canonicalAstHash(large, range)).toBe(first);
+    // The same text with a comment after it is another source, so another parse, hashed afresh.
+    expect(canonicalAstHash(`${large}// end\n`, range)).toBe(first);
+    expect(canonicalAstHash(large)).not.toBe(first);
+  });
+
+  it("a large source with a syntax error throws each time it is hashed", () => {
+    const broken = `${large}export function (\n`;
+    expect(() => canonicalAstHash(broken)).toThrow(CanonicalAstParseError);
+    expect(() => canonicalAstHash(broken, { start: 0, end: 10 })).toThrow(CanonicalAstParseError);
+  });
+});

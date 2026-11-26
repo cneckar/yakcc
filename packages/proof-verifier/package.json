@@ -44,7 +44,8 @@
   "dependencies": {
     "@noble/hashes": "^2.2.0",
     "@yakcc/contracts": "workspace:*",
-    "@yakcc/duc": "workspace:*"
+    "@yakcc/duc": "workspace:*",
+    "@yakcc/verify-l2": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
