@@ -1333,6 +1333,8 @@ export interface CxxUnit {
     | undefined;
   /** Whether a member function is virtual. */
   readonly isVirtual: (methodId: string) => boolean;
+  /** A class's type_info (RTTI): its static's key. */
+  readonly typeinfoOf: (record: string) => string;
   /** Whether a member function is final, or its class is (a call of it is not dispatched). */
   readonly isFinal: (methodId: string) => boolean;
   /** A function's parameter's default argument (its expression), by the function's id. */
@@ -2202,6 +2204,26 @@ function raiseBody(
     switch (e.kind) {
       case "ParenExpr":
         return place(k0);
+      // typeid (C++ RTTI): the type_info of a type, or of a polymorphic object's dynamic type, the
+      // one before its vtable's address point (see typeinfoOf).
+      case "CXXTypeidExpr": {
+        const ti = typeOf(e);
+        const arg = (e as { typeArg?: { qualType?: string } }).typeArg?.qualType;
+        const of = arg !== undefined ? parseType(arg) : typeOf(k0);
+        if (unitCxx === undefined || of.k !== "rec")
+          throw new RaiseCError("a typeid of a type not a class");
+        if (arg === undefined && unitLayout(of.name)?.vptr !== undefined) {
+          const o = place(k0);
+          if (o.k !== "mem") throw new RaiseCError("a typeid of an object not in memory");
+          const vptr = `__ykBigToF64(__ykI64(__ykLoad64(${o.addr})))`;
+          return { k: "mem", addr: `__ykBigToF64(__ykI64(__ykLoad64(${vptr} - 8)))`, t: ti };
+        }
+        return {
+          k: "mem",
+          addr: `__ykStatic(${JSON.stringify(unitCxx.typeinfoOf(of.name))})`,
+          t: ti,
+        };
+      }
       // A braced list of one, as a reference or a scalar is initialized from it (`parser{_parser}`):
       // what its element names.
       case "InitListExpr":
@@ -3017,6 +3039,32 @@ function raiseBody(
       }
       case "CXXNullPtrLiteralExpr":
         return "0";
+      // dynamic_cast (C++ RTTI): the object's dynamic type's bases searched for the target's
+      // (__ykDynCast); to void *, the complete object. A reference that fails: the program ends,
+      // as bad_cast uncaught does.
+      case "CXXDynamicCastExpr": {
+        const to = typeOf(e);
+        const target =
+          to.k === "ptr"
+            ? to.to.k === "void"
+              ? undefined
+              : to.to
+            : to.k === "rec"
+              ? to
+              : undefined;
+        if (unitCxx === undefined || (target !== undefined && target.k !== "rec"))
+          throw new RaiseCError("a dynamic_cast to a type not a class");
+        const ti =
+          target === undefined
+            ? "0"
+            : `__ykStatic(${JSON.stringify(unitCxx.typeinfoOf((target as { name: string }).name))})`;
+        if (to.k === "ptr") return `__ykDynCast(${expr(k0)}, ${ti})`;
+        const o = place(k0);
+        if (o.k !== "mem") throw new RaiseCError("a dynamic_cast of an object not in memory");
+        const r = temp({ k: "f64" });
+        externals.add("abort");
+        return `(((${r} = __ykDynCast(${o.addr}, ${ti})) === 0) ? (abort(), 0) : ${r})`;
+      }
       // A throw (C++; no handler is raised): the program ends, as an uncaught exception does.
       case "CXXThrowExpr":
         externals.add("abort");
@@ -4921,7 +4969,7 @@ function raiseBody(
   ];
   const vptrAt = thisRecord === undefined ? undefined : vptrOf(thisRecord);
   const setVptr = (): string =>
-    `__ykStore64(${vptrAt === 0 ? "__this" : `(__this + ${vptrAt})`}, __ykNumToBig(__ykStatic(${JSON.stringify(unitCxx?.vtableOf(thisRecord as string, destroy))})));`;
+    `__ykStore64(${vptrAt === 0 ? "__this" : `(__this + ${vptrAt})`}, __ykNumToBig(__ykStatic(${JSON.stringify(unitCxx?.vtableOf(thisRecord as string, destroy))}) + 16));`;
   if (fn.kind === "CXXDestructorDecl" && vptrAt !== undefined) entry.push(setVptr());
   for (const init of fn.kind === "CXXConstructorDecl" ? baseFirst : []) {
     if (init === undefined) {
@@ -5594,6 +5642,35 @@ export function shaveCUnit(
   const typedefScopes = new Map<string, Map<string, string>>();
   // C++: classes, from the index. (A large C unit is indexed too, and stays C: its records are
   // returned as C's are, the same in every unit.)
+  /**
+   * A class's type_info (C++ RTTI), a static of every unit that names it, by its type's name:
+   * std::type_info's vtable slot (unused) and its name, Itanium's mangling of the class; then the
+   * class's bases, each its type_info and offset, as __ykDynCast walks them. (A class in an
+   * anonymous namespace, its unit's alone.)
+   */
+  const typeinfoOf = (record: string): string => {
+    const full = fullRecordKey(record).replace(/^(struct|class|union) /, "");
+    const local = full.includes("(anonymous namespace)");
+    const parts = full.replace(/\(anonymous namespace\)/g, "_GLOBAL__N_1").split("::");
+    const name =
+      parts.length === 1
+        ? `${(parts[0] as string).length}${parts[0]}`
+        : `N${parts.map((p) => `${p.length}${p}`).join("")}E`;
+    const key = `typeinfo:${name}${local ? `:${unit}` : ""}`;
+    if (statics.has(key)) return key;
+    const init: StaticItem[] = [
+      { offset: 8, data: { kind: "u8", values: [...Buffer.from(name, "latin1"), 0] } },
+    ];
+    statics.set(key, { size: 24, align: 8, init });
+    const bases = [...(layout(record)?.bases ?? [])];
+    init.push({ offset: 16, kind: "u64", value: BigInt(bases.length) });
+    bases.forEach(([b, o], i) => {
+      init.push({ offset: 24 + 16 * i, static: typeinfoOf(b), addend: 0 });
+      init.push({ offset: 32 + 16 * i, kind: "u64", value: BigInt(o) });
+    });
+    statics.set(key, { size: 24 + 16 * bases.length, align: 8, init });
+    return key;
+  };
   /** A function's symbol (its mangled name), through its redeclarations, by its id. */
   const symbolOfId = (fnId: string): string | undefined => {
     if (indexed === undefined) return undefined;
@@ -5957,8 +6034,11 @@ export function shaveCUnit(
                   .join("\n")}\n}`,
               );
             const init: StaticItem[] = [];
+            // (Itanium's: offset-to-top and the RTTI before the address point, the class's
+            // type_info, see typeinfoOf; the entries after it.)
+            init.push({ offset: 8, static: typeinfoOf(record), addend: 0 });
             entries.forEach((text, i) => {
-              const offset = 8 * i;
+              const offset = 16 + 8 * i;
               if (text.endsWith("[pure]")) return;
               if (text.endsWith("[complete]")) init.push({ offset, fn: complete() });
               else if (text.endsWith("[deleting]"))
@@ -6005,9 +6085,10 @@ export function shaveCUnit(
                 init.push({ offset, fn: fnKey });
               }
             });
-            statics.set(key, { size: Math.max(8, 8 * entries.length), align: 8, init });
+            statics.set(key, { size: 16 + 8 * entries.length, align: 8, init });
             return key;
           },
+          typeinfoOf: (record) => typeinfoOf(record),
         };
   // The unit's vtables, as clang lays them out (its code generation dumps them): each class's
   // entries from its address point, and the slot of each virtual function it declares.
@@ -8478,6 +8559,29 @@ export function createCMemory() {
     },
     /** A static variable's address: allocated and initialized when first used. */
     __ykStatic: staticAt,
+    /**
+     * C++'s dynamic_cast: the object at `p` (a polymorphic one) as the class whose type_info is at
+     * `ti`, its complete object's (its vtable's offset-to-top and RTTI) bases searched depth
+     * first; 0 if it is not one. With `ti` 0, the complete object.
+     */
+    __ykDynCast: (p: number, ti: number): number => {
+      if (p === 0) return 0;
+      const ld = (a: number): number => Number(BigInt.asIntN(64, leaves.__ykLoad64(a)));
+      const vptr = ld(p);
+      const obj = p + ld(vptr - 16);
+      if (ti === 0) return obj;
+      const search = (t: number, at: number, depth: number): number => {
+        if (t === ti) return at;
+        if (depth > 64) return 0;
+        const n = ld(t + 16);
+        for (let i = 0; i < n; i++) {
+          const r = search(ld(t + 24 + 16 * i), at + ld(t + 32 + 16 * i), depth + 1);
+          if (r !== 0) return r;
+        }
+        return 0;
+      };
+      return search(ld(vptr - 8), obj, 0);
+    },
     __ykFree: (a: number): void => {
       if (a === 0) return;
       const r = regionOf(a, 1, false);
