@@ -76,7 +76,12 @@ export function shaveCFiles(
       byFile.set(file, [...(byFile.get(file) ?? []), name]);
     }
     const staticsByFile = new Map<string, string[]>();
+    if (process.env.YAKCC_PROGRESS !== undefined)
+      console.error(
+        `c-files: wave of ${byFile.size} files, ${[...byFile.values()].flat().length} names; ${atoms.size} atoms so far`,
+      );
     for (const [file, names] of byFile) {
+      const t = Date.now();
       let unit: ShavedUnit;
       try {
         unit = shaveCUnit(file, names, args, "clang", basename(file));
@@ -86,6 +91,8 @@ export function shaveCFiles(
         continue;
       }
       take(unit, file);
+      if (process.env.YAKCC_PROGRESS !== undefined && Date.now() - t > 10_000)
+        console.error(`c-files: ${basename(file)} took ${Date.now() - t} ms`);
       // Statics this unit uses that another file defines (zlib's tables): their definitions.
       for (const key of unit.staticRefs) {
         if (key.includes(":") || definedStatics.has(key)) continue;
