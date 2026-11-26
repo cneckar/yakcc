@@ -149,6 +149,7 @@ const GLOBALS = new Set([
   "Symbol",
   "globalThis",
   "Reflect",
+  "Proxy",
   "Function",
   "encodeURIComponent",
   "encodeURI",

@@ -786,6 +786,18 @@ static yk_array *iterable_items(yk v);
 static yk method_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
 static yk object_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
 static yk builtin_iter_new(yk src, int mode, int type);
+/* Proxies (below): their internal methods. */
+static int is_proxy(yk v);
+static int is_obj_proxy(yk v);
+static yk proxy_get(yk proxy, yk key, yk receiver);
+static void proxy_set(yk proxy, yk key, yk value, yk receiver);
+static yk proxy_has(yk proxy, yk key);
+static yk proxy_delete(yk proxy, yk key);
+static yk_array *proxy_own_keys(yk proxy);
+static yk proxy_own_descriptor(yk proxy, yk key);
+static yk proxy_prototype(yk proxy);
+static yk builtin_proxy(void *c, yk s, uint64_t argc, const yk *argv);
+static yk proxy_revocable(void *c, yk s, uint64_t argc, const yk *argv);
 static int is_builtin_iter(yk v);
 static int builtin_iter_step(yk v, yk *out);
 static yk iter_result(yk value, int done);
@@ -1590,6 +1602,7 @@ yk yk_get_ic(yk obj, yk key, uint32_t *site) {
   return yk_get(obj, key);
 }
 static __attribute__((noinline)) yk yk_get_slow(yk obj, yk key) {
+  if (is_proxy(obj)) return proxy_get(obj, to_property_key(key), obj);
   /* An element by an integer index: an array's (not a hole), a typed array's, in range. */
   if (is_number(key)) {
     double d = num(key);
@@ -2368,6 +2381,7 @@ static yk_object *own_props(yk v) {
 
 /* A property along the prototype chain: its slot (perhaps an accessor). */
 static int chain_get(yk obj, yk key, yk *out) {
+  if (is_proxy(obj)) return *out = proxy_get(obj, key, obj), 1;
   if (is_closure(obj)) {
     yk_closure *c = (yk_closure *)PTR(obj);
     /* A function's prototype exists from its first use, as `F.prototype.m = …` needs. */
@@ -2379,8 +2393,10 @@ static int chain_get(yk obj, yk key, yk *out) {
     /* A derived class inherits its parent's statics. */
     return c->parent != 0 && is_closure(c->parent) && chain_get(c->parent, key, out);
   }
-  for (yk v = obj; v != 0 && is_object(v); v = ((yk_object *)PTR(v))->proto)
+  for (yk v = obj; v != 0 && is_object(v); v = ((yk_object *)PTR(v))->proto) {
+    if (is_obj_proxy(v)) return *out = proxy_get(v, key, obj), 1; /* a proxy along the chain */
     if (own_get((yk_object *)PTR(v), key, out)) return 1;
+  }
   return 0;
 }
 
@@ -2753,6 +2769,7 @@ yk yk_closure_inherit(yk child, void *parent) {
 /* delete obj[key]: an own property removed; an array element becomes undefined. */
 yk yk_delete(yk obj, yk key) {
   if (is_nullish(obj)) type_error("Cannot convert undefined or null to object");
+  if (is_proxy(obj)) return proxy_delete(obj, to_property_key(key));
   if (is_object(obj) || is_closure(obj)) {
     if (is_closure(obj) && ((yk_closure *)PTR(obj))->props == 0) return YK_TRUE;
     yk_object *o = own_props(obj);
@@ -2879,6 +2896,10 @@ static int protected_call(yk f, uint64_t argc, const yk *argv, yk *result) {
 
 /* obj[key] = value. The graph's write yields the object, as written. */
 yk yk_set(yk obj, yk key, yk value) {
+  if (is_proxy(obj)) {
+    proxy_set(obj, to_property_key(key), value, obj);
+    return obj;
+  }
   if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 7 && buffer_set(obj, key, value)) return obj;
   if (is_object(obj) && is_string(key)) {
     /* An own data property of a plain object: written at once (a setter is the chain's only when
@@ -3213,12 +3234,14 @@ static yk intrinsic_proto(int which) {
     yk key = ascii(*g);
     define_accessor(o, key, yk_closure_new(getter_thunk_code, 1, 1, &key), 0);
   }
-  /* Error.prototype and each NativeError's: its name and an empty message, not enumerable. */
+  /* Error.prototype and each NativeError's: its name and an empty message, not enumerable; its
+     constructor the global's (made now: an error the runtime throws has it, read or not). */
   if (which >= I_ERROR && which <= I_AGGREGATE_ERROR) {
     own_set(o, ascii("name"), ascii(intrinsic_table[which].name));
     own_set(o, ascii("message"), ascii(""));
     set_hidden(o, ascii("name"), 1);
     set_hidden(o, ascii("message"), 1);
+    yk_global(intrinsic_table[which].name, strlen(intrinsic_table[which].name));
   }
   /* The iterator method each iterable type has. */
   if (which == I_ARRAY || which == I_SET) own_set(o, symbol_iterator(), yk_get(p, ascii("values")));
@@ -3397,6 +3420,7 @@ static yk with_methods(yk_code code, int n, const char *const *names, const yk_c
 static yk arg_or_undefined(uint64_t argc, const yk *argv, uint64_t i) { return i < argc ? argv[i] : YK_UNDEFINED; }
 /* [[GetPrototypeOf]]: an object's prototype (its intrinsic one when it has none of its own). */
 static yk prototype_of(yk v) {
+  if (is_proxy(v)) return proxy_prototype(v);
   if (is_object(v)) {
     yk p = ((yk_object *)PTR(v))->proto;
     if (is_object(p)) return p;
@@ -3427,6 +3451,7 @@ static yk reflect_set_prototype_of(void *c, yk s, uint64_t argc, const yk *argv)
 }
 /* OwnPropertyKeys: its own string keys (integer indexes first), then its symbols. */
 static yk_array *own_keys_of(yk v) {
+  if (is_proxy(v)) return proxy_own_keys(v);
   yk_array *r = new_array(4);
   if (is_array(v)) {
     for (uint32_t i = 0; i < arr(v)->len; i++)
@@ -3509,7 +3534,9 @@ static yk descriptor_of(yk v, yk key) {
 }
 static yk reflect_get_own_property_descriptor(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
-  return descriptor_of(arg_or_undefined(argc, argv, 0), arg_or_undefined(argc, argv, 1));
+  yk v = arg_or_undefined(argc, argv, 0);
+  if (is_proxy(v)) return proxy_own_descriptor(v, to_property_key(arg_or_undefined(argc, argv, 1)));
+  return descriptor_of(v, arg_or_undefined(argc, argv, 1));
 }
 static yk object_get_own_property_descriptors(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
@@ -3547,9 +3574,23 @@ static void define_from(yk v, yk key, yk desc) {
   } else if (!has_own(v, key) && (is_object(v) || is_closure(v)))
     own_set(own_props(v), key, YK_UNDEFINED);
 }
+static yk proxy_trap(yk proxy, const char *name);
+static yk proxy_target(yk proxy);
+static yk proxy_handler(yk proxy);
 static yk object_define_property(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
   yk v = arg_or_undefined(argc, argv, 0);
+  if (is_proxy(v)) {
+    /* [[DefineOwnProperty]] of a proxy: its defineProperty trap, else the target's. */
+    yk t = proxy_trap(v, "defineProperty");
+    yk key = to_property_key(arg_or_undefined(argc, argv, 1)), desc = arg_or_undefined(argc, argv, 2);
+    if (t == 0) define_from(proxy_target(v), key, desc);
+    else {
+      yk args[3] = {proxy_target(v), key, desc};
+      if (!yk_truthy(call_value(t, proxy_handler(v), 3, args))) type_error("'defineProperty' on proxy: trap returned falsish");
+    }
+    return v;
+  }
   if (!is_object(v) && !is_closure(v) && !is_array(v)) type_error("Object.defineProperty called on non-object");
   define_from(v, arg_or_undefined(argc, argv, 1), arg_or_undefined(argc, argv, 2));
   return v;
@@ -3688,7 +3729,7 @@ static yk global_this(void) {
                                       "ReferenceError", "URIError", "AggregateError", "WeakMap", "WeakSet",
                                       "WeakRef", "FinalizationRegistry", "Date", "RegExp", "encodeURIComponent",
                                       "encodeURI", "decodeURIComponent", "decodeURI", "escape", "unescape",
-                                      "eval", NULL};
+                                      "eval", "Proxy", NULL};
   for (int i = 0; names[i] != NULL; i++) {
     yk v = yk_global(names[i], strlen(names[i]));
     if (v != YK_UNDEFINED) own_set((yk_object *)PTR(g), ascii(names[i]), v);
@@ -5258,7 +5299,9 @@ static int json_object(json_state *st, yk_array *parts, yk v, yk key, yk holder,
   push(st->stack, v);
   push(st->keys, key);
   yk_string *inner = str(concat(indent, st->gap));
-  int list = is_array(v);
+  yk seen = v;
+  while (is_proxy(seen)) seen = proxy_target(seen); /* IsArray sees through a proxy */
+  int list = is_array(seen);
   yk_array *members = new_array(8);
   if (list) {
     double len = to_number(yk_get(v, ascii("length")));
@@ -5378,11 +5421,31 @@ static yk builtin_array_from(void *c, yk self, uint64_t argc, const yk *argv) {
 }
 static yk builtin_array_is_array(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
-  return yk_bool(argc > 0 && is_array(argv[0]));
+  yk v = argc > 0 ? argv[0] : YK_UNDEFINED;
+  while (is_proxy(v)) v = proxy_target(v); /* IsArray sees through a proxy */
+  return yk_bool(is_array(v));
 }
 
 static yk object_parts(yk v, int which) {
   yk_array *r = new_array(4);
+  if (is_proxy(v)) {
+    /* EnumerableOwnProperties of a proxy: its ownKeys' strings whose descriptors say enumerable. */
+    yk_array *keys = proxy_own_keys(v);
+    for (uint32_t i = 0; i < keys->len; i++) {
+      yk k = keys->items[i];
+      if (!is_string(k)) continue;
+      yk d = proxy_own_descriptor(v, k);
+      if (!is_reference(d) || !yk_truthy(yk_get(d, ascii("enumerable")))) continue;
+      if (which == 0) {
+        push(r, k);
+        continue;
+      }
+      yk value = proxy_get(v, k, v);
+      yk pair[2] = {k, value};
+      push(r, which == 1 ? value : yk_array_of(2, pair));
+    }
+    return BOX(T_ARRAY, r);
+  }
   /* An object's own enumerable keys: a plain one's, or a Map's, Set's or Date's set on it (not a
      buffer's or typed array's, whose elements are keys of their own). */
   /* A function's own enumerable properties are its props object's (its name and length are not
@@ -9344,7 +9407,7 @@ static yk leaf_value(const char *name, uint64_t n) {
   return 0;
 }
 
-#define N_GLOBALS 41
+#define N_GLOBALS 42
 static yk global_raw(const char *name, uint64_t n);
 static yk global_this(void);
 static yk reflect_global(void);
@@ -9724,7 +9787,7 @@ static yk global_raw(const char *name, uint64_t n) {
                                          "decodeURIComponent", "decodeURI", "escape", "unescape", "eval",
                                          "EvalError", "ReferenceError", "URIError", "AggregateError",
                                          "WeakMap", "WeakSet", "WeakRef", "FinalizationRegistry", "Date",
-                                         "RegExp"};
+                                         "RegExp", "Proxy"};
   static yk_code codes[N_GLOBALS] = {builtin_string, builtin_number, builtin_boolean,
                                      builtin_parse_float, builtin_parse_int, builtin_is_nan,
                                      builtin_is_finite, builtin_array, NULL, builtin_try,
@@ -9737,7 +9800,8 @@ static yk global_raw(const char *name, uint64_t n) {
                                      builtin_unescape, builtin_eval, builtin_eval_error,
                                      builtin_reference_error, builtin_uri_error, builtin_aggregate_error,
                                      builtin_weak_map, builtin_weak_set, builtin_weak_ref,
-                                     builtin_finalization_registry, builtin_date, builtin_regexp};
+                                     builtin_finalization_registry, builtin_date, builtin_regexp,
+                                     builtin_proxy};
   for (int i = 0; i < N_GLOBALS; i++)
     if (strlen(names[i]) == n && memcmp(names[i], name, n) == 0) {
       if (fns[i] != 0) return fns[i];
@@ -9758,6 +9822,11 @@ static yk global_raw(const char *name, uint64_t n) {
       if (codes[i] == try_gen_code) return fns[i] = yk_closure_mode(yk_closure_new(try_gen_code, 0, 0, NULL), 2);
       if (codes[i] == try_async_gen_code)
         return fns[i] = yk_closure_mode(yk_closure_new(try_async_gen_code, 0, 0, NULL), 3);
+      if (codes[i] == builtin_proxy) {
+        static const char *const m[1] = {"revocable"};
+        static const yk_code k[1] = {proxy_revocable};
+        return fns[i] = with_methods(builtin_proxy, 1, m, k);
+      }
       if (codes[i] == builtin_map) {
         static const char *const m[1] = {"groupBy"};
         static const yk_code k[1] = {map_group_by};
@@ -9809,9 +9878,157 @@ static yk global_raw(const char *name, uint64_t n) {
 }
 
 /* new F(…): the constructors the runtime has (Array). */
+/* --- Proxy (ECMA-262 10.5, 28.2) ---
+   A proxy of an object is an object of kind 14 over its target and handler; of a function, a closure
+   whose code is proxy_fn_code, its one capture that object. Each internal method a property
+   operation reaches asks the handler's trap, else does it on the target. Revoking one clears its
+   handler. */
+typedef struct {
+  yk target;
+  yk handler; /* YK_NULL once revoked */
+} proxy_data;
+static yk proxy_fn_code(void *c, yk self, uint64_t argc, const yk *argv);
+static int is_obj_proxy(yk v) { return is_object(v) && ((yk_object *)PTR(v))->kind == 14; }
+static int is_fn_proxy(yk v) { return is_closure(v) && ((yk_closure *)PTR(v))->code == proxy_fn_code; }
+static int is_proxy(yk v) { return is_obj_proxy(v) || is_fn_proxy(v); }
+static proxy_data *proxy_of(yk v) {
+  if (is_fn_proxy(v)) v = ((yk_closure *)PTR(v))->captures[0];
+  return (proxy_data *)((yk_object *)PTR(v))->ext;
+}
+/* The handler's trap of the name, or 0 when it has none (a revoked proxy's TypeError). */
+static yk proxy_trap(yk proxy, const char *name) {
+  proxy_data *p = proxy_of(proxy);
+  if (p->handler == YK_NULL) {
+    char msg[96];
+    snprintf(msg, sizeof msg, "Cannot perform '%s' on a proxy that has been revoked", name);
+    type_error(msg);
+  }
+  yk t = yk_get(p->handler, ascii(name));
+  if (is_nullish(t)) return 0;
+  if (!is_closure(t)) type_error("a proxy's trap is not a function");
+  return t;
+}
+static yk proxy_target(yk proxy) { return proxy_of(proxy)->target; }
+static yk proxy_handler(yk proxy) { return proxy_of(proxy)->handler; }
+static yk proxy_get(yk proxy, yk key, yk receiver) {
+  yk t = proxy_trap(proxy, "get");
+  proxy_data *p = proxy_of(proxy);
+  if (t == 0) return yk_get(p->target, key);
+  yk args[3] = {p->target, key, receiver};
+  return call_value(t, p->handler, 3, args);
+}
+static void proxy_set(yk proxy, yk key, yk value, yk receiver) {
+  yk t = proxy_trap(proxy, "set");
+  proxy_data *p = proxy_of(proxy);
+  if (t == 0) {
+    yk_set(p->target, key, value);
+    return;
+  }
+  yk args[4] = {p->target, key, value, receiver};
+  if (!yk_truthy(call_value(t, p->handler, 4, args))) {
+    yk m = concat(str(concat(str(ascii("'set' on proxy: trap returned falsish for property '")), str(to_string(is_symbol(key) ? symbol_descriptive(key) : key)))), str(ascii("'")));
+    yk_throw(make_error("TypeError", m));
+  }
+}
+yk yk_in(yk key, yk obj);
+yk yk_delete(yk obj, yk key);
+static yk proxy_has(yk proxy, yk key) {
+  yk t = proxy_trap(proxy, "has");
+  proxy_data *p = proxy_of(proxy);
+  if (t == 0) return yk_in(key, p->target);
+  yk args[2] = {p->target, key};
+  return yk_bool(yk_truthy(call_value(t, p->handler, 2, args)));
+}
+static yk proxy_delete(yk proxy, yk key) {
+  yk t = proxy_trap(proxy, "deleteProperty");
+  proxy_data *p = proxy_of(proxy);
+  if (t == 0) return yk_delete(p->target, key);
+  yk args[2] = {p->target, key};
+  return yk_bool(yk_truthy(call_value(t, p->handler, 2, args)));
+}
+static yk_array *own_keys_of(yk v);
+static yk_array *proxy_own_keys(yk proxy) {
+  yk t = proxy_trap(proxy, "ownKeys");
+  proxy_data *p = proxy_of(proxy);
+  if (t == 0) return own_keys_of(p->target);
+  yk got = call_value(t, p->handler, 1, &p->target);
+  yk_array *items = iterable_items(got), *out = new_array(items->len);
+  for (uint32_t i = 0; i < items->len; i++) {
+    yk k = items->items[i];
+    if (!is_string(k) && !is_symbol(k)) type_error("a proxy's ownKeys trap gave a value that is not a property key");
+    push(out, k);
+  }
+  return out;
+}
+static yk reflect_get_own_property_descriptor(void *c, yk s, uint64_t argc, const yk *argv);
+static yk proxy_own_descriptor(yk proxy, yk key) {
+  yk t = proxy_trap(proxy, "getOwnPropertyDescriptor");
+  proxy_data *p = proxy_of(proxy);
+  yk args[2] = {p->target, key};
+  if (t == 0) return reflect_get_own_property_descriptor(NULL, YK_UNDEFINED, 2, args);
+  return call_value(t, p->handler, 2, args);
+}
+static yk prototype_of(yk v);
+static yk proxy_prototype(yk proxy) {
+  yk t = proxy_trap(proxy, "getPrototypeOf");
+  proxy_data *p = proxy_of(proxy);
+  if (t == 0) return prototype_of(p->target);
+  return call_value(t, p->handler, 1, &p->target);
+}
+static yk proxy_fn_code(void *c, yk self, uint64_t argc, const yk *argv) {
+  yk proxy = BOX(T_CLOSURE, c);
+  yk t = proxy_trap(proxy, "apply");
+  proxy_data *p = proxy_of(proxy);
+  if (t == 0) return call_value(p->target, self, argc, argv);
+  yk args[3] = {p->target, self, yk_array_of(argc, argv)};
+  return call_value(t, p->handler, 3, args);
+}
+static yk proxy_construct(yk proxy, uint64_t argc, const yk *argv) {
+  yk t = proxy_trap(proxy, "construct");
+  proxy_data *p = proxy_of(proxy);
+  if (t == 0) return yk_new(p->target, argc, argv);
+  yk args[3] = {p->target, yk_array_of(argc, argv), proxy};
+  yk r = call_value(t, p->handler, 3, args);
+  if (!is_reference(r)) type_error("proxy [[Construct]] must return an object");
+  return r;
+}
+static yk proxy_new(yk target, yk handler) {
+  if (!is_reference(target) || !is_reference(handler))
+    type_error("Cannot create proxy with a non-object as target or handler");
+  yk o = yk_object_of(0, NULL, NULL);
+  yk_object *po = (yk_object *)PTR(o);
+  po->kind = 14;
+  proxy_data *d = alloc(sizeof(proxy_data));
+  d->target = target;
+  d->handler = handler;
+  po->ext = d;
+  if (!is_closure(target)) return o;
+  yk f = yk_closure_new(proxy_fn_code, 1, 1, &o);
+  return f;
+}
+static yk builtin_proxy(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s, (void)argc, (void)argv;
+  type_error("Constructor Proxy requires 'new'");
+  return YK_UNDEFINED;
+}
+static yk proxy_revoke(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)s, (void)argc, (void)argv;
+  yk proxy = ((yk_closure *)c)->captures[0];
+  if (proxy != YK_NULL) proxy_of(proxy)->handler = YK_NULL;
+  return YK_UNDEFINED;
+}
+static yk proxy_revocable(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk proxy = proxy_new(arg_or_undefined(argc, argv, 0), arg_or_undefined(argc, argv, 1));
+  yk keys[2] = {ascii("proxy"), ascii("revoke")};
+  yk vals[2] = {proxy, yk_closure_new(proxy_revoke, 0, 1, &proxy)};
+  return yk_object_of(2, keys, vals);
+}
 yk yk_new(yk f, uint64_t argc, const yk *argv) {
   if (is_closure(f)) {
     yk_code code = ((yk_closure *)PTR(f))->code;
+    if (code == builtin_proxy) return proxy_new(arg_or_undefined(argc, argv, 0), arg_or_undefined(argc, argv, 1));
+    if (code == proxy_fn_code) return proxy_construct(f, argc, argv);
     if (code == builtin_promise) return promise_construct(argc, argv);
     if (((yk_closure *)PTR(f))->mode != 0) type_error("this function is not a constructor");
     if (is_buffer_code(code)) return code(NULL, YK_UNDEFINED, argc, argv);
@@ -9858,7 +10075,15 @@ yk yk_instanceof(yk v, yk f) {
   }
   if (!is_closure(f)) type_error("Right-hand side of 'instanceof' is not callable");
   yk_code code = ((yk_closure *)PTR(f))->code;
-  if (code == builtin_array) return yk_bool(is_array(v));
+  if (code == builtin_array) {
+    if (is_array(v)) return YK_TRUE;
+    /* Array.prototype along another value's chain (a proxy's getPrototypeOf, Object.create). */
+    if (!is_object(v) && !is_closure(v)) return YK_FALSE;
+    yk ap = intrinsic_proto(I_ARRAY);
+    for (yk o = prototype_of(v); is_object(o); o = prototype_of(o))
+      if (o == ap) return YK_TRUE;
+    return YK_FALSE;
+  }
   if (code == builtin_object) {
     /* Object.prototype along the value's chain: any object but one made with a null prototype. */
     if (!is_object(v) && !is_closure(v) && !is_array(v)) return YK_FALSE;
@@ -9963,6 +10188,7 @@ yk yk_object_rest(yk src, uint64_t n, const yk *taken) {
 
 /* key in obj: an object's own property, an array's index or length. */
 yk yk_in(yk key, yk obj) {
+  if (is_proxy(obj)) return proxy_has(obj, to_property_key(key));
   if (is_object(obj)) {
     /* Its own properties, then its prototype's (HasProperty follows the chain). */
     yk v, k = to_property_key(key);
