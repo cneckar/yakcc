@@ -112,3 +112,12 @@ module statements 1,444, closures 572, `for…of` 122, `await` 99.
 | a number converted to a string | 3 |
 
 Next: records (object fields), closures as callbacks (`map`, `filter`), `null`.
+
+## With records (encoder `verify-l2/6`)
+
+Records do not change these numbers:
+- no registry spec declares an object type L2 reads;
+- the sample's remaining `.kind` reads are of untyped (`any`) AST nodes.
+
+The sample's functions with argument types L2 reads go from 37 to 39 (record kinds); 5 are inside
+the fragment. Callbacks are not encoded (see the package README for why).

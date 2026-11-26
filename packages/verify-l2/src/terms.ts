@@ -66,6 +66,16 @@ export interface Term {
   readonly defined?: string;
 }
 
+/**
+ * A record: its fields by name, each a term or a record. It is a value with no identity here:
+ * fields are read and records are built, compared field by field never (`===` is refused), and
+ * never written (a write is an effect, refused).
+ */
+export interface Rec {
+  readonly sort: "Rec";
+  readonly fields: ReadonlyMap<string, Term | Rec>;
+}
+
 /** The value of a possibly-undefined term when it is defined. */
 export function base(t: Term): Term {
   const { defined: _defined, ...rest } = t;
