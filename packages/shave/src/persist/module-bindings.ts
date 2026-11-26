@@ -513,7 +513,118 @@ export function moduleBindingsOf(moduleSource: string): Map<string, ModuleBindin
   for (const [name, f] of fns) {
     bindings.set(name, { binding: pure.has(name) ? "pure" : "mutable", declHash: f.declHash });
   }
+  // A name the module writes on the global object is the module's state too (#1368): the
+  // portable runtime of a bundle writes `G.i32 = ..` for each name it then reads bare, through
+  // `var G = typeof window < "u" && window || typeof global < "u" && global || self`. Read where
+  // it is, a name only some write sets is mutable, as a module variable a write sets is.
+  for (const [name, declHash] of globalWrites(sf, bindings)) {
+    if (!bindings.has(name)) bindings.set(name, { binding: "mutable", declHash });
+  }
   return bindings;
+}
+
+/** The names of the global object. */
+const GLOBAL_OBJECTS = new Set(["globalThis", "global", "window", "self"]);
+
+/**
+ * The names a module writes on the global object (`globalThis.x = ..`, or through a module
+ * variable whose value is only ever the global object), each with the hash of its first write.
+ * A global object's name the module binds itself is not the global object.
+ */
+function globalWrites(
+  sf: SourceFile,
+  bindings: ReadonlyMap<string, ModuleBindingInfo>,
+): Map<string, string> {
+  const named = (n: Node): boolean =>
+    Node.isIdentifier(n) && GLOBAL_OBJECTS.has(n.getText()) && !bindings.has(n.getText());
+  // An expression whose value is a global object, whichever way its tests go: the global names,
+  // joined by && || ?: , with typeof tests of them in the conditions.
+  const globalNames: Node[] = [];
+  const isGlobalObject = (e: Node | undefined): boolean => {
+    if (e === undefined) return false;
+    if (Node.isParenthesizedExpression(e)) return isGlobalObject(e.getExpression());
+    if (named(e)) {
+      globalNames.push(e);
+      return true;
+    }
+    if (Node.isConditionalExpression(e))
+      return (
+        isTest(e.getCondition()) &&
+        isGlobalObject(e.getWhenTrue()) &&
+        isGlobalObject(e.getWhenFalse())
+      );
+    if (Node.isBinaryExpression(e)) {
+      const op = e.getOperatorToken().getKind();
+      if (op === SyntaxKind.BarBarToken)
+        return (isTest(e.getLeft()) || isGlobalObject(e.getLeft())) && isGlobalObject(e.getRight());
+      if (op === SyntaxKind.AmpersandAmpersandToken)
+        return isTest(e.getLeft()) && isGlobalObject(e.getRight());
+    }
+    return false;
+  };
+  // `typeof window < "u"`, `typeof global !== "undefined"`: a test with no effect.
+  const isTest = (e: Node): boolean => {
+    if (Node.isParenthesizedExpression(e)) return isTest(e.getExpression());
+    if (!Node.isBinaryExpression(e)) return false;
+    const [l, r] = [e.getLeft(), e.getRight()];
+    const of = (t: Node, other: Node): boolean =>
+      Node.isTypeOfExpression(t) && named(t.getExpression()) && Node.isStringLiteral(other);
+    if (!(of(l, r) || of(r, l))) return false;
+    globalNames.push(Node.isTypeOfExpression(l) ? l.getExpression() : (r as Node));
+    return true;
+  };
+
+  const aliases = new Map<string, Node>();
+  for (const stmt of sf.getVariableStatements())
+    for (const decl of stmt.getDeclarations()) {
+      const nameNode = decl.getNameNode();
+      if (Node.isIdentifier(nameNode) && isGlobalObject(decl.getInitializer()))
+        aliases.set(nameNode.getText(), decl);
+    }
+  const candidates: { bin: Node; object: Node; name: string }[] = [];
+  for (const bin of sf.getDescendantsOfKind(SyntaxKind.BinaryExpression)) {
+    if (bin.getOperatorToken().getKind() !== SyntaxKind.EqualsToken) continue;
+    const left = bin.getLeft();
+    if (!Node.isPropertyAccessExpression(left)) continue;
+    const object = left.getExpression();
+    if (named(object) || (Node.isIdentifier(object) && aliases.has(object.getText())))
+      candidates.push({ bin, object, name: left.getName() });
+  }
+  if (candidates.length === 0) return new Map();
+
+  // Each name is the one it looks like only where no scope of the module binds it again: minified
+  // code names a parameter `Z` as readily as its global alias. The checker tells, once there is a
+  // write to ask about.
+  const declaredHere = (id: Node): boolean =>
+    id
+      .getSymbol()
+      ?.getDeclarations()
+      .some((d) => d.getSourceFile() === sf) ?? false;
+  const isAlias = (id: Node): boolean => {
+    const decl = aliases.get(id.getText());
+    return (
+      decl !== undefined &&
+      (id.getSymbol()?.getDeclarations() ?? []).every((d) => d.compilerNode === decl.compilerNode)
+    );
+  };
+  if (globalNames.some(declaredHere)) return new Map();
+  // An alias is the global object only while nothing rebinds it.
+  for (const bin of sf.getDescendantsOfKind(SyntaxKind.BinaryExpression)) {
+    const left = bin.getLeft();
+    if (
+      ASSIGN_OPS.has(bin.getOperatorToken().getKind()) &&
+      Node.isIdentifier(left) &&
+      aliases.has(left.getText()) &&
+      isAlias(left)
+    )
+      aliases.delete(left.getText());
+  }
+  const writes = new Map<string, string>();
+  for (const { bin, object, name } of candidates) {
+    const global = named(object) ? !declaredHere(object) : isAlias(object);
+    if (global && !writes.has(name)) writes.set(name, sha(bin.getText()));
+  }
+  return writes;
 }
 
 /**
