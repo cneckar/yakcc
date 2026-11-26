@@ -21,7 +21,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
-import { Node, Project, type SourceFile, type Statement } from "ts-morph";
+import { Node, Project, type SourceFile, type Statement, SyntaxKind } from "ts-morph";
 import type {
   NativeEsm,
   NativeImport,
@@ -92,11 +92,18 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
     // A placeholder first: a cycle sees the module as known.
     modules.set(id, { id, statements: [] });
     const text = readFileSync(file, "utf8");
-    if (/\bimport\s*\(/.test(text) && /(^|[^.\w])import\s*\(/m.test(text))
-      throw new ProgramError(`a dynamic import() is not in the native subset yet (${id})`);
-    if (/\bimport\.meta\b/.test(text))
-      throw new ProgramError(`import.meta is not in the native subset yet (${id})`);
     const sf = project.createSourceFile(`/m/${modules.size}.ts`, text, { overwrite: true });
+    // import() and import.meta, as syntax (a string or comment that mentions them is neither).
+    if (/\bimport\s*[(.]/.test(text))
+      sf.forEachDescendant((n) => {
+        if (
+          n.getKind() === SyntaxKind.CallExpression &&
+          n.getFirstChild()?.getKind() === SyntaxKind.ImportKeyword
+        )
+          throw new ProgramError(`a dynamic import() is not in the native subset yet (${id})`);
+        if (n.getKind() === SyntaxKind.MetaProperty && n.getText().startsWith("import"))
+          throw new ProgramError(`import.meta is not in the native subset yet (${id})`);
+      });
     const parsed = moduleOf(sf, file, id, (spec) => idOf(resolveSpecifier(spec, file)));
     modules.set(id, parsed.module);
     for (const spec of parsed.specifiers) visit(resolveSpecifier(spec, file));
