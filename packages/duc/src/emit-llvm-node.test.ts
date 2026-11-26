@@ -160,3 +160,63 @@ describe.skipIf(!canRun("x86_64-linux"))("a user program over Node's library (#1
     expect(r.status).toBe(0);
   }, 1_200_000);
 });
+
+const TICK_PROGRAM = `const out = [];
+const log = (...a) => out.push(a.join(" "));
+process.nextTick(() => log("tick 1"));
+Promise.resolve().then(() => {
+  log("promise 1");
+  process.nextTick(() => log("tick from a promise job"));
+});
+queueMicrotask(() => log("microtask 1"));
+process.nextTick((a, b) => {
+  log("tick 2", a, b);
+  Promise.resolve().then(() => log("promise from a tick"));
+  process.nextTick(() => log("tick from a tick"));
+}, "x", 7);
+log("sync");
+const ah = require("async_hooks");
+log("ids", ah.executionAsyncId(), ah.triggerAsyncId());
+const res = new ah.AsyncResource("THING");
+res.runInAsyncScope(() => log("in scope", ah.executionAsyncId() === res.asyncId(), ah.triggerAsyncId() === res.triggerAsyncId()));
+log("after scope", ah.executionAsyncId());
+const sys = require("sys");
+log("sys", typeof sys.format);
+process.on("exit", () => console.log(out.join("|")));
+`;
+
+describe.skipIf(!canRun("x86_64-linux"))(
+  "process.nextTick and async hooks, natively (#1361 P2)",
+  () => {
+    it("ticks run before promise jobs, again after them; async ids and scopes as Node's", () => {
+      const record = nodeBootProgram(
+        lib,
+        { id: "main", source: TICK_PROGRAM },
+        {
+          bindings,
+          include: [
+            "internal/util/comparisons",
+            "internal/v8/startup_snapshot",
+            "async_hooks",
+            "sys",
+          ],
+          ...(process.env.YAKCC_LIFT_CACHE !== undefined
+            ? { liftCache: process.env.YAKCC_LIFT_CACHE }
+            : {}),
+        },
+      );
+      const exe = join(work, "ticks");
+      buildRecord(record, exe);
+      const r = spawnSync(exe, [], { encoding: "utf8" });
+      const want = spawnSync(process.execPath, ["-e", TICK_PROGRAM], { encoding: "utf8" });
+      // A warning names the process's id and the program it was run as (node, or this executable).
+      const same = (t: string): string =>
+        t
+          .replace(/\(node:\d+\)/g, "(node:PID)")
+          .replace(/`(node|ticks) --trace/g, "`PROGRAM --trace");
+      expect(same(r.stderr)).toBe(same(want.stderr));
+      expect(r.stdout).toBe(want.stdout);
+      expect(r.status).toBe(0);
+    }, 1_200_000);
+  },
+);

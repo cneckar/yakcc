@@ -98,6 +98,11 @@ function disagreements(
 
 const PROGRAMS: [string, string, number][] = [
   [
+    "deep recursion throws V8's RangeError, which a catch sees, and the program goes on (#1361 P2)",
+    "export function f(a, b) { const down = (n) => down(n + 1); let e1; try { down(0); } catch (e) { e1 = [e instanceof RangeError, e.name, e.message]; } let depth = 0; const count = () => { depth++; count(); }; try { count(); } catch (e) { } return [e1, depth > 1000, String(a) + String(b)]; }",
+    2,
+  ],
+  [
     "large Maps and Sets (their hash index): mixed keys, -0 and NaN, deletes and re-adds, order, clear (#1370)",
     "export function f(a, b) { const m = new Map(); const objs = []; for (let i = 0; i < 300; i++) { const o = { i }; objs.push(o); m.set(i % 3 === 0 ? i : i % 3 === 1 ? 'k' + i : o, i); } m.set(-0, 'zero'); m.set(NaN, 'nan'); m.set(10n, 'big'); m.set(a, 'a'); m.set(b, 'b'); const got = [m.get(0), m.get(+0), m.get(NaN), m.get(0 / 0), m.get(10n), m.get('k4'), m.get(objs[2]), m.get({ i: 2 }), m.get(a), m.get(b), m.size]; for (let i = 0; i < 300; i += 7) m.delete(i % 3 === 0 ? i : i % 3 === 1 ? 'k' + i : objs[i]); const after = [m.size, m.has(7), m.has('k7'), m.has(objs[14]), m.get(3), [...m.keys()].slice(0, 12).map(String)]; m.set(7, 'back'); m.set('k7', 'back'); const order = [...m.entries()].slice(-4).map(([k, v]) => String(k) + '=' + v); const s = new Set(); for (let i = 0; i < 200; i++) s.add(i % 50 === 0 ? 'x' + i : i * 2); for (let i = 0; i < 400; i += 3) s.delete(i); s.add(-0); const sres = [s.size, s.has(0), s.has(4), s.has(6), s.has('x50'), [...s].slice(0, 10).map(String), [...s.union(new Set([1, 2, 3, 4]))].length]; m.clear(); m.set('again', 1); return [got, after, order, sres, m.size, m.get('again'), m.get('k4')]; }",
     2,

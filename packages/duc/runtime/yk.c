@@ -222,6 +222,9 @@ static uint64_t gc_recip[GC_NCLASS];
 static size_t gc_since = 0, gc_threshold = (size_t)32 << 20, gc_floor = (size_t)32 << 20;
 static int gc_state = 0; /* 0 not yet set up, 1 collecting, 2 allocating only, 3 never (no heap) */
 static uintptr_t gc_stack_top = 0;
+/* The lowest frame address a call may make on the main stack (#1361 P2): below it, a call throws
+   V8's RangeError, as deep recursion does in Node (its library probes for that error's message). */
+static uintptr_t yk_stack_low = 0;
 /* While a coroutine runs, where the main stack was left (its frames above are live). */
 static uintptr_t gc_main_sp = 0;
 static int gc_in_coroutine(void);
@@ -264,6 +267,8 @@ static void gc_setup(void) {
   if (gc_state == 2 && yk_nolibc_stack_top != 0) {
     gc_stack_top = yk_nolibc_stack_top;
     gc_state = 1;
+    /* Linux's default main stack, 8 MiB, less a margin to throw in. */
+    yk_stack_low = yk_nolibc_stack_top - ((size_t)8 << 20) + ((size_t)256 << 10);
   }
 #else
   pthread_attr_t at;
@@ -273,6 +278,7 @@ static void gc_setup(void) {
     if (pthread_attr_getstack(&at, &addr, &size) == 0) {
       gc_stack_top = (uintptr_t)addr + size;
       gc_state = 1;
+      yk_stack_low = (uintptr_t)addr + ((size_t)256 << 10);
     }
     pthread_attr_destroy(&at);
   }
@@ -3820,7 +3826,16 @@ static __attribute__((noinline)) yk call_special(yk_closure *c, yk self, uint64_
   if (c->mode == 2) return generator_new(c, self, argc, argv);
   return agen_new(c, self, argc, argv);
 }
+static __attribute__((noinline, noreturn)) void stack_overflow(void) {
+  yk_throw(make_error("RangeError", ascii("Maximum call stack size exceeded")));
+}
+static uintptr_t coro_stack_low(void);
 static yk call_value(yk f, yk self, uint64_t argc, const yk *argv) {
+  {
+    uintptr_t sp = (uintptr_t)__builtin_frame_address(0);
+    uintptr_t low = coro_stack_low();
+    if (__builtin_expect(sp < (low != 0 ? low : yk_stack_low), 0)) stack_overflow();
+  }
   if (__builtin_expect(!is_closure(f), 0)) not_callable(f);
   yk_closure *c = (yk_closure *)PTR(f);
   if (__builtin_expect(c->is_class || c->mode != 0, 0)) return call_special(c, self, argc, argv);
@@ -6339,6 +6354,10 @@ typedef struct coro {
 
 #define CORO_STACK (256 * 1024)
 static coro *current_coro, *starting_coro;
+/* The lowest frame address a call may make on the running coroutine's stack, or 0 on the main one. */
+static uintptr_t coro_stack_low(void) {
+  return current_coro != NULL && current_coro->stack != NULL ? (uintptr_t)current_coro->stack + (64 * 1024) : 0;
+}
 #if YK_GC
 static int gc_in_coroutine(void) { return current_coro != NULL; }
 #endif
@@ -7905,13 +7924,33 @@ static yk process_global(void) {
   }
   own_set(o, ascii("env"), env);
   own_set(o, ascii("platform"), ascii("linux"));
-  own_set(o, ascii("arch"), ascii(sizeof(void *) == 8 ? (
+  /* os.arch()'s names (Node's for the target the program is built for). */
+  own_set(o, ascii("arch"), ascii(
 #if defined(__aarch64__)
-                                       "arm64"
+                                "arm64"
+#elif defined(__x86_64__)
+                                "x64"
+#elif defined(__riscv) && __riscv_xlen == 64
+                                "riscv64"
+#elif defined(__arm__)
+                                "arm"
 #else
-                                       "x64"
+                                "ia32"
 #endif
-                                       ) : "ia32"));
+                                ));
+  /* The process's own ids, and the name it was run by (#1361 P2). */
+  own_set(o, ascii("pid"), yk_number((double)getpid()));
+  own_set(o, ascii("ppid"), yk_number((double)getppid()));
+  own_set(o, ascii("argv0"), ascii(self));
+  /* release: Node's, as the library this program is built from names it. */
+  {
+    yk r = yk_object_of(0, NULL, NULL);
+    own_set((yk_object *)PTR(r), ascii("name"), ascii("node"));
+    own_set((yk_object *)PTR(r), ascii("lts"), ascii("Jod"));
+    own_set((yk_object *)PTR(r), ascii("sourceUrl"), ascii("https://nodejs.org/download/release/v22.23.5/node-v22.23.5.tar.gz"));
+    own_set((yk_object *)PTR(r), ascii("headersUrl"), ascii("https://nodejs.org/download/release/v22.23.5/node-v22.23.5-headers.tar.gz"));
+    own_set(o, ascii("release"), r);
+  }
   /* versions: the Node library the program is built from; no OpenSSL (no crypto binding yet). */
   {
     yk v = yk_object_of(0, NULL, NULL);
@@ -8129,8 +8168,43 @@ void yk_main_begin(int argc, char **argv) {
   program_argc = argc;
   program_argv = argv;
 }
-int yk_main_end(void) {
+/* The tick hook (#1361 P2): a boot program over Node's library sets it to run process.nextTick's
+   queue when the runtime's jobs are done, as Node runs it after a callback; the jobs it makes are
+   run, and it again, until neither has more. __yakccRunMicrotasks is V8's microtask drain. */
+static yk tick_hook = 0;
+static yk builtin_set_tick_hook(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  tick_hook = arg_or_undefined(argc, argv, 0);
+  return YK_UNDEFINED;
+}
+static yk builtin_run_microtasks(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s, (void)argc, (void)argv;
   yk_drain();
+  return YK_UNDEFINED;
+}
+/* The exit hook (#1361 P2): a boot program sets it to emit process's 'exit' when nothing is left
+   to run, before the exit code is read. */
+static yk exit_hook = 0;
+static yk builtin_on_exit(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  exit_hook = arg_or_undefined(argc, argv, 0);
+  return YK_UNDEFINED;
+}
+static void run_jobs_and_ticks(void) {
+  if (is_closure(tick_hook))
+    for (;;) {
+      call_value(tick_hook, YK_UNDEFINED, 0, NULL);
+      if (jobs_head >= jobs_tail) break;
+      yk_drain();
+    }
+  yk_drain();
+}
+int yk_main_end(void) {
+  run_jobs_and_ticks();
+  if (is_closure(exit_hook)) {
+    call_value(exit_hook, YK_UNDEFINED, 0, NULL);
+    run_jobs_and_ticks();
+  }
   fflush(stdout);
   fflush(stderr);
   return exit_code_of();
@@ -9091,6 +9165,9 @@ static yk builtin_array_of(void *c, yk s, uint64_t argc, const yk *argv) {
 }
 static yk global_uncached(const char *name, uint64_t n);
 static yk builtin_set_builtin_require(void *c, yk s, uint64_t argc, const yk *argv);
+static yk builtin_set_tick_hook(void *c, yk s, uint64_t argc, const yk *argv);
+static yk builtin_on_exit(void *c, yk s, uint64_t argc, const yk *argv);
+static yk builtin_run_microtasks(void *c, yk s, uint64_t argc, const yk *argv);
 /* A global's value: a defined global's (__yakccDefineGlobal) as it is now; anything else (the
    runtime's own, fixed once made) from a cache by name, so a read in a loop makes nothing again. */
 static yk global_cache = 0;
@@ -9114,6 +9191,18 @@ static yk global_uncached(const char *name, uint64_t n) {
   if (n == 19 && memcmp(name, "__yakccDefineGlobal", 19) == 0) {
     static yk f;
     return f != 0 ? f : (f = yk_closure_new(builtin_define_global, 0, 0, NULL));
+  }
+  if (n == 13 && memcmp(name, "__yakccOnExit", 13) == 0) {
+    static yk f;
+    return f != 0 ? f : (f = yk_closure_new(builtin_on_exit, 0, 0, NULL));
+  }
+  if (n == 18 && memcmp(name, "__yakccSetTickHook", 18) == 0) {
+    static yk f;
+    return f != 0 ? f : (f = yk_closure_new(builtin_set_tick_hook, 0, 0, NULL));
+  }
+  if (n == 20 && memcmp(name, "__yakccRunMicrotasks", 20) == 0) {
+    static yk f;
+    return f != 0 ? f : (f = yk_closure_new(builtin_run_microtasks, 0, 0, NULL));
   }
   if (n == 24 && memcmp(name, "__yakccSetBuiltinRequire", 24) == 0) {
     static yk f;
