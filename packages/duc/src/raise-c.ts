@@ -1571,6 +1571,16 @@ const dataKind = (t: CType): string => (t.k === "ptr" ? "u64" : t.k === "bool" ?
  * A member function's key within its class: its name and its parameters and qualifiers, without
  * namespaces or spaces (`area() const`, as a declaration's type or clang's vtable dump spells it).
  */
+/** A class's own name, without its tag, scopes and template arguments (`StringByteSink`). */
+const simpleClass = (record: string): string => {
+  let t = record.replace(/^(struct|class|union) /, "");
+  for (let prev = ""; prev !== t; ) {
+    prev = t;
+    t = t.replace(/<[^<>]*>/g, "");
+  }
+  return t.split("::").pop() ?? "";
+};
+
 const memberKey = (name: string, signature: string): string =>
   name +
   signature
@@ -5879,19 +5889,11 @@ export function shaveCUnit(
             return hits.length === 1 ? (hits[0] as [string, number])[1] : undefined;
           },
           deletingSlotOf: (record) => {
-            const simple =
-              record
-                .replace(/^(struct|class|union) /, "")
-                .split("::")
-                .pop() ?? "";
+            const simple = simpleClass(record);
             return vtables().indices.get(simple)?.get(`~${simple}()[deleting]`);
           },
           vtableOf: (record, destroy) => {
-            const simple =
-              record
-                .replace(/^(struct|class|union) /, "")
-                .split("::")
-                .pop() ?? "";
+            const simple = simpleClass(record);
             const key = `vtable:${unit}:${simple}`;
             if (statics.has(key)) return key;
             const entries = vtables().tables.get(simple);
@@ -5928,11 +5930,13 @@ export function shaveCUnit(
                   ),
                 });
               else {
-                // The final overrider: a method of the class the entry names.
-                const head = text.slice(0, text.indexOf("("));
+                // The final overrider: a method of the class the entry names. (Its scope without
+                // `(anonymous namespace)`, whose parenthesis is not the parameters'.)
+                const plain = text.replace(/\(anonymous namespace\)::/g, "");
+                const head = plain.slice(0, plain.indexOf("("));
                 const owner = head.split("::").slice(-2, -1)[0] ?? "";
                 const name = head.split("::").pop() ?? "";
-                const want = memberKey(name, text.slice(text.indexOf("(")));
+                const want = memberKey(name, plain.slice(plain.indexOf("(")));
                 let id: string | undefined;
                 for (const d of indexed.byName.get(owner) ?? []) {
                   if (!RECORD_KINDS.has(d.kind)) continue;
@@ -5974,7 +5978,7 @@ export function shaveCUnit(
       const lines = block.split("\n");
       const head = /^(Vtable for|VTable indices for) '(.+?)'/.exec(lines[0] ?? "");
       if (head === null) continue;
-      const simple = (head[2] as string).split("::").pop() ?? "";
+      const simple = simpleClass(head[2] as string);
       const rows = lines.flatMap((l) => {
         const m = /^\s*(\d+) \| (.*)$/.exec(l);
         return m === null ? [] : [[Number(m[1]), (m[2] as string).trim()] as const];
