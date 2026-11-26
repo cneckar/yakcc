@@ -4,7 +4,7 @@
 // file its own unit; the functions and statics they reach, in turn. What none of the files
 // defines is left external (the C library's, shaved apart).
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { type ShavedUnit, shaveCUnit } from "../raise-c.js";
@@ -17,18 +17,33 @@ export interface ShavedFiles {
   readonly externals: string[];
 }
 
-/** The symbols each file defines, by its object's symbol table: name -> file. */
+/** The symbols each file defines, by its object's symbol table: name -> file (the first file's). */
 function definitions(files: readonly string[], args: readonly string[]): Map<string, string> {
   const out = new Map<string, string>();
   const work = mkdtempSync(join(tmpdir(), "yakcc-c-files-"));
   try {
-    for (const f of files) {
-      const obj = join(work, `${basename(f)}.o`);
-      execFileSync("clang", [...args, "-c", f, "-o", obj]);
+    // Compiled in parallel (one object per file, named by its index), then read in the files' order.
+    const q = (x: string): string => `'${x.replaceAll("'", "'\\''")}'`;
+    const script = join(work, "cc.sh");
+    writeFileSync(
+      script,
+      files
+        .map(
+          (f, i) =>
+            `clang ${args.map(q).join(" ")} -c ${q(f)} -o ${q(join(work, `${i}.o`))} 2>/dev/null`,
+        )
+        .join("\n"),
+    );
+    execFileSync("sh", ["-c", `xargs -d '\\n' -P "$(nproc)" -I{} sh -c {} < ${q(script)}`], {
+      stdio: "ignore",
+    });
+    for (const [i] of files.entries()) {
+      const obj = join(work, `${i}.o`);
+      if (!existsSync(obj)) throw new Error(`clang could not compile ${files[i]}`);
       const syms = execFileSync("nm", ["--defined-only", obj], { encoding: "utf8" });
       for (const line of syms.split("\n")) {
         const m = /^[0-9a-f]+ [TDRBC] (\w+)$/.exec(line.trim());
-        if (m !== null && !out.has(m[1] as string)) out.set(m[1] as string, f);
+        if (m !== null && !out.has(m[1] as string)) out.set(m[1] as string, files[i] as string);
       }
     }
   } finally {
