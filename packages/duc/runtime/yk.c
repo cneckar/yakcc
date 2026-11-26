@@ -650,6 +650,7 @@ yk yk_closure_new(yk_code code, int32_t has_this, uint64_t n, const yk *captures
 static int own_get(yk_object *o, yk key, yk *out);
 static int64_t own_find_chars(yk_object *o, const char *p, uint32_t n);
 static int chain_get(yk obj, yk key, yk *out);
+static yk number_format(double x, int which, yk arg);
 static yk substring(yk_string *s, uint32_t a, uint32_t b);
 static yk resolve_slot(yk slot, yk receiver);
 static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
@@ -1967,6 +1968,8 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
     return to_string(recv);
   }
   if ((is_number(recv) || is_bool(recv) || is_bigint(recv)) && key_is(key, "valueOf")) return recv;
+  if (is_number(recv) && (key_is(key, "toFixed") || key_is(key, "toPrecision") || key_is(key, "toExponential")))
+    return number_format(num(recv), key_is(key, "toFixed") ? 0 : key_is(key, "toPrecision") ? 1 : 2, arg0);
   {
     /* A method the program put on an intrinsic prototype (not one of the runtime's thunks). */
     yk f = proto_lookup(recv, key);
@@ -4542,6 +4545,128 @@ static void collection_put(yk_object *o, yk key, yk value) {
     push(o->entries, key);
 }
 
+
+/* ES2025's Set methods (union, intersection, …): the other is set-like (GetSetRecord: a size that is
+   a number, callable has and keys), its keys walked by its own keys(), and the order of the result
+   as the spec builds it. */
+static int set_method(yk_object *o, yk key, yk other, yk *out) {
+  static const char *const names[] = {"union", "intersection", "difference", "symmetricDifference",
+                                      "isSubsetOf", "isSupersetOf", "isDisjointFrom"};
+  int which = -1;
+  for (int k = 0; k < 7; k++)
+    if (key_is(key, names[k])) which = k;
+  if (which < 0) return 0;
+  char msg[96];
+  if (!is_object(other) && !is_closure(other)) {
+    snprintf(msg, sizeof msg, "Set.prototype.%s argument must be an object", names[which]);
+    type_error(msg);
+  }
+  yk rawsize = yk_get(other, ascii("size"));
+  double size = to_number(rawsize);
+  if (size != size) type_error("The .size property is NaN");
+  size = trunc(size);
+  if (size < 0) {
+    yk m = concat(str(ascii("'")), str(to_string(yk_number(size))));
+    yk_throw(make_error("RangeError", concat(str(m), str(ascii("' is an invalid size")))));
+  }
+  yk has = yk_get(other, ascii("has")), keys = yk_get(other, ascii("keys"));
+  if (!is_closure(has)) type_error("string \"has\" is not a function");
+  if (!is_closure(keys)) type_error("string \"keys\" is not a function");
+  double mine = o->entries->len;
+  yk_array *ks = NULL;
+  /* The other's keys, as its keys() gives them (iterated by its next). */
+#define OTHER_KEYS()                                                                     \
+  do {                                                                                     \
+    ks = new_array(4);                                                                     \
+    yk it = call_value(keys, other, 0, NULL);                                              \
+    if (!is_object(it) && !is_closure(it)) type_error("Result of the keys method is not an object"); \
+    yk next_key = ascii("next");                                                           \
+    for (;;) {                                                                             \
+      yk r = call_method_key(it, next_key, 0, NULL);                                       \
+      if (!is_object(r)) type_error("Iterator result is not an object");                  \
+      if (yk_truthy(yk_get(r, ascii("done")))) break;                                      \
+      yk v = yk_get(r, ascii("value"));                                                    \
+      push(ks, is_number(v) && num(v) == 0 ? yk_number(0) : v);                            \
+    }                                                                                      \
+  } while (0)
+#define OTHER_HAS(e) yk_truthy(call_value(has, other, 1, &(e)))
+  yk r = new_collection(2);
+  yk_object *ro = (yk_object *)PTR(r);
+  switch (which) {
+  case 0: /* union */
+    for (uint32_t j = 0; j < o->entries->len; j++) collection_put(ro, o->entries->items[j], YK_UNDEFINED);
+    OTHER_KEYS();
+    for (uint32_t j = 0; j < ks->len; j++) collection_put(ro, ks->items[j], YK_UNDEFINED);
+    return *out = r, 1;
+  case 1: /* intersection */
+    if (mine <= size) {
+      for (uint32_t j = 0; j < o->entries->len; j++) {
+        yk e = o->entries->items[j];
+        if (OTHER_HAS(e)) collection_put(ro, e, YK_UNDEFINED);
+      }
+    } else {
+      OTHER_KEYS();
+      for (uint32_t j = 0; j < ks->len; j++)
+        if (collection_find(o, ks->items[j]) >= 0) collection_put(ro, ks->items[j], YK_UNDEFINED);
+    }
+    return *out = r, 1;
+  case 2: /* difference */
+    for (uint32_t j = 0; j < o->entries->len; j++) collection_put(ro, o->entries->items[j], YK_UNDEFINED);
+    if (mine <= size) {
+      for (uint32_t j = 0; j < o->entries->len; j++) {
+        yk e = o->entries->items[j];
+        int64_t at;
+        if (OTHER_HAS(e) && (at = collection_find(ro, e)) >= 0) collection_remove(ro, at);
+      }
+    } else {
+      OTHER_KEYS();
+      for (uint32_t j = 0; j < ks->len; j++) {
+        int64_t at = collection_find(ro, ks->items[j]);
+        if (at >= 0) collection_remove(ro, at);
+      }
+    }
+    return *out = r, 1;
+  case 3: /* symmetricDifference */
+    for (uint32_t j = 0; j < o->entries->len; j++) collection_put(ro, o->entries->items[j], YK_UNDEFINED);
+    OTHER_KEYS();
+    for (uint32_t j = 0; j < ks->len; j++) {
+      yk k = ks->items[j];
+      int64_t at;
+      if (collection_find(o, k) >= 0) {
+        if ((at = collection_find(ro, k)) >= 0) collection_remove(ro, at);
+      } else
+        collection_put(ro, k, YK_UNDEFINED);
+    }
+    return *out = r, 1;
+  case 4: /* isSubsetOf */
+    if (mine > size) return *out = YK_FALSE, 1;
+    for (uint32_t j = 0; j < o->entries->len; j++) {
+      yk e = o->entries->items[j];
+      if (!OTHER_HAS(e)) return *out = YK_FALSE, 1;
+    }
+    return *out = YK_TRUE, 1;
+  case 5: /* isSupersetOf */
+    if (mine < size) return *out = YK_FALSE, 1;
+    OTHER_KEYS();
+    for (uint32_t j = 0; j < ks->len; j++)
+      if (collection_find(o, ks->items[j]) < 0) return *out = YK_FALSE, 1;
+    return *out = YK_TRUE, 1;
+  default: /* isDisjointFrom */
+    if (mine <= size) {
+      for (uint32_t j = 0; j < o->entries->len; j++) {
+        yk e = o->entries->items[j];
+        if (OTHER_HAS(e)) return *out = YK_FALSE, 1;
+      }
+    } else {
+      OTHER_KEYS();
+      for (uint32_t j = 0; j < ks->len; j++)
+        if (collection_find(o, ks->items[j]) >= 0) return *out = YK_FALSE, 1;
+    }
+    return *out = YK_TRUE, 1;
+  }
+#undef OTHER_KEYS
+#undef OTHER_HAS
+}
 static int collection_method(yk_object *o, yk recv, yk key, uint64_t argc, const yk *argv, yk *out) {
   yk a0 = argc > 0 ? argv[0] : YK_UNDEFINED, a1 = argc > 1 ? argv[1] : YK_UNDEFINED;
   int64_t i;
@@ -4576,6 +4701,7 @@ static int collection_method(yk_object *o, yk recv, yk key, uint64_t argc, const
     }
     return *out = BOX(T_ARRAY, r), 1;
   }
+  if (o->kind == 2 && set_method(o, key, a0, out)) return 1;
   if (key_is(key, "forEach")) {
     for (uint32_t j = 0; j < o->entries->len; j++) {
       yk e = o->entries->items[j];
@@ -9109,6 +9235,176 @@ _Noreturn void yk_module_not_found(yk spec, const char *from, uint64_t n) {
   yk e = make_error("Error", message);
   yk_set(e, ascii("code"), ascii("MODULE_NOT_FOUND"));
   yk_throw(e);
+}
+
+/* A finite double's exact decimal digits (no leading zeros; "0" for zero) and how many of them are
+   before the point (which may be negative or past the digits): x = mantissa * 2^e, and for e < 0
+   mantissa * 5^-e scaled by 10^e. */
+static char *exact_digits(double x, int *point) {
+  int e;
+  double m = frexp(x, &e); /* x = m * 2^e, 0.5 <= m < 1 */
+  uint64_t mant = (uint64_t)ldexp(m, 53);
+  e -= 53;
+  /* The number, base 10^9, least significant limb first. */
+  size_t cap = 140, n = 1;
+  uint32_t *v = alloc(cap * sizeof(uint32_t));
+  v[0] = (uint32_t)(mant % 1000000000u);
+  if (mant >= 1000000000u) {
+    v[n++] = (uint32_t)(mant / 1000000000u % 1000000000u);
+    if (mant >= 1000000000000000000ull) v[n++] = (uint32_t)(mant / 1000000000000000000ull);
+  }
+  int shift = e >= 0 ? e : -e;
+  uint32_t by = e >= 0 ? 2 : 5;
+  for (int i = 0; i < shift; i++) {
+    uint64_t carry = 0;
+    for (size_t j = 0; j < n; j++) {
+      uint64_t t = (uint64_t)v[j] * by + carry;
+      v[j] = (uint32_t)(t % 1000000000u);
+      carry = t / 1000000000u;
+    }
+    if (carry != 0) v[n++] = (uint32_t)carry;
+  }
+  char *d = alloc(n * 9 + 2);
+  int len = snprintf(d, 12, "%u", v[n - 1]);
+  for (size_t j = n - 1; j-- > 0;) len += snprintf(d + len, 12, "%09u", v[j]);
+  int lead = 0;
+  while (lead < len - 1 && d[lead] == '0') lead++;
+  *point = (len - lead) - (e >= 0 ? 0 : -e);
+  return d + lead;
+}
+/* digits[0..keep) rounded at digits[keep] as Number's formatting does (a tie to the larger): the
+   kept digits in out, and 1 when the rounding carried into a new leading digit. */
+static int round_digits(const char *digits, int len, int keep, char *out) {
+  for (int i = 0; i < keep; i++) out[i] = i < len ? digits[i] : '0';
+  out[keep] = 0;
+  if (keep < 0 || keep >= len || digits[keep] < '5') return 0;
+  for (int i = keep - 1; i >= 0; i--) {
+    if (out[i] != '9') {
+      out[i]++;
+      return 0;
+    }
+    out[i] = '0';
+  }
+  memmove(out + 1, out, (size_t)keep + 1);
+  out[0] = '1';
+  return 1;
+}
+/* Number.prototype.toFixed (0), toPrecision (1) and toExponential (2), ECMA-262 21.1.3. */
+static yk number_format(double x, int which, yk arg) {
+  static const char *const names[3] = {"toFixed() digits argument", "toPrecision() argument", "toExponential() argument"};
+  double f = arg == YK_UNDEFINED ? (which == 1 ? NAN : 0) : trunc(to_number(arg));
+  if (f != f && !(which == 1 && arg == YK_UNDEFINED)) f = 0;
+  if (which == 1 && arg == YK_UNDEFINED) return to_string(yk_number(x));
+  if (!isfinite(x)) return to_string(yk_number(x));
+  int lo = which == 1 ? 1 : 0;
+  if (!(f >= lo && f <= 100)) {
+    char msg[96];
+    snprintf(msg, sizeof msg, "%s must be between %d and 100", names[which], lo);
+    range_error(msg);
+  }
+  int digits_n = (int)f;
+  if (which == 0 && fabs(x) >= 1e21) return to_string(yk_number(x));
+  int neg = x < 0;
+  double a = fabs(x);
+  int point = 1;
+  const char *d = a == 0 ? "0" : exact_digits(a, &point);
+  int len = (int)strlen(d);
+  char *buf = alloc((size_t)len + 260), *r = alloc((size_t)len + 260);
+  int o = 0;
+  if (neg) buf[o++] = '-';
+  if (which == 0) {
+    /* n / 10^f nearest x: the digits through f places after the point. */
+    int keep = point + digits_n;
+    if (a == 0 || keep <= 0) {
+      int up = a != 0 && keep == 0 && d[0] >= '5';
+      buf[o++] = up && digits_n == 0 ? '1' : '0';
+      if (digits_n > 0) {
+        buf[o++] = '.';
+        for (int i = 0; i < digits_n; i++) buf[o++] = (up && i == digits_n - 1) ? '1' : '0';
+      }
+      buf[o] = 0;
+      return ascii(buf);
+    }
+    int carry = round_digits(d, len, keep, r);
+    int ip = point + carry; /* digits before the point */
+    int rl = keep + carry;
+    if (ip <= 0) {
+      buf[o++] = '0';
+    } else
+      for (int i = 0; i < ip; i++) buf[o++] = r[i];
+    if (digits_n > 0) {
+      buf[o++] = '.';
+      for (int i = 0; i < digits_n; i++) {
+        int at = ip + i;
+        buf[o++] = at >= 0 && at < rl ? r[at] : '0';
+      }
+    }
+    buf[o] = 0;
+    return ascii(buf);
+  }
+  /* toExponential with no digits given: as many as the shortest round-trip needs. */
+  if (which == 2 && arg == YK_UNDEFINED) {
+    if (a == 0) return ascii(neg ? "-0e+0" : "0e+0");
+    yk_string *sh = str(number_to_string(a));
+    char t[64], sc[64];
+    for (uint32_t i = 0; i < sh->len && i < 63; i++) sc[i] = (char)sh->units[i];
+    sc[sh->len < 63 ? sh->len : 63] = 0;
+    int k = 0, dot = -1, exp10 = 0;
+    for (uint32_t i = 0; i < sh->len; i++) {
+      uint16_t c = sh->units[i];
+      if (c == 'e') {
+        exp10 = atoi(sc + i + 1 + (sc[i + 1] == '+'));
+        break;
+      }
+      if (c == '.') dot = k;
+      else t[k++] = (char)c;
+    }
+    int intdigits = dot < 0 ? k : dot;
+    int first = 0;
+    while (first < k - 1 && t[first] == '0') first++;
+    int e10 = exp10 + intdigits - first - 1;
+    int last = k;
+    while (last > first + 1 && t[last - 1] == '0') last--;
+    buf[o++] = t[first];
+    if (last > first + 1) {
+      buf[o++] = '.';
+      for (int i = first + 1; i < last; i++) buf[o++] = t[i];
+    }
+    o += snprintf(buf + o, 16, "e%c%d", e10 < 0 ? '-' : '+', abs(e10));
+    return ascii(buf);
+  }
+  int sig = which == 1 ? digits_n : digits_n + 1;
+  int e10;
+  if (a == 0) {
+    for (int i = 0; i < sig; i++) r[i] = '0';
+    r[sig] = 0;
+    e10 = 0;
+  } else {
+    int carry = round_digits(d, len, sig, r);
+    e10 = point - 1 + carry;
+    r[sig] = 0;
+  }
+  if (which == 2 || e10 < -6 || e10 >= sig) {
+    buf[o++] = r[0];
+    if (sig > 1) {
+      buf[o++] = '.';
+      for (int i = 1; i < sig; i++) buf[o++] = r[i];
+    }
+    o += snprintf(buf + o, 16, "e%c%d", e10 < 0 ? '-' : '+', abs(e10));
+  } else if (e10 >= 0) {
+    for (int i = 0; i <= e10; i++) buf[o++] = r[i];
+    if (sig > e10 + 1) {
+      buf[o++] = '.';
+      for (int i = e10 + 1; i < sig; i++) buf[o++] = r[i];
+    }
+  } else {
+    buf[o++] = '0';
+    buf[o++] = '.';
+    for (int i = 0; i < -e10 - 1; i++) buf[o++] = '0';
+    for (int i = 0; i < sig; i++) buf[o++] = r[i];
+  }
+  buf[o] = 0;
+  return ascii(buf);
 }
 
 /* --- Math, with JavaScript's results --- */

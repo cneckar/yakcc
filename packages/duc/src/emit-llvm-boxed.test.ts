@@ -98,6 +98,16 @@ function disagreements(
 
 const PROGRAMS: [string, string, number][] = [
   [
+    "Set's union, intersection, difference, symmetricDifference and the three tests, on sets and set-likes (#1370)",
+    "export function f(a, b) { const t = (g) => { try { return g(); } catch (e) { return e.name + ': ' + e.message; } }; const s = new Set([1, 2, 3, a, -0]); const o = new Set([3, 4, b, 2, 0]); const big = new Set([1, 2, 3, 4, 5, 6, 7, 8, a, b]); const like = { size: 2, has: (x) => x === 2 || x === 9, keys: () => [9, 2][Symbol.iterator]() }; const all = (x) => [[...s.union(x)], [...s.intersection(x)], [...s.difference(x)], [...s.symmetricDifference(x)], s.isSubsetOf(x), s.isSupersetOf(x), s.isDisjointFrom(x)]; return [all(o), all(big), all(like), all(new Set()), new Set([2]).isSubsetOf(like), t(() => s.union(5)), t(() => s.union({ size: NaN, has() {}, keys() {} })), t(() => s.union({ size: -1, has() {}, keys() {} })), t(() => s.intersection({ size: 1, has: 1, keys() {} })), t(() => s.union({ size: 1, has() {}, keys() { return 5; } }))]; }",
+    2,
+  ],
+  [
+    "toFixed, toPrecision and toExponential: exact digits, ties to the larger, their ranges (#1370)",
+    "export function f(a, b) { const t = (g) => { try { return g(); } catch (e) { return e.name + ': ' + e.message; } }; const xs = [typeof a === 'number' ? a : 1.5, typeof b === 'number' ? b : -2.5, 0, -0, 0.5, 1.5, 2.5, 1.005, 0.005, 0.0005, 123.456, -0.004, 1e21, 1.23e-7, 5e-324, 1.7976931348623157e308, 999.995, 0.1, NaN, -Infinity, 12345678901234567890]; return [xs.map((x) => [x.toFixed(), x.toFixed(2), x.toFixed(0), x.toFixed(20), x.toPrecision(), x.toPrecision(1), x.toPrecision(3), x.toPrecision(21), x.toExponential(), x.toExponential(0), x.toExponential(4)]), t(() => (1).toFixed(101)), t(() => (1).toPrecision(0)), t(() => (1).toExponential(-1)), (1.45).toFixed(1), (8.345).toFixed(2), (25).toPrecision(1), (0.000001).toPrecision(2), (0.0000001).toPrecision(2)]; }",
+    2,
+  ],
+  [
     "substring, charAt, trimLeft/trimRight, isWellFormed/toWellFormed and Annex B's HTML methods (#1370)",
     "export function f(a, b) { const s = String(a) + ' abc\\ud800def ' + String(b); const t = (g) => { try { return g(); } catch (e) { return e.name; } }; return [s.substring(2), s.substring(5, 2), s.substring(-3, 4), s.substring(NaN, 3), s.substring(3, Infinity), s.charAt(0), s.charAt(-1), s.charAt(99), s.charAt(2.7), s.trimLeft(), s.trimRight(), s.isWellFormed(), 'ok'.isWellFormed(), s.toWellFormed(), '\\udc00x\\ud83d\\ude00'.toWellFormed(), 'x'.anchor('a\"b'), 'x'.bold(), 'x'.link(a), 'x'.fontsize(b), 'x'.sub(), t(() => s.substring.call(null))]; }",
     2,
