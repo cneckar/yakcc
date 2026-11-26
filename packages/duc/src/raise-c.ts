@@ -1333,6 +1333,8 @@ export interface CxxUnit {
     | undefined;
   /** Whether a member function is virtual. */
   readonly isVirtual: (methodId: string) => boolean;
+  /** Whether a member function is final, or its class is (a call of it is not dispatched). */
+  readonly isFinal: (methodId: string) => boolean;
   /** A function's parameter's default argument (its expression), by the function's id. */
   readonly defaultArgOf: (fnId: string, index: number) => ClangNode | undefined;
   /**
@@ -1575,6 +1577,7 @@ const memberKey = (name: string, signature: string): string =>
     .slice(signature.indexOf("("))
     .replace(/\s*\bnoexcept\b(\([^)]*\))?/g, "")
     .replace(/\s*\bthrow\b\s*(\(\s*\))?/g, "")
+    .replace(/\(anonymous namespace\)::/g, "")
     .replace(/\b[A-Za-z_]\w*::/g, "")
     .replace(/\s+/g, "");
 
@@ -3505,13 +3508,17 @@ function raiseBody(
         return `((${to} = ${addr}), ${stores.join(", ")}, undefined)`;
       }
     }
-    if (ctor === undefined) throw new RaiseCError(`the constructor ${t.name}(${ctorType})`);
+    // (A default construction of a class the unit shows no constructor of, a C struct's, an
+    // anonymous union's, `aligned_storage`'s: the implicit one, below.)
+    if (ctor === undefined && args.length > 0)
+      throw new RaiseCError(`the constructor ${t.name}(${ctorType})`);
     const to = temp({ k: "f64" });
     // (One the class declares that another unit defines: its symbol's, as a call.)
-    const elsewhere = !ctor.body && ctor.provided === true ? outside(ctor.id) : undefined;
+    const elsewhere =
+      ctor !== undefined && !ctor.body && ctor.provided === true ? outside(ctor.id) : undefined;
     if (elsewhere !== undefined)
-      return `${elsewhere}(${[addr, ...withDefaults(args, ctor.id).map(argOf)].join(", ")})`;
-    if (!ctor.body) {
+      return `${elsewhere}(${[addr, ...withDefaults(args, ctor?.id).map(argOf)].join(", ")})`;
+    if (ctor === undefined || !ctor.body) {
       // The implicit (or defaulted) constructors: the default one constructs each base and
       // member (its default initializer, or its class's default constructor); a copy or move,
       // each in turn (see relocate).
@@ -3745,7 +3752,13 @@ function raiseBody(
     }
     // A virtual call (not one a qualifier names): the function in the object's vtable.
     const qualified = (member.inner ?? []).some((k) => k.kind === "NestedNameSpecifier");
-    if (id !== undefined && !qualified && unitCxx?.isVirtual(id) === true) {
+    // (Of a final method or class, as clang emits it: a direct call, its vtable unneeded.)
+    if (
+      id !== undefined &&
+      !qualified &&
+      unitCxx?.isVirtual(id) === true &&
+      unitCxx.isFinal(id) !== true
+    ) {
       const slot = unitCxx.slotOf(id);
       if (slot === undefined) throw new RaiseCError(`the vtable slot of ${name}`);
       const o = temp({ k: "f64" });
@@ -5834,6 +5847,15 @@ export function shaveCUnit(
               at = indexed.next.get(at);
             }
             return false;
+          },
+          isFinal: (methodId) => {
+            const d = indexed.byId.get(methodId);
+            if (d === undefined) return false;
+            const hasFinal = (n: ClangNode): boolean =>
+              (n.inner ?? []).some((c) => c.kind === "FinalAttr");
+            if (hasFinal(readDecl(indexed, d))) return true;
+            const cls = d.parent === undefined ? undefined : indexed.byId.get(d.parent);
+            return cls !== undefined && hasFinal(readDecl(indexed, cls));
           },
           slotOf: (methodId) => {
             const d = indexed.byId.get(methodId);
