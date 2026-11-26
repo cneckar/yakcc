@@ -284,11 +284,7 @@ export function atomShape(source: string): AtomShape {
  */
 function normalizeJumps(
   file: SourceFile,
-  reparse: (text: string) => SourceFile = (text) =>
-    file.getProject().createSourceFile("atom.ts", text, {
-      overwrite: true,
-      scriptKind: ScriptKind.TS,
-    }),
+  reparse: (text: string) => SourceFile = parsedAlone,
 ): SourceFile {
   let sf = file;
   for (let round = 0; round < 64; round++) {
@@ -450,12 +446,22 @@ export function reachableSource(file: SourceFile): SourceFile {
   for (let round = 0; round < 64; round++) {
     const text = dropUnreachable(sf);
     if (text === undefined) break;
-    sf = sf.getProject().createSourceFile(sf.getBaseName(), text, {
-      overwrite: true,
-      scriptKind: ScriptKind.TS,
-    });
+    sf = parsedAlone(text);
   }
   return sf;
+}
+
+/**
+ * A rewrite of the atom's source, parsed as the only file of a project of its own. Overwritten in
+ * the project of the source it rewrites, it made ts-morph forget each node of that source one by
+ * one, and that was nearly all of the time a shave of a large module spent (#1368).
+ */
+function parsedAlone(text: string): SourceFile {
+  const project = new Project({
+    useInMemoryFileSystem: true,
+    compilerOptions: { allowJs: false, noEmit: true, noLib: true, skipLibCheck: true },
+  });
+  return project.createSourceFile("atom.ts", text, { scriptKind: ScriptKind.TS });
 }
 
 /**

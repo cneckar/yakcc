@@ -168,51 +168,86 @@ function captureUseOf(closure: DucGraph, k: number): string {
  */
 const CAPTURE_USE_DEPTH = 3;
 
+/** Each value of a graph, with the nodes that read it and at which input. */
+function readersOf(graph: DucGraph): ReadonlyMap<string, readonly (readonly [DucNode, number])[]> {
+  let readers = valueReaders.get(graph);
+  if (readers === undefined) {
+    const index = new Map<string, (readonly [DucNode, number])[]>();
+    for (const n of graph.nodes)
+      n.inputs.forEach((v, i) => {
+        const at = index.get(v);
+        if (at === undefined) index.set(v, [[n, i]]);
+        else at.push([n, i]);
+      });
+    readers = index;
+    valueReaders.set(graph, readers);
+  }
+  return readers;
+}
+const valueReaders = new WeakMap<
+  DucGraph,
+  ReadonlyMap<string, readonly (readonly [DucNode, number])[]>
+>();
+/**
+ * Uses already told, by graph, depth and value. Graphs are immutable: a value's use is told once,
+ * where each capture of each closure at each level told it again and scanned the whole graph for
+ * every step, which was most of the time a shave spent on a module of nested closures.
+ */
+const valueUses = new WeakMap<DucGraph, Map<string, string>>();
+
 /** The operations that read a value, at which input, and (to `depth`) how their results are used. */
 function valueUseOf(closure: DucGraph, value: string, depth: number): string {
+  let told = valueUses.get(closure);
+  if (told === undefined) {
+    told = new Map();
+    valueUses.set(closure, told);
+  }
+  const key = `${depth} ${value}`;
+  const hit = told.get(key);
+  if (hit !== undefined) return hit;
   const uses: string[] = [];
-  for (const n of closure.nodes)
-    n.inputs.forEach((v, i) => {
-      if (v !== value) return;
-      // Positions canonicalization reorders are not structure: a commutative operand, a loop's
-      // invariant, a nested closure's capture.
-      const at =
-        (n.kind === "op" && COMMUTATIVE.has(n.label ?? "")) ||
-        n.closure !== undefined ||
-        (n.loop !== undefined && i >= invariantOffset(n))
-          ? "*"
-          : String(i);
-      // A loop's input is its body's value (an invariant, or a carry's first value): how the body
-      // uses it, at the same depth, since passing it in is no operation.
-      const inner =
-        n.loop === undefined
-          ? undefined
-          : i >= invariantOffset(n)
-            ? n.loop.invariant[i - invariantOffset(n)]
-            : i < n.loop.carry.length
-              ? n.loop.carry[i]
-              : undefined;
-      // A nested closure's capture is its parameter of the same position (before it is renumbered):
-      // how that closure uses it, one step further (#1292). Cells passed only into getters and
-      // callbacks were told apart by nothing, and kept the order the source read them in.
-      const captured =
-        n.closure !== undefined && depth > 0
-          ? n.closure.nodes.find((p) => p.kind === "param-source" && p.label === String(i))
-              ?.outputs[0]
-          : undefined;
-      const next =
-        inner !== undefined
-          ? `(${valueUseOf(closure, inner, depth)})`
-          : captured !== undefined
-            ? `(${valueUseOf(n.closure as DucGraph, captured, depth - 1)})`
-            : depth > 0 && n.outputs.length > 0 && n.closure === undefined && n.loop === undefined
-              ? `(${n.outputs.map((o) => valueUseOf(closure, o, depth - 1)).join(";")})`
-              : "";
-      uses.push(
-        `${n.kind}:${n.label ?? ""}:${at}:${structuralDiamond(n.diamond)?.symbol ?? ""}${next}`,
-      );
-    });
-  return uses.sort().join("|");
+  for (const [n, i] of readersOf(closure).get(value) ?? []) {
+    // Positions canonicalization reorders are not structure: a commutative operand, a loop's
+    // invariant, a nested closure's capture.
+    const at =
+      (n.kind === "op" && COMMUTATIVE.has(n.label ?? "")) ||
+      n.closure !== undefined ||
+      (n.loop !== undefined && i >= invariantOffset(n))
+        ? "*"
+        : String(i);
+    // A loop's input is its body's value (an invariant, or a carry's first value): how the body
+    // uses it, at the same depth, since passing it in is no operation.
+    const inner =
+      n.loop === undefined
+        ? undefined
+        : i >= invariantOffset(n)
+          ? n.loop.invariant[i - invariantOffset(n)]
+          : i < n.loop.carry.length
+            ? n.loop.carry[i]
+            : undefined;
+    // A nested closure's capture is its parameter of the same position (before it is renumbered):
+    // how that closure uses it, one step further (#1292). Cells passed only into getters and
+    // callbacks were told apart by nothing, and kept the order the source read them in.
+    const captured =
+      n.closure !== undefined && depth > 0
+        ? n.closure.nodes.find((p) => p.kind === "param-source" && p.label === String(i))
+            ?.outputs[0]
+        : undefined;
+    const next =
+      inner !== undefined
+        ? `(${valueUseOf(closure, inner, depth)})`
+        : captured !== undefined
+          ? `(${valueUseOf(n.closure as DucGraph, captured, depth - 1)})`
+          : depth > 0 && n.outputs.length > 0 && n.closure === undefined && n.loop === undefined
+            ? `(${n.outputs.map((o) => valueUseOf(closure, o, depth - 1)).join(";")})`
+            : "";
+    uses.push(
+      `${n.kind}:${n.label ?? ""}:${at}:${structuralDiamond(n.diamond)?.symbol ?? ""}${next}`,
+    );
+  }
+  const use = uses.sort().join("|");
+  told.set(key, use);
+  return use;
 }
 
 /** Where a loop's invariants start among its inputs: after the carries' initial values and the iterable. */

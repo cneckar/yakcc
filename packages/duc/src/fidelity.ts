@@ -77,9 +77,9 @@ export function sourceFreeNames(source: string): Set<string> {
   // What never runs is not read: the lifter drops it, and so does this (esbuild's `__name(f, "f")`
   // after a function's return, in undici).
   const parsed = parseAtomSource(source);
-  const project = parsed.project;
   const file = reachableSource(parsed.file);
-  const checker = project.getTypeChecker().compilerObject;
+  // A rewrite is parsed in a project of its own: the checker is the one of the file it binds.
+  const checker = file.getProject().getTypeChecker().compilerObject;
   const sf = file.compilerNode;
   const free = new Set<string>();
   // TypeScript binds `globalThis` to its own symbol, which has no declarations, even where the
