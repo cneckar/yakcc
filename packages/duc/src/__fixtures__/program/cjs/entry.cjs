@@ -1,6 +1,7 @@
 // A CommonJS program (#1370): a module required by path, and an optional dependency required in a
 // try (it does not resolve: the require throws, and the program goes on).
 const lib = require("./lib.cjs");
+const wrapped = require("./wrapped.cjs");
 let optional;
 try {
   optional = require("not-a-package-of-this-program");
@@ -18,5 +19,12 @@ exports.probe = (n) => {
     g.next(),
     [...g],
     lib.upTo.name,
+    wrapped.bump(n),
+    wrapped.bump(1),
+    wrapped.table.module,
+    new wrapped.Box(n).twice,
+    wrapped.viaShorthand,
+    wrapped.hoisted,
+    wrapped.keys,
   ];
 };
