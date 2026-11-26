@@ -699,6 +699,9 @@ function parseType(spelled: string, depth = 0): CType {
       t = d === "" ? { k: "arr", of: t } : { k: "arr", of: t, size: Number(d) };
     return t;
   }
+  // libstdc++'s <cmath> promotion of arithmetic arguments (`std::pow(double, int)`'s
+  // `__gnu_cxx::__promote_2<..>::__type`): double, for the integers and doubles it promotes.
+  if (/^(?:typename )?__gnu_cxx::__promote(?:_\d)?<.*>::__type$/.test(raw)) return F64;
   // std::enable_if<C, T>::type, and enable_if_t (an instance exists only where C holds): T.
   const enable = /^(?:typename )?(?:std::)?enable_if(?:_t)?<(.*)>(?:::type)?$/.exec(raw);
   if (enable !== null) {
@@ -1141,6 +1144,9 @@ const LEAF_CALLS: Readonly<Record<string, (args: readonly string[]) => string>> 
   __builtin_signbit: (a) => `__ykBigToI32(__ykF64Bits(${a[0]}) >> 63n)`,
   // A branch hint: its value is its first argument's.
   __builtin_expect: (a) => `${a[0]}`,
+  __builtin_isnan: (a) => `(${a[0]} !== ${a[0]} ? 1 : 0)`,
+  __builtin_isfinite: (a) => `(Number.isFinite(${a[0]}) ? 1 : 0)`,
+  __builtin_labs: (a) => `(${a[0]} < 0n ? -(${a[0]}) : ${a[0]})`,
   // A prefetch is a hint; every atomic of a size up to 8 bytes is lock-free here.
   __builtin_prefetch: () => "undefined",
   // A fence orders one thread's memory against others': one thread here.
@@ -2117,8 +2123,9 @@ function raiseBody(
     }
     return p;
   };
-  const isMem = (d: ClangNode, t: CType): boolean =>
-    inMemory.has(d.id ?? "") || t.k === "rec" || (t.k === "arr" && t.of.k === "rec");
+  /** Whether a type is a record, or an array (of arrays) of them. */
+  const ofRecords = (t: CType): boolean => t.k === "rec" || (t.k === "arr" && ofRecords(t.of));
+  const isMem = (d: ClangNode, t: CType): boolean => inMemory.has(d.id ?? "") || ofRecords(t);
 
   /**
    * A variable-length array's element count (a number), from its bound as its type spells it
@@ -3222,7 +3229,7 @@ function raiseBody(
         const callee = stripCasts(k0);
         // (The C library's builtins are its functions: `__builtin_memcpy` is memcpy.)
         const name = (callee.referencedDecl?.name ?? "").replace(
-          /^__builtin_((?:mem|str)\w+)$/,
+          /^__builtin_((?:mem|str)\w+|tanhf?)$/,
           "$1",
         );
         // std::move, forward, addressof, as_const (clang's builtins, C++): the object's address.
@@ -3931,7 +3938,8 @@ function raiseBody(
   const outside = (id: string | undefined): string | undefined => {
     if (unitCxx === undefined || id === undefined) return undefined;
     const m = unitCxx.mangledOf(id);
-    if (m === undefined) return undefined;
+    // (A C function's, extern "C" or a builtin's, is by its name: the C library's, below.)
+    if (m === undefined || !m.startsWith("_Z")) return undefined;
     externals.add(m);
     return m;
   };
@@ -4023,6 +4031,11 @@ function raiseBody(
       if (s?.kind === "CXXConstructExpr" && t.of.k === "rec") {
         const elem = { ...s, type: { qualType: (t.of as { name: string }).name } } as ClangNode;
         return Array.from({ length: n }, (_, i) => `${construct(at(i), elem)};`);
+      }
+      // (Of arrays of them, `UnicodeString table[LEN][2]`: each row so.)
+      if (s?.kind === "CXXConstructExpr" && t.of.k === "arr") {
+        const row = t.of;
+        return Array.from({ length: n }, (_, i) => initialize(at(i), row, s)).flat();
       }
       // An array member copied (an implicit copy constructor's, `ArrayInitLoopExpr`): each element
       // from the source's, its bytes, or as its class copies.

@@ -46,7 +46,8 @@ function definitions(
       if (!existsSync(obj)) throw new Error(`clang could not compile ${files[i]}`);
       const syms = execFileSync("nm", ["--defined-only", obj], { encoding: "utf8" });
       for (const line of syms.split("\n")) {
-        const m = /^[0-9a-f]+ [TDRBC] (\w+)$/.exec(line.trim());
+        // (Weak ones too, `W`/`V`: a template's instance, an inline function, a class's vtable.)
+        const m = /^[0-9a-f]+ [TDRBCWV] (\w+)$/.exec(line.trim());
         if (m !== null && !out.has(m[1] as string)) out.set(m[1] as string, files[i] as string);
       }
     }
@@ -100,7 +101,9 @@ export function shaveCFiles(
       const name = todo.pop() as string;
       if (seen.has(name) || atoms.has(name)) continue;
       seen.add(name);
-      const file = defs.get(name);
+      // (A complete object's constructor or destructor, `C1`/`D1`, that code generation emits
+      // only as the base object's, `C2`/`D2`: the file of that one.)
+      const file = defs.get(name) ?? defs.get(name.replace(/([CD])1(E|I)/, "$12$2")) ?? undefined;
       if (file === undefined) {
         externals.add(name);
         continue;
