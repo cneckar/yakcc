@@ -493,7 +493,11 @@ export function nodeBootProgram(
     [...texts.values()].some((t) => new RegExp(`\\b${name}\\b`).test(t)),
   );
   for (const [, id] of lazyGlobals) visit(id);
-  // Modules a library module requires by a name it computes (no top-level require shows them).
+  // process.setUncaughtExceptionCaptureCallback and its query, when a module names them.
+  const capture = [...texts.values()].some((t) => /UncaughtExceptionCaptureCallback/.test(t));
+  if (capture) visit("internal/process/execution");
+  // Modules a library module requires by a name it computes, or in a function that runs as another
+  // loads (no top-level require shows them).
   for (const [id, deps] of Object.entries(COMPUTED_REQUIRES))
     if (texts.has(id)) for (const d of deps) visit(d);
 
@@ -530,7 +534,7 @@ export function nodeBootProgram(
   modules.unshift(
     lifted(
       NODE_BOOT,
-      nodeBootSource(main.id, options.bindings?.id, lazyGlobals, options.user?.entry),
+      nodeBootSource(main.id, options.bindings?.id, lazyGlobals, options.user?.entry, capture),
     ),
   );
   if (options.user !== undefined) modules.push(...options.user.modules);
@@ -552,10 +556,12 @@ const ASYNC_PROVIDERS: Readonly<Record<string, number>> = Object.fromEntries(
 );
 
 /** The boot module's source: Node's realm set up over the table, then `main` loaded. */
-/** A library module's requires of a computed name: every module the name can be. */
+/** A library module's requires no top-level require shows: of a computed name, every module it can be; one in a function another module's load runs. */
 const COMPUTED_REQUIRES: Readonly<Record<string, readonly string[]>> = {
   // require(`internal/cluster/${childOrPrimary}`)
   cluster: ["internal/cluster/primary", "internal/cluster/child"],
+  // Enabling a hook (updatePromiseHookMode) loads it: domain's createHook().enable() at its load.
+  "internal/async_hooks": ["internal/promise_hooks"],
 };
 
 /** Globals Node's bootstrap/node.js defines lazily: each its name, its module, and the export. */
@@ -568,6 +574,7 @@ function nodeBootSource(
   bindings: string | undefined,
   lazyGlobals: readonly (readonly [string, string, string])[] = [],
   user?: string,
+  capture = false,
 ): string {
   return `${MATH_VALUE}const table = require(${JSON.stringify(NODE_BUILTINS)});
 const given = ${bindings !== undefined ? `require(${JSON.stringify(bindings)})` : "{}"};
@@ -771,7 +778,44 @@ runtime.async_context_frame = {
 };
 // env_properties.h's symbols: the util binding's private ones, and the symbols binding.
 runtime.symbols = perIsolateSymbols;
-runtime.util = { privateSymbols };
+runtime.util = {
+  privateSymbols,
+  // node_errors.cc's toggle (1: an uncaught exception aborts when --abort-on-uncaught-exception).
+  shouldAbortOnUncaughtToggle: new Uint32Array([1]),
+  // V8's stack, walked for a frame in node_modules: the runtime keeps no frames, so none is.
+  isInsideNodeModules: () => false,
+};
+// node_contextify.cc's binding: what loading vm, the module loaders and process/execution reads.
+// Compiling JavaScript at run time is not in the native runtime (DEC-DUC-NODE-BASE-SET-001's
+// "refused natively"), so each compiling member throws when it is called.
+{
+  const refuse = (what) =>
+    function () {
+      const e = new Error(what + ": compiling JavaScript at run time is not in the native runtime");
+      e.code = "ERR_NOT_SUPPORTED";
+      throw e;
+    };
+  class ContextifyScript {
+    constructor() {
+      refuse("vm.Script")();
+    }
+  }
+  ContextifyScript.prototype.runInContext = refuse("runInContext");
+  runtime.contextify = {
+    ContextifyScript,
+    compileFunction: refuse("vm.compileFunction"),
+    compileFunctionForCJSLoader: refuse("compileFunctionForCJSLoader"),
+    containsModuleSyntax: refuse("containsModuleSyntax"),
+    makeContext: refuse("vm.createContext"),
+    measureMemory: refuse("vm.measureMemory"),
+    startSigintWatchdog: () => {},
+    stopSigintWatchdog: () => false,
+    watchdogHasPendingSigint: () => false,
+    constants: {
+      measureMemory: { mode: { SUMMARY: 0, DETAILED: 1 }, execution: { DEFAULT: 0, EAGER: 1 } },
+    },
+  };
+}
 // A binding is the runtime's members (V8's role, and the boot's own) with the given ones (node/src's,
 // shaved) beside them.
 const made = { __proto__: null };
@@ -844,6 +888,17 @@ table.get("internal/bootstrap/realm")(process, getLinkedBinding, getInternalBind
 }
 // process.emitWarning, as bootstrap/node.js sets it: internal/process/warning's, loaded when first used.
 process.emitWarning = (...args) => loaders.requireBuiltin("internal/process/warning").emitWarning(...args);
+${
+  capture
+    ? `// process's uncaught-exception capture, as bootstrap/node.js sets it (domain uses it).
+{
+  const execution = loaders.requireBuiltin("internal/process/execution");
+  process.setUncaughtExceptionCaptureCallback = execution.setUncaughtExceptionCaptureCallback;
+  process.hasUncaughtExceptionCaptureCallback = execution.hasUncaughtExceptionCaptureCallback;
+}
+`
+    : ""
+}
 // console, as Node's prints: each line formatted by internal/util/inspect's formatWithOptions.
 let inspectModule;
 const formatLine = (args) =>

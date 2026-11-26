@@ -265,6 +265,17 @@ const MEM_CACHE_DECLS = [
 let memorySites = 0;
 /** A BigInt literal: its digits (any radix prefix kept), then n. */
 const BIGINT_LITERAL = /^(0[xXoObB][0-9a-fA-F_]+|[0-9_]+)n$/;
+/** Math's value properties (ECMA-262 21.3.1). */
+const MATH_CONSTANTS: Readonly<Record<string, number>> = nameTable({
+  E: Math.E,
+  LN10: Math.LN10,
+  LN2: Math.LN2,
+  LOG10E: Math.LOG10E,
+  LOG2E: Math.LOG2E,
+  PI: Math.PI,
+  SQRT1_2: Math.SQRT1_2,
+  SQRT2: Math.SQRT2,
+});
 const MATH1 = new Set(["floor", "ceil", "trunc", "sqrt", "abs", "sign", "round"]);
 const APPROXIMATED =
   /^(exp|expm1|log|log1p|log2|log10|sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|cbrt|hypot|pow)$/;
@@ -431,6 +442,84 @@ function atomFunction(m: ModuleBuilder, atom: string): string {
   };
   lowerFunction(m, ecmaScriptView(atomGraph(atom)), fn, { captures: 0 }, scope);
   return fn;
+}
+
+/**
+ * `Math.<name>` read as a value (`const floor = Math.floor`): a function of the closure convention
+ * that does what a call of it does (the exact operations the runtime's, the others their atoms,
+ * #1362), its closure made once. The value, emitted with `emit`.
+ */
+function mathFunctionValue(
+  m: ModuleBuilder,
+  name: string,
+  fresh: () => string,
+  emit: (line: string) => void,
+): string {
+  // Its value properties (21.3.1): the numbers.
+  const constant = MATH_CONSTANTS[name];
+  if (constant !== undefined) {
+    const r = fresh();
+    emit(`${r} = add i64 0, ${boxedNumber(constant)}`);
+    return r;
+  }
+  const fn = `yk.mathval.${name}`;
+  if (!m.atoms.has(`mathval:${name}`)) {
+    m.atoms.set(`mathval:${name}`, fn);
+    const body: string[] = [];
+    let length = 1;
+    m.used.add("yk_arg");
+    const arg = (i: number): string => {
+      body.push(`  %a${i} = call i64 @yk_arg(i64 %argc, ptr %argv, i64 ${i})`);
+      return `%a${i}`;
+    };
+    const ref = mathOperation(name, 1) ?? mathOperation(name, 2);
+    if (MATH1.has(name)) {
+      const key = m.constant(name, true);
+      m.used.add("yk_math1");
+      body.push(`  %r = call i64 @yk_math1(ptr ${key.ptr}, i64 ${arg(0)})`);
+    } else if (name === "min" || name === "max") {
+      length = 2;
+      m.used.add("yk_math_minmax");
+      body.push(
+        `  %r = call i64 @yk_math_minmax(i32 ${name === "max" ? 1 : 0}, i64 %argc, ptr %argv)`,
+      );
+    } else if (name === "random") {
+      length = 0;
+      m.intrinsics.add("declare i64 @yk_math_random()");
+      body.push("  %r = call i64 @yk_math_random()");
+    } else if (ref !== undefined) {
+      length = ref.arity;
+      m.used.add("yk_pos");
+      body.push(`  %list = alloca [${ref.arity} x i64]`);
+      for (let i = 0; i < ref.arity; i++) {
+        body.push(`  %n${i} = call i64 @yk_pos(i64 ${arg(i)})`);
+        body.push(`  %p${i} = getelementptr [${ref.arity} x i64], ptr %list, i64 0, i64 ${i}`);
+        body.push(`  store i64 %n${i}, ptr %p${i}`);
+      }
+      body.push(
+        `  %r = call i64 @${atomFunction(m, ref.atom)}(ptr null, i64 ${UNDEFINED}, i64 ${ref.arity}, ptr %list)`,
+      );
+    } else throw new LlvmEmitError(`Math.${name} as a value is not in the subset yet`);
+    m.functions.push(
+      [
+        `define internal i64 @${fn}(ptr %closure, i64 %this, i64 %argc, ptr %argv) {`,
+        "entry:",
+        ...body,
+        "  ret i64 %r",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    m.globals.push(`@${fn}.c = internal global i64 0`);
+    m.atoms.set(`mathval:${name}:len`, String(length));
+  }
+  const key = m.constant(name);
+  m.intrinsics.add("declare i64 @yk_builtin_once(ptr, ptr, ptr, i64, i32)");
+  const r = fresh();
+  emit(
+    `${r} = call i64 @yk_builtin_once(ptr @${fn}.c, ptr @${fn}, ptr ${key.ptr}, i64 ${key.length}, i32 ${m.atoms.get(`mathval:${name}:len`)})`,
+  );
+  return r;
 }
 
 /** The module being built: its constants, the runtime functions it calls, its functions. */
@@ -965,6 +1054,8 @@ function lowerFunction(
   // Member reads whose value only a call takes as its callee: not made where they stand (a method
   // call reads its member by key itself; another call's operand makes the read where it is used).
   const calleeReads = new Map<ValueId, DucNode>();
+  /** Math.name reads only called: the call names the operation, nothing is read. */
+  const mathCalleeReads = new Set<ValueId>();
   // Calls of a direct function with a record result whose value only its keys' reads take (#1369):
   // each call's slots, and each read's slot.
   const recordCalls = new Map<ValueId, { slot: string; keys: readonly string[] }>();
@@ -999,7 +1090,10 @@ function lowerFunction(
         else bad.add(r);
       });
     for (const [v, n] of candidates)
-      if (called.has(v) && !bad.has(v) && !isMath(n.inputs[0] as ValueId)) calleeReads.set(v, n);
+      if (called.has(v) && !bad.has(v)) {
+        if (isMath(n.inputs[0] as ValueId)) mathCalleeReads.add(v);
+        else calleeReads.set(v, n);
+      }
   }
 
   // --- Typed BigInts (#1369, DEC-DUC-TYPED-NATIVE-001): a BigInt the graph proves narrower than 128
@@ -3485,7 +3579,12 @@ function lowerFunction(
     }
     // A member read: of Math, nothing (the call names it); otherwise the property's value.
     const member = /^\.[\w$]+$/.test(lbl) && ins.length === 1;
-    if (member && isMath(ins[0] as ValueId)) return;
+    // Math.name only called (the call names it): nothing; read as a value (`const floor =
+    // Math.floor`), the runtime's Math's member.
+    if (member && isMath(ins[0] as ValueId)) {
+      if (!mathCalleeReads.has(out)) set(out, mathFunctionValue(m, lbl.slice(1), fresh, emit));
+      return;
+    }
     const fromRecord = member ? recordReads.get(out) : undefined;
     if (fromRecord !== undefined) {
       // A record result's key: its slot, which the call filled.
