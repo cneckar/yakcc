@@ -97,6 +97,11 @@ function disagreements(
 }
 
 const PROGRAMS: [string, string, number][] = [
+  [
+    "templates with no substitutions: their cooked strings, escapes and line continuations (#1370)",
+    "export function f(a, b) { return [`\\${configDir}`, `a\\nb\\t\\x41\\u0042\\u{1F600}\\0\\\\\\``, `line\\\nnext`, `\\'\\\"`, `${a}` + `-` + String(b)]; }",
+    2,
+  ],
   // + with ToPrimitive, string concatenation and Number::toString's shortest digits.
   ["+ on every pair of kinds", "export function f(a, b) { return a + b; }", 2],
   [
