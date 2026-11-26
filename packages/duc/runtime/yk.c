@@ -2913,7 +2913,18 @@ yk yk_set(yk obj, yk key, yk value) {
     a->items[i] = value;
     return obj;
   }
-  type_error("Cannot create a property on a primitive");
+  /* V8's messages: of undefined or null, "Cannot set properties of undefined (setting 'k')"; of
+     another primitive (strict code), "Cannot create property 'k' on string 'v'". */
+#define CAT(a, b) concat(str(a), str(b))
+  yk k = to_string(is_symbol(key) ? symbol_descriptive(key) : key), msg;
+  if (is_nullish(obj))
+    msg = CAT(CAT(ascii(obj == YK_NULL ? "Cannot set properties of null (setting '" : "Cannot set properties of undefined (setting '"), k), ascii("')"));
+  else {
+    yk v = CAT(CAT(ascii("'"), is_symbol(obj) ? symbol_descriptive(obj) : to_string(obj)), ascii("'"));
+    msg = CAT(CAT(CAT(CAT(CAT(ascii("Cannot create property '"), k), ascii("' on ")), yk_typeof(obj)), ascii(" ")), v);
+  }
+#undef CAT
+  yk_throw(make_error("TypeError", msg));
   return obj;
 }
 
@@ -3879,6 +3890,15 @@ yk yk_closure_self(void *closure) { return BOX(T_CLOSURE, closure); }
 /* A function's closure with no captures, made once into *slot (an atom's, #1362). */
 yk yk_closure_once(yk *slot, yk_code code) {
   if (*slot == 0) *slot = yk_closure_new(code, 0, 0, NULL);
+  return *slot;
+}
+/* A built-in function value (Math.floor read as a value): its closure, made once, with its name and
+   length as the built-in's. */
+yk yk_builtin_once(yk *slot, yk_code code, const char *name, uint64_t n, uint32_t length) {
+  if (*slot == 0) {
+    *slot = named(yk_closure_new(code, 0, 0, NULL), yk_string_utf8(name, n));
+    ((yk_closure *)PTR(*slot))->flen = length;
+  }
   return *slot;
 }
 yk yk_capture(void *closure, uint64_t i) { return ((yk_closure *)closure)->captures[i]; }

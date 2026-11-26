@@ -246,3 +246,48 @@ describe.skipIf(!canRun("x86_64-linux"))(
     }, 1_200_000);
   },
 );
+
+const MODULES_PROGRAM = `const out = [];
+const punycode = require("punycode");
+out.push(punycode.encode("ma\u00f1ana"), punycode.decode("maana-pta"), punycode.toASCII("ma\u00f1ana.com"));
+out.push(punycode.toUnicode("xn--maana-pta.com"), punycode.ucs2.decode("\u{1F600}a").join(), punycode.version);
+// (domain's run needs process.report: the report binding, a later one.)
+const domain = require("domain");
+out.push(typeof domain.create, typeof domain.create().run, Object.keys(domain).join());
+const vm = require("vm");
+out.push(typeof vm.Script, typeof vm.runInNewContext, vm.isContext({}), Object.keys(vm.constants).join());
+console.log(out.join("|"));
+`;
+
+describe.skipIf(!canRun("x86_64-linux"))("more of Node's modules, natively (#1361 P2)", () => {
+  it("punycode, domain and vm load and run as Node's (vm compiling nothing)", () => {
+    const record = nodeBootProgram(
+      lib,
+      { id: "main", source: MODULES_PROGRAM },
+      {
+        bindings,
+        include: [
+          "internal/util/comparisons",
+          "internal/v8/startup_snapshot",
+          "punycode",
+          "domain",
+          "vm",
+        ],
+        ...(process.env.YAKCC_LIFT_CACHE !== undefined
+          ? { liftCache: process.env.YAKCC_LIFT_CACHE }
+          : {}),
+      },
+    );
+    const exe = join(work, "modules");
+    buildRecord(record, exe);
+    const r = spawnSync(exe, [], { encoding: "utf8" });
+    const want = spawnSync(process.execPath, ["-e", MODULES_PROGRAM], { encoding: "utf8" });
+    const same = (t: string): string =>
+      t
+        .replace(/\(node:\d+\)/g, "(node:PID)")
+        .replace(/`(node|modules) --trace/g, "`PROGRAM --trace");
+    expect(same(r.stderr)).toBe(same(want.stderr));
+    expect(r.stdout).toBe(want.stdout);
+    expect(r.status).toBe(0);
+  }, 1_200_000);
+});
