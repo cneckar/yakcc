@@ -107,6 +107,8 @@ export interface NodeModuleReport {
   readonly clean: number;
   /** Unexplained names, with how many atoms read each. */
   readonly unexplained: Readonly<Record<string, number>>;
+  /** Names Node does not define that the module reads, on the allowlist (UNDEFINED_IN_NODE). */
+  readonly allowed: Readonly<Record<string, number>>;
   /** Atoms whose lift is not faithful, as `missing|extra`. */
   readonly unfaithful: readonly string[];
   readonly liftErrors: readonly string[];
@@ -117,6 +119,31 @@ export interface NodeModuleReport {
 }
 
 const registry = { findByCanonicalAstHash: async () => [], getBlock: async () => undefined };
+
+/**
+ * Names a module of Node's reads that Node does not define, by module, each with its reason: the
+ * gate's allowlist (#1173). Every other unexplained name fails the gate. V8's tool scripts run in
+ * V8's `d8` shell, which loads them together, not in Node: their names are d8's or a sibling
+ * script's.
+ */
+export const UNDEFINED_IN_NODE: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  "internal/deps/cjs-module-lexer/lexer": {
+    syntaxError:
+      "defined nowhere: an unterminated template reaches it, and the call throws a ReferenceError",
+  },
+  "internal/deps/v8/tools/profile": {
+    Exception:
+      "defined nowhere: an invalid code offset reaches it, and `new` throws a ReferenceError",
+  },
+  "internal/deps/v8/tools/sourcemap": {
+    NetworkAgent: "Chrome DevTools': the loader for a page's source map, never reached from Node",
+  },
+  "internal/deps/v8/tools/tickprocessor": {
+    d8: "the d8 shell's file API (`d8.file.read`), for source maps the Node driver does not pass",
+    CallTree: "profile_view.js's, loaded with it by d8",
+    SourceMap: "sourcemap.js's, loaded with it by d8",
+  },
+};
 
 /** Shave one builtin module through the real pipeline and gate every atom. */
 export async function shaveNodeModule(id: string): Promise<NodeModuleReport> {
@@ -131,6 +158,8 @@ export async function shaveNodeModule(id: string): Promise<NodeModuleReport> {
   let atoms = 0;
   let clean = 0;
   const unexplained: Record<string, number> = Object.create(null);
+  const allowed: Record<string, number> = Object.create(null);
+  const allowlist = UNDEFINED_IN_NODE[id] ?? {};
   const unfaithful: string[] = [];
   const liftErrors: string[] = [];
   for (const p of plans) {
@@ -154,8 +183,12 @@ export async function shaveNodeModule(id: string): Promise<NodeModuleReport> {
       const faithful = r.fidelity?.holds ?? true;
       if (!faithful && r.fidelity !== undefined)
         unfaithful.push(`${r.fidelity.missing.join(",")}|${r.fidelity.extra.join(",")}`);
-      for (const u of r.unexplained) unexplained[u.symbol] = (unexplained[u.symbol] ?? 0) + 1;
-      if (r.unexplained.length === 0 && faithful) clean++;
+      const unlisted = r.unexplained.filter((u) => allowlist[u.symbol] === undefined);
+      for (const u of r.unexplained) {
+        const into = allowlist[u.symbol] === undefined ? unexplained : allowed;
+        into[u.symbol] = (into[u.symbol] ?? 0) + 1;
+      }
+      if (unlisted.length === 0 && faithful) clean++;
     }
   }
   const source = nodeModuleSource(id);
@@ -165,5 +198,5 @@ export async function shaveNodeModule(id: string): Promise<NodeModuleReport> {
   const requires = [
     ...new Set([...source.matchAll(/require\(\s*'([^']+)'\s*\)/g)].map((m) => m[1])),
   ].sort() as string[];
-  return { id, atoms, clean, unexplained, unfaithful, liftErrors, bindings, requires };
+  return { id, atoms, clean, unexplained, allowed, unfaithful, liftErrors, bindings, requires };
 }

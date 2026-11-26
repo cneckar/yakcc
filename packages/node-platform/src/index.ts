@@ -11,4 +11,5 @@ export {
   nodeModuleIds,
   nodeModuleSource,
   shaveNodeModule,
+  UNDEFINED_IN_NODE,
 } from "./shave-node.js";

@@ -35,7 +35,7 @@ export {
  * same source (a new construct lifted, a canonical rule) changes identities, so it bumps this: a
  * stored graph from an older lifter is still valid, but relifting its source may give another.
  */
-export const LIFTER_VERSION = 73;
+export const LIFTER_VERSION = 74;
 
 export interface PackedGraph {
   /** The graph's root (#1306): its identity, its links and its format version, committed to. */

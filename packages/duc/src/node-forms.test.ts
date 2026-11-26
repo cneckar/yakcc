@@ -1377,4 +1377,77 @@ ${Array.from({ length: rest }, (_, i) => `  log.push(x + ${i});`).join("\n")}
       ],
     );
   });
+  it("a for loop's continue inside a catch keeps the update in the header: the try's closures write no binding (#1330)", () => {
+    // Node's esm/translators.js and resolve.js: `try { .. } catch { continue; }` in a for loop.
+    agrees(
+      `export function f(xs: number[]) {
+  const out: number[] = [];
+  for (let i = 0; i < xs.length; i++) {
+    try {
+      if (xs[i] < 0) throw new RangeError("negative");
+      out.push(xs[i] * 2);
+    } catch (e) {
+      out.push(-i);
+      continue;
+    }
+    out.push(i);
+  }
+  return out;
+}`,
+      [[[1, -2, 3]], [[]], [[-1, -1]]],
+    );
+  });
+
+  it("a clause that ends in a switch every path of which returns does not fall through (#1330)", () => {
+    // cjs-module-lexer's isExpressionKeyword: nested switches on characters, each with a default.
+    agrees(
+      `export function f(s: string) {
+  const at = (i: number) => s.charCodeAt(s.length - 1 - i);
+  switch (at(0)) {
+    case 100:
+      switch (at(1)) {
+        case 105:
+          return "vo-id";
+        default:
+          return "d";
+      }
+    case 101:
+      switch (at(1)) {
+        case 115:
+          switch (at(2)) {
+            case 108:
+              return "else";
+            default:
+              return "es";
+          }
+        default:
+          return "e";
+      }
+    default:
+      return "none";
+  }
+}`,
+      [["void"], ["else"], ["case"], ["are"], ["xyz"], [""]],
+    );
+  });
+
+  it("a class field's initializer writes a binding of the function around the class: a cell (#1330)", () => {
+    // minimatch's AST class: \`var ID = 0; class AST { id = ++ID; }\`.
+    agrees(
+      `export function f(n: number) {
+  var ID = 0;
+  class A {
+    id = ++ID;
+    twice = this.id * 2;
+  }
+  const made: number[][] = [];
+  for (let i = 0; i < n; i++) {
+    const a = new A();
+    made.push([a.id, a.twice]);
+  }
+  return [made, ID];
+}`,
+      [[0], [3]],
+    );
+  });
 });

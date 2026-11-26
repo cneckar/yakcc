@@ -12,7 +12,7 @@
 // `arguments`, and meta-properties (`new.target`) are not source names and are left out.
 
 import { ts } from "ts-morph";
-import { parseAtomSource } from "./lift.js";
+import { parseAtomSource, reachableSource } from "./lift.js";
 import { operationReference } from "./operations.js";
 import type { DucGraph } from "./types.js";
 
@@ -74,7 +74,11 @@ function isWithin(node: ts.Node, ancestor: ts.Node): boolean {
 
 /** The names an atom's source reads without declaring them, by TypeScript's binder. */
 export function sourceFreeNames(source: string): Set<string> {
-  const { project, file } = parseAtomSource(source);
+  // What never runs is not read: the lifter drops it, and so does this (esbuild's `__name(f, "f")`
+  // after a function's return, in undici).
+  const parsed = parseAtomSource(source);
+  const project = parsed.project;
+  const file = reachableSource(parsed.file);
   const checker = project.getTypeChecker().compilerObject;
   const sf = file.compilerNode;
   const free = new Set<string>();
