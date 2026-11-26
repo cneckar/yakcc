@@ -5966,6 +5966,29 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
       if (n.closure !== undefined) writtenIn(n.closure, out);
     }
   };
+  // Modules evaluated asynchronously (ECMA-262 16.2.1.5.3): an ECMAScript module with an await at
+  // its top level, and one that imports such a module. Each one's body runs as an async function's
+  // coroutine; its importers wait for its evaluation's promise.
+  const asyncModules = new Set<number>();
+  modules.forEach((mod, i) => {
+    if (
+      mod.esm !== undefined &&
+      mod.statements.some(
+        (st) => st.kind === "statement" && st.graph.nodes.some((n) => n.label === "AwaitExpression"),
+      )
+    )
+      asyncModules.add(i);
+  });
+  for (let grew = true; grew; ) {
+    grew = false;
+    modules.forEach((mod, i) => {
+      if (asyncModules.has(i) || mod.esm === undefined) return;
+      if (mod.esm.deps.some((d) => asyncModules.has(index.get(d) ?? -1))) {
+        asyncModules.add(i);
+        grew = true;
+      }
+    });
+  }
   const directBySlot = new Map<string, string>();
   modules.forEach((mod, i) => {
     const written = new Set<string>();
@@ -6087,6 +6110,7 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     for (const name of names)
       globals.push(`${g(i, `b.${name}`)} = internal global i64 ${UNDEFINED}`);
     globals.push(`${g(i, "state")} = internal global i32 0`);
+    if (asyncModules.has(i)) globals.push(`${g(i, "promise")} = internal global i64 0`);
     const scope = (outs?: readonly string[]): ModuleScope => ({
       read: (name, emit, fresh) => {
         const slot =
@@ -6259,9 +6283,7 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     const namespace: string[] = [];
     if (mod.esm !== undefined) {
       m.used.add("yk_set_named");
-      // Marked as a namespace: import() gives it as it is (a CommonJS module's exports it wraps).
-      m.intrinsics.add("declare i64 @yk_mark_namespace(i64)");
-      namespace.push("  %marked = call i64 @yk_mark_namespace(i64 %ex)");
+
       exportNames(i).forEach((name, k) => {
         const target = resolveExport(i, name);
         if (target === undefined) return;
@@ -6278,8 +6300,60 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         );
       });
     }
+    // An ECMAScript module's dependencies are evaluated first, in order (a cycle sees a module
+    // still being evaluated, as ECMA-262's does); an async one's evaluation is waited for.
+    const isAsync = asyncModules.has(i);
+    const depLines: string[] = (mod.esm?.deps ?? []).flatMap((d, k) => {
+          const t = index.get(d);
+          if (t !== undefined) return [`  %dep${k} = call i64 ${g(t, "init")}()`];
+          if (!d.startsWith("node:"))
+            throw new LlvmEmitError(`the module ${d} is not in the program`);
+          const lines: string[] = [];
+          let n = 0;
+          emitBuiltin(
+            d,
+            i,
+            `%dep${k}`,
+            () => `%dep${k}.${n++}`,
+            (l) => lines.push(`  ${l}`),
+          );
+          return lines;
+        });
+    if (isAsync) {
+      (mod.esm?.deps ?? []).forEach((d, k) => {
+        const t = index.get(d);
+        if (t === undefined || !asyncModules.has(t)) return;
+        const at = depLines.findIndex((l) => l.startsWith(`  %dep${k} = `));
+        depLines.splice(
+          at + 1,
+          0,
+          `  %dp${k} = load i64, ptr ${g(t, "promise")}`,
+          `  %dw${k} = call i64 @yk_await(i64 %dp${k})`,
+        );
+      });
+      m.used.add("yk_await");
+      m.used.add("yk_call");
+      m.used.add("yk_closure_mode");
+      m.intrinsics.add("declare void @yk_module_evaluating(i64, i64)");
+      m.functions.push(
+        [
+          `define internal i64 @"m${i}.body"(ptr %closure, i64 %this, i64 %argc, ptr %argv) {`,
+          "entry:",
+          `  %ex = load i64, ptr ${g(i, "exports")}`,
+          ...depLines,
+          ...init,
+          ...namespace,
+          "  br label %done",
+          "done:",
+          `  ret i64 ${UNDEFINED}`,
+          "}",
+          "",
+        ].join("\n"),
+      );
+    }
     // The initializer: once; a second call (a cycle, or another require) gets the exports so far.
     const exportsKey = m.constant("exports");
+    if (mod.esm !== undefined) m.intrinsics.add("declare i64 @yk_mark_namespace(i64)");
     m.used.add("yk_object_of");
     m.used.add("yk_get_named");
     m.functions.push(
@@ -6295,6 +6369,9 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         `  store i32 1, ptr ${g(i, "state")}`,
         "  %ex = call i64 @yk_object_of(i64 0, ptr null, ptr null)",
         `  store i64 %ex, ptr ${g(i, "exports")}`,
+        // An ECMAScript module's exports object is its namespace, marked so: import() gives it as
+        // it is (a CommonJS module's exports it wraps).
+        ...(mod.esm !== undefined ? ["  %marked = call i64 @yk_mark_namespace(i64 %ex)"] : []),
         `  %ek = call i64 @yk_string_utf8(ptr ${exportsKey.ptr}, i64 ${exportsKey.length})`,
         "  store i64 %ek, ptr %keys",
         "  store i64 %ex, ptr %vals",
@@ -6302,26 +6379,17 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         `  store i64 %mod, ptr ${g(i, "module")}`,
         `  %req = call i64 @yk_closure_new(ptr ${g(i, "require.fn")}, i32 0, i64 0, ptr null)`,
         `  store i64 %req, ptr ${g(i, "require")}`,
-        // An ECMAScript module's dependencies are evaluated first, in order (a cycle sees a module
-        // still being evaluated, as ECMA-262's does).
-        ...(mod.esm?.deps ?? []).flatMap((d, k) => {
-          const t = index.get(d);
-          if (t !== undefined) return [`  %dep${k} = call i64 ${g(t, "init")}()`];
-          if (!d.startsWith("node:"))
-            throw new LlvmEmitError(`the module ${d} is not in the program`);
-          const lines: string[] = [];
-          let n = 0;
-          emitBuiltin(
-            d,
-            i,
-            `%dep${k}`,
-            () => `%dep${k}.${n++}`,
-            (l) => lines.push(`  ${l}`),
-          );
-          return lines;
-        }),
-        ...init,
-        ...namespace,
+        ...(isAsync
+          ? [
+              // Its body (dependencies, statements, namespace) as an async function: its promise
+              // is its evaluation's, which importers and import() wait for.
+              `  %body = call i64 @yk_closure_new(ptr @"m${i}.body", i32 0, i64 0, ptr null)`,
+              "  %bodym = call i64 @yk_closure_mode(i64 %body, i32 1)",
+              `  %eval = call i64 @yk_call(i64 %bodym, i64 ${UNDEFINED}, i64 0, ptr null)`,
+              `  store i64 %eval, ptr ${g(i, "promise")}`,
+              "  call void @yk_module_evaluating(i64 %ex, i64 %eval)",
+            ]
+          : [...depLines, ...init, ...namespace]),
         "  br label %done",
         "done:",
         `  %m = load i64, ptr ${g(i, "module")}`,
