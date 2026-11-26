@@ -637,6 +637,27 @@ static yk_string *str(yk v) {
 }
 /* A string's length, a rope's without making its units. */
 static uint32_t str_len(yk v) { return ((yk_string *)PTR(v))->len & ~ROPE_BIT; }
+/* A string's unit at i < its length: a rope's found down its parts when that takes few steps (the
+   last unit of a chain of appends is one step away: a writer asking whether its output ends in a
+   space, as TypeScript's does after each write), else made flat. */
+static uint16_t str_unit(yk v, uint32_t i) {
+  yk_string *s = (yk_string *)PTR(v);
+  for (int steps = 0; (s->len & ROPE_BIT) != 0 && steps < 64; steps++) {
+    yk_rope *r = (yk_rope *)s;
+    if (r->flat != NULL) {
+      s = r->flat;
+      break;
+    }
+    uint32_t ll = str_len(r->left);
+    if (i < ll) s = (yk_string *)PTR(r->left);
+    else {
+      i -= ll;
+      s = (yk_string *)PTR(r->right);
+    }
+  }
+  if ((s->len & ROPE_BIT) != 0) s = flatten((yk_rope *)s);
+  return s->units[i];
+}
 static yk_array *arr(yk v) { return (yk_array *)PTR(v); }
 
 /* --- arrays --- */
@@ -1140,7 +1161,7 @@ int yk_truthy(yk v) {
     double d = num(v);
     return d == d && d != 0;
   }
-  if (is_string(v)) return str(v)->len > 0;
+  if (is_string(v)) return str_len(v) > 0;
   if (is_reference(v)) return 1;
   if (is_bigint(v)) return ((yk_bigint *)PTR(v))->len != 0;
   return v == YK_TRUE;
@@ -1471,7 +1492,7 @@ yk yk_get(yk obj, yk key) {
         yk r;
         if (object_index_get(obj, i, &r)) return r;
       } else if (is_string(obj)) {
-        if (i < str(obj)->len) return unit_string(str(obj)->units[i]);
+        if (i < str_len(obj)) return unit_string(str_unit(obj, (uint32_t)i));
       } else if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 7) {
         yk r;
         if (typed_fast_get(obj, i, &r)) return r;
@@ -1490,7 +1511,7 @@ yk yk_get(yk obj, yk key) {
         }
     }
   } else if (is_string(obj) && is_string(key) && key == length_key()) {
-    return yk_number(str(obj)->len);
+    return yk_number(str_len(obj));
   }
   return yk_get_slow(obj, key);
 }
@@ -1526,10 +1547,10 @@ static __attribute__((noinline)) yk yk_get_slow(yk obj, yk key) {
     yk_throw(make_error("TypeError", concat(str(m), str(ascii("')")))));
   }
   if (is_string(obj)) {
-    yk_string *s = str(obj);
-    if (key_is(key, "length")) return yk_number(s->len);
+    /* Its length and a unit, a rope's without making it flat. */
+    if (key_is(key, "length")) return yk_number(str_len(obj));
     int64_t i = index_of_key(key);
-    if (i >= 0 && i < s->len) return unit_string(s->units[i]);
+    if (i >= 0 && i < str_len(obj)) return unit_string(str_unit(obj, (uint32_t)i));
     return i >= 0 ? YK_UNDEFINED : proto_lookup(obj, key);
   }
   if (is_array(obj)) {
@@ -1662,8 +1683,7 @@ yk yk_char_code_at(yk recv, yk key, yk i) {
   if (is_string(recv) && is_number(i)) {
     double d = num(i);
     d = d != d ? 0 : trunc(d);
-    yk_string *s = str(recv);
-    return d < 0 || d >= s->len ? yk_number(NAN) : yk_number(s->units[(int64_t)d]);
+    return d < 0 || d >= str_len(recv) ? yk_number(NAN) : yk_number(str_unit(recv, (uint32_t)d));
   }
   return call_method_key(recv, key, 1, &i);
 }
@@ -1938,6 +1958,12 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
       push(r, string_of(last));
       return BOX(T_ARRAY, r);
     }
+  }
+  if (is_string(recv) && key_is(key, "charCodeAt")) {
+    /* Not made flat for one unit (a rope's last, most often). */
+    double d = to_number(arg0);
+    d = d != d ? 0 : trunc(d);
+    return d < 0 || d >= str_len(recv) ? yk_number(NAN) : yk_number(str_unit(recv, (uint32_t)d));
   }
   if (is_string(recv)) {
     yk_string *s = str(recv);
@@ -3115,7 +3141,7 @@ static int has_own(yk v, yk key) {
   if (is_string(v)) {
     if (key_is(key, "length")) return 1;
     int64_t i = index_of_key(key);
-    return i >= 0 && i < str(v)->len;
+    return i >= 0 && i < str_len(v);
   }
   return 0;
 }
