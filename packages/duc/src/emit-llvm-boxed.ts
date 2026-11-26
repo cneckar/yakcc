@@ -4135,10 +4135,13 @@ function lowerFunction(
           set(out, r);
           return;
         }
-        m.intrinsics.add("declare i64 @yk_call_method_k(i64, i64, i64, ptr)");
+        // With its site's cache: the index of a plain object's own method last called here.
+        const site = `@yk.ic.${m.icSites++}`;
+        m.globals.push(`${site} = internal global i32 0`);
+        m.intrinsics.add("declare i64 @yk_call_method_ic(i64, i64, ptr, i64, ptr)");
         const r = fresh();
         emit(
-          `${r} = call i64 @yk_call_method_k(i64 ${recv}, i64 ${key}, i64 ${args.length}, ptr ${list(args)})`,
+          `${r} = call i64 @yk_call_method_ic(i64 ${recv}, i64 ${key}, ptr ${site}, i64 ${args.length}, ptr ${list(args)})`,
         );
         set(out, r);
         return;
