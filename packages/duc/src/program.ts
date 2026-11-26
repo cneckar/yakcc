@@ -71,6 +71,19 @@ function resolveSpecifier(spec: string, from: string): string {
     throw new ProgramError(`${spec} does not resolve (imported by ${from})`);
   }
 }
+/** A module with no ECMAScript import or export, in a .js or .cjs file: CommonJS. */
+function isCommonJs(sf: SourceFile, file: string): boolean {
+  if (!/\.c?js$/.test(file)) return false;
+  return !sf
+    .getStatements()
+    .some(
+      (st) =>
+        Node.isImportDeclaration(st) ||
+        Node.isExportDeclaration(st) ||
+        Node.isExportAssignment(st) ||
+        (Node.isModifierable(st) && st.hasModifier(SyntaxKind.ExportKeyword)),
+    );
+}
 function isBuiltin(spec: string): boolean {
   return createRequire(import.meta.url)("node:module").builtinModules.includes(spec.split("/")[0]);
 }
@@ -104,6 +117,32 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
         if (n.getKind() === SyntaxKind.MetaProperty && n.getText().startsWith("import"))
           throw new ProgramError(`import.meta is not in the native subset yet (${id})`);
       });
+    if (isCommonJs(sf, file)) {
+      // A CommonJS module (an npm package's, TypeScript's): each require of a specifier that
+      // resolves is its module's; a platform module's or one that does not resolve stays unlinked,
+      // and throws when it runs (an optional dependency required in a try).
+      const parsed = commonJsModuleOf(project, text, id);
+      const requires: Record<string, string> = {};
+      const targets: string[] = [];
+      for (const spec of Object.keys(parsed.module.requires ?? {})) {
+        if (
+          spec.startsWith("node:") ||
+          (!spec.startsWith(".") && !spec.startsWith("/") && isBuiltin(spec))
+        )
+          continue;
+        let target: string;
+        try {
+          target = resolveSpecifier(spec, file);
+        } catch {
+          continue;
+        }
+        requires[spec] = idOf(target);
+        targets.push(target);
+      }
+      modules.set(id, { ...parsed.module, requires });
+      for (const t of targets) visit(t);
+      return;
+    }
     const parsed = moduleOf(sf, file, id, (spec) => idOf(resolveSpecifier(spec, file)));
     modules.set(id, parsed.module);
     for (const spec of parsed.specifiers) visit(resolveSpecifier(spec, file));
