@@ -50,6 +50,10 @@ const report = await verifyL2(
   - `no-obligations` (not a proof);
   - `vacuous` (unsatisfiable preconditions: not a proof);
   - `not-proven`.
+- **Integers stay integers.** Lengths, `indexOf`, integer literals, and `+`/`-` of these carry an
+  exact SMT Int beside their binary64 value. Comparisons of two such numbers are made on the
+  integers while both are within ±2^53. That is where they equal their binary64 values, and every
+  length is.
 - **Every query is a deterministic SMT-LIB2 text,** recorded with its BLAKE3 hash.
 
 ## The fragment
@@ -61,6 +65,7 @@ const report = await verifyL2(
 | 3 | `while`/`for` loops, by invariants (`loopInvariants`, one list per loop in `loopsOf` order). Entry and preservation are obligations. The exit is a fact over fresh carried values. A fact is assumed only by obligations made after it, so a wrong invariant cannot prove its own loop. `++`/`--` |
 | 4 | `Math.abs floor ceil trunc sqrt min max sign fround` (ECMAScript's NaN and ±0 rules). Calls of supplied callees (`options.callees`, by link spec, `module#symbol` or symbol): their preconditions are obligations, their postconditions a fact only when `proven` |
 | 5 | `throw` in a branch: the branch is a path that does not return. Postconditions assume it is not taken. `report.throws` says whether each throw is reachable under the preconditions, with an input |
+| strings | `string` as a sequence of UTF-16 code units (`(Seq (_ BitVec 16))`), at most 2^53 - 1 long (a longer result is a RangeError). Literals, templates, `+` (concatenation; with booleans), `=== !== == !=`, truthiness. `length`; `charCodeAt`, `charAt`, `slice`, `substring` with ECMAScript's index rules; `startsWith`, `endsWith`, `includes`, `indexOf` without a position |
 
 **Unsupported** (named in the reason):
 - `%` (ECMAScript's is fmod; SMT's `fp.rem` is the IEEE remainder) and `**`;
@@ -68,7 +73,9 @@ const report = await verifyL2(
 - any call, member read or other effect not listed above, anywhere in the graph (an unused
   `console.log` included);
 - `for…of`/`for…in`, throws inside loops, closures, async functions and generators;
-- strings, arrays and objects.
+- a number converted to a string or a string to a number, `<` on strings, `s[i]`, string methods
+  not listed, and the search methods with a position;
+- arrays and objects.
 
 ## The record and the registry (slice 6)
 

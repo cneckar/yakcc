@@ -67,3 +67,22 @@ templates), object fields and arrays.
 
    Calls of supplied callees already work; they need the registry to resolve links to proven
    callees.
+
+## With strings (encoder `verify-l2/4`, the same day)
+
+| | Before | With strings |
+|---|---|---|
+| Registry blocks with an encodable signature (number, boolean, string) | 7 | 46 |
+| Registry blocks inside the fragment | 2 | 9 |
+| DUC sample functions whose arguments are numbers, booleans or strings | 3 | 35 |
+| DUC sample functions inside the fragment | 3 | 4 |
+
+**The sample's next refusals:**
+
+| Construct | Functions |
+|---|---|
+| `s[i]` (a string or `undefined`) | 7 |
+| `.replace` | 6 |
+| closures | 5 |
+| `.length` of arrays | 4 |
+| a number converted to a string | 3 |

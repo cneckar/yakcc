@@ -34,7 +34,9 @@ import {
 } from "@yakcc/duc";
 import {
   MATH_EXACT,
+  MAX_STRING_LENGTH,
   PLATFORM_NUMBERS,
+  STRING_METHODS,
   type Sort,
   type Term,
   Unsupported,
@@ -43,6 +45,9 @@ import {
   mathCall,
   operation,
   smtSort,
+  strLength,
+  stringMethod,
+  template,
   truthy,
 } from "./terms.js";
 import type { Callee, L2Contract } from "./types.js";
@@ -102,12 +107,22 @@ function carriedNames(
   taken: readonly string[],
 ): string[] {
   const used = new Set(taken);
-  return (loop.loop?.carry ?? []).map((v, i) => {
+  return dataCarries(loop, defOf).map((v, i) => {
     const text = defOf.get(v)?.origin?.text;
     const name = text !== undefined && IDENT.test(text) && !used.has(text) ? text : `$carry${i}`;
     used.add(name);
     return name;
   });
+}
+
+/** Whether a carried value is the heap token, which orders effects and holds no data (#1285). */
+function isHeapCarry(v: ValueId, defOf: ReadonlyMap<ValueId, DucNode>): boolean {
+  return defOf.get(v)?.label?.endsWith(":heap") === true;
+}
+
+/** A loop's carried values that hold data, in order: every carry but the heap token. */
+function dataCarries(loop: DucNode, defOf: ReadonlyMap<ValueId, DucNode>): ValueId[] {
+  return (loop.loop?.carry ?? []).filter((v) => !isHeapCarry(v, defOf));
 }
 
 interface GraphCtx {
@@ -138,7 +153,10 @@ type Value =
   | { readonly sort: "Undef" }
   | {
       readonly sort: "Fn";
-      readonly fn: { kind: "math"; name: string } | { kind: "link"; key: string; symbol: string };
+      readonly fn:
+        | { kind: "math"; name: string }
+        | { kind: "link"; key: string; symbol: string }
+        | { kind: "string"; name: string; target: Term };
     };
 
 function and(xs: readonly string[]): string {
@@ -164,7 +182,7 @@ export class Encoder {
   private fresh = 0;
   private calls = 0;
   private readonly memo = new Map<string, Value>();
-  private readonly loopMemo = new Map<string, readonly Term[]>();
+  private readonly loopMemo = new Map<string, readonly (Term | undefined)[]>();
 
   constructor(
     private readonly contract: L2Contract,
@@ -193,14 +211,15 @@ export class Encoder {
   }
 
   /**
-   * Encodes every call in a scope (the top level, or one loop's body), so each callee precondition
-   * is an obligation even where the call's result is never read.
+   * Encodes every call and member read in a scope (the top level, or one loop's body), so each
+   * callee precondition is an obligation, and each read is checked to be of a string or of Math,
+   * even where its value is never used (a getter on another object could have an effect).
    */
   private touchCalls(env: Env, loopId: string | undefined): void {
     const inThrowing = (region: string): boolean =>
       [...env.gc.throwing].some((t) => region === t || region.startsWith(`${t}/`));
     for (const n of env.gc.g.nodes) {
-      if (n.label !== "CallExpression") continue;
+      if (n.label !== "CallExpression" && n.label?.startsWith(".") !== true) continue;
       const region = n.region ?? "";
       if (inThrowing(region)) continue;
       const innermost = region
@@ -233,8 +252,9 @@ export class Encoder {
   /** A fresh constant of a sort. A number is declared as its 64 bits, so a model gives them exactly. */
   freshConst(sort: Sort, hint: string): Term {
     const name = `${hint.replace(/[^\w]/g, "_")}_${this.fresh++}`;
-    if (sort === "Bool") {
-      this.decls.push(`(declare-const ${name} Bool)`);
+    if (sort === "Bool" || sort === "Str") {
+      this.decls.push(`(declare-const ${name} ${smtSort(sort)})`);
+      if (sort === "Str") this.decls.push(`(assert (<= (seq.len ${name}) ${MAX_STRING_LENGTH}))`);
       return { sort, smt: name };
     }
     this.decls.push(`(declare-const ${name} (_ BitVec 64))`);
@@ -269,20 +289,24 @@ export class Encoder {
       }
       const label = n.label ?? "";
       if (n.kind === "op" && label.startsWith(".")) {
-        if (!isMath(n.inputs[0]) || !MATH_EXACT.has(label.slice(1))) {
+        // Math's exact functions, or a string's length and encoded methods. Whether the target is
+        // a string is checked when the read is encoded, and every read is encoded (touchScope).
+        const name = label.slice(1);
+        const ok = isMath(n.inputs[0])
+          ? MATH_EXACT.has(name)
+          : name === "length" || STRING_METHODS.has(name);
+        if (!ok) {
           throw new Unsupported(
             label,
-            `the member read ${label}: only Math's exact functions are read`,
+            `the member read ${label}: only Math's exact functions and a string's length and methods are read`,
           );
         }
         continue;
       }
       if (n.kind === "op" && label === "CallExpression") {
         const callee = defOf.get(n.inputs[0] as ValueId);
-        const mathFn =
-          callee?.kind === "op" &&
-          callee.label?.startsWith(".") === true &&
-          isMath(callee.inputs[0]);
+        // A member read (checked above): Math's function, or a string's method.
+        const mathFn = callee?.kind === "op" && callee.label?.startsWith(".") === true;
         const linked = callee?.diamond !== undefined && this.linkKey(callee.diamond) !== undefined;
         if (!mathFn && !linked) {
           const what = callee?.diamond?.symbol ?? callee?.label ?? "a computed function";
@@ -346,7 +370,21 @@ export class Encoder {
     }
     const name = `${env.ns}_${v}`;
     this.defs.push(`(define-fun ${name} () ${smtSort(result.sort)} ${result.smt})`);
-    const named: Term = { sort: result.sort, smt: name };
+    let named: Term = { sort: result.sort, smt: name };
+    if (result.int !== undefined) {
+      this.defs.push(`(define-fun ${name}_int () Int ${result.int})`);
+      named = {
+        ...named,
+        int: `${name}_int`,
+        ...(result.bound !== undefined ? { bound: result.bound } : {}),
+      };
+    }
+    if (result.sort === "Str") {
+      // A string longer than 2^53 - 1 is a RangeError, not a value: on a normal return, every
+      // string computed on the path taken is within it.
+      const guard = and([...env.ctx, this.path(n.region, env)]);
+      this.facts.push(`(=> ${guard} (<= (seq.len ${name}) ${MAX_STRING_LENGTH}))`);
+    }
     this.memo.set(key, named);
     return named;
   }
@@ -370,7 +408,10 @@ export class Encoder {
       case "loop": {
         const outputs = this.loop(n, env);
         const i = n.outputs.indexOf(v);
-        return outputs[i] as Term;
+        const out = outputs[i];
+        if (out === undefined)
+          throw new Unsupported("heap", "the heap token after a loop, read as a value");
+        return out;
       }
       case "op":
         return this.op(n, env);
@@ -422,26 +463,30 @@ export class Encoder {
     if (t.sort !== e.sort) {
       throw new Unsupported("union", "a select whose two values have different types");
     }
-    return { sort: t.sort, smt: `(ite ${c.smt} ${t.smt} ${e.smt})` };
+    const int =
+      t.int !== undefined && e.int !== undefined ? `(ite ${c.smt} ${t.int} ${e.int})` : undefined;
+    return {
+      sort: t.sort,
+      smt: `(ite ${c.smt} ${t.smt} ${e.smt})`,
+      ...(int !== undefined ? { int } : {}),
+    };
   }
 
   private op(n: DucNode, env: Env): Value {
     const label = n.label ?? "";
     const operands = n.order === 1 ? n.inputs.slice(0, -1) : n.inputs;
-    if (label.startsWith(".") && n.order === 1) {
-      // A read of one of Math's functions (checked in graphCtx).
-      const name = label.slice(1);
-      if (!MATH_EXACT.has(name)) throw new Unsupported(`Math.${name}`, `Math.${name}: not exact`);
-      return { sort: "Fn", fn: { kind: "math", name } };
-    }
     if (label.startsWith(".")) {
+      const name = label.slice(1);
       const target = this.value(operands[0] as ValueId, env);
       if (target.sort === "Fn" && target.fn.kind === "math" && target.fn.name === "") {
-        const name = label.slice(1);
         if (!MATH_EXACT.has(name)) throw new Unsupported(`Math.${name}`, `Math.${name}: not exact`);
         return { sort: "Fn", fn: { kind: "math", name } };
       }
-      throw new Unsupported(label, `the member read ${label}`);
+      if (target.sort === "Str") {
+        if (name === "length") return strLength(target);
+        if (STRING_METHODS.has(name)) return { sort: "Fn", fn: { kind: "string", name, target } };
+      }
+      throw new Unsupported(label, `the member read ${label} on a ${target.sort} value`);
     }
     if (label === "CallExpression") {
       const callee = this.value(operands[0] as ValueId, env);
@@ -449,9 +494,29 @@ export class Encoder {
         throw new Unsupported("call", "a call of a value that is not a known function");
       const args = operands.slice(1).map((a) => this.term(this.value(a, env), "an argument"));
       if (callee.fn.kind === "math") return mathCall(callee.fn.name, args);
+      if (callee.fn.kind === "string") {
+        const r = stringMethod(callee.fn.name, callee.fn.target, args);
+        if (callee.fn.name === "indexOf" && r.int !== undefined) {
+          // Lemmas true of seq.indexof for every value, which the solver does not find alone: it is
+          // non-negative exactly when the string contains the search string, and then the search
+          // string is there, inside the string.
+          const str = callee.fn.target.smt;
+          const t = (args[0] as Term).smt;
+          this.facts.push(
+            `(let ((i ${r.int})) (and (= (>= i 0) (seq.contains ${str} ${t})) (=> (>= i 0) (and (<= (+ i (seq.len ${t})) (seq.len ${str})) (= (seq.extract ${str} i (seq.len ${t})) ${t})))))`,
+          );
+        }
+        return r;
+      }
       return this.linkedCall(callee.fn.key, callee.fn.symbol, args, n, env);
     }
     if (n.order === 1) throw new Unsupported(label, `${label}: an effect`);
+    if (label.startsWith("template:")) {
+      return template(
+        label,
+        operands.map((a) => this.term(this.value(a, env), "a template substitution")),
+      );
+    }
     return operation(
       label,
       operands.map((a) => this.term(this.value(a, env), `an operand of ${label}`)),
@@ -503,7 +568,7 @@ export class Encoder {
     return result;
   }
 
-  private loop(n: DucNode, env: Env): readonly Term[] {
+  private loop(n: DucNode, env: Env): readonly (Term | undefined)[] {
     const key = `${env.ns}:${n.id}`;
     const done = this.loopMemo.get(key);
     if (done !== undefined) return done;
@@ -511,7 +576,12 @@ export class Encoder {
     if (rec === undefined || rec.cond === undefined)
       throw new Unsupported("loop", "a loop without a condition");
     const k = rec.carry.length;
-    const init = n.inputs.slice(0, k).map((v) => this.term(this.value(v, env), "a carried value"));
+    // The heap token is carried too (`carry:<i>:heap`); it orders effects and holds no data, and
+    // the effects it orders are refused or pure, so it is not encoded.
+    const data = rec.carry.flatMap((v, i) => (isHeapCarry(v, env.gc.defOf) ? [] : [i]));
+    const init = data.map((i) =>
+      this.term(this.value(n.inputs[i] as ValueId, env), "a carried value"),
+    );
     const outer = n.inputs.slice(k).map((v) => this.value(v, env));
     const index = env.gc.loopIndex.get(n.id) ?? 0;
     const invariants = env.gc.isAtom ? (this.contract.loopInvariants?.[index] ?? []) : [];
@@ -533,7 +603,7 @@ export class Encoder {
       );
     const body = (terms: readonly Term[], ns: string, extra: readonly string[]): Env => {
       const bind = new Map<ValueId, Term>(env.bind);
-      rec.carry.forEach((v, i) => bind.set(v, terms[i] as Term));
+      data.forEach((i, j) => bind.set(rec.carry[i] as ValueId, terms[j] as Term));
       rec.invariant.forEach((v, j) => {
         const o = outer[j];
         if (o !== undefined && o.sort !== "Undef" && o.sort !== "Fn") bind.set(v, o);
@@ -561,9 +631,10 @@ export class Encoder {
     const invC = inv(c, `${tag}_pre`);
     const pe = body(c, `${tag}_pass`, [invC]);
     const cond = truthy(this.term(this.value(rec.cond, pe), "a loop condition")).smt;
-    const next = rec.next.map((v, i) => {
+    const next = data.map((i, j) => {
+      const v = rec.next[i] as ValueId;
       const t = this.term(this.value(v, pe), "a carried value");
-      if (t.sort !== init[i]?.sort)
+      if (t.sort !== init[j]?.sort)
         throw new Unsupported("loop", "a carried value that changes type");
       return t;
     });
@@ -587,12 +658,20 @@ export class Encoder {
     this.abstractions.push(
       `loop ${index} (by ${invariants.length > 0 ? "its invariants" : "no invariant"})`,
     );
-    this.loopMemo.set(key, e);
-    return e;
+    const outputs: (Term | undefined)[] = rec.carry.map(() => undefined);
+    data.forEach((i, j) => {
+      outputs[i] = e[j];
+    });
+    this.loopMemo.set(key, outputs);
+    return outputs;
   }
 }
 
-const SORT_OF_TYPE: Readonly<Record<string, Sort>> = { number: "F64", boolean: "Bool" };
+const SORT_OF_TYPE: Readonly<Record<string, Sort>> = {
+  number: "F64",
+  boolean: "Bool",
+  string: "Str",
+};
 
 /** The sort of a contract type: `number` or `boolean`; anything else is unsupported. */
 export function sortOf(type: string, what: string): Sort {

@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 // SPDX-License-Identifier: Apache-2.0
 // #1421 slice 7: L2 over the bootstrap corpus. For every block: does it carry a contract L2 can
 // check, is its implementation inside the encoder's fragment, and if not, which construct is the
@@ -7,11 +8,10 @@
 //   pnpm --filter @yakcc/verify-l2 build
 //   node packages/verify-l2/scripts/measure-corpus.mjs [registry.sqlite] [out.json]
 import { createRequire } from "node:module";
-import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { liftAtom } from "@yakcc/duc";
-import { Encoder, Unsupported, shutdownSolver, verifyL2, ENCODER_VERSION } from "../dist/index.js";
+import { ENCODER_VERSION, Encoder, Unsupported, shutdownSolver, verifyL2 } from "../dist/index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..", "..");
@@ -21,7 +21,7 @@ const require = createRequire(join(root, "packages", "registry", "package.json")
 const Database = require("better-sqlite3");
 const db = new Database(dbPath, { readonly: true });
 
-const SORT = { number: "F64", boolean: "Bool" };
+const SORT = { number: "F64", boolean: "Bool", string: "Str" };
 const rows = db
   .prepare("select block_merkle_root r, spec_canonical_bytes s, impl_source i from blocks")
   .all();
@@ -63,11 +63,13 @@ for (const row of rows) {
   }
   // The fragment check is independent of the declared types: parameters are taken as numbers.
   const arity = graph.nodes.filter((n) => n.kind === "param-source").length;
-  const params = Array.from({ length: arity }, (_, i) =>
-    scalar && SORT[inputs[i]?.type] === "Bool"
-      ? { sort: "Bool", smt: `p${i}` }
-      : { sort: "F64", smt: `((_ to_fp 11 53) p${i})` },
-  );
+  // Declared types where the spec gives them; a number otherwise.
+  const params = Array.from({ length: arity }, (_, i) => {
+    const sort = SORT[inputs[i]?.type];
+    return sort === "Bool" || sort === "Str"
+      ? { sort, smt: `p${i}` }
+      : { sort: "F64", smt: `((_ to_fp 11 53) p${i})` };
+  });
   try {
     new Encoder({ inputs: [], outputs: [], preconditions: [], postconditions: [] }, params).atom(
       graph,
@@ -116,8 +118,18 @@ const sample = JSON.parse(
 const sampleRefusals = new Map();
 let sampleEncodable = 0;
 let sampleScalar = 0;
+// The sample's argument kinds (#1299's generator): numbers, indices and integers are numbers;
+// "str" and { str } are strings.
+const kindSort = (a) =>
+  a === "num" || a === "int" || a === "idx"
+    ? "F64"
+    : a === "bool"
+      ? "Bool"
+      : a === "str" || (typeof a === "object" && a !== null && "str" in a)
+        ? "Str"
+        : undefined;
 for (const atom of sample) {
-  const scalar = atom.args.every((a) => a === "num" || a === "bool");
+  const scalar = atom.args.every((a) => kindSort(a) !== undefined);
   if (scalar) sampleScalar++;
   try {
     const graph = liftAtom(atom.source);
