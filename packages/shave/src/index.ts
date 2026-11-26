@@ -369,6 +369,7 @@ import type { IntentCard } from "./intent/types.js";
 import { locateProjectRoot } from "./locate-root.js";
 import { linkPlanAtoms, maybePersistNovelGlueAtom } from "./persist/atom-persist.js";
 import { collectInternalSymbols, moduleBindingsOf } from "./persist/duc-gate.js";
+import { mutableOuterOf, withImportedReassigned } from "./persist/module-bindings.js";
 import { enclosingBindingsOf } from "./persist/module-bindings.js";
 import { FOREIGN_POLICY_DEFAULT } from "./types.js";
 import type {
@@ -609,7 +610,12 @@ export async function universalize(
     );
     // DEC-DUC-MODULE-CAPTURE-001 (#1171): the enclosing module's top-level bindings,
     // computed once from the whole module text. Captured pure constants are recorded.
-    const moduleBindings = moduleBindingsOf(candidate.source);
+    // An import whose exporting module reassigns the binding is read in order too (#1375).
+    const moduleBindings = withImportedReassigned(
+      moduleBindingsOf(candidate.source),
+      candidate.source,
+      options?.sourceFilePath,
+    );
 
     // Postorder lineage loop — lifted verbatim from shave()'s index.ts:741-779.
     // Each NovelGlueEntry is persisted in DFS order; the preceding novel-glue
@@ -666,6 +672,7 @@ export async function universalize(
         e.kind === "novel-glue" ? [{ source: e.source, merkleRoot: e.merkleRoot }] : [],
       ),
       registry as Parameters<typeof linkPlanAtoms>[1],
+      mutableOuterOf(moduleBindings),
     );
   }
 

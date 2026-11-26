@@ -58,6 +58,7 @@ import {
   ducGateModeFromEnv,
   enforceDucGate,
 } from "./duc-gate.js";
+import { mutableOuterOf } from "./module-bindings.js";
 import { buildTriplet } from "./triplet.js";
 
 // ---------------------------------------------------------------------------
@@ -356,6 +357,7 @@ export async function persistNovelGlueAtom(
       triplet.merkleRoot,
       triplet.spec,
       proofRoot(triplet.manifest, triplet.artifacts),
+      mutableOuterOf(options?.moduleBindings),
     );
     if (stored !== undefined) await registry.storeDucImplementation(stored);
   }
@@ -376,10 +378,11 @@ export function ducImplementationOf(
   blockMerkleRoot: string | null,
   spec?: Pick<SpecYak, "inputs" | "outputs">,
   proof?: string,
+  mutableOuter: readonly string[] = [],
 ): DucImplementationRow | undefined {
   let graph: ReturnType<typeof liftAtom>;
   try {
-    graph = liftAtom(source);
+    graph = liftAtom(source, { mutableOuter });
     if (spec !== undefined) graph = byMeaning(graph, contractSignature(spec));
   } catch {
     return undefined;
@@ -472,6 +475,7 @@ export async function linkPlanAtoms(
     readonly getBlock?: (root: BlockMerkleRoot) => Promise<BlockTripletRow | null | undefined>;
     readonly storeDucImplementation?: Registry["storeDucImplementation"];
   },
+  mutableOuter: readonly string[] = [],
 ): Promise<number> {
   if (
     typeof registry.getBlock !== "function" ||
@@ -505,7 +509,7 @@ export async function linkPlanAtoms(
   for (const atom of persisted) {
     let graph: ReturnType<typeof liftAtom>;
     try {
-      graph = liftAtom(atom.source);
+      graph = liftAtom(atom.source, { mutableOuter });
       if (atom.spec !== undefined) graph = byMeaning(graph, contractSignature(atom.spec));
     } catch {
       continue;
