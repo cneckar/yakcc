@@ -792,6 +792,10 @@ static yk method_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
 static yk object_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
 static yk builtin_iter_new(yk src, int mode, int type);
 static _Noreturn void integrity_refused(const char *a, yk k, const char *b);
+/* A primitive's wrapper object (new Number(1), Object('s'); kind 15): its primitive in ext. */
+static int is_wrapper(yk v);
+static yk wrapper_value(yk v);
+static yk make_wrapper(yk prim);
 /* Proxies (below): their internal methods. */
 static int is_proxy(yk v);
 static int is_obj_proxy(yk v);
@@ -1023,6 +1027,7 @@ static yk array_join(yk_array *a, yk_string *sep) {
 
 static yk to_primitive(yk v);
 static yk to_primitive_string(yk v);
+static yk to_primitive_hint(yk v, int hint);
 yk yk_get(yk obj, yk key);
 
 /* --- symbols (ECMA-262 20.4): an internal value (kind 4) with its description; equal only to itself.
@@ -1105,16 +1110,27 @@ static yk to_string(yk v) {
  * toString, as Object.prototype's would be overridden, else "[object Object]"; a function has no
  * source text here, so it is a fixed string.
  */
-static yk to_primitive_hint(yk v, int string_hint);
+static yk to_primitive_hint(yk v, int hint);
 static yk to_primitive(yk v) { return to_primitive_hint(v, 0); }
 /* OrdinaryToPrimitive with hint string (ToString, ToPropertyKey, a template's substitutions):
-   toString before valueOf. */
+   toString before valueOf. Hints: 0 default, 1 string, 2 number (valueOf first, as default). */
 static yk to_primitive_string(yk v) { return to_primitive_hint(v, 1); }
-static yk to_primitive_hint(yk v, int string_hint) {
+static yk to_primitive_hint(yk v, int hint) {
+  int string_hint = hint == 1;
   if (is_array(v)) return to_string(v);
   if (is_closure(v)) return ascii("function () { [native code] }");
   if (!is_object(v)) return v;
   yk_object *self = (yk_object *)PTR(v);
+  {
+    /* Its own @@toPrimitive (one the program defines), called with the hint. */
+    yk f;
+    if (chain_get(v, well_known_symbol(10), &f) && is_closure(f = resolve_slot(f, v)) && !is_thunk(f)) {
+      yk h = ascii(hint == 1 ? "string" : hint == 2 ? "number" : "default");
+      yk r = call_value(f, v, 1, &h);
+      if (is_reference(r)) type_error("Cannot convert object to primitive value");
+      return r;
+    }
+  }
   if (self->kind != 0 && is_object(self->proto)) {
     /* A subclass's (or the program's) own valueOf / toString first (a Buffer's toString). */
     static const char *own_names[2][2] = {{"valueOf", "toString"}, {"toString", "valueOf"}};
@@ -1126,10 +1142,12 @@ static yk to_primitive_hint(yk v, int string_hint) {
       }
     }
   }
+  if (self->kind == 15) return wrapper_value(v); /* a wrapper's primitive, its own valueOf's */
   /* A typed array's toString is its join; a buffer's and a view's, their tag. */
   if (self->kind == 7) return buffer_primitive(v);
   if (self->kind == 6) return ascii("[object ArrayBuffer]");
-  if (self->kind == 10) return date_string(*(double *)self->ext, 0); /* a Date's default hint is string */
+  /* A Date's default hint is string; hint number its time value. */
+  if (self->kind == 10) return hint == 2 ? yk_number(*(double *)self->ext) : date_string(*(double *)self->ext, 0);
   if (self->kind == 8) return ascii("[object DataView]");
   if (self->kind == 3)
     return concat(str(concat(str(concat(str(ascii("/")), str(self->regex[0]))), str(ascii("/")))), str(self->regex[1]));
@@ -1225,7 +1243,7 @@ static double to_number(yk v) {
   if (v == YK_TRUE) return 1;
   if (is_string(v)) return string_to_number(str(v));
   if (is_bigint(v)) type_error("Cannot convert a BigInt value to a number");
-  v = to_primitive(v);
+  v = to_primitive_hint(v, 2); /* ToNumber: hint number */
   if (is_bigint(v)) type_error("Cannot convert a BigInt value to a number");
   return to_number(v);
 }
@@ -1266,19 +1284,19 @@ yk yk_div(yk a, yk b) {
 }
 yk yk_mod(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '%') : yk_number(fmod(to_number(a), to_number(b))); }
 yk yk_neg(yk a) {
-  a = to_primitive(a);
+  a = to_primitive_hint(a, 2);
   return is_bigint(a) ? big_negate(a) : yk_number(-to_number(a));
 }
 yk yk_pos(yk a) { return yk_number(to_number(a)); }
 yk yk_not(yk a) { return yk_bool(!yk_truthy(a)); }
 yk yk_inc(yk a) {
   if (is_number(a)) return yk_number(num(a) + 1);
-  a = to_primitive(a);
+  a = to_primitive_hint(a, 2);
   return is_bigint(a) ? big_add_small(a, 1) : yk_number(to_number(a) + 1);
 }
 yk yk_dec(yk a) {
   if (is_number(a)) return yk_number(num(a) - 1);
-  a = to_primitive(a);
+  a = to_primitive_hint(a, 2);
   return is_bigint(a) ? big_add_small(a, -1) : yk_number(to_number(a) - 1);
 }
 int yk_is_nullish(yk a) { return is_nullish(a); }
@@ -1324,8 +1342,8 @@ static int less_than(yk a, yk b) {
     double x = num(a), y = num(b);
     return x != x || y != y ? -1 : x < y;
   }
-  a = to_primitive(a);
-  b = to_primitive(b);
+  a = to_primitive_hint(a, 2);
+  b = to_primitive_hint(b, 2);
   if (is_string(a) && is_string(b)) {
     yk_string *x = str(a), *y = str(b);
     uint32_t n = x->len < y->len ? x->len : y->len;
@@ -1617,6 +1635,13 @@ yk yk_get_ic(yk obj, yk key, uint32_t *site) {
 }
 static __attribute__((noinline)) yk yk_get_slow(yk obj, yk key) {
   if (is_proxy(obj)) return proxy_get(obj, to_property_key(key), obj);
+  if (is_wrapper(obj) && is_string(wrapper_value(obj))) {
+    /* A String object's length and indexes, its string's. */
+    yk sv = wrapper_value(obj);
+    if (!is_symbol(key) && key_is(to_string(key), "length")) return yk_number(str_len(sv));
+    int64_t i = is_symbol(key) ? -1 : index_of_key(key);
+    if (i >= 0 && i < str_len(sv)) return unit_string(str_unit(sv, (uint32_t)i));
+  }
   /* An element by an integer index: an array's (not a hole), a typed array's, in range. */
   if (is_number(key)) {
     double d = num(key);
@@ -1861,6 +1886,14 @@ static int inherits_thunk(yk recv, yk key) {
   return is_thunk(proto_lookup(recv, key));
 }
 static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
+  if (is_wrapper(recv)) {
+    /* A method the program set on it (or along its chain), with it as the receiver; any other
+       its primitive's. */
+    yk f;
+    if (chain_get(recv, key, &f) && is_closure(f = resolve_slot(f, recv)) && !is_thunk(f)) return call_value(f, recv, argc, argv);
+    if (key_is(key, "valueOf")) return wrapper_value(recv);
+    recv = wrapper_value(recv);
+  }
   /* The member read the call makes first: of undefined or null, its TypeError. */
   if (is_nullish(recv)) yk_get(recv, key);
   yk arg0 = argc > 0 ? argv[0] : YK_UNDEFINED;
@@ -3432,8 +3465,23 @@ static int has_own(yk v, yk key) {
   return 0;
 }
 /* Object.prototype.toString: "[object " + the tag + "]" (Symbol.toStringTag when it is a string). */
+static int is_wrapper(yk v) { return is_object(v) && ((yk_object *)PTR(v))->kind == 15; }
+static yk wrapper_value(yk v) { return *(yk *)((yk_object *)PTR(v))->ext; }
+static yk intrinsic_proto(int which);
+static yk make_wrapper(yk prim) {
+  yk o = yk_object_of(0, NULL, NULL);
+  yk_object *w = (yk_object *)PTR(o);
+  w->kind = 15;
+  yk *box = alloc(sizeof(yk));
+  *box = prim;
+  w->ext = box;
+  w->proto = intrinsic_proto(is_string(prim) ? I_STRING : is_number(prim) ? I_NUMBER : is_bool(prim) ? I_BOOLEAN
+                             : is_symbol(prim) ? I_SYMBOL : I_BIGINT);
+  return o;
+}
 static yk object_to_string(yk v) {
   const char *tag = "Object";
+  if (is_wrapper(v)) v = wrapper_value(v); /* a wrapper's tag is its primitive's */
   if (v == YK_UNDEFINED) tag = "Undefined";
   else if (v == YK_NULL) tag = "Null";
   else if (is_array(v)) tag = "Array";
@@ -4409,7 +4457,7 @@ yk yk_ushr(yk a, yk b) {
   return yk_number(to_uint32(a) >> (to_uint32(b) & 31));
 }
 yk yk_bitnot(yk a) {
-  a = to_primitive(a);
+  a = to_primitive_hint(a, 2);
   return is_bigint(a) ? big_add_small(big_negate(a), -1) : yk_number(~to_int32(a));
 }
 
@@ -4890,8 +4938,8 @@ static yk big_binary(yk a, yk b, char op) {
 }
 /* The operands as numbers or BigInts: 1 when both are BigInts, 0 when neither, else a TypeError. */
 static int numeric_pair(yk *a, yk *b) {
-  *a = to_primitive(*a);
-  *b = to_primitive(*b);
+  *a = to_primitive_hint(*a, 2); /* ToNumeric: hint number */
+  *b = to_primitive_hint(*b, 2);
   int x = is_bigint(*a), y = is_bigint(*b);
   if (x && y) return 1;
   if (x || y) mix_error();
@@ -5426,6 +5474,11 @@ static int json_property(json_state *st, yk_array *parts, yk holder, yk key, yk 
     yk args[2] = {key, value};
     value = call_value(st->replacer, holder, 2, args);
   }
+  /* A wrapper as its primitive (a Number's ToNumber, a String's ToString). */
+  if (is_wrapper(value)) {
+    yk p = wrapper_value(value);
+    value = is_number(p) ? yk_number(to_number(value)) : is_string(p) ? to_string(value) : p;
+  }
   if (value == YK_NULL) return push(parts, ascii("null")), 1;
   if (is_bool(value)) return push(parts, ascii(value == YK_TRUE ? "true" : "false")), 1;
   if (is_string(value)) return json_quote(parts, str(value)), 1;
@@ -5636,7 +5689,10 @@ yk yk_cjs_namespace_once(yk *slot, yk exports) {
 static yk builtin_identity(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return argc > 0 ? argv[0] : YK_UNDEFINED; }
 static yk builtin_object(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
-  return argc > 0 && is_reference(argv[0]) ? argv[0] : yk_object_of(0, NULL, NULL);
+  if (argc > 0 && is_reference(argv[0])) return argv[0];
+  /* ToObject: a primitive's wrapper; undefined and null an empty object. */
+  if (argc > 0 && !is_nullish(argv[0])) return make_wrapper(argv[0]);
+  return yk_object_of(0, NULL, NULL);
 }
 static yk builtin_map(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
@@ -10110,6 +10166,8 @@ yk yk_new(yk f, uint64_t argc, const yk *argv) {
   if (is_closure(f)) {
     yk_code code = ((yk_closure *)PTR(f))->code;
     if (code == builtin_proxy) return proxy_new(arg_or_undefined(argc, argv, 0), arg_or_undefined(argc, argv, 1));
+    if (code == builtin_number || code == builtin_string || code == builtin_boolean)
+      return make_wrapper(code(NULL, YK_UNDEFINED, argc, argv)); /* new Number(x): its wrapper */
     if (code == proxy_fn_code) return proxy_construct(f, argc, argv);
     if (code == builtin_promise) return promise_construct(argc, argv);
     if (((yk_closure *)PTR(f))->mode != 0) type_error("this function is not a constructor");
@@ -10164,6 +10222,15 @@ yk yk_instanceof(yk v, yk f) {
     yk ap = intrinsic_proto(I_ARRAY);
     for (yk o = prototype_of(v); is_object(o); o = prototype_of(o))
       if (o == ap) return YK_TRUE;
+    return YK_FALSE;
+  }
+  if (code == builtin_number || code == builtin_string || code == builtin_boolean || code == builtin_symbol || code == builtin_bigint) {
+    /* The type's prototype along an object's chain (a wrapper's, or one made from it). */
+    if (!is_object(v)) return YK_FALSE;
+    yk tp = intrinsic_proto(code == builtin_number ? I_NUMBER : code == builtin_string ? I_STRING
+                            : code == builtin_boolean ? I_BOOLEAN : code == builtin_symbol ? I_SYMBOL : I_BIGINT);
+    for (yk o = prototype_of(v); is_object(o); o = prototype_of(o))
+      if (o == tp) return YK_TRUE;
     return YK_FALSE;
   }
   if (code == builtin_object) {
