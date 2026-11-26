@@ -724,8 +724,20 @@ function parseType(spelled: string, depth = 0): CType {
   if (/\)\s*&{1,2}$/.test(raw) || /^auto\s*\(.*\)\s*->/.test(raw)) return { k: "fn" };
   // A reference is an address (C++): `T &`, `T &&`.
   const ref = /^(.*?)\s*&&?$/.exec(raw);
-  if (ref !== null && !/\)$/.test(ref[1] as string))
-    return { k: "ptr", to: parseType(ref[1] as string, depth + 1) };
+  if (ref !== null && !/\)$/.test(ref[1] as string)) {
+    // (To an opaque type, a class only declared here, `MicroProps &`: an address only.)
+    try {
+      return { k: "ptr", to: parseType(ref[1] as string, depth + 1) };
+    } catch (e) {
+      if (
+        e instanceof RaiseCError &&
+        /is not raised yet$/.test(e.message) &&
+        /^[A-Za-z_][\w:]*$/.test((ref[1] as string).trim())
+      )
+        return { k: "ptr", to: { k: "void" } };
+      throw e;
+    }
+  }
   // A reference or a pointer to an array (`int (&)[5]`, `char (*)[16]`): its address.
   const toArr = /^(.*?)\s*\((&&?|\*)\)\s*((?:\[\d*\])+)$/.exec(raw);
   if (toArr !== null)
@@ -761,7 +773,15 @@ function parseType(spelled: string, depth = 0): CType {
   }
   const builtin = BUILTIN[raw];
   if (builtin !== undefined) return builtin;
-  if (/^(struct|union|class) /.test(raw)) return { k: "rec", name: raw };
+  if (/^(struct|union|class) /.test(raw)) {
+    // (An enumeration a layout's field spells with a class's tag, `class StandardPlural::Form`:
+    // its underlying type, when no record is laid out by that name.)
+    if (unitLayout(raw) === undefined) {
+      const asEnum = unitTypedef(raw.replace(/^(struct|class|union) /, "enum "));
+      if (asEnum !== undefined) return parseType(asEnum, depth + 1);
+    }
+    return { k: "rec", name: raw };
+  }
   if (/^enum /.test(raw)) {
     const e = unitTypedef(raw);
     if (e !== undefined) return parseType(e, depth + 1);
@@ -784,10 +804,14 @@ function parseType(spelled: string, depth = 0): CType {
   for (const tag of ["struct", "class", "union"])
     if (unitLayout(`${tag} ${raw}`) !== undefined) return { k: "rec", name: `${tag} ${raw}` };
   // A class named in the scope of the member function's class (`_Storage<int>`).
-  for (const scope of localScopes)
+  for (const scope of localScopes) {
+    // (An enumeration of the class first, `StandardPlural::Form`: its underlying type.)
+    const asEnum = unitTypedef(`enum ${scope}::${raw}`);
+    if (asEnum !== undefined) return parseType(asEnum, depth + 1);
     for (const tag of ["struct", "class", "union"])
       if (unitLayout(`${tag} ${scope}::${raw}`) !== undefined)
         return { k: "rec", name: `${tag} ${scope}::${raw}` };
+  }
   // (Its template's arguments spelled with typedefs, `optional<std::string_view>`: the types.)
   const parts = templateParts(raw);
   if (parts !== undefined && depth < 16) {
@@ -812,6 +836,9 @@ function parseType(spelled: string, depth = 0): CType {
     // (A C typedef's unnamed record, which the layout dump names by the typedef alone:
     // `pthread_mutex_t`.)
     if (unitLayout(raw) !== undefined) return { k: "rec", name: raw };
+    // (A class only declared here, `struct MicroProps;`: one known by its address, its layout
+    // asked of it fails where it is needed.)
+    if (/::|^[A-Z]/.test(raw) && isCxxUnit) return { k: "rec", name: `struct ${raw}` };
   }
   throw new RaiseCError(`the C type "${raw}" is not raised yet`);
 }
@@ -1384,7 +1411,9 @@ export interface CxxUnit {
    */
   readonly lambdaOf: (methodId: string) => Lambda | undefined;
   /** A virtual member function's slot in its class's vtable; a destructor's, `deleting`. */
-  readonly slotOf: (methodId: string) => number | undefined;
+  readonly slotOf: (methodId: string, objectClass?: string) => number | undefined;
+  /** Whether a class has a pure virtual function, of its own or not overridden. */
+  readonly isAbstract: (record: string) => boolean;
   readonly deletingSlotOf: (record: string) => number | undefined;
   /**
    * A class's vtable, as module state: its static's key (the functions' addresses, from the
@@ -1812,6 +1841,7 @@ function raiseBody(
 ): string {
   // (C++: a range-based for is the for loop clang spells it as.)
   const fn = flattenEnteredSwitches(lowerRangeFor(asWritten));
+  raisingSymbol = symbolOf(fn);
   /** Whether a declaration is named outside a static_assert in the function. */
   const readAtRunTime = (id: string): boolean => {
     const walk = (n: ClangNode): boolean =>
@@ -2760,6 +2790,9 @@ function raiseBody(
           return `(((${p} = ${expr(k0)}) !== 0) ? ${p} ${ck === "BaseToDerived" ? "-" : "+"} ${off} : 0)`;
         }
         if (ck === "NullToPointer") return "0";
+        // A null pointer to a member (C++): a member function's, 0; a data member's, its
+        // offset's -1 (Itanium's).
+        if (ck === "NullToMemberPointer") return typeOf(e).k === "i64" ? "-1n" : "0";
         // A conversion operator's call (C++), or a record a conversion makes: its value.
         if (ck === "UserDefinedConversion" && typeOf(e).k !== "rec") return expr(k0);
         if (
@@ -3951,7 +3984,13 @@ function raiseBody(
       unitCxx.isFinal(id) !== true &&
       !unitCxx.calledDirectly(symbolOf(fn), id)
     ) {
-      const slot = unitCxx.slotOf(id);
+      // (The object's class, whose vtable has the slot of a method an abstract base declares.)
+      const baseOf = (member.inner ?? [])[0] as ClangNode | undefined;
+      // (Before its conversion to the base that declares the method.)
+      const bt = baseOf === undefined ? undefined : typeOf(stripCasts(baseOf));
+      const objCls =
+        bt?.k === "ptr" && bt.to.k === "rec" ? bt.to.name : bt?.k === "rec" ? bt.name : undefined;
+      const slot = unitCxx.slotOf(id, objCls);
       if (slot === undefined) throw new RaiseCError(`the vtable slot of ${name}`);
       const o = temp({ k: "f64" });
       const vt = `__ykBigToF64(__ykI64(__ykLoad64(${o})))`;
@@ -3984,6 +4023,26 @@ function raiseBody(
         const elem = { ...s, type: { qualType: (t.of as { name: string }).name } } as ClangNode;
         return Array.from({ length: n }, (_, i) => `${construct(at(i), elem)};`);
       }
+      // An array member copied (an implicit copy constructor's, `ArrayInitLoopExpr`): each element
+      // from the source's, its bytes, or as its class copies.
+      if (s?.kind === "ArrayInitLoopExpr") {
+        const opaque = (s.inner ?? [])[0] as ClangNode;
+        const src = place(((opaque.inner ?? [])[0] ?? opaque) as ClangNode);
+        if (src.k !== "mem") throw new RaiseCError("an array copied from one not in memory");
+        const from = temp({ k: "f64" });
+        const head = `${from} = ${src.addr}`;
+        if (t.of.k !== "rec" || unitCxx?.trivialCopy(t.of.name) !== false)
+          return [`${head};`, ...copyBytes(addr, from, n * size).map((x) => `${x};`)];
+        const of = t.of;
+        return [
+          `${head};`,
+          ...Array.from({ length: n }, (_, i) =>
+            relocate(at(i), i === 0 ? from : `(${from} + ${i * size})`, of, false).map(
+              (x) => `${x};`,
+            ),
+          ).flat(),
+        ];
+      }
       if (s !== undefined && s.kind !== "InitListExpr")
         throw new RaiseCError(`an array initialized by ${s.kind}`);
       // Elements past the list (clang's array filler) are zero.
@@ -4013,6 +4072,15 @@ function raiseBody(
       let i = 0;
       for (const [name, f] of l.fields) {
         const ft = parseType(f.type);
+        // (A reference member, C++: the address of the object it binds to.)
+        const item0 = items[i];
+        if (isReferenceType(f.type) && item0 !== undefined && item0.kind !== "CXXDefaultInitExpr") {
+          out.push(
+            `${storeAt(f.offset === 0 ? addr : `(${addr} + ${f.offset})`, { k: "ptr", to: { k: "void" } }, argOf(item0))};`,
+          );
+          i++;
+          continue;
+        }
         // (A member the list leaves to its default initializer, C++: that initializer.)
         if (items[i]?.kind === "CXXDefaultInitExpr") {
           const d = unitCxx?.memberInitOf(t.name, name);
@@ -4494,9 +4562,21 @@ function raiseBody(
         return;
       }
       case "GotoStmt": {
-        if (scopes.some((sc) => sc !== "loop" && sc.length > 0))
-          throw new RaiseCError("a goto where objects would be destroyed");
         const target = (s as { targetLabelDeclId?: string }).targetLabelDeclId ?? "";
+        // To a label of the function's own block (ICU's `goto error`): the objects of the blocks
+        // between destroyed first, the innermost's last made first, as leaving them does.
+        const body = (fn.inner ?? []).find((k) => k.kind === "CompoundStmt");
+        const atTop = (body?.inner ?? []).some(
+          (k) => k.kind === "LabelStmt" && (k as { declId?: string }).declId === target,
+        );
+        const inner = scopes.slice(1);
+        if (atTop && inner.some((sc) => sc !== "loop" && sc.length > 0)) {
+          for (let i = inner.length - 1; i >= 0; i--) {
+            const sc = inner[i] as string[] | "loop";
+            if (sc !== "loop") for (const x of [...sc].reverse()) push(`${x};`);
+          }
+        } else if (scopes.some((sc) => sc !== "loop" && sc.length > 0))
+          throw new RaiseCError("a goto where objects would be destroyed");
         if (dispatch !== undefined) {
           const d = dispatch;
           const targetOf = (x: Dispatch): number | undefined =>
@@ -4561,7 +4641,7 @@ function raiseBody(
         return;
       // `cpuid` (clang's cpuid.h, `__cpuid` and `__cpuid_count`): each register from the leaf.
       case "GCCAsmStmt": {
-        if (isEmptyAsm(s)) return;
+        if (isEmptyAsm(s) || unitEmptyAsm().has(raisingSymbol)) return;
         if (!isCpuid(s)) throw new RaiseCError("an asm statement other than cpuid");
         const [leafOf, subOf] = kids.slice(4) as [ClangNode, ClangNode?];
         const leaf = temp({ k: "u32" });
@@ -5063,8 +5143,23 @@ function raiseBody(
     ...inits.filter((i) => (i as { baseInit?: unknown }).baseInit === undefined),
   ];
   const vptrAt = thisRecord === undefined ? undefined : vptrOf(thisRecord);
-  const setVptr = (): string =>
-    `__ykStore64(${vptrAt === 0 ? "__this" : `(__this + ${vptrAt})`}, __ykNumToBig(__ykStatic(${JSON.stringify(unitCxx?.vtableOf(thisRecord as string, destroy))}) + 16));`;
+  const setVptr = (): string => {
+    // (An abstract class's, whose vtable no unit lays out, `SeriesMatcher`: none set, as only a
+    // derived class's object exists and its constructor sets its own.)
+    let key: string | undefined;
+    try {
+      key = unitCxx?.vtableOf(thisRecord as string, destroy);
+    } catch (e) {
+      if (
+        e instanceof RaiseCError &&
+        /^the vtable of /.test(e.message) &&
+        unitCxx?.isAbstract(thisRecord as string)
+      )
+        return "";
+      throw e;
+    }
+    return `__ykStore64(${vptrAt === 0 ? "__this" : `(__this + ${vptrAt})`}, __ykNumToBig(__ykStatic(${JSON.stringify(key)}) + 16));`;
+  };
   if (fn.kind === "CXXDestructorDecl" && vptrAt !== undefined) entry.push(setVptr());
   for (const init of fn.kind === "CXXConstructorDecl" ? baseFirst : []) {
     if (init === undefined) {
@@ -5402,6 +5497,27 @@ export function shaveCUnit(
     }).length > 200_000;
   const indexed = large ? indexUnit(clang, args, file) : undefined;
   unitFile = file;
+  isCxxUnit = /\+\+$/.test(clang) || /\.(cc|cpp|cxx)$/.test(file);
+  let emptyAsm: Set<string> | undefined;
+  unitEmptyAsm = () => {
+    if (emptyAsm === undefined) {
+      emptyAsm = new Set();
+      const bad = new Set<string>();
+      let current: string | undefined;
+      for (const line of unitIR().split("\n")) {
+        const def = /^define .*?@("?)([^\s("]+)\1\(/.exec(line);
+        if (def !== null) current = def[2] as string;
+        else if (line === "}") current = undefined;
+        else if (current !== undefined && /\basm\b/.test(line)) {
+          if (/\basm (?:sideeffect )?(?:alignstack )?(?:inteldialect )?""/.test(line))
+            emptyAsm.add(current);
+          else bad.add(current);
+        }
+      }
+      for (const b of bad) emptyAsm.delete(b);
+    }
+    return emptyAsm;
+  };
   const isCxx = /\+\+$/.test(clang) || /\.(cc|cpp|cxx)$/.test(file);
   // The roots, as the filters name them; in an indexed unit, the index's own nodes (its ids).
   // (C++: a filter can be a symbol, the mangled name another unit calls a function by.)
@@ -5852,11 +5968,33 @@ export function shaveCUnit(
             // aside: a type can be spelled with or without them).
             const bare = (t: string): string =>
               normType(t.replace(/\b[A-Za-z_]\w*::/g, "").replace(/\s*\bnoexcept\b(\(.*\))?$/, ""));
-            const all = nodes.flatMap((node) =>
+            let all = nodes.flatMap((node) =>
               (node?.inner ?? []).flatMap((c) =>
                 c.kind === "FunctionTemplateDecl" ? (c.inner ?? []) : [c],
               ),
             );
+            // (A declaration of it found, not its definition, a nested class's, `Edits::Iterator`:
+            // the complete one of its name in the class that encloses it.)
+            if (!all.some((c) => c.kind === "CXXConstructorDecl")) {
+              const parts =
+                simpleClass(record) === "" ? [] : plainName.replace(/<.*>/g, "").split("::");
+              const own = parts[parts.length - 1] ?? "";
+              const outer = parts[parts.length - 2];
+              const defs = (indexed.byName.get(own) ?? []).filter((x) => {
+                if (!RECORD_KINDS.has(x.kind)) return false;
+                if (
+                  (readDecl(indexed, x) as { completeDefinition?: boolean }).completeDefinition !==
+                  true
+                )
+                  return false;
+                const p = x.parent === undefined ? undefined : indexed.byId.get(x.parent);
+                return outer === undefined || p?.name === outer;
+              });
+              if (defs.length === 1)
+                all = (readDecl(indexed, defs[0] as IndexedDecl).inner ?? []).flatMap((c) =>
+                  c.kind === "FunctionTemplateDecl" ? (c.inner ?? []) : [c],
+                );
+            }
             // (A constructor template's own declaration in the instance has the type of its
             // instance: the one defined.)
             const matching = (same: (t: string) => boolean): ClangNode | undefined => {
@@ -6080,14 +6218,76 @@ export function shaveCUnit(
             const cls = d.parent === undefined ? undefined : indexed.byId.get(d.parent);
             return cls !== undefined && hasFinal(readDecl(indexed, cls));
           },
-          slotOf: (methodId) => {
+          isAbstract: (record) =>
+            (vtables().tables.get(simpleClass(record)) ?? []).some((t) => t.endsWith("[pure]")) ||
+            !vtables().tables.has(simpleClass(record)),
+          slotOf: (methodId, objectClass) => {
             const d = indexed.byId.get(methodId);
             const cls = d?.parent === undefined ? undefined : indexed.byId.get(d.parent);
             if (d === undefined || cls === undefined) return undefined;
             const node = readDecl(indexed, d);
             const slots = vtables().indices.get(cls.name);
             const exact = slots?.get(memberKey(node.name ?? "", node.type?.qualType ?? ""));
-            if (exact !== undefined || slots === undefined) return exact;
+            if (exact !== undefined) return exact;
+            // (Not in its class's indices, an abstract base's that no unit lays out: the object's
+            // class's vtable, by the entry of its name and arity.)
+            const fromObject = (): number | undefined => {
+              const table =
+                objectClass === undefined
+                  ? undefined
+                  : vtables().tables.get(simpleClass(objectClass));
+              if (table === undefined) return undefined;
+              const name = node.name ?? "";
+              const arityOf = (sig: string): number => {
+                const inner = sig.slice(sig.indexOf("(") + 1, sig.lastIndexOf(")")).trim();
+                return inner === "" || inner === "void" ? 0 : splitTemplateArgs(inner).length;
+              };
+              const want = arityOf(node.type?.qualType ?? "");
+              const hits = table.flatMap((t, i) => {
+                const head = t.replace(/\(anonymous namespace\)::/g, "");
+                const at = head.indexOf(`::${name}(`);
+                return at >= 0 && arityOf(head.slice(at + name.length + 2)) === want ? [i] : [];
+              });
+              return hits.length === 1 ? hits[0] : undefined;
+            };
+            // (A class no vtable is laid out for, an interface, `Modifier`: its slots as the
+            // Itanium ABI orders them, from its declarations.)
+            const fromDecls = (): number | undefined => {
+              const order = (c: IndexedDecl, depth: number): string[] => {
+                if (depth > 16) return [];
+                const node = readDecl(indexed, c);
+                const bases = (
+                  node as { bases?: { type?: { qualType?: string }; isVirtual?: boolean }[] }
+                ).bases;
+                const primary = bases?.find((b) => b.isVirtual !== true)?.type?.qualType;
+                const baseDecl =
+                  primary === undefined
+                    ? undefined
+                    : (indexed.byName.get(simpleClass(primary)) ?? []).find(
+                        (x) =>
+                          RECORD_KINDS.has(x.kind) &&
+                          (readDecl(indexed, x) as { completeDefinition?: boolean })
+                            .completeDefinition === true,
+                      );
+                const slots0 = baseDecl === undefined ? [] : order(baseDecl, depth + 1);
+                const own: string[] = [];
+                for (const m of node.inner ?? []) {
+                  const isVirt = (m as { virtual?: boolean }).virtual === true;
+                  if (m.kind === "CXXDestructorDecl" && isVirt) {
+                    if (!slots0.some((k) => k.startsWith("~"))) own.push("~", "~[deleting]");
+                    continue;
+                  }
+                  if (m.kind !== "CXXMethodDecl" || !isVirt) continue;
+                  const k = memberKey(m.name ?? "", m.type?.qualType ?? "");
+                  if (!slots0.includes(k)) own.push(k);
+                }
+                return [...slots0, ...own];
+              };
+              const all = order(cls, 0);
+              const at = all.indexOf(memberKey(node.name ?? "", node.type?.qualType ?? ""));
+              return at < 0 ? undefined : at;
+            };
+            if (slots === undefined) return fromObject() ?? fromDecls();
             // (Its parameters spelled otherwise there, a typedef's for its type, `UBool (UChar32)`
             // as `signed char (int)`: the one entry of its name and arity.)
             const arity = (sig: string): number => {
@@ -6099,7 +6299,7 @@ export function shaveCUnit(
             const hits = [...slots].filter(
               ([k]) => k.startsWith(`${name}(`) && arity(k.slice(name.length)) === want,
             );
-            return hits.length === 1 ? (hits[0] as [string, number])[1] : undefined;
+            return hits.length === 1 ? (hits[0] as [string, number])[1] : fromObject();
           },
           deletingSlotOf: (record) => {
             const simple = simpleClass(record);
@@ -6199,7 +6399,19 @@ export function shaveCUnit(
     if (vt !== undefined) return vt;
     const text = execFileSync(
       clang,
-      [...args, "-S", "-emit-llvm", "-o", "/dev/null", "-Xclang", "-fdump-vtable-layouts", file],
+      // (Every class's, also one whose vtable another unit emits, `-fforce-emit-vtables`: a
+      // destructor here sets its vptr, a call here takes its slots.)
+      [
+        ...args,
+        "-S",
+        "-emit-llvm",
+        "-o",
+        "/dev/null",
+        ...(isCxx ? ["-fforce-emit-vtables"] : []),
+        "-Xclang",
+        "-fdump-vtable-layouts",
+        file,
+      ],
       { encoding: "utf8", maxBuffer: 1 << 30, stdio: ["ignore", "pipe", "ignore"] },
     );
     const tables = new Map<string, string[]>();
@@ -6353,7 +6565,9 @@ export function shaveCUnit(
       ) {
         const t = n.type?.desugaredQualType ?? n.type?.qualType;
         // `typedef struct { .. } Ctx;`: the desugared type is the typedef's own name.
-        if (t === name) anonymous = n;
+        // (In C++, the record or enumeration takes the typedef's name, qualified by its
+        // namespace: `icu_78::EmbeddingType`.)
+        if (t === name || t?.endsWith(`::${name}`) === true) anonymous = n;
         else hit = t;
         return;
       }
@@ -7608,6 +7822,15 @@ let cpuidHeader: string | undefined;
 const asmSources = new Map<string, string>();
 /** The file of the unit being shaved: where a location without its own file is. */
 let unitFile = "";
+/** Whether the unit being shaved is C++. */
+let isCxxUnit = false;
+/**
+ * The functions of the unit whose every asm statement has an empty template, by their symbols,
+ * as code generation emits them (`asm sideeffect ""`): when clang's dump does not say which file
+ * a macro's asm is spelled in (ICU's U_ALIASING_BARRIER, in char16ptr.h).
+ */
+let unitEmptyAsm: () => ReadonlySet<string> = () => new Set();
+let raisingSymbol = "";
 function isEmptyAsm(s: ClangNode): boolean {
   type Loc = { offset?: number; file?: string; spellingLoc?: Loc };
   const begin = (s as { range?: { begin?: Loc } }).range?.begin;
