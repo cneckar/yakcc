@@ -4,6 +4,7 @@
 import { ts } from "ts-morph";
 import { describe, expect, it } from "vitest";
 import { EMIT_CASES as CASES } from "./__fixtures__/emit-cases.js";
+import { PRIVATE_FIELDS_STREAM } from "./__fixtures__/private-fields-stream.js";
 import { runnable } from "./__fixtures__/runnable.js";
 import { graphIdentity } from "./canonical.js";
 import { EmitError, emitTypeScript } from "./emit-ts.js";
@@ -93,4 +94,74 @@ describe("a fragment that can return: its completion record (#1297)", () => {
         if (want[0] === false) expect(got.slice(2)).toEqual(want.slice(2));
       }
     });
+});
+
+describe("the npm closure's last round trips (#1368)", () => {
+  const roundTrips = (source: string): string => {
+    const g = liftAtom(source);
+    const code = emitTypeScript(g);
+    expect(graphIdentity(liftAtom(code)), code).toBe(graphIdentity(g));
+    return code;
+  };
+
+  it("a class's method reads a class declared below it through a cell the declaration writes", () => {
+    const source = "class A { m() { return B; } }\nclass B {}";
+    const g = liftAtom(source);
+    // No free name: B is the module's own class, as a hoisted function's later read is.
+    expect(g.nodes.some((n) => n.diamond?.symbol === "B")).toBe(false);
+    expect(g.nodes.some((n) => n.label === ".value=")).toBe(true);
+    roundTrips(source);
+  });
+
+  it("a module's `var` is the module's own, not a binding outside the atom", () => {
+    // A bundler's helper binding (zod: `var _a; (_a = globalThis).x ?? ..`).
+    const source = "var _a;\n(_a = globalThis).x ?? (_a.x = 1);";
+    expect(liftAtom(source).nodes.some((n) => n.label === "binding=")).toBe(false);
+    roundTrips(source);
+  });
+
+  it("a `for await` at a fragment's top level iterates, as the async body it was cut from", () => {
+    const source = "for await (const event of stream) { handle.call(this, event); }";
+    expect(liftAtom(source).nodes.some((n) => (n.label ?? "").includes("#"))).toBe(false);
+    roundTrips(source);
+  });
+
+  it("a nameless class declaration is the class expression it was cut from", () => {
+    const source = "class extends Base { m() { return 1; } }";
+    const g = liftAtom(source);
+    expect(g.nodes.some((n) => (n.label ?? "").includes("#"))).toBe(false);
+    expect(graphIdentity(g)).toBe(
+      graphIdentity(liftAtom("(class extends Base { m() { return 1; } });")),
+    );
+    roundTrips(source);
+  });
+
+  it("captures used alike for many steps are told apart further along, not by the source's order", () => {
+    // Nine cells the constructor uses alike, more of them than the least-identity search tries.
+    roundTrips(PRIVATE_FIELDS_STREAM);
+  });
+
+  it("a loop whose condition is a call orders the call of each pass after the last", () => {
+    // TypeScript's parseJSDocCommentWorker: `while (parseOptionalJsdoc(5)) ;`. Written with its
+    // parentheses, `while ((p()))`, the loop carried the heap token; bare, it did not.
+    for (const source of ["function g() { while (p(5)) ; }", "function g() { while ((p(5))) ; }"]) {
+      const loop = liftAtom(source).nodes.find((n) => n.kind === "loop");
+      expect(loop?.loop?.carry.length).toBe(1);
+      roundTrips(source);
+    }
+  });
+
+  it("branches alike inside another branch's side are told apart by what they hold", () => {
+    // Node's repl.js: two `if (!e)` on one side of `if (e)`, numbered in the source's order before.
+    roundTrips(
+      "function f(e) { if (e) { if (e instanceof Rc && !s) { return; } } s = false; if (!e && arguments.length === 2 && !x.u) { } if (!e) { x.d(); } }",
+    );
+  });
+
+  it("a loop condition that makes a closure is written at the top of the body", () => {
+    const source =
+      "export function f(b: number[]) { let i = 0; while (b.some((x) => x > i)) { i++; } return i; }";
+    const code = roundTrips(source);
+    expect(run(code, [[1, 3, 2]])).toBe(runSource(source, [[1, 3, 2]]));
+  });
 });

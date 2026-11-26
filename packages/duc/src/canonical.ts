@@ -154,12 +154,19 @@ const renumbered = new WeakMap<DucGraph, Map<string, DucGraph>>();
  * where canonicalization reorders the inputs). Captures the outer graph cannot tell apart are told apart by this first,
  * which is structure, and cheap; only those used alike are left to the search over orders.
  */
-function captureUseOf(closure: DucGraph, k: number): string {
+function captureUseOf(closure: DucGraph, k: number, depth = CAPTURE_USE_DEPTH): string {
   const param = closure.nodes.find((n) => n.kind === "param-source" && n.label === String(k));
   const value = param?.outputs[0];
   if (value === undefined) return "";
-  return valueUseOf(closure, value, CAPTURE_USE_DEPTH);
+  return valueUseOf(closure, value, depth);
 }
+
+/**
+ * How far past CAPTURE_USE_DEPTH captures still tied are told apart (#1368): cells used alike for
+ * several steps (`ended.set(this, false); errored.set(this, false); ..`, TypeScript's private
+ * fields) are apart only further along. Ties left are ordered by the least identity, when few.
+ */
+const CAPTURE_USE_MAX_DEPTH = 48;
 
 /**
  * How many steps along its uses a capture's signature looks (#1292): a cell's capture is read with
@@ -245,7 +252,10 @@ function valueUseOf(closure: DucGraph, value: string, depth: number): string {
       `${n.kind}:${n.label ?? ""}:${at}:${structuralDiamond(n.diamond)?.symbol ?? ""}${next}`,
     );
   }
-  const use = uses.sort().join("|");
+  // Past the usual depth (ties told apart further along), a use is hashed: written out, each step
+  // nests every use after it, and a large module's grew past what a string holds (#1368).
+  const joined = uses.sort().join("|");
+  const use = depth > CAPTURE_USE_DEPTH ? sha256Hex(joined) : joined;
   told.set(key, use);
   return use;
 }
@@ -585,6 +595,18 @@ export function canonicalizeGraph(
         ? sigOfValue(v)
         : `${sigOfValue(v)}/${captureUseOf(node.closure, k)}`,
     );
+    // Ties are looked at further along their uses, each tied capture's deeper use appended to its
+    // signature: captures already apart keep their order, and a closure with no tie is unchanged.
+    if (node.closure !== undefined) {
+      const closure = node.closure;
+      for (let depth = CAPTURE_USE_DEPTH * 2; depth <= CAPTURE_USE_MAX_DEPTH; depth *= 2) {
+        const count = new Map<string, number>();
+        for (const sig of sigs) count.set(sig, (count.get(sig) ?? 0) + 1);
+        const tied = sigs.flatMap((sig, k) => ((count.get(sig) ?? 0) > 1 ? [k] : []));
+        if (tied.length === 0) break;
+        for (const k of tied) sigs[k] = `${sigs[k]}|${captureUseOf(closure, k, depth)}`;
+      }
+    }
     let order = sigs
       .map((_, i) => i)
       .sort((a, b) => {
@@ -777,19 +799,21 @@ export function canonicalizeGraph(
   const branchKey = (b: DucBranch): string =>
     `${branchSigOf(b.id) ?? ""}|${regionSig(b.within) ?? ""}`;
   const contentsMemo = new Map<string, string>();
-  // A side holds the nodes whose region is it or starts with it: whose region's first segment is
-  // it. Indexed once; filtering every node for each branch was quadratic in a minified module's
-  // graph, thousands of branches each (#1368).
+  // A side holds the nodes whose region has it as a segment: a nested branch's side is a segment
+  // after its enclosing ones (#1368: two `if (!e)` inside one branch's side were told apart by
+  // nothing, and numbered in the order the source had them). Indexed once; filtering every node for
+  // each branch was quadratic in a minified module's graph, thousands of branches each.
   let bySide: Map<string, string[]> | undefined;
   const sideKeys = (side: string): readonly string[] => {
     if (bySide === undefined) {
       bySide = new Map();
       for (const n of nodes) {
         if (n.region === undefined) continue;
-        const first = n.region.split("/", 1)[0] as string;
-        const list = bySide.get(first);
-        if (list === undefined) bySide.set(first, [key.get(n) ?? ""]);
-        else list.push(key.get(n) ?? "");
+        for (const seg of new Set(n.region.split("/"))) {
+          const list = bySide.get(seg);
+          if (list === undefined) bySide.set(seg, [key.get(n) ?? ""]);
+          else list.push(key.get(n) ?? "");
+        }
       }
     }
     return bySide.get(side) ?? [];

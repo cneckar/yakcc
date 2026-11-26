@@ -315,6 +315,10 @@ function emitFunction(
       if (new Set(consumers.get(v) ?? []).size > (v === rec.cond ? 0 : 1)) {
         throw new EmitError(`the condition of loop ${loop.id} shares a value with the body`);
       }
+      // A closure or a class is written as a statement of its own, never inside an expression: the
+      // condition is then written at the top of the body (#1368: `while (xs.some((x) => !x.done))`).
+      if (p.closure !== undefined || (p.label ?? "").startsWith("class:"))
+        throw new EmitError(`the condition of loop ${loop.id} makes a closure`);
       inline.add(p.id);
       const owner = owners.get(p.id);
       if (p.kind === "sel" && owner !== undefined && owner.cond === p.inputs[0]) {
