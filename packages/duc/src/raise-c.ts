@@ -753,7 +753,7 @@ function parseType(spelled: string, depth = 0): CType {
       if (
         e instanceof RaiseCError &&
         /is not raised yet$/.test(e.message) &&
-        /^\w+$/.test((ptr[1] as string).trim())
+        /^[A-Za-z_][\w:]*$/.test((ptr[1] as string).trim())
       )
         return { k: "ptr", to: { k: "void" } };
       throw e;
@@ -797,9 +797,13 @@ function parseType(spelled: string, depth = 0): CType {
   }
   // A record named without its tag (C++: `impl::DecNum`, partly qualified; `div_t`, a C typedef's
   // unnamed struct, which takes the typedef's name).
-  if (/^[A-Za-z_][\w:]*$/.test(raw))
+  if (/^[A-Za-z_][\w:]*$/.test(raw)) {
     for (const tag of ["class", "struct", "union"])
       if (unitLayout(`${tag} ${raw}`) !== undefined) return { k: "rec", name: `${tag} ${raw}` };
+    // (A C typedef's unnamed record, which the layout dump names by the typedef alone:
+    // `pthread_mutex_t`.)
+    if (unitLayout(raw) !== undefined) return { k: "rec", name: raw };
+  }
   throw new RaiseCError(`the C type "${raw}" is not raised yet`);
 }
 
@@ -2239,6 +2243,21 @@ function raiseBody(
           if (off === undefined) throw new RaiseCError(`${to.name} as a base of ${from.name}`);
           return { k: "mem", addr: off === 0 ? p.addr : `(${p.addr} + ${off})`, t: to };
         }
+        // A base's subobject as the derived object it is in (`static_cast<Derived &>(base)`): back
+        // by the base's offset.
+        if (e.castKind === "BaseToDerived") {
+          const from = typeOf(k0);
+          const to = typeOf(e);
+          const p = place(k0);
+          if (from.k !== "rec" || to.k !== "rec" || p.k !== "mem") break;
+          const off = baseOffset(to.name, from.name);
+          if (off === undefined) throw new RaiseCError(`${from.name} as a base of ${to.name}`);
+          return { k: "mem", addr: off === 0 ? p.addr : `(${p.addr} - ${off})`, t: to };
+        }
+        // A conversion operator returning a reference (`operator const UnicodeString &()`): the
+        // object at the address it returns.
+        if (e.castKind === "UserDefinedConversion" && typeOf(e).k !== "ptr")
+          return { k: "mem", addr: expr(k0), t: typeOf(e) };
         break;
       case "DeclRefExpr": {
         const d = e.referencedDecl as ClangNode;
@@ -3753,6 +3772,12 @@ function raiseBody(
           { length: n },
           (_, i) => `${storeAt(at(i), t.of, String(bytes[i] ?? 0))};`,
         );
+      }
+      // An array of class objects, each made by the constructor (C++: `UnicodeString parts[5];`):
+      // each in turn.
+      if (s?.kind === "CXXConstructExpr" && t.of.k === "rec") {
+        const elem = { ...s, type: { qualType: (t.of as { name: string }).name } } as ClangNode;
+        return Array.from({ length: n }, (_, i) => `${construct(at(i), elem)};`);
       }
       if (s !== undefined && s.kind !== "InitListExpr")
         throw new RaiseCError(`an array initialized by ${s.kind}`);
@@ -5405,12 +5430,17 @@ export function shaveCUnit(
         .replace(/\s+/g, "")
         .replace(/^(-?\d+)[uUlL]*$/, "$1")
         .replace(/^true$/, "1")
-        .replace(/^false$/, "0");
+        .replace(/^false$/, "0")
+        // (A declaration's, `&ures_close_78`: by its name.)
+        .replace(/^&/, "");
     const argsOf = (node: ClangNode): string[] =>
       (node.inner ?? [])
         .filter((a) => a.kind === "TemplateArgument")
         .map((a) => {
-          const v = canon(a.type?.qualType ?? String((a as { value?: unknown }).value ?? ""));
+          const named = (a as { decl?: { name?: string } }).decl?.name;
+          const v = canon(
+            a.type?.qualType ?? named ?? String((a as { value?: unknown }).value ?? ""),
+          );
           return v === "-1" && a.type === undefined ? "1" : v;
         });
     // The candidate whose arguments these are (a type spelled without its default arguments,
@@ -5546,6 +5576,9 @@ export function shaveCUnit(
                       .filter((a) => a.kind === "TemplateArgument")
                       .map((a) => {
                         if (a.type?.qualType !== undefined) return a.type.qualType;
+                        // (A declaration's, `&ures_close_78`, as the layout dump spells it.)
+                        const named = (a as { decl?: { name?: string } }).decl?.name;
+                        if (named !== undefined) return `&${named}`;
                         // (A bool's true is dumped as -1.)
                         const v = String((a as { value?: unknown }).value ?? "");
                         return v === "-1" ? "1" : v;
@@ -5807,9 +5840,21 @@ export function shaveCUnit(
             const cls = d?.parent === undefined ? undefined : indexed.byId.get(d.parent);
             if (d === undefined || cls === undefined) return undefined;
             const node = readDecl(indexed, d);
-            return vtables()
-              .indices.get(cls.name)
-              ?.get(memberKey(node.name ?? "", node.type?.qualType ?? ""));
+            const slots = vtables().indices.get(cls.name);
+            const exact = slots?.get(memberKey(node.name ?? "", node.type?.qualType ?? ""));
+            if (exact !== undefined || slots === undefined) return exact;
+            // (Its parameters spelled otherwise there, a typedef's for its type, `UBool (UChar32)`
+            // as `signed char (int)`: the one entry of its name and arity.)
+            const arity = (sig: string): number => {
+              const inner = sig.slice(sig.indexOf("(") + 1, sig.lastIndexOf(")")).trim();
+              return inner === "" || inner === "void" ? 0 : splitTemplateArgs(inner).length;
+            };
+            const want = arity(node.type?.qualType ?? "");
+            const name = node.name ?? "";
+            const hits = [...slots].filter(
+              ([k]) => k.startsWith(`${name}(`) && arity(k.slice(name.length)) === want,
+            );
+            return hits.length === 1 ? (hits[0] as [string, number])[1] : undefined;
           },
           deletingSlotOf: (record) => {
             const simple =
