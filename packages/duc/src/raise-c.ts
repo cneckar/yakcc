@@ -643,6 +643,25 @@ function parseType(spelled: string, depth = 0): CType {
       else if (raw[i] === ")" || raw[i] === ">") depth--;
     return depth === 0;
   });
+  // (A declarator nested in one, `void (*(*)(A))(void)`: a pointer to a function returning a
+  // function's pointer, a pointer to a function as an object.)
+  if (fnPtr === undefined) {
+    for (let i = 0, depth = 0; i < raw.length; i++) {
+      const ch = raw[i];
+      if (ch === "(" && depth === 0 && raw[i + 1] === "*") {
+        let close = i;
+        for (let d = 0; close < raw.length; close++) {
+          if (raw[close] === "(") d++;
+          else if (raw[close] === ")" && --d === 0) break;
+        }
+        const inner = raw.slice(i + 1, close).replace(/^\*+/, "");
+        if (/^\(\*+\)\s*\(.*\)$/.test(inner) && /^\s*\(.*\)$/.test(raw.slice(close + 1)))
+          return { k: "ptr", to: { k: "fn" } };
+      }
+      if (ch === "(" || ch === "<") depth++;
+      else if (ch === ")" || ch === ">") depth--;
+    }
+  }
   if (fnPtr !== undefined) {
     let t: CType = { k: "fn" };
     for (let i = 0; i < (fnPtr[1] as string).length; i++) t = { k: "ptr", to: t };
