@@ -21,7 +21,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
-import { Node, Project, type SourceFile, type Statement, SyntaxKind } from "ts-morph";
+import { Node, Project, type SourceFile, type Statement, SyntaxKind, ts } from "ts-morph";
 import type {
   NativeEsm,
   NativeImport,
@@ -636,12 +636,178 @@ ${lazyGlobals.map(([name, id, key]) => `__yakccDefineGlobal(${JSON.stringify(nam
 `;
 }
 
+/** The names a statement list declares at its own level (var, let, const, function, class). */
+function declaredNames(statements: readonly ts.Statement[]): Set<string> {
+  const out = new Set<string>();
+  const bind = (b: ts.BindingName): void => {
+    if (ts.isIdentifier(b)) out.add(b.text);
+    else for (const e of b.elements) if (!ts.isOmittedExpression(e)) bind(e.name);
+  };
+  const hoisted = (n: ts.Node): void => {
+    // var declarations anywhere in the function's own body (not in nested functions) are its.
+    if (ts.isVariableStatement(n) && (n.declarationList.flags & ts.NodeFlags.BlockScoped) === 0)
+      for (const d of n.declarationList.declarations) bind(d.name);
+    if (ts.isForStatement(n) || ts.isForInStatement(n) || ts.isForOfStatement(n)) {
+      const init = n.initializer;
+      if (
+        init !== undefined &&
+        ts.isVariableDeclarationList(init) &&
+        (init.flags & ts.NodeFlags.BlockScoped) === 0
+      )
+        for (const d of init.declarations) bind(d.name);
+    }
+    if (ts.isFunctionLike(n) || ts.isClassLike(n)) return;
+    ts.forEachChild(n, hoisted);
+  };
+  for (const st of statements) {
+    if (ts.isVariableStatement(st)) for (const d of st.declarationList.declarations) bind(d.name);
+    else if ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) && st.name !== undefined)
+      out.add(st.name.text);
+    else hoisted(st);
+  }
+  return out;
+}
+
+/**
+ * A module whose code is one immediately called function (a bundler's wrapper, as TypeScript's
+ * `typescript.js` is: `((module) => { ...5,000 statements... })({ ... })`), with its body's statements
+ * as the module's own, so each lifts as a statement rather than the whole as one (#1370). The
+ * parameters become bindings of the arguments (renamed apart: an argument may read a name a
+ * parameter has). Undefined, and the module left as it is, when that could mean anything else: a
+ * `return`, `this` or `arguments` of the function itself, a parameter that is not a plain name or is
+ * declared again inside, or a name the body declares that the module's other code also uses.
+ */
+export function unwrapModuleFunction(text: string): string | undefined {
+  const sf = ts.createSourceFile("m.js", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const at = sf.statements.findIndex(
+    (st) => ts.isExpressionStatement(st) && st.end - st.pos > text.length / 2,
+  );
+  const st = sf.statements[at];
+  if (st === undefined || !ts.isExpressionStatement(st)) return undefined;
+  let call: ts.Expression = st.expression;
+  while (ts.isParenthesizedExpression(call)) call = call.expression;
+  if (!ts.isCallExpression(call)) return undefined;
+  let fn: ts.Expression = call.expression;
+  while (ts.isParenthesizedExpression(fn)) fn = fn.expression;
+  if (!(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn))) return undefined;
+  if (!ts.isBlock(fn.body)) return undefined;
+  if (ts.isFunctionExpression(fn) && (fn.name !== undefined || fn.asteriskToken !== undefined))
+    return undefined;
+  if (fn.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)) return undefined;
+  if (call.arguments.some(ts.isSpreadElement) || call.arguments.length > fn.parameters.length)
+    return undefined;
+  const params: string[] = [];
+  for (const p of fn.parameters) {
+    if (!ts.isIdentifier(p.name) || p.initializer !== undefined || p.dotDotDotToken !== undefined)
+      return undefined;
+    params.push(p.name.text);
+  }
+  const body = fn.body;
+  const own = declaredNames(body.statements);
+  if (params.some((p) => own.has(p))) return undefined;
+  // The function's own return, this and arguments (not a nested function's); any declaration of a
+  // parameter's name inside; and the parameters' references, to rename.
+  const isArrow = ts.isArrowFunction(fn);
+  const renames: { pos: number; end: number; text: string }[] = [];
+  let refused = false;
+  const fresh = (p: string): string => `__yk_wrapped_${p}`;
+  const walk = (n: ts.Node, inFunction: boolean, inArrowOnly: boolean): void => {
+    if (refused) return;
+    if (!inFunction && ts.isReturnStatement(n)) refused = true;
+    if (
+      !isArrow &&
+      inArrowOnly &&
+      (n.kind === ts.SyntaxKind.ThisKeyword || (ts.isIdentifier(n) && n.text === "arguments"))
+    )
+      refused = true;
+    if (ts.isMetaProperty(n) && n.keywordToken === ts.SyntaxKind.NewKeyword && !inFunction)
+      refused = true;
+    if (ts.isIdentifier(n) && params.includes(n.text)) {
+      const p = n.parent;
+      const declaration =
+        (ts.isVariableDeclaration(p) ||
+          ts.isParameter(p) ||
+          ts.isFunctionDeclaration(p) ||
+          ts.isFunctionExpression(p) ||
+          ts.isClassDeclaration(p) ||
+          ts.isClassExpression(p) ||
+          ts.isBindingElement(p) ||
+          ts.isImportSpecifier(p) ||
+          ts.isCatchClause(p)) &&
+        (p as { name?: ts.Node }).name === n;
+      if (declaration) refused = true;
+      else if (ts.isPropertyAccessExpression(p) && p.name === n) {
+      } else if (
+        (ts.isPropertyAssignment(p) ||
+          ts.isMethodDeclaration(p) ||
+          ts.isPropertyDeclaration(p) ||
+          ts.isGetAccessorDeclaration(p) ||
+          ts.isSetAccessorDeclaration(p) ||
+          ts.isEnumMember(p)) &&
+        p.name === n
+      ) {
+      } else if (ts.isShorthandPropertyAssignment(p))
+        renames.push({ pos: n.getStart(sf), end: n.end, text: `${n.text}: ${fresh(n.text)}` });
+      else if (ts.isLabeledStatement(p) || ts.isBreakOrContinueStatement(p)) {
+      } else renames.push({ pos: n.getStart(sf), end: n.end, text: fresh(n.text) });
+    }
+    const fnHere = ts.isFunctionLike(n) || ts.isClassStaticBlockDeclaration(n);
+    ts.forEachChild(n, (c) =>
+      walk(c, inFunction || fnHere, inArrowOnly && (!fnHere || ts.isArrowFunction(n))),
+    );
+  };
+  for (const s0 of body.statements) walk(s0, false, true);
+  if (refused) return undefined;
+  // What the module's other code (its other statements and the arguments) names, as text: none of it
+  // may be a name the body now declares at the module's level.
+  const outside = new Set<string>();
+  const names = (n: ts.Node): void => {
+    if (ts.isIdentifier(n)) outside.add(n.text);
+    ts.forEachChild(n, names);
+  };
+  sf.statements.forEach((s0, i) => {
+    if (i !== at) names(s0);
+  });
+  for (const a of call.arguments) names(a);
+  if ([...own].some((x) => outside.has(x) || params.some((p) => fresh(p) === x))) return undefined;
+  // The body's text, its directive prologue left out and each parameter's reference renamed.
+  let first = 0;
+  while (
+    first < body.statements.length &&
+    ts.isExpressionStatement(body.statements[first] as ts.Statement) &&
+    ts.isStringLiteral((body.statements[first] as ts.ExpressionStatement).expression)
+  )
+    first++;
+  const start =
+    first < body.statements.length
+      ? (body.statements[first] as ts.Statement).getStart(sf)
+      : body.end - 1;
+  const end = body.end - 1;
+  let inner = "";
+  let cursor = start;
+  for (const r of renames
+    .filter((r) => r.pos >= start && r.end <= end)
+    .sort((a, b) => a.pos - b.pos)) {
+    inner += text.slice(cursor, r.pos) + r.text;
+    cursor = r.end;
+  }
+  inner += text.slice(cursor, end);
+  const bindings = params
+    .map((p, i) => {
+      const a = call.arguments[i];
+      return `var ${fresh(p)} = ${a === undefined ? "void 0" : a.getText(sf)};\n`;
+    })
+    .join("");
+  return `${text.slice(0, st.getStart(sf))}${bindings}${inner}\n${text.slice(st.end)}`;
+}
+
 /** A CommonJS module's statements, and its requires: every one, and those its top level makes. */
 function commonJsModuleOf(
   project: Project,
-  text: string,
+  text0: string,
   id: string,
 ): { module: NativeModule; topLevel: string[] } {
+  const text = unwrapModuleFunction(text0) ?? text0;
   const sf = project.createSourceFile(`/cjs/${id.replace(/[^A-Za-z0-9]/g, "_")}.js`, text, {
     overwrite: true,
   });
