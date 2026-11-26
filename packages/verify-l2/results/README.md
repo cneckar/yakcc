@@ -67,3 +67,57 @@ templates), object fields and arrays.
 
    Calls of supplied callees already work; they need the registry to resolve links to proven
    callees.
+
+## With strings (encoder `verify-l2/4`, the same day)
+
+| | Before | With strings |
+|---|---|---|
+| Registry blocks with an encodable signature (number, boolean, string) | 7 | 46 |
+| Registry blocks inside the fragment | 2 | 9 |
+| DUC sample functions whose arguments are numbers, booleans or strings | 3 | 35 |
+| DUC sample functions inside the fragment | 3 | 4 |
+
+**The sample's next refusals:**
+
+| Construct | Functions |
+|---|---|
+| `s[i]` (a string or `undefined`) | 7 |
+| `.replace` | 6 |
+| closures | 5 |
+| `.length` of arrays | 4 |
+| a number converted to a string | 3 |
+
+## With arrays and `undefined` (encoder `verify-l2/5`)
+
+Every node is now encoded (an unused write was missed before), so a block's first refusal is the
+first node the encoder cannot model, in graph order. That reorders the registry's refusal list:
+module statements 1,444, closures 572, `for…of` 122, `await` 99.
+
+| | With strings | With arrays |
+|---|---|---|
+| Registry blocks with an encodable signature | 46 | 49 |
+| Registry blocks inside the fragment | 9 | 10 |
+| DUC sample functions with encodable argument types | 35 | 37 |
+| DUC sample functions inside the fragment | 4 | 5 |
+
+**The sample's next refusals:**
+
+| Construct | Functions |
+|---|---|
+| `.length` (of values whose type the sample does not give) | 14 |
+| closures | 8 |
+| `null` and other literals | 4 |
+| `.kind` (object fields) | 3 |
+| `.replace` | 3 |
+| a number converted to a string | 3 |
+
+Next: records (object fields), closures as callbacks (`map`, `filter`), `null`.
+
+## With records (encoder `verify-l2/6`)
+
+Records do not change these numbers:
+- no registry spec declares an object type L2 reads;
+- the sample's remaining `.kind` reads are of untyped (`any`) AST nodes.
+
+The sample's functions with argument types L2 reads go from 37 to 39 (record kinds); 5 are inside
+the fragment. Callbacks are not encoded (see the package README for why).

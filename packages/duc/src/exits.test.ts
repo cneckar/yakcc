@@ -145,7 +145,7 @@ describe("exits (#1276)", () => {
     expect(calls.every((n) => n.region !== undefined)).toBe(true);
   });
 
-  it("a loop whose body throws lifts, with the rest of its body on the side that does not throw", () => {
+  it("a loop whose body throws lifts: the throw ends its path, and the rest of the body follows the if (#1292)", () => {
     const src =
       "export function f(xs: number[]) { let s = 0; for (const x of xs) { if (x < 0) throw new Error('neg'); s = s + x; } return s; }";
     const g = liftAtom(src);
@@ -153,7 +153,8 @@ describe("exits (#1276)", () => {
     const thrown = g.nodes.find((n) => n.label === "throw");
     const added = g.nodes.find((n) => n.label === "js.add");
     expect(thrown?.region).toMatch(/\.t$/);
-    expect(added?.region).toMatch(/\.e$/);
+    // An if whose only exits are throws takes no tail: the add is after it, in no side of it.
+    expect(added?.region ?? "").not.toMatch(/\.e$/);
     const code = emitTypeScript(g);
     const run = new Function(`${code.replace("export ", "")}; return f;`)() as (
       xs: number[],
@@ -171,7 +172,7 @@ describe("exits (#1276)", () => {
     expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
     // The same function with the increment written into another name before the if.
     const renamed =
-      'export function f(n: number, p: number) { while (p < n) { let q = p; q++; let r = q; if (q >= n) { throw new Error("x"); } else { while (r < n) { r++; } } p = r; } return p; }';
+      'export function f(n: number, p: number) { while (p < n) { let q = p; q++; let r = q; if (q >= n) { throw new Error("x"); } while (r < n) { r++; } p = r; } return p; }';
     expect(graphIdentity(liftAtom(renamed))).toBe(graphIdentity(g));
   });
 

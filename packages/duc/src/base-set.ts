@@ -47,7 +47,7 @@ const pure = (names: readonly string[]): Record<string, PrimitiveLabels> =>
 /** ECMAScript built-ins: available on every JavaScript target. */
 export const ECMASCRIPT: BaseSet = {
   target: "ecmascript",
-  version: 1,
+  version: 2,
   primitives: {
     // What the language gives a call made with `new` (#1173).
     "new.target": {},
@@ -106,6 +106,14 @@ export const ECMASCRIPT: BaseSet = {
       "Infinity",
       "arguments",
       "globalThis",
+      // The global object's own prototype is Object.prototype, so a script's bare `toString` is
+      // its method (amaro's wasm-bindgen glue reads `toString.call(val)`, #1331).
+      "toString",
+      "toLocaleString",
+      "valueOf",
+      "hasOwnProperty",
+      "isPrototypeOf",
+      "propertyIsEnumerable",
     ]),
     Math: { members: { random: { nondeterministic: true } } },
     // `new Date()` and `Date.now()` read the clock.
@@ -155,7 +163,7 @@ const WEB_DATA_CLASSES = [
 /** Node.js: ECMAScript, plus the host's data APIs and its authority-bearing APIs, and its modules. */
 export const NODE: BaseSet = {
   target: "node",
-  version: 4,
+  version: 5,
   modules: {
     ...pure([
       "assert",
@@ -247,7 +255,7 @@ export const NODE: BaseSet = {
  */
 export const WEB: BaseSet = {
   target: "web",
-  version: 2,
+  version: 3,
   primitives: {
     ...ECMASCRIPT.primitives,
     ...pure([

@@ -708,10 +708,14 @@ function emitFunction(
   /** What the nodes inside a region need from outside it, their order included. */
   const neededBy = (paths: readonly string[]): ValueId[] => {
     const inside = new Set(paths.flatMap(madeWithin));
-    return g.nodes
-      .filter((n) => paths.some((path) => isPrefix(path, n.region)))
-      .flatMap((n) => [...n.inputs, ...(after.get(n.id) ?? [])])
-      .filter((v) => !inside.has(v));
+    return [
+      ...g.nodes
+        .filter((n) => paths.some((path) => isPrefix(path, n.region)))
+        .flatMap((n) => [...n.inputs, ...(after.get(n.id) ?? [])]),
+      // A branch inside tests its condition there: a value from outside it is needed first too
+      // (an arrow's default, tested in a side after an early return, #1292).
+      ...branches.filter((b) => paths.some((path) => isPrefix(path, b.within))).map((b) => b.cond),
+    ].filter((v) => !inside.has(v));
   };
 
   const emitBranch = (b: DucBranch): string[] => {

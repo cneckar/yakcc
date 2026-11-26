@@ -174,8 +174,8 @@ describe("unsupported, never approximated", () => {
   });
 
   it("refuses types it has no sort for", async () => {
-    const r = await verifyL2("function f(s: string): number { return 1; }", {
-      inputs: [{ name: "s", type: "string" }],
+    const r = await verifyL2("function f(s: Map<string, number>): number { return 1; }", {
+      inputs: [{ name: "s", type: "Map<string, number>" }],
       outputs: [{ type: "number" }],
       preconditions: [],
       postconditions: ["result === 1"],

@@ -14,8 +14,8 @@ export type {
 } from "./verify.js";
 export { ENCODER_VERSION, verifyL2 } from "./verify.js";
 export type { Callee, L2Contract } from "./types.js";
-export type { GoalObligation, LoopInfo, ThrowSite } from "./encoder.js";
-export { Encoder, loopsOf, sortOf } from "./encoder.js";
+export type { GoalObligation, L2Type, LoopInfo, ThrowSite } from "./encoder.js";
+export { Encoder, loopsOf, sortOf, typeOf } from "./encoder.js";
 export type { Sort, Term } from "./terms.js";
 export {
   MATH_EXACT,

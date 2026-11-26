@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 // SPDX-License-Identifier: Apache-2.0
 // #1421 slice 7: L2 over the bootstrap corpus. For every block: does it carry a contract L2 can
 // check, is its implementation inside the encoder's fragment, and if not, which construct is the
@@ -7,11 +8,18 @@
 //   pnpm --filter @yakcc/verify-l2 build
 //   node packages/verify-l2/scripts/measure-corpus.mjs [registry.sqlite] [out.json]
 import { createRequire } from "node:module";
-import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { liftAtom } from "@yakcc/duc";
-import { Encoder, Unsupported, shutdownSolver, verifyL2, ENCODER_VERSION } from "../dist/index.js";
+import {
+  ENCODER_VERSION,
+  Encoder,
+  Unsupported,
+  shutdownSolver,
+  sortOf,
+  typeOf,
+  verifyL2,
+} from "../dist/index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..", "..");
@@ -21,7 +29,25 @@ const require = createRequire(join(root, "packages", "registry", "package.json")
 const Database = require("better-sqlite3");
 const db = new Database(dbPath, { readonly: true });
 
-const SORT = { number: "F64", boolean: "Bool" };
+// Whether L2 has a type for a declared type (a sort or a record of them).
+const hasType = (t) => {
+  try {
+    typeOf(String(t), "");
+    return true;
+  } catch (e) {
+    if (e instanceof Unsupported) return false;
+    throw e;
+  }
+};
+// The sort of a declared type, or undefined (sortOf refuses what L2 has no sort for).
+const sortOfType = (t) => {
+  try {
+    return sortOf(String(t), "");
+  } catch (e) {
+    if (e instanceof Unsupported) return undefined;
+    throw e;
+  }
+};
 const rows = db
   .prepare("select block_merkle_root r, spec_canonical_bytes s, impl_source i from blocks")
   .all();
@@ -45,7 +71,7 @@ for (const row of rows) {
   if ((spec.preconditions ?? []).length > 0) stats.withPreconditions++;
   const inputs = spec.inputs ?? [];
   const outputs = spec.outputs ?? [];
-  const nonScalar = [...inputs, ...outputs].find((p) => SORT[p.type] === undefined);
+  const nonScalar = [...inputs, ...outputs].find((p) => !hasType(p.type));
   const scalar = nonScalar === undefined && outputs.length === 1;
   if (scalar) stats.scalarSignature++;
   else
@@ -63,11 +89,13 @@ for (const row of rows) {
   }
   // The fragment check is independent of the declared types: parameters are taken as numbers.
   const arity = graph.nodes.filter((n) => n.kind === "param-source").length;
-  const params = Array.from({ length: arity }, (_, i) =>
-    scalar && SORT[inputs[i]?.type] === "Bool"
-      ? { sort: "Bool", smt: `p${i}` }
-      : { sort: "F64", smt: `((_ to_fp 11 53) p${i})` },
-  );
+  // Declared types where the spec gives them; a number otherwise.
+  const params = Array.from({ length: arity }, (_, i) => {
+    const sort = sortOfType(inputs[i]?.type);
+    return sort === undefined || sort === "F64"
+      ? { sort: "F64", smt: `((_ to_fp 11 53) p${i})` }
+      : { sort, smt: `p${i}` };
+  });
   try {
     new Encoder({ inputs: [], outputs: [], preconditions: [], postconditions: [] }, params).atom(
       graph,
@@ -116,8 +144,23 @@ const sample = JSON.parse(
 const sampleRefusals = new Map();
 let sampleEncodable = 0;
 let sampleScalar = 0;
+// The sample's argument kinds (#1299's generator): numbers, indices and integers are numbers;
+// "str" and { str } are strings.
+const kindSort = (a) => {
+  if (a === "num" || a === "int" || a === "idx" || a === "byte") return "F64";
+  if (a === "bool") return "Bool";
+  if (a === "str" || (typeof a === "object" && a !== null && "str" in a)) return "Str";
+  if (typeof a === "object" && a !== null && "arr" in a) {
+    const e = kindSort(a.arr);
+    return e === "F64" ? "ArrF64" : e === "Bool" ? "ArrBool" : e === "Str" ? "ArrStr" : undefined;
+  }
+  return undefined;
+};
 for (const atom of sample) {
-  const scalar = atom.args.every((a) => a === "num" || a === "bool");
+  const typed = (a) =>
+    kindSort(a) !== undefined ||
+    (typeof a === "object" && a !== null && "obj" in a && Object.values(a.obj).every(typed));
+  const scalar = atom.args.every(typed);
   if (scalar) sampleScalar++;
   try {
     const graph = liftAtom(atom.source);

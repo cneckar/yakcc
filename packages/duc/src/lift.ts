@@ -442,6 +442,23 @@ function labelled(l: import("ts-morph").LabeledStatement): Node {
 }
 
 /**
+ * The atom's source with the statements that never run dropped, as the lifter reads it
+ * (dropUnreachable): what a check of the source against the graph compares with (#1292).
+ */
+export function reachableSource(file: SourceFile): SourceFile {
+  let sf = file;
+  for (let round = 0; round < 64; round++) {
+    const text = dropUnreachable(sf);
+    if (text === undefined) break;
+    sf = sf.getProject().createSourceFile(sf.getBaseName(), text, {
+      overwrite: true,
+      scriptKind: ScriptKind.TS,
+    });
+  }
+  return sf;
+}
+
+/**
  * The statements after a `return`, `throw`, `break` or `continue` in the same list, which never run,
  * dropped (#1292): what the graph holds, and so what the emitter writes back. Left in, a write there
  * (`throw e; n--;`) makes `n` a binding the atom writes, which the emitted source does not. A function
@@ -683,6 +700,15 @@ function forUpdateAsTail(sf: SourceFile): string | undefined {
       return target?.compilerNode === loop.compilerNode;
     });
     if (own.length === 0) continue;
+    // A continue inside a try is a completion of the closures the try lowers to, which then
+    // continues the loop itself (#1330): the update written there would be a closure's write of the
+    // loop's binding. It stays in the header.
+    const inTry = (j: Node): boolean => {
+      for (let p = j.getParent(); p !== undefined && p !== loop; p = p.getParent())
+        if (Node.isTryStatement(p)) return true;
+      return false;
+    };
+    if (own.some(inTry)) continue;
     const step = `${update.getText()};`;
     const edits: { from: number; to: number; text: string }[] = [
       // The header's update goes, with the space before it: `for (a; b; c)` is `for (a; b; )`.
@@ -1281,10 +1307,14 @@ class Lifter {
       const rest = stmts.slice(i + 1);
       const full = cont === undefined ? undefined : [...rest, ...cont];
       if (this.bodyExits !== undefined) {
+        // Not an if whose only exits are throws (#1292): a throw ends its path, so the rest of the
+        // body is the rest of every path that goes on, as in a function. A for loop's update is not
+        // part of its body, but a while loop's is: taking the rest made them two graphs.
         if (
           Node.isIfStatement(stmt) &&
           full !== undefined &&
-          this.holdsLoopExit(stmt, this.bodyExits.node)
+          this.holdsLoopExit(stmt, this.bodyExits.node) &&
+          !this.throwsOnlyIn(stmt, this.bodyExits.node)
         ) {
           const elseNode = stmt.getElseStatement();
           this.liftIf(
@@ -1372,7 +1402,12 @@ class Lifter {
       if (this.liftStatement(stmt, blockCont)) return true;
       // An exit on some paths that no if could take the rest for: the rest runs only on the paths
       // that have not exited, under the return state (the fallback).
-      if (containsDirectExit(stmt) && rest.length > 0 && this.env.has(RETURN_DONE)) {
+      if (
+        containsDirectExit(stmt) &&
+        !(Node.isIfStatement(stmt) && throwsOnly(stmt)) &&
+        rest.length > 0 &&
+        this.env.has(RETURN_DONE)
+      ) {
         this.guardTail(rest);
         return false;
       }
@@ -1799,6 +1834,15 @@ class Lifter {
     }
   }
 
+  /** Whether every exit of a loop a statement holds, written or lowered, is a throw. */
+  private throwsOnlyIn(stmt: Node, loop: Node): boolean {
+    const jumps = new Set(loopJumpsOf(loop).map((j) => j.compilerNode));
+    const exits = stmt
+      .getDescendants()
+      .filter((d) => jumps.has(d.compilerNode) || this.loweredExits.has(d.compilerNode));
+    return exits.length > 0 && exits.every((d) => Node.isThrowStatement(d));
+  }
+
   /** Whether a statement holds an exit of the loop whose body is being lifted. */
   private holdsLoopExit(stmt: Node, loop: Node): boolean {
     return (
@@ -1894,6 +1938,11 @@ class Lifter {
     const both =
       !alwaysReturns(stmt.getThenStatement()) &&
       !(elseNode !== undefined && alwaysReturns(elseNode));
+    // An if whose only exits are throws, both of whose sides go on, needs no tail: a throw ends its
+    // path, so the rest after the if is the rest of every path that goes on (#1292). Taking the tail
+    // (twice) or not, by its size, made the same program two graphs: a long one emitted and lifted
+    // again crossed the size where a short one's source had not.
+    if (both && throwsOnly(stmt)) return false;
     const size = tail.reduce((n, t) => n + t.getText().length, 0);
     return !(both && this.returnFrames.length === 0 && size > 4000);
   }
@@ -2650,7 +2699,14 @@ class Lifter {
   ): void {
     const condValue = this.liftExpr(node.getExpression());
     // A return on some paths: the return state must exist before the branch, so the join carries it.
-    if (sides === undefined && containsDirectExit(node)) this.ensureReturnState();
+    // Not for an if whose only exits are throws (#1292): no path through it returns, and the rest of
+    // the function is the rest of the paths that go on.
+    if (
+      sides === undefined &&
+      containsDirectExit(node) &&
+      !(this.exitMode === "function" && throwsOnly(node))
+    )
+      this.ensureReturnState();
     const before = new Map(this.env);
     // Record the branch, and lift each side inside its own region, so the structure is kept.
     const id = `b${this.branchCount++}`;
@@ -4875,13 +4931,17 @@ function closureLocals(fn: Node): Set<string> {
  */
 function cellNames(scope: Node): Set<string> {
   // A try statement's blocks are closures once it is lowered (Lifter.lowerTry): they count as nested.
-  // So does a class's static block: a closure run with the class as its receiver (#1368).
+  // So does a class's static block: a closure run with the class as its receiver (#1368); and a
+  // field's initializer, run with the instance when it is made (#1330: `id = ++ID` in minimatch).
+  const fieldInit = (d: Node): boolean =>
+    Node.isPropertyDeclaration(d) && d.getInitializer() !== undefined;
   const nested = scope
     .getDescendants()
     .filter(
       (d) =>
         isFunctionLikeNode(d) ||
         Node.isClassStaticBlockDeclaration(d) ||
+        fieldInit(d) ||
         (Node.isBlock(d) && Node.isTryStatement(d.getParent())) ||
         Node.isCatchClause(d),
     );
@@ -4889,7 +4949,8 @@ function cellNames(scope: Node): Set<string> {
   const insideNested = (n: Node): boolean => {
     for (const a of n.getAncestors()) {
       if (a.compilerNode === scope.compilerNode) return false;
-      if (isFunctionLikeNode(a) || Node.isClassStaticBlockDeclaration(a)) return true;
+      if (isFunctionLikeNode(a) || Node.isClassStaticBlockDeclaration(a) || fieldInit(a))
+        return true;
     }
     return false;
   };
@@ -4925,7 +4986,7 @@ function cellNames(scope: Node): Set<string> {
   const out = new Set<string>();
   for (const fn of nested) {
     const locals = closureLocals(fn);
-    if (!isFunctionLikeNode(fn) && !Node.isClassStaticBlockDeclaration(fn)) {
+    if (!isFunctionLikeNode(fn) && !Node.isClassStaticBlockDeclaration(fn) && !fieldInit(fn)) {
       // A var in a try statement's block is the function's: the block's closure assigns it.
       for (const list of fn.getDescendantsOfKind(SyntaxKind.VariableDeclarationList)) {
         if (list.getDeclarationKind() !== "var" || isInsideNestedFunction(list, fn)) continue;
@@ -6267,6 +6328,24 @@ function alwaysReturns(node: Node): boolean {
       elseNode !== undefined && alwaysReturns(node.getThenStatement()) && alwaysReturns(elseNode)
     );
   }
+  // A switch with a default, no break of its own, and every clause with statements ending in an
+  // exit: every value reaches a clause that exits (an empty clause falls into the next), so the
+  // statement after it never runs (#1330: cjs-module-lexer's nested switches on characters).
+  if (Node.isSwitchStatement(node)) {
+    const clauses = node.getCaseBlock().getClauses();
+    const last = clauses[clauses.length - 1];
+    return (
+      clauses.some((c) => Node.isDefaultClause(c)) &&
+      last !== undefined &&
+      last.getStatements().length > 0 &&
+      clauses.every(
+        (c) => c.getStatements().length === 0 || c.getStatements().some(alwaysReturns),
+      ) &&
+      !node
+        .getDescendantsOfKind(SyntaxKind.BreakStatement)
+        .some((b) => b.getLabel() === undefined && breakTarget(b) === node)
+    );
+  }
   return false;
 }
 
@@ -6288,6 +6367,17 @@ function containsDirectExit(node: Node): boolean {
     node.getDescendantsOfKind(SyntaxKind.ThrowStatement).some((t) => !insideOpaque(t, node));
   exitCache.set(key, result);
   return result;
+}
+
+/** Whether a statement's exits are all throws: no return of its own, and no loop in it that returns. */
+function throwsOnly(node: Node): boolean {
+  return (
+    containsExitOrLoopReturn(node) &&
+    !containsDirectReturn(node) &&
+    ![...node.getDescendants()].some(
+      (d) => isLoopStatement(d) && !insideOpaqueNonLoop(d, node) && loopReturns(d),
+    )
+  );
 }
 
 /**

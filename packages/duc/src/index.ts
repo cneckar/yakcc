@@ -51,6 +51,8 @@ export {
 export type { EmitSignature } from "./emit-ts.js";
 export { EmitError, emitTypeScript } from "./emit-ts.js";
 export type { PackedGraph, StoredLink } from "./store.js";
+export type { RootedGraph } from "./root.js";
+export { rootedGraph } from "./root.js";
 export {
   GRAPH_FORMAT_VERSION,
   LIFTER_VERSION,

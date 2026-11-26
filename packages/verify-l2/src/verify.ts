@@ -28,12 +28,26 @@ import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { type DucGraph, emitTypeScript, liftAtom } from "@yakcc/duc";
 import { Encoder, type GoalObligation, sortOf } from "./encoder.js";
+import { type L2Type, typeOf } from "./encoder.js";
 import { type SolverAnswer, check, solverVersion } from "./solver.js";
-import { PRELUDE, type Sort, type Term, Unsupported, f64FromBits, smtSort } from "./terms.js";
+import {
+  type ArraySort,
+  MAX_ARRAY_LENGTH,
+  MAX_STRING_LENGTH,
+  PRELUDE,
+  type Rec,
+  type Sort,
+  type Term,
+  Unsupported,
+  elementSort,
+  f64FromBits,
+  isArraySort,
+  smtSort,
+} from "./terms.js";
 import type { Callee, L2Contract } from "./types.js";
 
 /** The encoder's version: part of every record, since a query's meaning depends on it. */
-export const ENCODER_VERSION = "verify-l2/3";
+export const ENCODER_VERSION = "verify-l2/6";
 
 export interface L2Options {
   /** Per obligation, in milliseconds. Default 5000. */
@@ -54,7 +68,7 @@ export type Outcome = "proven" | "disproven" | "unknown" | "timeout" | "unsuppor
 /** One value of a counterexample. A number carries its bits, since NaN and -0 do not survive JSON. */
 export interface CounterexampleInput {
   readonly name: string;
-  readonly value: number | boolean;
+  readonly value: number | boolean | string | readonly unknown[];
   /** For a number: its binary64 bits, 16 hex digits. */
   readonly bits?: string;
   /** How ECMAScript prints it (`NaN`, `-0`, `Infinity`, `1e+308`). */
@@ -153,14 +167,14 @@ export async function verifyL2(
     })),
   });
 
-  // The signature: every parameter and the result must have a sort.
+  // The signature: every parameter and the result must have a sort or be a record of them.
   const names = contract.inputs.map((p) => p.name);
-  let sorts: Sort[];
-  let resultSort: Sort;
+  let types: L2Type[];
+  let resultType: L2Type;
   try {
-    sorts = contract.inputs.map((p) => sortOf(p.type, `parameter ${p.name}`));
+    types = contract.inputs.map((p) => typeOf(p.type, `parameter ${p.name}`));
     if (contract.outputs.length !== 1) throw new Unsupported("result", "one result is required");
-    resultSort = sortOf(contract.outputs[0]?.type ?? "", "the result");
+    resultType = typeOf(contract.outputs[0]?.type ?? "", "the result");
   } catch (e) {
     return unsupportedAll(describe(e));
   }
@@ -168,29 +182,90 @@ export async function verifyL2(
     return unsupportedAll("parameter names must be distinct and not `result`");
   }
 
-  const params: Term[] = sorts.map((sort, i) =>
-    sort === "F64" ? { sort, smt: `((_ to_fp 11 53) p${i})` } : { sort, smt: `p${i}` },
-  );
-  const declarations = sorts.map((sort, i) =>
-    sort === "F64" ? `(declare-const p${i} (_ BitVec 64))` : `(declare-const p${i} Bool)`,
-  );
+  // Every parameter's leaves: one declared constant per scalar (p<i>) or record field
+  // (p<i>__a__b), and a Bool for each optional field (…__def).
+  const leaves: Leaf[] = [];
+  const declarations: string[] = [];
+  const declare = (sort: Sort, name: string): Term => {
+    if (sort === "F64") {
+      declarations.push(`(declare-const ${name} (_ BitVec 64))`);
+      return { sort, smt: `((_ to_fp 11 53) ${name})` };
+    }
+    declarations.push(`(declare-const ${name} ${smtSort(sort)})`);
+    if (sort === "Str") declarations.push(`(assert (<= (seq.len ${name}) ${MAX_STRING_LENGTH}))`);
+    if (isArraySort(sort)) declarations.push(`(assert (<= (seq.len ${name}) ${MAX_ARRAY_LENGTH}))`);
+    return { sort, smt: name };
+  };
+  const build = (
+    type: L2Type,
+    smtName: string,
+    path: readonly string[],
+    optional: boolean,
+  ): Term | Rec => {
+    if (type.kind === "sort") {
+      const t = declare(type.sort, smtName);
+      const def = optional ? `${smtName}__def` : undefined;
+      if (def !== undefined) declarations.push(`(declare-const ${def} Bool)`);
+      leaves.push({ path, sort: type.sort, smt: smtName, ...(def !== undefined ? { def } : {}) });
+      return def !== undefined ? { ...t, defined: def } : t;
+    }
+    if (optional) throw new Unsupported("record", `${path.join(".")}: an optional record`);
+    const fields = new Map<string, Term | Rec>();
+    for (const f of type.fields) {
+      fields.set(f.name, build(f.type, `${smtName}__${f.name}`, [...path, f.name], f.optional));
+    }
+    return { sort: "Rec", fields };
+  };
+  let params: (Term | Rec)[];
+  try {
+    params = types.map((t, i) => build(t, `p${i}`, [names[i] as string], false));
+  } catch (e) {
+    return unsupportedAll(describe(e));
+  }
   const enc = new Encoder(contract, params, options.callees ?? {});
 
   // The atom.
   let implGraph: DucGraph;
-  let result: Term;
+  let result: Term | Rec;
   try {
     implGraph = typeof atom === "string" ? liftAtom(atom) : atom;
     result = enc.atom(implGraph);
   } catch (e) {
     return unsupportedAll(`the atom: ${describe(e)}`);
   }
-  if (result.sort !== resultSort) {
-    return unsupportedAll(
-      `the atom returns ${result.sort}, the contract says ${contract.outputs[0]?.type}`,
-    );
+  // The result as named definitions (result, result__f for a record's fields), checked against its type.
+  const resultDefs: string[] = [];
+  const nameResult = (t: Term | Rec, type: L2Type, smtName: string, what: string): Term | Rec => {
+    if (type.kind === "sort") {
+      if (t.sort !== type.sort)
+        throw new Unsupported("result", `${what} is ${t.sort}, the contract says ${type.sort}`);
+      resultDefs.push(`(define-fun ${smtName} () ${smtSort(type.sort)} ${t.smt})`);
+      if (t.int !== undefined) resultDefs.push(`(define-fun ${smtName}_int () Int ${t.int})`);
+      return {
+        sort: type.sort,
+        smt: smtName,
+        ...(t.int !== undefined ? { int: `${smtName}_int` } : {}),
+        ...(t.bound !== undefined ? { bound: t.bound } : {}),
+      };
+    }
+    if (t.sort !== "Rec") throw new Unsupported("result", `${what} is not a record`);
+    const fields = new Map<string, Term | Rec>();
+    for (const f of type.fields) {
+      if (f.optional)
+        throw new Unsupported("result", `${what}.${f.name}: an optional field of the result`);
+      const v = t.fields.get(f.name);
+      if (v === undefined) throw new Unsupported("result", `${what} has no field ${f.name}`);
+      fields.set(f.name, nameResult(v, f.type, `${smtName}__${f.name}`, `${what}.${f.name}`));
+    }
+    return { sort: "Rec", fields };
+  };
+  let resultTerm: Term | Rec;
+  try {
+    resultTerm = nameResult(result, resultType, "result", "the result");
+  } catch (e) {
+    return unsupportedAll(describe(e));
   }
-  const resultDef = `(define-fun result () ${smtSort(resultSort)} ${result.smt})`;
+  const resultDef = resultDefs.join("\n");
 
   // The preconditions, assumed by every obligation.
   const pres: string[] = [];
@@ -210,7 +285,7 @@ export async function verifyL2(
         const holds = enc.condition(
           condition,
           [...names, "result"],
-          [...params, { sort: resultSort, smt: "result" }],
+          [...params, resultTerm],
           `post${i}`,
         );
         return { holds };
@@ -220,7 +295,7 @@ export async function verifyL2(
     },
   );
 
-  const modelOf = sorts.map((_, i) => `p${i}`);
+  const modelOf = leaves.flatMap((l) => (l.def !== undefined ? [l.smt, l.def] : [l.smt]));
   const query = (assumptions: readonly string[], facts: number, goal: string | undefined): string =>
     [
       `; yakcc L2 obligation, ${ENCODER_VERSION}`,
@@ -252,7 +327,7 @@ export async function verifyL2(
 
   const replay: ReplayInputs = {
     names,
-    sorts,
+    leaves,
     implGraph,
     contract,
     calleesUsed: enc.calleesUsed,
@@ -294,7 +369,7 @@ export async function verifyL2(
       condition: o.condition,
       query: q,
       queryHash: hash(q),
-      ...judgeGoal(answer, names, sorts, o),
+      ...judgeGoal(answer, names, leaves, o),
     });
   }
 
@@ -303,7 +378,7 @@ export async function verifyL2(
   for (const t of enc.throws) {
     const answer = await check(query([t.path], enc.facts.length, undefined), modelOf);
     if (answer.status === "sat") {
-      const example = parseValues(answer.values, names, sorts, modelOf);
+      const example = decodeParams(answer.values, names, leaves);
       throws.push({
         region: t.region,
         text: t.text,
@@ -342,9 +417,68 @@ export async function verifyL2(
   };
 }
 
+/** A declared constant behind a parameter: a scalar parameter, or a field of a record one. */
+interface Leaf {
+  /** The parameter's name, then the field names. */
+  readonly path: readonly string[];
+  readonly sort: Sort;
+  /** Its declared constant (a number's 64 bits). */
+  readonly smt: string;
+  /** For an optional field: the Bool that says it is present. */
+  readonly def?: string;
+}
+
+/** The parameters' values in a model: each leaf decoded, records reassembled as objects. */
+function decodeParams(
+  values: string,
+  names: readonly string[],
+  leaves: readonly Leaf[],
+): CounterexampleInput[] | undefined {
+  const parsed = parseValues(
+    values,
+    leaves.map((l) => l.path.join(".")),
+    leaves.map((l) => l.sort),
+    leaves.map((l) => l.smt),
+  );
+  if (parsed === undefined) return undefined;
+  const present = (l: Leaf): boolean => {
+    if (l.def === undefined) return true;
+    const m = new RegExp(`\\(${l.def}\\s+(true|false)\\)`).exec(values);
+    return m?.[1] !== "false";
+  };
+  return names.map((name) => {
+    const mine = leaves.flatMap((l, j) =>
+      l.path[0] === name ? [[l, parsed[j] as CounterexampleInput] as const] : [],
+    );
+    const only = mine[0];
+    if (mine.length === 1 && only !== undefined && only[0].path.length === 1)
+      return { ...only[1], name };
+    const value: Record<string, unknown> = {};
+    for (const [l, c] of mine) {
+      let at = value;
+      for (const key of l.path.slice(1, -1)) {
+        at[key] ??= {};
+        at = at[key] as Record<string, unknown>;
+      }
+      at[l.path.at(-1) as string] = present(l) ? c.value : undefined;
+    }
+    return {
+      name,
+      value: value as never,
+      text: JSON.stringify(value, (_k, v) =>
+        v === undefined
+          ? "undefined"
+          : typeof v === "number" && !Number.isFinite(v)
+            ? String(v)
+            : v,
+      ),
+    };
+  });
+}
+
 interface ReplayInputs {
   readonly names: readonly string[];
-  readonly sorts: readonly Sort[];
+  readonly leaves: readonly Leaf[];
   readonly implGraph: DucGraph;
   readonly contract: L2Contract;
   readonly calleesUsed: ReadonlyMap<string, { symbol: string; callee: Callee }>;
@@ -365,16 +499,11 @@ function unknownOrTimeout(answer: { reason: string }): Judgement {
 async function judgePost(answer: SolverAnswer, r: ReplayInputs, index: number): Promise<Judgement> {
   if (answer.status === "unsat") return { outcome: "proven" };
   if (answer.status === "unknown") return unknownOrTimeout(answer);
-  const counterexample = parseValues(
-    answer.values,
-    r.names,
-    r.sorts,
-    r.sorts.map((_, i) => `p${i}`),
-  );
+  const counterexample = decodeParams(answer.values, r.names, r.leaves);
   if (counterexample === undefined) {
     return { outcome: "unknown", reason: `unreadable model: ${answer.values.trim()}` };
   }
-  const args = counterexample.slice(0, r.names.length).map((c) => c.value);
+  const args = counterexample.map((c) => c.value);
   const notReproduced = (why: string, result?: unknown): Judgement => ({
     outcome: "unknown",
     reason: r.abstracted
@@ -403,23 +532,28 @@ async function judgePost(answer: SolverAnswer, r: ReplayInputs, index: number): 
 function judgeGoal(
   answer: SolverAnswer,
   names: readonly string[],
-  sorts: readonly Sort[],
+  leaves: readonly Leaf[],
   o: GoalObligation,
 ): Judgement {
   if (answer.status === "unsat") return { outcome: "proven" };
   if (answer.status === "unknown") return unknownOrTimeout(answer);
-  const counterexample = parseValues(
+  const params = decodeParams(answer.values, names, leaves);
+  const shown = parseValues(
     answer.values,
-    [...names, ...o.show.map((s) => s.name)],
-    [...sorts, ...o.show.map((s) => s.sort)],
-    [...sorts.map((_, i) => `p${i}`), ...o.show.map((s) => s.smt)],
+    o.show.map((s) => s.name),
+    o.show.map((s) => s.sort),
+    o.show.map((s) => s.smt),
   );
+  const counterexample =
+    params !== undefined && shown !== undefined ? [...params, ...shown] : undefined;
   const reason =
     o.kind === "loop-entry"
       ? "the invariant does not hold when the loop is entered"
       : o.kind === "loop-preserve"
         ? "the invariant is not inductive: a pass from a state that satisfies it can leave it"
-        : "the callee's precondition can fail at this call";
+        : o.kind === "defined"
+          ? "the value can be undefined here"
+          : "the callee's precondition can fail at this call";
   return { outcome: "disproven", reason, ...(counterexample ? { counterexample } : {}) };
 }
 
@@ -429,7 +563,7 @@ function judgeGoal(
  */
 function replayPost(
   r: ReplayInputs,
-  args: readonly (number | boolean)[],
+  args: readonly unknown[],
   index: number,
 ): { result: unknown; presHold: boolean; postHolds: boolean } {
   const fn = (graph: DucGraph, name: string): string =>
@@ -472,6 +606,12 @@ function parseValues(
   const out: CounterexampleInput[] = [];
   for (const [i, sort] of sorts.entries()) {
     const smt = bareName(smts[i] as string);
+    if (sort === "Str" || isArraySort(sort)) {
+      const value = modelValue(values, smt, sort);
+      if (value === undefined) return undefined;
+      out.push({ name: names[i] as string, value, text: showValue(value) });
+      continue;
+    }
     const escaped = smt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const m = new RegExp(`\\(${escaped}\\s+(#x[0-9a-fA-F]{16}|true|false)\\)`).exec(values);
     if (m === null) return undefined;
@@ -486,6 +626,69 @@ function parseValues(
     }
   }
   return out;
+}
+
+type ModelValue = number | boolean | string | ModelValue[];
+
+/** The balanced term after `(name ` in a `(get-value …)` answer, parsed into an S-expression. */
+function sexpAt(values: string, name: string): unknown {
+  const start = values.indexOf(`(${name} `);
+  if (start < 0) return undefined;
+  const tokens = values.slice(start + name.length + 2).match(/\(|\)|[^\s()]+/g) ?? [];
+  let pos = 0;
+  const read = (): unknown => {
+    const tok = tokens[pos++];
+    if (tok !== "(") return tok;
+    const list: unknown[] = [];
+    while (pos < tokens.length && tokens[pos] !== ")") list.push(read());
+    pos++;
+    return list;
+  };
+  return read();
+}
+
+/** The elements of a sequence term (`seq.empty`, `seq.unit`, `seq.++`), as S-expressions. */
+function seqElements(t: unknown): unknown[] | undefined {
+  if (!Array.isArray(t)) return undefined;
+  if (t[0] === "as" && t[1] === "seq.empty") return [];
+  if (t[0] === "seq.unit") return [t[1]];
+  if (t[0] === "seq.++") {
+    const parts = t.slice(1).map(seqElements);
+    return parts.every((p) => p !== undefined) ? (parts as unknown[][]).flat() : undefined;
+  }
+  return undefined;
+}
+
+/** A model value of a string or array sort, from Z3's printing of sequences. */
+function modelValue(values: string, name: string, sort: Sort): ModelValue | undefined {
+  const convert = (t: unknown, s: Sort): ModelValue | undefined => {
+    if (s === "Str") {
+      const units = seqElements(t);
+      if (
+        units === undefined ||
+        units.some((u) => typeof u !== "string" || !/^#x[0-9a-fA-F]{4}$/.test(u))
+      )
+        return undefined;
+      return String.fromCharCode(
+        ...(units as string[]).map((u) => Number.parseInt(u.slice(2), 16)),
+      );
+    }
+    if (s === "F64")
+      return typeof t === "string" && /^#x[0-9a-fA-F]{16}$/.test(t)
+        ? f64FromBits(t.slice(2))
+        : undefined;
+    if (s === "Bool") return t === "true" ? true : t === "false" ? false : undefined;
+    const elems = seqElements(t);
+    if (elems === undefined) return undefined;
+    const out = elems.map((e) => convert(e, elementSort(s as ArraySort)));
+    return out.every((e) => e !== undefined) ? (out as ModelValue[]) : undefined;
+  };
+  return convert(sexpAt(values, name), sort);
+}
+
+function showValue(v: ModelValue): string {
+  if (Array.isArray(v)) return `[${v.map(showValue).join(", ")}]`;
+  return typeof v === "string" ? JSON.stringify(v) : show(v);
 }
 
 /** A fresh number is asked for through its bit-vector constant: `((_ to_fp 11 53) name)` → `name`. */

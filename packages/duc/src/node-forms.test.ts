@@ -1249,4 +1249,205 @@ export function f(xs: number[]) {
       [[1], [3]],
     );
   });
+  it("an if whose only exits are throws takes no tail: the rest is lifted once, however long", () => {
+    const program = (rest: number) =>
+      `export function f(c: boolean, x: number) {
+  const log: number[] = [];
+  if (c) {
+    if (x > 2) {
+      throw new RangeError("big " + x);
+    }
+    log.push(x);
+  }
+${Array.from({ length: rest }, (_, i) => `  log.push(x + ${i});`).join("\n")}
+  return log;
+}`;
+    for (const rest of [1, 200]) {
+      const code = program(rest);
+      const g = liftAtom(code);
+      expect(g.nodes.filter((n) => n.origin?.kind === "ReturnSelect").length, code).toBe(0);
+      expect(g.nodes.filter((n) => n.label === ".push").length, code).toBe(rest + 1);
+      agrees(code, [
+        [true, 1],
+        [true, 3],
+        [false, 5],
+      ]);
+    }
+  }, 60_000);
+
+  it("a constructor whose branch throws on one side, with the heap joined after it (#1370)", () => {
+    agrees(
+      `export function f(a: number, b: number) {
+  class B {
+    v: number;
+    w: number;
+    constructor(o: { k?: number; c?: number } = {}, fl = 0) {
+      const { k, c } = o;
+      const has = c !== undefined;
+      if (k !== undefined) {
+        if (has) throw new Error("x");
+        this.v = k + fl;
+      } else {
+        this.v = fl;
+      }
+      this.w = this.v * 2;
+    }
+  }
+  return [new B({ k: a }, 1).w, new B().w];
+}`,
+      [
+        [3, 4],
+        [7, 8],
+      ],
+    );
+  });
+  it("in a loop body, an if whose only exits are throws takes no tail: for and while agree (#1292)", () => {
+    // raise-c's block lowering: a for loop with a continue and a throw, whose emitted form is a while
+    // loop with its update in the body.
+    agrees(
+      `export function f(kids: string[], forward: number[], jumps: number[]) {
+  const out: string[] = [];
+  for (let i = 0; i < kids.length; i++) {
+    for (const j of jumps) if (kids.slice(i, j).some((k) => k === "x")) out.push(i + ":" + j);
+    if (kids[i] !== "L") {
+      continue;
+    }
+    if (forward.includes(i)) throw new RangeError("both ways at " + i);
+    i = i + 1;
+  }
+  return out;
+}`,
+      [
+        [["a", "x", "L", "b", "L", "c"], [9], [2, 4]],
+        [["L", "a"], [0], [1]],
+        [[], [], []],
+      ],
+    );
+  });
+  it("cells passed only into getters are ordered by how the getters use them (#1292)", () => {
+    // Node's inspect_repl.js, reduced: a context object of getters, each reading or writing one of
+    // the function's cells. Outside the getters the cells are alike, and seven of them are too many
+    // orders to search: their order was the source's, and the emitted source's was another.
+    const code = `function createRepl(inspector) {
+  const { Debugger, HeapProfiler, Profiler, Runtime } = inspector;
+  const history = {};
+  let currentBacktrace;
+  let exitDebugRepl;
+  function initializeContext(context) {
+    copyOwnProperties(context, {
+      get pause() { return Debugger.pause(); },
+      get backtrace() { return currentBacktrace; },
+      get profileEnd() { return PromisePrototypeThen(Profiler.stop(), Profile.createAndRegister); },
+      takeHeapSnapshot(filename = "node.heapsnapshot") {
+        heapSnapshotPromise = new Promise((resolve, reject) => {
+          PromisePrototypeThen(HeapProfiler.takeHeapSnapshot({}), onResolve, onReject);
+        });
+      },
+      get repl() { exitDebugRepl = () => { repl.history = history.control; }; },
+      get version() {
+        return PromisePrototypeThen(Runtime.evaluate({ returnByValue: true }), ({ result }) => {});
+      },
+    });
+  }
+}`;
+    const g = liftAtom(code);
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+  });
+  it("a value a nested branch tests is made before the branch around it (#1292)", () => {
+    // Node's repl/utils.js: an arrow's default, tested in an if after an early return. The test of
+    // the inner if was not a need of the outer one, which could come first and read it unmade.
+    agrees(
+      `export function f(line: string, show?: boolean) {
+  const out: string[] = [];
+  const preview = (showCompletion = true) => {
+    if (line === "") {
+      return;
+    }
+    if (showCompletion) {
+      out.push(line);
+    }
+  };
+  preview(show);
+  return out;
+}`,
+      [
+        ["", true],
+        ["a", undefined],
+        ["b", false],
+      ],
+    );
+  });
+  it("a for loop's continue inside a catch keeps the update in the header: the try's closures write no binding (#1330)", () => {
+    // Node's esm/translators.js and resolve.js: `try { .. } catch { continue; }` in a for loop.
+    agrees(
+      `export function f(xs: number[]) {
+  const out: number[] = [];
+  for (let i = 0; i < xs.length; i++) {
+    try {
+      if (xs[i] < 0) throw new RangeError("negative");
+      out.push(xs[i] * 2);
+    } catch (e) {
+      out.push(-i);
+      continue;
+    }
+    out.push(i);
+  }
+  return out;
+}`,
+      [[[1, -2, 3]], [[]], [[-1, -1]]],
+    );
+  });
+
+  it("a clause that ends in a switch every path of which returns does not fall through (#1330)", () => {
+    // cjs-module-lexer's isExpressionKeyword: nested switches on characters, each with a default.
+    agrees(
+      `export function f(s: string) {
+  const at = (i: number) => s.charCodeAt(s.length - 1 - i);
+  switch (at(0)) {
+    case 100:
+      switch (at(1)) {
+        case 105:
+          return "vo-id";
+        default:
+          return "d";
+      }
+    case 101:
+      switch (at(1)) {
+        case 115:
+          switch (at(2)) {
+            case 108:
+              return "else";
+            default:
+              return "es";
+          }
+        default:
+          return "e";
+      }
+    default:
+      return "none";
+  }
+}`,
+      [["void"], ["else"], ["case"], ["are"], ["xyz"], [""]],
+    );
+  });
+
+  it("a class field's initializer writes a binding of the function around the class: a cell (#1330)", () => {
+    // minimatch's AST class: \`var ID = 0; class AST { id = ++ID; }\`.
+    agrees(
+      `export function f(n: number) {
+  var ID = 0;
+  class A {
+    id = ++ID;
+    twice = this.id * 2;
+  }
+  const made: number[][] = [];
+  for (let i = 0; i < n; i++) {
+    const a = new A();
+    made.push([a.id, a.twice]);
+  }
+  return [made, ID];
+}`,
+      [[0], [3]],
+    );
+  });
 });

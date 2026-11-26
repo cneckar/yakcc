@@ -370,7 +370,7 @@
   {
     "name": "validateProofManifestL0",
     "origin": "fb8b23598335710d2b820e99df7fd8192cbf13f167d2495dd31c658e4d1cc4fc",
-    "identity": "9a1298a50aa1bb68c354dfbbd471d81cfe526820e9306e2e87ca4b5fe98e64c2",
+    "identity": "0b95776f6bf519d926b5b1a078eb7461f108f87b3891bcda1629316ca612b149",
     "constructs": ["exception", "loop", "object", "in", "typeof"],
     "args": [
       {
@@ -899,7 +899,7 @@
   {
     "name": "seed:signed-integer",
     "origin": "seed:signed-integer",
-    "identity": "5f4f2993c856d564e47bc2d77d2c49e10cafc406ee224c3241aa31091db8ca6e",
+    "identity": "8f0f049e911cf4a5ff9425d58f75140fc34ecf3ac63e8e2df3589709c69f55a0",
     "constructs": ["loop", "exception", "number"],
     "args": [
       {
@@ -964,7 +964,7 @@
   {
     "name": "seed:non-ascii-rejector",
     "origin": "seed:non-ascii-rejector",
-    "identity": "084e4db32da5ef79e79a33d8f1470603ac0508284fec5945b48a07e404872200",
+    "identity": "2f31eb18e8058328244f6afde191e1b54749fc135b235b7ef7d46f2b6e6586a6",
     "constructs": ["loop", "exception", "string"],
     "args": [
       {
@@ -977,7 +977,7 @@
   {
     "name": "seed:comma-separated-integers",
     "origin": "seed:comma-separated-integers",
-    "identity": "bf0086d4c4cf3ff598ed05a875a12b0e7fb3150ca3167cbe026d51c92143745e",
+    "identity": "27e3f4f74da9dc14848f816be64e36fd5985049584ecf1ba3abbc041c323e60c",
     "constructs": ["loop", "exception", "array", "tuple"],
     "args": [
       {
@@ -991,7 +991,7 @@
   {
     "name": "seed:nonempty-list-content",
     "origin": "seed:nonempty-list-content",
-    "identity": "290c24e686ffa7c2f4aff9a8922fe325ed957636efa35483d3f151abd281ae21",
+    "identity": "d30de575669908817e3d0a48d7df33d8d17b5d5332956e196e7f64c370c0a3a9",
     "constructs": ["loop", "exception", "array"],
     "args": [
       {

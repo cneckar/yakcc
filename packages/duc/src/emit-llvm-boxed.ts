@@ -2338,16 +2338,18 @@ function lowerFunction(
       const within = (base: string, len: string): { off: string; ok: string } => {
         const off = fresh();
         emit(`${off} = sub i64 ${i}, ${base}`);
-        const room = fresh();
-        emit(`${room} = icmp uge i64 ${len}, ${mem.size}`);
-        const lim = fresh();
-        emit(`${lim} = sub i64 ${len}, ${mem.size}`);
+        // off + size <= len as one compare: off below len less size - 1 (0 when len is shorter),
+        // which a loop computes once.
+        let lim = len;
+        if (mem.size > 1) {
+          m.intrinsics.add("declare i64 @llvm.usub.sat.i64(i64, i64)");
+          lim = fresh();
+          emit(`${lim} = call i64 @llvm.usub.sat.i64(i64 ${len}, i64 ${mem.size - 1})`);
+        }
         const inside = fresh();
-        emit(`${inside} = icmp ule i64 ${off}, ${lim}`);
-        const a1 = fresh();
-        emit(`${a1} = and i1 ${integral}, ${room}`);
+        emit(`${inside} = icmp ult i64 ${off}, ${lim}`);
         const ok = fresh();
-        emit(`${ok} = and i1 ${a1}, ${inside}`);
+        emit(`${ok} = and i1 ${integral}, ${inside}`);
         return { off, ok };
       };
       // The runtime's two entries: the region last allocated or found, and the one before it (a
@@ -2369,12 +2371,13 @@ function lowerFunction(
           emit(`${both} = and i1 ${gOk}, ${wr}`);
           gOk = both;
         }
+        // The bytes read before the test, so that a loop reads them once.
+        const gBytes = fresh();
+        emit(`${gBytes} = load ptr, ptr ${g0}_bytes`);
         const gHit = freshLabel("mglobal");
         const next = freshLabel("mnext");
         emit(`br i1 ${likely(gOk)}, label %${gHit}, label %${next}`);
         block(gHit);
-        const gBytes = fresh();
-        emit(`${gBytes} = load ptr, ptr ${g0}_bytes`);
         const gP = fresh();
         emit(`${gP} = getelementptr i8, ptr ${gBytes}, i64 ${g.off}`);
         emit(`br label %${fast}`);
@@ -2835,6 +2838,11 @@ function lowerFunction(
               read: scope.read,
               write: scope.write,
               ...(scope.direct !== undefined ? { direct: scope.direct } : {}),
+              // What a direct callee takes and gives, so a call in a closure (a class's method)
+              // reaches its number, integer and record variants as a function's does (#1370).
+              ...(scope.arity !== undefined ? { arity: scope.arity } : {}),
+              ...(scope.ranges !== undefined ? { ranges: scope.ranges } : {}),
+              ...(scope.record !== undefined ? { record: scope.record } : {}),
             }
           : {
               // The module's require (a global of the module's own) for an import() in it.
@@ -4144,6 +4152,43 @@ function lowerFunction(
             callee = thunk;
           }
         }
+        // In a loop, arguments not proven numbers but numbers when it runs: the number clone too,
+        // tested for at the call (#1370: a hash's rotate called with the words it reads).
+        const speculate =
+          boxedCall &&
+          blocks === undefined &&
+          rec === undefined &&
+          callee === target &&
+          args.length === arity &&
+          (arity as number) > 0 &&
+          inLoop(n);
+        let specEnd: string | undefined;
+        let specR: string | undefined;
+        if (speculate) {
+          m.numCalled.set(`${target}.num`, { of: target, rawBlocks: 0, regs: arity as number });
+          let all = "";
+          for (const a of args) {
+            const c = fresh();
+            emit(`${c} = icmp ult i64 ${a}, ${NUMBER_LIMIT}`);
+            if (all === "") all = c;
+            else {
+              const both = fresh();
+              emit(`${both} = and i1 ${all}, ${c}`);
+              all = both;
+            }
+          }
+          const specL = freshLabel("specnum");
+          const genL = freshLabel("specgen");
+          emit(`br i1 ${likely(all)}, label %${specL}, label %${genL}`);
+          block(specL);
+          specR = fresh();
+          emit(
+            `${specR} = call i64 @${target}.num(ptr ${ptr}, i64 ${superRecv}, i64 ${args.length}, ptr ${argv}${args.map((a) => `, i64 ${a}`).join("")})`,
+          );
+          specEnd = currentLabel();
+          emit(`br label %${join}`);
+          block(genL);
+        }
         const r1 = fresh();
         emit(
           `${r1} = call i64 @${callee}(ptr ${ptr}, i64 ${superRecv}, i64 ${args.length}, ptr ${argv}${rawPass}${rec !== undefined ? `, ptr ${rec.slot}` : ""}${regPass})`,
@@ -4163,7 +4208,9 @@ function lowerFunction(
         emit(`br label %${join}`);
         block(join);
         const r = fresh();
-        emit(`${r} = phi i64 [ ${r1}, %${yesEnd} ], [ ${r2}, %${noEnd} ]`);
+        emit(
+          `${r} = phi i64 [ ${r1}, %${yesEnd} ], [ ${r2}, %${noEnd} ]${specEnd !== undefined ? `, [ ${specR}, %${specEnd} ]` : ""}`,
+        );
         set(out, r);
         return;
       }

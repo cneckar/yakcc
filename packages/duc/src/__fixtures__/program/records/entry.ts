@@ -50,3 +50,52 @@ export function stepAll(values: unknown[]): unknown {
   }
   return out;
 }
+
+// A method's loop calling a function with the words it reads (a hash's rounds, #1370): numbers
+// when it runs, so the number clone, tested for at the call; anything else, the function itself.
+class Rounds {
+  readonly words: unknown[];
+  constructor(words: unknown[]) {
+    this.words = words;
+  }
+  run(shift: unknown): unknown[] {
+    const out: unknown[] = [];
+    for (let i = 0; i < this.words.length; i++)
+      out.push(rot(this.words[i] as number, shift as number), rot(i, 7));
+    return out;
+  }
+}
+export function rounds(words: unknown[], shift: unknown): unknown {
+  return new Rounds(words).run(shift);
+}
+
+// A DataView's every get and set, both byte orders, and a member that is none of them.
+export function views(seed: number): unknown {
+  const dv = new DataView(new ArrayBuffer(16));
+  const out: unknown[] = [];
+  const kinds = ["Int8", "Uint8", "Int16", "Uint16", "Int32", "Uint32", "Float32", "Float64"];
+  for (const k of kinds)
+    for (const little of [false, true]) {
+      (dv as unknown as Record<string, (o: number, v: number, l: boolean) => void>)[`set${k}`]?.(
+        1,
+        seed * 1000.75 - 3,
+        little,
+      );
+      out.push(
+        (dv as unknown as Record<string, (o: number, l: boolean) => number>)[`get${k}`]?.(
+          1,
+          little,
+        ),
+        dv.getUint8(1),
+      );
+    }
+  dv.setBigInt64(8, BigInt(seed) - 5n, true);
+  out.push(String(dv.getBigInt64(8, true)), String(dv.getBigUint64(8)));
+  out.push(typeof (dv as unknown as Record<string, unknown>).getUint64);
+  try {
+    dv.getUint32(14);
+  } catch (e) {
+    out.push((e as Error).name);
+  }
+  return out;
+}

@@ -3,7 +3,8 @@
  * The self-rebuild acceptance, interim (#1370): the acceptance command (@yakcc/contracts'
  * canonicalize and contract id) shaved to a record of roots, its closure checked and listed, and
  * built from the roots alone, with no C library: the same executable as from its sources, printing
- * what Node does.
+ * what Node does. Step 5, interim: a native command that computes graphs' roots gives every root of
+ * its own closure and of the acceptance command's, as the Node-hosted store does.
  */
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -17,8 +18,10 @@ import { contractId } from "../../contracts/src/contract-id.js";
 import { canRun } from "./__fixtures__/native-harness.js";
 import { AcceptanceError, closureListing, programOfRoots, shaveProgram } from "./acceptance.js";
 import { buildRecord } from "./build.js";
+import { encodeGraph } from "./compact.js";
 import { emitNativeModules } from "./emit-llvm-boxed.js";
 import { programRecord } from "./program.js";
+import { packGraph } from "./store.js";
 
 const here = (p: string): string => fileURLToPath(new URL(p, import.meta.url));
 const work = mkdtempSync(join(tmpdir(), "yakcc-acceptance-"));
@@ -82,6 +85,40 @@ describe.skipIf(!canRun("x86_64-linux"))("the self-rebuild acceptance, interim (
     expect(run.stdout.toString().split("\n").slice(0, -1)).toEqual(
       specs.map((s) => `${contractId(s as never)} ${canonicalizeText(s as never).length}`),
     );
+  }, 900_000);
+
+  it("step 5, the interim fixpoint: the native root command gives every root of its own closure and the acceptance command's, as Node's store does", () => {
+    // The root command, built natively with no C library from root.ts's closure alone.
+    const command = programRecord(
+      here("./__fixtures__/program/graph-root-cli.ts"),
+      here("../../.."),
+    );
+    const listing = closureListing(command);
+    expect(listing.unlinked).toEqual([]);
+    const binary = join(work, "graph-root");
+    buildRecord(command, binary, { noLibc: true });
+    const acceptance = programRecord(
+      here("./__fixtures__/program/contract-id-cli.ts"),
+      here("../../.."),
+    );
+    for (const program of [command, acceptance]) {
+      const graphs = program.modules.flatMap((m) => m.statements.map((st) => st.graph));
+      const want = graphs.map((g) => packGraph(g).root);
+      const got: string[] = [];
+      // Each graph one argument, in batches the kernel's argument limit takes.
+      for (let i = 0; i < graphs.length; i += 20) {
+        const run = spawnSync(
+          binary,
+          graphs.slice(i, i + 20).map((g) => JSON.stringify(encodeGraph(g))),
+          { maxBuffer: 1 << 24 },
+        );
+        expect([run.status, run.stderr.toString()]).toEqual([0, ""]);
+        got.push(...run.stdout.toString().split("\n").slice(0, -1));
+      }
+      expect(got).toEqual(want);
+      // The same roots shaveProgram stores the program under.
+      expect(new Set(got)).toEqual(new Set(shaveProgram(program).store.keys()));
+    }
   }, 900_000);
 
   it("a root missing from the store, or a graph stored under another's root, is refused", () => {
