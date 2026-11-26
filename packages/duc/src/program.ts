@@ -152,8 +152,12 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
         if (
           spec.startsWith("node:") ||
           (!spec.startsWith(".") && !spec.startsWith("/") && isBuiltin(spec))
-        )
+        ) {
+          // Node's module: named as node:<id>, which no module of the record is, so it stays
+          // unresolved here and a boot program over Node's library gives its own (#1361 P2).
+          requires[spec] = spec.startsWith("node:") ? spec : `node:${spec}`;
           continue;
+        }
         let target: string;
         try {
           target = resolveSpecifier(spec, file);
@@ -370,6 +374,17 @@ function topLevelRequires(project: Project, text: string, id: string): string[] 
   return out;
 }
 
+/** The library modules a user program requires: each specifier none of its modules resolves to. */
+function builtinRequires(user: ProgramRecord | undefined): string[] {
+  if (user === undefined) return [];
+  const ids = new Set(user.modules.map((m) => m.id));
+  const out = new Set<string>();
+  for (const m of user.modules)
+    for (const [spec, target] of Object.entries(m.requires ?? {}))
+      if (!ids.has(target) && target.startsWith("node:")) out.add(target.slice(5));
+  return [...out].filter((id) => !id.startsWith("internal/") && !id.startsWith("."));
+}
+
 /**
  * Node's library booted as Node boots it (#1331, #1361 P2), in a program record:
  * - each library module is its wrapper function, the module text as its body, with the
@@ -391,6 +406,12 @@ export function nodeBootProgram(
     readonly include?: readonly string[];
     /** A directory of lifted modules by their source's hash, for repeated builds while the lifter is unchanged. */
     readonly liftCache?: string;
+    /**
+     * A user program to run once the library is set up (#1361 P2): its modules join the record, its
+     * entry is required last, and each require its modules do not resolve is the library's module
+     * of that name (`node:` or not) when users may require it.
+     */
+    readonly user?: ProgramRecord;
   } = {},
 ): ProgramRecord {
   const project = new Project({ useInMemoryFileSystem: true, compilerOptions: { allowJs: true } });
@@ -419,6 +440,8 @@ export function nodeBootProgram(
     visit(id);
   visit(main.id, main.source);
   for (const id of options.include ?? []) visit(id);
+  for (const id of builtinRequires(options.user))
+    if (existsSync(resolve(lib, `${id}.js`))) visit(id);
   // Node's lazily loaded globals (bootstrap/node.js): the module that gives one, when a module names it.
   const lazyGlobals = LAZY_GLOBALS.filter(([name]) =>
     [...texts.values()].some((t) => new RegExp(`\\b${name}\\b`).test(t)),
@@ -458,7 +481,13 @@ export function nodeBootProgram(
   );
   if (options.bindings !== undefined)
     modules.push(lifted(options.bindings.id, options.bindings.source));
-  modules.unshift(lifted(NODE_BOOT, nodeBootSource(main.id, options.bindings?.id, lazyGlobals)));
+  modules.unshift(
+    lifted(
+      NODE_BOOT,
+      nodeBootSource(main.id, options.bindings?.id, lazyGlobals, options.user?.entry),
+    ),
+  );
+  if (options.user !== undefined) modules.push(...options.user.modules);
   return { entry: NODE_BOOT, modules };
 }
 
@@ -485,6 +514,7 @@ function nodeBootSource(
   main: string,
   bindings: string | undefined,
   lazyGlobals: readonly (readonly [string, string, string])[] = [],
+  user?: string,
 ): string {
   return `${MATH_VALUE}const table = require(${JSON.stringify(NODE_BUILTINS)});
 const given = ${bindings !== undefined ? `require(${JSON.stringify(bindings)})` : "{}"};
@@ -633,7 +663,18 @@ __yakccDefineGlobal("console", {
   },
 });
 ${lazyGlobals.map(([name, id, key]) => `__yakccDefineGlobal(${JSON.stringify(name)}, () => loaders.requireBuiltin(${JSON.stringify(id)})[${JSON.stringify(key)}], true);\n`).join("")}loaders.requireBuiltin(${JSON.stringify(main)});
-`;
+${
+  user === undefined
+    ? ""
+    : `// A user program's require of a module it does not have: the library's, if users may require it.
+__yakccSetBuiltinRequire((id) => {
+  const name = id.startsWith("node:") ? id.slice(5) : id;
+  if (!table.has(name) || name.startsWith("internal/")) return undefined;
+  return loaders.requireBuiltin(name);
+});
+require(${JSON.stringify(user)});
+`
+}`;
 }
 
 /** The names a statement list declares at its own level (var, let, const, function, class). */
