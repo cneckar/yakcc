@@ -2836,7 +2836,11 @@ function lowerFunction(
               write: scope.write,
               ...(scope.direct !== undefined ? { direct: scope.direct } : {}),
             }
-          : { read: () => undefined, write: () => false };
+          : {
+              // The module's require (a global of the module's own) for an import() in it.
+              read: (nm, e, f) => (nm === "require" ? scope.read(nm, e, f) : undefined),
+              write: () => false,
+            };
     lowerFunction(m, graph, fn, { captures: n.inputs.length, moduleCaptures }, inner);
     const caps = n.inputs.map(operand);
     m.used.add("yk_closure_new");
@@ -3054,6 +3058,16 @@ function lowerFunction(
       const top = closure === undefined ? scope?.read("this", emit, fresh) : "%this";
       if (top === undefined) throw new LlvmEmitError("`this` outside a function");
       set(out, top);
+      return;
+    }
+    if (lbl === "import()" && ins.length >= 1) {
+      // import(spec): the module's require, in a job: a promise of its namespace or exports.
+      const req = scope?.read("require", emit, fresh);
+      if (req === undefined) throw new LlvmEmitError("import() outside a module");
+      m.intrinsics.add("declare i64 @yk_import(i64, i64)");
+      const r = fresh();
+      emit(`${r} = call i64 @yk_import(i64 ${req}, i64 ${operand(ins[0] as ValueId)})`);
+      set(out, r);
       return;
     }
     if (lbl === "instanceof" || lbl === "in") {

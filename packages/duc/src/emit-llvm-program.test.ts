@@ -191,6 +191,16 @@ describe.skipIf(!canRun("x86_64-linux"))("programs, natively (#1333)", () => {
     );
   }, 600_000);
 
+  it("import(): a module loaded in a job, its namespace the promise's; a missing one rejects (#1370)", () => {
+    const entry = here("./__fixtures__/program/dynamic/entry.js");
+    const exe = join(work, "dynamic-run");
+    buildProgram(entry, exe, { root: here("../../..") });
+    const native = spawnSync(exe, [], { encoding: "utf8", timeout: 60_000 });
+    const node = spawnSync(process.execPath, [entry], { encoding: "utf8", timeout: 60_000 });
+    expect(native.stderr).toBe("");
+    expect(native.stdout).toBe(node.stdout);
+  }, 600_000);
+
   it("@yakcc/contracts' canonicalize and contract id (BLAKE3 from @noble/hashes), from their sources, equal Node's", () => {
     const run = nativeProgram("contract-id", here("./__fixtures__/program/contract-id-entry.ts"));
     const specs = fc.sample(spec, { numRuns: 100, seed: 1333 });
