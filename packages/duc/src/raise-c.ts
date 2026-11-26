@@ -5976,7 +5976,10 @@ export function shaveCUnit(
     const same = [...(layouts ?? [])]
       .filter(
         ([key, l]) =>
-          /\(unnamed at /.test(key) && [...l.fields.keys()].join(",") === fields.join(","),
+          // (Each once: not again under its `::`-qualified key.)
+          !key.startsWith("::") &&
+          /\(unnamed at /.test(key) &&
+          [...l.fields.keys()].join(",") === fields.join(","),
       )
       .map(([key]) => key);
     // (Several with these fields, musl's `struct { union { .. } __u; }` typedefs: the one declared
