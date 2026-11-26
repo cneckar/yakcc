@@ -5971,7 +5971,14 @@ export function shaveCUnit(
               else {
                 // The final overrider: a method of the class the entry names. (Its scope without
                 // `(anonymous namespace)`, whose parenthesis is not the parameters'.)
-                const plain = text.replace(/\(anonymous namespace\)::/g, "");
+                // (And a template instance's: its arguments, and the `[T = ..]` clang appends.)
+                let plain = text
+                  .replace(/\(anonymous namespace\)::/g, "")
+                  .replace(/\s*\[[A-Za-z_]\w* = .*\]$/, "");
+                for (let prev = "", i = 0; prev !== plain && i < 8; i++) {
+                  prev = plain;
+                  plain = plain.replace(/<[^<>()]*>(?=::)/g, "");
+                }
                 const head = plain.slice(0, plain.indexOf("("));
                 const owner = head.split("::").slice(-2, -1)[0] ?? "";
                 const name = head.split("::").pop() ?? "";
