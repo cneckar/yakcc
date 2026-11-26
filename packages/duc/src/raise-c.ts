@@ -5305,9 +5305,10 @@ export function shaveCUnit(
     return pick(candidates(), bare);
   };
   const typedefScopes = new Map<string, Map<string, string>>();
-  // C++: classes, from the index.
+  // C++: classes, from the index. (A large C unit is indexed too, and stays C: its records are
+  // returned as C's are, the same in every unit.)
   const cxx: CxxUnit | undefined =
-    indexed === undefined
+    indexed === undefined || !(/\+\+$/.test(clang) || /\.(cc|cpp|cxx)$/.test(file))
       ? undefined
       : {
           isStaticMember: (fnId) => {
