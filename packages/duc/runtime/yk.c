@@ -823,6 +823,7 @@ static int big_cmp_v(yk a, yk b);
 static int big_cmp_double_v(yk a, double y);
 static yk big_binary(yk a, yk b, char op);
 static int numeric_pair(yk *a, yk *b);
+static uint32_t clamp_relative(yk v, uint32_t len, uint32_t dflt);
 static yk big_from_string_v(yk s);
 static yk big_negate(yk a);
 static yk big_add_small(yk a, int64_t k);
@@ -4398,8 +4399,9 @@ static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv,
   yk_array *a = arr(recv);
   yk f = argc > 0 ? argv[0] : YK_UNDEFINED;
   if (key_is(key, "includes")) {
-    for (uint32_t i = 0; i < a->len; i++)
-      if (same_value_zero(a->items[i], f)) return *out = YK_TRUE, 1;
+    /* From fromIndex (relative, negative from the end); a hole is undefined. */
+    for (uint32_t i = clamp_relative(argc > 1 ? argv[1] : YK_UNDEFINED, a->len, 0); i < a->len; i++)
+      if (same_value_zero(array_hole(a, i) ? YK_UNDEFINED : a->items[i], f)) return *out = YK_TRUE, 1;
     return *out = YK_FALSE, 1;
   }
   if (key_is(key, "sort")) {
@@ -7716,6 +7718,42 @@ static yk promise_static_all_settled(void *c, yk self, uint64_t argc, const yk *
   (void)c, (void)self;
   return promise_combine(argc, argv, 1);
 }
+/* Promise.any: the first to fulfil; when all reject, an AggregateError of their reasons in order. */
+static yk any_rejected(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)self;
+  yk_closure *k = (yk_closure *)c; /* result, errors, index, remaining, called */
+  yk_array *called = arr(k->captures[4]);
+  if (called->items[0] == YK_TRUE) return YK_UNDEFINED;
+  called->items[0] = YK_TRUE;
+  arr(k->captures[1])->items[(uint32_t)num(k->captures[2])] = argc > 0 ? argv[0] : YK_UNDEFINED;
+  yk_array *remaining = arr(k->captures[3]);
+  remaining->items[0] = yk_number(num(remaining->items[0]) - 1);
+  if (num(remaining->items[0]) == 0) {
+    yk args[2] = {k->captures[1], ascii("All promises were rejected")};
+    reject_promise(k->captures[0], builtin_aggregate_error(NULL, YK_UNDEFINED, 2, args));
+  }
+  return YK_UNDEFINED;
+}
+static yk promise_static_any(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  yk result = promise_new(), resolve, reject;
+  resolving_functions(result, &resolve, &reject);
+  yk_array *items = iterable_items(argc > 0 ? argv[0] : YK_UNDEFINED);
+  yk errors = BOX(T_ARRAY, new_array(items->len > 0 ? items->len : 1));
+  arr(errors)->len = items->len;
+  for (uint32_t i = 0; i < items->len; i++) arr(errors)->items[i] = YK_UNDEFINED;
+  yk remaining = yk_array_of(1, (yk[]){yk_number(items->len)});
+  if (items->len == 0) {
+    yk args[2] = {errors, ascii("All promises were rejected")};
+    reject_promise(result, builtin_aggregate_error(NULL, YK_UNDEFINED, 2, args));
+    return result;
+  }
+  for (uint32_t i = 0; i < items->len; i++) {
+    yk caps[5] = {result, errors, yk_number(i), remaining, yk_array_of(1, (yk[]){YK_FALSE})};
+    promise_then(NULL, promise_resolve(items->items[i]), 2, (yk[]){resolve, yk_closure_new(any_rejected, 0, 5, caps)});
+  }
+  return result;
+}
 static yk promise_static_race(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
   yk result = promise_new(), resolve, reject;
@@ -9985,10 +10023,10 @@ static yk global_raw(const char *name, uint64_t n) {
       if (strcmp(names[i], "Symbol") == 0) return fns[i] = symbol_global();
       if (codes[i] == NULL) return YK_UNDEFINED;
       if (codes[i] == builtin_promise) {
-        static const char *const m[5] = {"resolve", "reject", "all", "allSettled", "race"};
-        static const yk_code k[5] = {promise_static_resolve, promise_static_reject, promise_static_all,
-                                     promise_static_all_settled, promise_static_race};
-        return fns[i] = with_methods(builtin_promise, 5, m, k);
+        static const char *const m[6] = {"resolve", "reject", "all", "allSettled", "race", "any"};
+        static const yk_code k[6] = {promise_static_resolve, promise_static_reject, promise_static_all,
+                                     promise_static_all_settled, promise_static_race, promise_static_any};
+        return fns[i] = with_methods(builtin_promise, 6, m, k);
       }
       if (codes[i] == try_async_body) return fns[i] = yk_closure_mode(yk_closure_new(try_async_body, 0, 0, NULL), 1);
       if (codes[i] == try_gen_code) return fns[i] = yk_closure_mode(yk_closure_new(try_gen_code, 0, 0, NULL), 2);
