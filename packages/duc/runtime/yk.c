@@ -398,8 +398,8 @@ static struct {
   size_t n;
 } *gc_work = NULL;
 static size_t gc_nwork = 0, gc_capwork = 0;
-static void gc_consider(uintptr_t x) {
-  if (x < (uintptr_t)gc_heap || x >= (uintptr_t)gc_heap + (gc_top << GC_PAGE_SHIFT)) return;
+/* A word known to be an address in the heap's span: its block marked, and queued to be scanned. */
+static inline __attribute__((always_inline)) void gc_consider_in(uintptr_t x) {
   size_t off = x - (uintptr_t)gc_heap;
   size_t pi = off >> GC_PAGE_SHIFT;
   gc_page *g = &gc_pages[pi];
@@ -435,18 +435,28 @@ static void gc_consider(uintptr_t x) {
   gc_work[gc_nwork].p = p;
   gc_work[gc_nwork++].n = n;
 }
+static void gc_consider(uintptr_t x) {
+  if (x < (uintptr_t)gc_heap || x >= (uintptr_t)gc_heap + (gc_top << GC_PAGE_SHIFT)) return;
+  gc_consider_in(x);
+}
 static void gc_scan(const void *lo, const void *hi) {
   uintptr_t a = ((uintptr_t)lo + sizeof(uintptr_t) - 1) & ~(uintptr_t)(sizeof(uintptr_t) - 1);
   /* The heap's span, the same while marking: a word outside it is not considered at all. */
   uintptr_t base = (uintptr_t)gc_heap, span = (uintptr_t)gc_top << GC_PAGE_SHIFT;
-  for (const uintptr_t *w = (const uintptr_t *)a; (const void *)(w + 1) <= hi; w++) {
+  const uintptr_t *end = (const uintptr_t *)((uintptr_t)hi & ~(uintptr_t)(sizeof(uintptr_t) - 1));
+  for (const uintptr_t *w = (const uintptr_t *)a; w < end; w++) {
     uintptr_t x = *w;
 #if UINTPTR_MAX > 0xFFFFFFFFu
+    /* Its payload in the heap's span first (most words are not), then whether it is an address or
+       a boxed value at all (a number's bits may fall in the span). */
+    uintptr_t y = x & 0x0000FFFFFFFFFFFFull;
+    if (y - base >= span) continue;
     uint64_t top = (uint64_t)x >> 48;
-    if (top >= 0xFFFA) x &= 0x0000FFFFFFFFFFFFull;
-    else if (top != 0) continue;
+    if (top != 0 && top < 0xFFFA) continue;
+    gc_consider_in(y);
+#else
+    if (x - base < span) gc_consider_in(x);
 #endif
-    if (x - base < span) gc_consider(x);
   }
 }
 static void gc_drain(void) {
