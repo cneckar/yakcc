@@ -470,6 +470,9 @@ function contextErrors(sf: ts.SourceFile, parsedCleanly: boolean): GrammarError[
     if (!parsedCleanly && code !== 1313) return;
     errors.push({ start: node.getStart(sf), code, message: CONTEXT_MESSAGES[code] ?? "" });
   };
+  // A module's top level awaits (#1368: an ES module's `await` outside any function, assemblyscript's
+  // asc.js); a script's does not.
+  const module = ts.isExternalModule(sf);
   const isAsync = (fn: ts.Node): boolean =>
     ts.isClassStaticBlockDeclaration(fn) ||
     (ts.getCombinedModifierFlags(fn as ts.Declaration) & ts.ModifierFlags.Async) !== 0;
@@ -486,8 +489,9 @@ function contextErrors(sf: ts.SourceFile, parsedCleanly: boolean): GrammarError[
     if (ts.isIfStatement(node) && ts.isEmptyStatement(node.thenStatement))
       report(node.thenStatement, 1313);
     if (ts.isAwaitExpression(node)) {
-      if (fn === undefined) report(node, 1375);
-      else if (!isAsync(fn)) report(node, 1308);
+      if (fn === undefined) {
+        if (!module) report(node, 1375);
+      } else if (!isAsync(fn)) report(node, 1308);
     }
     if (ts.isBreakStatement(node) || ts.isContinueStatement(node)) {
       const isBreak = ts.isBreakStatement(node);
@@ -507,8 +511,9 @@ function contextErrors(sf: ts.SourceFile, parsedCleanly: boolean): GrammarError[
     }
     if (ts.isIterationStatement(node, false)) {
       if (ts.isForOfStatement(node) && node.awaitModifier !== undefined) {
-        if (fn === undefined) report(node, 1431);
-        else if (!isAsync(fn)) report(node, 1103);
+        if (fn === undefined) {
+          if (!module) report(node, 1431);
+        } else if (!isAsync(fn)) report(node, 1103);
       }
       const inLoop = { ...jumps, breaks: true, continues: true };
       ts.forEachChild(node, (child) => walk(child, fn, child === node.statement ? inLoop : jumps));

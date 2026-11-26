@@ -214,6 +214,68 @@ function testsPresent(test: ts.Expression, name: string): boolean {
   return eq ? text.text !== "undefined" : text.text === "undefined";
 }
 
+/** Does `test` hold only where `name` is absent (`typeof name === "undefined"`, either side of `||`)? */
+function testsAbsent(test: ts.Expression, name: string): boolean {
+  let e = test;
+  while (ts.isParenthesizedExpression(e)) e = e.expression;
+  if (!ts.isBinaryExpression(e)) return false;
+  if (e.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+    return testsAbsent(e.left, name) || testsAbsent(e.right, name);
+  const eq =
+    e.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+    e.operatorToken.kind === ts.SyntaxKind.EqualsEqualsToken;
+  const ne =
+    e.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+    e.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsToken;
+  if (!eq && !ne) return false;
+  const sides = [e.left, e.right];
+  const probe = sides.find(
+    (s) => ts.isTypeOfExpression(s) && ts.isIdentifier(s.expression) && s.expression.text === name,
+  );
+  const text = sides.find((s) => ts.isStringLiteral(s)) as ts.StringLiteral | undefined;
+  if (probe === undefined || text === undefined) return false;
+  return eq ? text.text === "undefined" : text.text !== "undefined";
+}
+
+/** Does the statement always leave its function, by a return or a throw? */
+function exits(st: ts.Statement): boolean {
+  if (ts.isReturnStatement(st) || ts.isThrowStatement(st)) return true;
+  if (ts.isBlock(st)) {
+    const last = st.statements[st.statements.length - 1];
+    return last !== undefined && exits(last);
+  }
+  return false;
+}
+
+/**
+ * Is `a` a statement an earlier one of its list guards: `if (typeof name === "undefined") throw ..;`
+ * leaves before `a` runs whenever the name is absent.
+ */
+function afterAbsenceExit(a: ts.Node, name: string): boolean {
+  const list = a.parent;
+  if (list === undefined) return false;
+  if (
+    !(
+      ts.isBlock(list) ||
+      ts.isSourceFile(list) ||
+      ts.isCaseClause(list) ||
+      ts.isDefaultClause(list)
+    )
+  )
+    return false;
+  for (const st of list.statements) {
+    if (st === a) return false;
+    if (
+      ts.isIfStatement(st) &&
+      st.elseStatement === undefined &&
+      testsAbsent(st.expression, name) &&
+      exits(st.thenStatement)
+    )
+      return true;
+  }
+  return false;
+}
+
 const within = (node: ts.Node, part: ts.Node | undefined): boolean =>
   part !== undefined && node.pos >= part.pos && node.end <= part.end;
 
@@ -224,6 +286,9 @@ function isProbe(id: ts.Identifier): boolean {
   for (let a: ts.Node | undefined = id.parent; a !== undefined; a = a.parent) {
     if (ts.isIfStatement(a) && within(id, a.thenStatement) && testsPresent(a.expression, name))
       return true;
+    if (ts.isIfStatement(a) && within(id, a.elseStatement) && testsAbsent(a.expression, name))
+      return true;
+    if (afterAbsenceExit(a, name)) return true;
     if (ts.isConditionalExpression(a) && within(id, a.whenTrue) && testsPresent(a.condition, name))
       return true;
     if (
@@ -240,7 +305,9 @@ function isProbe(id: ts.Identifier): boolean {
 /**
  * The free names an atom only probes for (DEC-DUC-FEATURE-DETECTION-001, #1173): every read of the
  * name is `typeof name`, or lies under a test that `typeof name` is present (an `if`, a `?:`, the
- * right of an `&&`). The atom decides by its own test what to do when the name is absent, so it is
+ * right of an `&&`), or in the `else` of a test that it is absent, or after a test that it is absent whose
+ * branch returns or throws (#1368: `if (typeof AudioContext === "undefined") throw ..;` before
+ * `new AudioContext()`). The atom decides by its own test what to do when the name is absent, so it is
  * explained: feature detection (a UMD wrapper's `define`), not a hole. A read inside a `try` is not a
  * probe: a `catch` survives any missing name, a real hole included.
  */

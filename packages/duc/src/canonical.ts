@@ -529,11 +529,24 @@ export function canonicalizeGraph(
     });
   }
   const bodySummaries = new Map<string, string>();
+  let bySegment: Map<string, DucNode[]> | undefined;
   const bodySummaryOf = (id: string): string => {
     const cached = bodySummaries.get(id);
     if (cached !== undefined) return cached;
-    const body = nodes
-      .filter((n) => n.region?.split("/").includes(`${id}.b`))
+    // The nodes whose region has the loop's body as a segment, indexed once: filtering every node
+    // for each loop was quadratic in a minified module's graph (#1368).
+    if (bySegment === undefined) {
+      bySegment = new Map();
+      for (const n of nodes) {
+        if (n.region === undefined) continue;
+        for (const seg of new Set(n.region.split("/"))) {
+          const list = bySegment.get(seg);
+          if (list === undefined) bySegment.set(seg, [n]);
+          else list.push(n);
+        }
+      }
+    }
+    const body = (bySegment.get(`${id}.b`) ?? [])
       .map(
         (n) =>
           `${n.kind}:${invariantOuterOf.has(n) ? "invariant" : (n.label ?? "")}:${n.diamond?.symbol ?? ""}`,
@@ -764,17 +777,27 @@ export function canonicalizeGraph(
   const branchKey = (b: DucBranch): string =>
     `${branchSigOf(b.id) ?? ""}|${regionSig(b.within) ?? ""}`;
   const contentsMemo = new Map<string, string>();
+  // A side holds the nodes whose region is it or starts with it: whose region's first segment is
+  // it. Indexed once; filtering every node for each branch was quadratic in a minified module's
+  // graph, thousands of branches each (#1368).
+  let bySide: Map<string, string[]> | undefined;
+  const sideKeys = (side: string): readonly string[] => {
+    if (bySide === undefined) {
+      bySide = new Map();
+      for (const n of nodes) {
+        if (n.region === undefined) continue;
+        const first = n.region.split("/", 1)[0] as string;
+        const list = bySide.get(first);
+        if (list === undefined) bySide.set(first, [key.get(n) ?? ""]);
+        else list.push(key.get(n) ?? "");
+      }
+    }
+    return bySide.get(side) ?? [];
+  };
   const contentsKey = (b: DucBranch): string => {
     const known = contentsMemo.get(b.id);
     if (known !== undefined) return known;
-    const side = (s: "t" | "e"): string =>
-      nodes
-        .filter(
-          (n) => n.region === `${b.id}.${s}` || n.region?.startsWith(`${b.id}.${s}/`) === true,
-        )
-        .map((n) => key.get(n) ?? "")
-        .sort()
-        .join(",");
+    const side = (s: "t" | "e"): string => [...sideKeys(`${b.id}.${s}`)].sort().join(",");
     const k = sha256Hex(`${side("t")}|${side("e")}`);
     contentsMemo.set(b.id, k);
     return k;
