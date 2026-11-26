@@ -80,6 +80,8 @@ typedef struct {
                           too once one was not an index below 128 */
   uint64_t small_ints[2]; /* the indices below 128 a key was added for (a bit stays when deleted) */
   yk_array *hidden;       /* its non-enumerable own keys (Object.defineProperty's), or NULL */
+  uint32_t *cindex;       /* a Map's or Set's: each entry's position + 1, by its key's hash; NULL to rebuild */
+  uint32_t cindex_cap;
 } yk_object;
 
 /* A BigInt: a sign and a magnitude, 32-bit limbs least significant first, no zero limb on top. */
@@ -2496,6 +2498,7 @@ yk yk_super_construct(void *closure, yk self, uint64_t argc, const yk *argv) {
     yk made = yk_new(parent, adder ? 0 : argc, argv);
     yk_object *o = (yk_object *)PTR(self), *b = (yk_object *)PTR(made);
     o->kind = b->kind, o->entries = b->entries, o->ext = b->ext, o->regex = b->regex, o->error = b->error;
+    o->cindex = NULL;
     for (uint32_t i = 0; i < b->len; i++) own_set(o, b->keys[i], b->values[i]);
     if (adder) {
       /* The entries go in through the receiver's set / add, a subclass's override included. */
@@ -4666,17 +4669,65 @@ static yk new_collection(int32_t kind) {
   return v;
 }
 
-static int64_t collection_find(yk_object *o, yk key) {
-  for (uint32_t i = 0; i < o->entries->len; i++) {
-    yk k = o->kind == 1 ? arr(o->entries->items[i])->items[0] : o->entries->items[i];
-    if (same_value_zero(k, key)) return i;
+/* A key's hash for SameValueZero (#1370): a number's by its value (-0 as +0, every NaN one), a
+   string's by its units, a BigInt's one for them all (they compare by value), anything else's by
+   identity. */
+static uint32_t key_hash(yk key);
+static uint32_t svz_hash(yk k) {
+  if (is_number(k)) {
+    double d = num(k);
+    if (d == 0) d = 0;
+    uint64_t b;
+    if (d != d) b = 0x7ff8000000000000ull;
+    else memcpy(&b, &d, 8);
+    b *= 0x9E3779B97F4A7C15ull;
+    return (uint32_t)(b ^ (b >> 32));
   }
-  return -1;
+  if (is_string(k)) return key_hash(k);
+  if (is_bigint(k)) return 0x5bd1e995u;
+  uint64_t h = (k ^ (k >> 29)) * 0x9E3779B97F4A7C15ull;
+  return (uint32_t)(h ^ (h >> 32));
+}
+static yk collection_key(yk_object *o, uint32_t i) {
+  return o->kind == 1 ? arr(o->entries->items[i])->items[0] : o->entries->items[i];
+}
+static void collection_index_put(yk_object *o, uint32_t i) {
+  uint32_t mask = o->cindex_cap - 1;
+  for (uint32_t j = svz_hash(collection_key(o, i)) & mask;; j = (j + 1) & mask)
+    if (o->cindex[j] == 0) {
+      o->cindex[j] = i + 1;
+      return;
+    }
+}
+static void collection_index_build(yk_object *o) {
+  uint32_t cap = 16;
+  while (cap < o->entries->len * 4) cap *= 2;
+  o->cindex = alloc((size_t)cap * sizeof(uint32_t));
+  o->cindex_cap = cap;
+  for (uint32_t i = 0; i < o->entries->len; i++) collection_index_put(o, i);
+}
+/* An entry's position by its key, or -1: by the hash index from 8 entries on (#1370: a Map of a
+   compiler's symbols is looked up millions of times), else by a scan. */
+static int64_t collection_find(yk_object *o, yk key) {
+  uint32_t n = o->entries->len;
+  if (n < 8) {
+    for (uint32_t i = 0; i < n; i++)
+      if (same_value_zero(collection_key(o, i), key)) return i;
+    return -1;
+  }
+  if (o->cindex == NULL) collection_index_build(o);
+  uint32_t mask = o->cindex_cap - 1;
+  for (uint32_t j = svz_hash(key) & mask;; j = (j + 1) & mask) {
+    uint32_t at = o->cindex[j];
+    if (at == 0) return -1;
+    if (same_value_zero(collection_key(o, at - 1), key)) return at - 1;
+  }
 }
 
 static void collection_remove(yk_object *o, int64_t i) {
   memmove(o->entries->items + i, o->entries->items + i + 1, (size_t)(o->entries->len - i - 1) * sizeof(yk));
   o->entries->len--;
+  o->cindex = NULL; /* the positions after it moved: made again when next needed */
 }
 
 static yk_array *iterable_items(yk v);
@@ -4693,6 +4744,11 @@ static void collection_put(yk_object *o, yk key, yk value) {
     }
   } else if (i < 0)
     push(o->entries, key);
+  /* A new entry into the index, while it is at most a quarter full; else it is made again. */
+  if (i < 0 && o->cindex != NULL) {
+    if (o->entries->len * 4 > o->cindex_cap) o->cindex = NULL;
+    else collection_index_put(o, o->entries->len - 1);
+  }
 }
 
 
@@ -4834,6 +4890,7 @@ static int collection_method(yk_object *o, yk recv, yk key, uint64_t argc, const
   }
   if (key_is(key, "clear")) {
     o->entries->len = 0;
+    o->cindex = NULL;
     return *out = YK_UNDEFINED, 1;
   }
   /* keys / values / entries: the items, as an array (iterable, as the iterators they stand for). */
