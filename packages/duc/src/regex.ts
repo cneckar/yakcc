@@ -16,10 +16,13 @@ import { liftAtom } from "./lift.js";
  * Covered: flags g, i (ASCII and Latin-1 case folding), m, s, u (code points), y, d; alternation,
  * groups (capturing, named, non-capturing), quantifiers (*, +, ?, {n,m}, lazy), classes and their
  * escapes (\d \w \s and negations), anchors and \b \B, lookahead and lookbehind, backreferences
- * (numbered and named), the character escapes. Refused, with the reason: Unicode property escapes
- * (\p{…}), case folding beyond Latin-1, a dynamic `new RegExp(…)`.
+ * (numbered and named), the character escapes, Unicode property escapes with u (\p{…}, \P{…}: General
+ * Category values, the common binary properties and some scripts, from the table generated from
+ * Node's RegExp, unicode-properties.ts). Refused, with the reason: a property not in the table, case
+ * folding beyond Latin-1, a dynamic `new RegExp(…)`.
  */
 import type { DucGraph } from "./types.js";
+import { UNICODE_PROPERTY_NAMES, UNICODE_PROPERTY_RANGES } from "./unicode-properties.js";
 
 export class RegexCompileError extends Error {
   constructor(message: string) {
@@ -63,6 +66,24 @@ const SPACE: Range[] = [
   [0xfeff, 0xfeff],
 ];
 const MAX = 0x10ffff;
+
+/** A property's code points, decoded from the table once. */
+const decodedProperties = new Map<string, Range[]>();
+function propertyRanges(property: string): Range[] {
+  const known = decodedProperties.get(property);
+  if (known !== undefined) return known;
+  const text = UNICODE_PROPERTY_RANGES[property] ?? "";
+  const out: Range[] =
+    text === ""
+      ? []
+      : text.split(",").map((r) => {
+          const [a, b] = r.split("-");
+          const lo = Number.parseInt(a as string, 36);
+          return [lo, b === undefined ? lo : Number.parseInt(b, 36)] as const;
+        });
+  decodedProperties.set(property, out);
+  return out;
+}
 
 /** The complement of a set of ranges within 0 .. MAX. */
 function complement(ranges: readonly Range[]): Range[] {
@@ -148,15 +169,26 @@ export function parseRegex(pattern: string, flags: string): ParsedRegex {
       }
       return v;
     }
-    if (e === "p" || e === "P") {
-      if (unicode) fail("Unicode property escapes are not in the subset yet");
-      return e.charCodeAt(0);
-    }
+    if ((e === "p" || e === "P") && unicode) fail("a property escape is a set, not a character");
+    if (e === "p" || e === "P") return e.charCodeAt(0);
     if (unicode && !/[\^$\\.*+?()[\]{}|/-]/.test(e)) fail(`\\${e} is not an escape with u`);
     at--;
     return codePointAt();
   };
   const classEscape = (e: string): Range[] | undefined => {
+    // \p{…} / \P{…} with u: the property's code points (or the rest), from the generated table.
+    if ((e === "p" || e === "P") && unicode) {
+      const close = pattern.indexOf("}", at);
+      if (pattern[at + 1] !== "{" || close < 0) fail("a bad property escape");
+      const name = pattern.slice(at + 2, close);
+      const property = Object.hasOwn(UNICODE_PROPERTY_NAMES, name)
+        ? UNICODE_PROPERTY_NAMES[name]
+        : undefined;
+      if (property === undefined) fail(`the Unicode property ${name} is not in the table yet`);
+      at = close; // the caller steps past the "}"
+      const set = propertyRanges(property as string);
+      return e === "P" ? complement(set) : set;
+    }
     if (e === "d") return DIGIT;
     if (e === "D") return complement(DIGIT);
     if (e === "w") return WORD;
@@ -446,12 +478,29 @@ export function regexMatcherSource(
     ? "const c = s.codePointAt(i); const w = c > 65535 ? 2 : 1;"
     : "const c = s.charCodeAt(i); const w = 1;";
   const canon = (c: string): string => (fold ? `up(${c})` : c);
-  const rangesTest = (v: string, ranges: readonly Range[]): string =>
-    ranges.length === 0
+  // A large set (a property's): a binary search of its sorted, merged ranges, a helper of its own
+  // whose table only its element reads use (a constant table natively, #1369).
+  const tables: string[] = [];
+  const rangesTest = (v: string, ranges: readonly Range[]): string => {
+    if (ranges.length > 12) {
+      const merged: [number, number][] = [];
+      for (const [lo, hi] of [...ranges].sort((a, b) => a[0] - b[0])) {
+        const last = merged[merged.length - 1];
+        if (last !== undefined && lo <= last[1] + 1) last[1] = Math.max(last[1], hi);
+        else merged.push([lo, hi]);
+      }
+      const name = `inSet${tables.length}`;
+      tables.push(
+        `function ${name}(c) { const t = [${merged.flat().join(", ")}]; let lo = 0; let hi = ${merged.length - 1}; while (lo <= hi) { const m = (lo + hi) >> 1; if (c < t[2 * m]) hi = m - 1; else if (c > t[2 * m + 1]) lo = m + 1; else return true; } return false; }`,
+      );
+      return `${name}(${v})`;
+    }
+    return ranges.length === 0
       ? "false"
       : ranges
           .map(([lo, hi]) => (lo === hi ? `${v} === ${lo}` : `(${v} >= ${lo} && ${v} <= ${hi})`))
           .join(" || ");
+  };
   // Backward (inside a lookbehind): the code point (or code unit) ending at i, and its width.
   const readBack = unicode
     ? "let c = s.charCodeAt(i - 1); let w = 1; if (c >= 56320 && c <= 57343 && i >= 2) { const h = s.charCodeAt(i - 2); if (h >= 55296 && h <= 56319) { c = (h - 55296) * 1024 + (c - 56320) + 65536; w = 2; } }"
@@ -574,8 +623,13 @@ export function regexMatcherSource(
     "  const n = s.length;",
     `  const caps = [${Array(caps).fill("-1").join(", ")}];`,
     ...helpers.map((h) => `  ${h}`),
+    ...tables.map((t) => `  ${t}`),
     ...fns.map((f) => `  ${f}`),
-    "  let pos = start;",
+    // With u, a start inside a surrogate pair is the pair's character (RegExpBuiltinExec's
+    // "the character obtained from element lastIndex"): matching begins at its start.
+    unicode
+      ? "  let pos = start; if (pos > 0 && pos < n) { const lo0 = s.charCodeAt(pos); const hi0 = s.charCodeAt(pos - 1); if (lo0 >= 56320 && lo0 <= 57343 && hi0 >= 55296 && hi0 <= 56319) pos = pos - 1; }"
+      : "  let pos = start;",
     "  while (pos <= n) {",
     `    let c0 = 0; while (c0 < ${caps}) { caps[c0] = -1; c0 = c0 + 1; }`,
     "    let found = -1;",
