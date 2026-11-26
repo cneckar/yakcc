@@ -1243,7 +1243,14 @@ function lowerFunction(
             c.label === "ElementAccess" &&
             c.inputs.length === 2 &&
             resolve(c.inputs[0] as ValueId) === out &&
-            resolve(c.inputs[1] as ValueId) !== out,
+            resolve(c.inputs[1] as ValueId) !== out &&
+            // Not a method's callee (`[9, 2][Symbol.iterator]()`): the call takes the array as this.
+            !(uses.get(resolve(c.outputs[0] as ValueId)) ?? []).some(
+              (u) =>
+                u.kind === "op" &&
+                u.label === "CallExpression" &&
+                resolve(u.inputs[0] as ValueId) === resolve(c.outputs[0] as ValueId),
+            ),
         )
       )
         continue;
