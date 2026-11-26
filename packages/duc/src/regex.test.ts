@@ -40,6 +40,11 @@ const CASES: [string, string, string[]][] = [
   ["(?<=\\u{1F600})x", "u", ["\u{1F600}x x", "\uDE00x"]],
   ["(?<=.)$", "m", ["ab\ncd", ""]],
   ["(?<=a*?)b", "", ["aab", "b"]],
+  // Anchored at the start (no m): only position 0 can match, from any start.
+  ["^#!.*", "", ["#!/usr/bin/env node\nx", "x#!y"]],
+  ["^a|^b", "g", ["ab ba", "ba"]],
+  ["(^x)+", "", ["xx", "yx"]],
+  ["^x", "m", ["a\nx\nx"]],
   // Unicode property escapes (with u), from the generated table.
   ["\\p{L}+", "u", ["12h\u00e9llo\u4e16\u754c!", "\u{1F600}"]],
   ["\\P{L}", "gu", ["a1-\u00df_\u03a9\u{1F600}"]],
