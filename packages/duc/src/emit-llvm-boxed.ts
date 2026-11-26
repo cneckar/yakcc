@@ -1852,7 +1852,10 @@ function lowerFunction(
   ): string => {
     // Code with little numeric work (a library's function): the runtime's operation, not an inline
     // fast path beside it, so the module stays small and compiles fast (#1369).
-    if (compact && !proven && !inLoop(emitting)) return slow();
+    // Strict equality keeps its few instructions everywhere: library code compares numbers
+    // (`node.kind === SyntaxKind.X`) more than it does anything else (#1370).
+    const equality = emitting?.label === "===" || emitting?.label === "!==";
+    if (compact && !proven && !inLoop(emitting) && !equality) return slow();
     if (proven && guard === undefined) {
       // Every operand a proven number: the double operation alone.
       return fast(
