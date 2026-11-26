@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * TypeScript's compiler, natively (#1370): typescript.js lifted statement by statement (its bundler
+ * wrapper unwrapped, #1458), built by the native toolchain, and transpileModule run on sources of
+ * this package: the output is Node's TypeScript's, byte for byte. About 16 minutes (an 11-minute
+ * record, a 5-minute build), so it runs when YAKCC_TS_NATIVE=1.
+ */
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterAll, describe, expect, it } from "vitest";
+import { canRun } from "./__fixtures__/native-harness.js";
+import { buildRecord } from "./build.js";
+import { programRecord } from "./program.js";
+
+const here = (p: string): string => fileURLToPath(new URL(p, import.meta.url));
+const work = mkdtempSync(join(tmpdir(), "yakcc-ts-native-"));
+afterAll(() => rmSync(work, { recursive: true, force: true }));
+
+describe.skipIf(!canRun("x86_64-linux") || process.env.YAKCC_TS_NATIVE !== "1")(
+  "TypeScript's compiler, natively (#1370)",
+  () => {
+    it("transpileModule natively gives Node's TypeScript's output, byte for byte", () => {
+      const entry = here("./__fixtures__/program/typescript/transpile.cjs");
+      const record = programRecord(entry, here("../../.."));
+      expect(record.modules.reduce((n, m) => n + m.statements.length, 0)).toBeGreaterThan(5000);
+      const exe = join(work, "tsc-native");
+      buildRecord(record, exe);
+      const sources = [
+        "enum E { A, B } let x: number = 1; class C<T> { m(a?: T) { return a ?? 3; } }",
+        readFileSync(here("./program.ts"), "utf8"),
+        readFileSync(here("./acceptance.ts"), "utf8"),
+      ];
+      const run = spawnSync(exe, sources, {
+        encoding: "utf8",
+        maxBuffer: 1 << 26,
+        timeout: 300_000,
+      });
+      expect([run.status, run.stderr]).toEqual([0, ""]);
+      const ts = createRequire(import.meta.url)("typescript") as {
+        transpileModule: (t: string, o: unknown) => { outputText: string };
+      };
+      const want = sources.map((t) =>
+        JSON.stringify(
+          ts.transpileModule(t, { compilerOptions: { target: 99, module: 99 } }).outputText,
+        ),
+      );
+      expect(run.stdout.split("\n").slice(0, -1)).toEqual(want);
+    }, 3_600_000);
+  },
+);
