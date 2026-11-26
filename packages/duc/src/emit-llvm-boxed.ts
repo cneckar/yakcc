@@ -49,7 +49,15 @@ function boxedNumber(x: number): string {
   return v.getBigUint64(0).toString();
 }
 
-const BINARY: Readonly<Record<string, string>> = {
+/**
+ * A table keyed by names a program may use (an operator, a leaf, a binding): no prototype, so a
+ * name like `toString` or `hasOwnProperty` is in it only if the table has it (#1370).
+ */
+function nameTable<T>(entries: Record<string, T>): Record<string, T> {
+  return Object.freeze(Object.assign(Object.create(null) as Record<string, T>, entries));
+}
+
+const BINARY: Readonly<Record<string, string>> = nameTable({
   "+": "yk_add",
   "-": "yk_sub",
   "*": "yk_mul",
@@ -69,21 +77,21 @@ const BINARY: Readonly<Record<string, string>> = {
   ">": "yk_gt",
   "<=": "yk_le",
   ">=": "yk_ge",
-};
+});
 /**
  * The operators a number's own operation computes when both operands are numbers (#1369): the
  * double operation inline, behind a check of the operands' tags, and the runtime's otherwise. A
  * boxed number is its double's bits, so no conversion is needed; a NaN result is made canonical, as
  * the runtime's numbers are.
  */
-const FAST_ARITH: Readonly<Record<string, string>> = {
+const FAST_ARITH: Readonly<Record<string, string>> = nameTable({
   "+": "fadd",
   "-": "fsub",
   "*": "fmul",
   "/": "fdiv",
   "%": "frem",
-};
-const FAST_COMPARE: Readonly<Record<string, string>> = {
+});
+const FAST_COMPARE: Readonly<Record<string, string>> = nameTable({
   "<": "olt",
   ">": "ogt",
   "<=": "ole",
@@ -92,26 +100,26 @@ const FAST_COMPARE: Readonly<Record<string, string>> = {
   "!==": "une",
   "==": "oeq",
   "!=": "une",
-};
+});
 /** The bitwise operators on ToInt32 (ToUint32 for >>>), inline for a number below 2^63. */
-const FAST_BITWISE: Readonly<Record<string, string>> = {
+const FAST_BITWISE: Readonly<Record<string, string>> = nameTable({
   "|": "or",
   "&": "and",
   "^": "xor",
   "<<": "shl",
   ">>": "ashr",
   ">>>": "lshr",
-};
+});
 /** Every boxed value at or above this (unsigned) is tagged: below it, a double. */
 const NUMBER_LIMIT = "-1970324836974592"; // 0xFFF9000000000000
 const CANONICAL_NAN = "9221120237041090560"; // 0x7FF8000000000000
-const UNARY: Readonly<Record<string, string>> = {
+const UNARY: Readonly<Record<string, string>> = nameTable({
   "-": "yk_neg",
   "+": "yk_pos",
   "!": "yk_not",
   TypeOfExpression: "yk_typeof",
   "~": "yk_bitnot",
-};
+});
 /** The global functions the runtime gives as values. */
 const GLOBALS = new Set([
   "String",
@@ -182,7 +190,7 @@ const GLOBALS = new Set([
  * The fixed-width and float64-bits leaves (DEC-DUC-OPERATIONS-AS-ATOMS-001) that raised C calls:
  * each the runtime function that implements it, and its arity. A call of one is a direct call.
  */
-const LEAVES: Readonly<Record<string, [string, number]>> = {
+const LEAVES: Readonly<Record<string, [string, number]>> = nameTable({
   __ykI32Mul: ["yk_leaf_i32mul", 2],
   __ykU64: ["yk_leaf_u64", 1],
   __ykI64: ["yk_leaf_i64", 1],
@@ -218,7 +226,7 @@ const LEAVES: Readonly<Record<string, [string, number]>> = {
   __ykF32: ["yk_leaf_f32", 1],
   __ykFnAddr: ["yk_leaf_fn_addr", 1],
   __ykFnAt: ["yk_leaf_fn_at", 1],
-};
+});
 /**
  * The memory leaves with an inline fast path (#1369): an access to the region the runtime's cache
  * holds (`yk_mcache_*`) is a native load or store; anything else is the runtime's leaf, which finds
@@ -226,7 +234,7 @@ const LEAVES: Readonly<Record<string, [string, number]>> = {
  */
 const MEM_INLINE: Readonly<
   Record<string, { size: number; ty: string; kind: "u" | "f64" | "f32"; store: boolean }>
-> = {
+> = nameTable({
   __ykLoad8: { size: 1, ty: "i8", kind: "u", store: false },
   __ykLoad16: { size: 2, ty: "i16", kind: "u", store: false },
   __ykLoad32: { size: 4, ty: "i32", kind: "u", store: false },
@@ -237,7 +245,7 @@ const MEM_INLINE: Readonly<
   __ykStore32: { size: 4, ty: "i32", kind: "u", store: true },
   __ykStoreF64: { size: 8, ty: "double", kind: "f64", store: true },
   __ykStoreF32: { size: 4, ty: "float", kind: "f32", store: true },
-};
+});
 const MEM_CACHE_DECLS = [
   "@yk_mcache_base = external global i64",
   "@yk_mcache_len = external global i64",
@@ -257,7 +265,7 @@ const MATH1 = new Set(["floor", "ceil", "trunc", "sqrt", "abs", "sign", "round"]
 const APPROXIMATED =
   /^(exp|expm1|log|log1p|log2|log10|sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|cbrt|hypot|pow)$/;
 
-const RUNTIME_DECLS: Readonly<Record<string, string>> = {
+const RUNTIME_DECLS: Readonly<Record<string, string>> = nameTable({
   yk_bigint_literal: "declare i64 @yk_bigint_literal(ptr, i64)",
   yk_bigint_from_i128: "declare i64 @yk_bigint_from_i128(i64, i64)",
   yk_bigint_word: "declare i64 @yk_bigint_word(i64, i32)",
@@ -328,7 +336,7 @@ const RUNTIME_DECLS: Readonly<Record<string, string>> = {
   yk_math_minmax_list: "declare i64 @yk_math_minmax_list(i32, i64)",
   ...Object.fromEntries(Object.values(BINARY).map((f) => [f, `declare i64 @${f}(i64, i64)`])),
   ...Object.fromEntries(Object.values(UNARY).map((f) => [f, `declare i64 @${f}(i64)`])),
-};
+});
 
 /** UTF-8 bytes as an LLVM string constant body. */
 /**
@@ -810,7 +818,7 @@ const INT_DOMAIN = new Set([
   "==",
   "!=",
 ]);
-const INT_COMPARE: Readonly<Record<string, string>> = {
+const INT_COMPARE: Readonly<Record<string, string>> = nameTable({
   "<": "slt",
   ">": "sgt",
   "<=": "sle",
@@ -819,7 +827,7 @@ const INT_COMPARE: Readonly<Record<string, string>> = {
   "!==": "ne",
   "==": "eq",
   "!=": "ne",
-};
+});
 
 /** A number clone this small (its graph's nodes) is a hint to inline into its callers (#1369). */
 const SMALL_CLONE = 200;
@@ -5649,9 +5657,9 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     if (name === "*") return { ns: i };
     const esm = mod.esm;
     if (esm === undefined) return undefined;
-    const ex = esm.exports[name];
+    const ex = Object.hasOwn(esm.exports, name) ? esm.exports[name] : undefined;
     if (ex !== undefined && "local" in ex) {
-      const imported = esm.imports[ex.local];
+      const imported = Object.hasOwn(esm.imports, ex.local) ? esm.imports[ex.local] : undefined;
       if (imported !== undefined) return resolveImport(imported, seen);
       return { slot: g(i, `b.${ex.local}`) };
     }
@@ -5719,7 +5727,10 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     const mod = modules[i] as NativeModule;
     if (mod.statements.some((st) => st.declares.includes(name)))
       return directBySlot.get(g(i, `b.${name}`));
-    const imp = mod.esm?.imports[name];
+    const imp =
+      mod.esm !== undefined && Object.hasOwn(mod.esm.imports, name)
+        ? mod.esm.imports[name]
+        : undefined;
     if (imp === undefined) return undefined;
     const target = resolveImport(imp);
     return target !== undefined && "slot" in target ? directBySlot.get(target.slot) : undefined;
@@ -5828,7 +5839,10 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
                 ? g(i, `b.${name}`)
                 : undefined;
         if (slot === undefined) {
-          const imp = mod.esm?.imports[name];
+          const imp =
+            mod.esm !== undefined && Object.hasOwn(mod.esm.imports, name)
+              ? mod.esm.imports[name]
+              : undefined;
           if (imp === undefined) return undefined;
           const target = resolveImport(imp);
           if (target === undefined)
@@ -5856,7 +5870,8 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         return true;
       },
       direct: (name) => directOf(i, name),
-      binds: (name) => names.has(name) || mod.esm?.imports[name] !== undefined,
+      binds: (name) =>
+        names.has(name) || (mod.esm !== undefined && Object.hasOwn(mod.esm.imports, name)),
       arity: (name) => {
         const fn = directOf(i, name);
         return fn === undefined ? undefined : arities.get(fn);

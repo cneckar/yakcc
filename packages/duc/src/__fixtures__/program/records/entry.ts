@@ -1,6 +1,7 @@
 // Record results (#1369): keys read, the result kept whole, a method among the values, numbers and
 // not, in a loop, and a function only called before its module's bindings are evaluated.
-import { callCount, mix, rot, split, step } from "./lib.js";
+// biome-ignore lint/suspicious/noShadowRestrictedNames: the name is what is tested (#1370)
+import { callCount, mix, rot, split, step, valueOf } from "./lib.js";
 
 export function sums(k: number): unknown {
   let acc = 0;
@@ -98,4 +99,10 @@ export function views(seed: number): unknown {
     out.push((e as Error).name);
   }
   return out;
+}
+
+export function named(x: number): unknown {
+  // biome-ignore lint/suspicious/noShadowRestrictedNames: the name is what is tested (#1370)
+  const toString = (y: number) => `#${y}`;
+  return [valueOf(x), toString(x), typeof valueOf];
 }

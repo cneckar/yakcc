@@ -5,6 +5,14 @@ let api = {};
 ((module) => {
   "use strict";
   let counter = 0;
+  // Bindings named as Object.prototype's members are the module's own (TypeScript's hasProperty).
+  // biome-ignore lint/suspicious/noShadowRestrictedNames: the name is what is tested (#1370)
+  const hasOwnProperty = Object.prototype.hasOwnProperty;
+  function hasProperty(map, key) {
+    return hasOwnProperty.call(map, key);
+  }
+  // biome-ignore lint/suspicious/noShadowRestrictedNames: the name is what is tested (#1370)
+  const toString = "own";
   function bump(k) {
     counter += k;
     return counter;
@@ -26,6 +34,7 @@ let api = {};
     viaShorthand: self.module === module,
     hoisted: typeof later,
     keys: Object.keys(module),
+    own: [hasProperty({ a: 1 }, "a"), hasProperty({}, "a"), toString, typeof hasOwnProperty],
   };
   function later() {}
 })({
