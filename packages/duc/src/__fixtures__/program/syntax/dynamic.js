@@ -1,2 +1,3 @@
-// A module with a dynamic import(): not in the native subset yet.
-module.exports = () => import("./mentions.js");
+// A module with an import() of a computed specifier: not in the native subset yet.
+const which = "./mentions.js";
+module.exports = () => import(which);

@@ -106,17 +106,41 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
     modules.set(id, { id, statements: [] });
     const text = readFileSync(file, "utf8");
     const sf = project.createSourceFile(`/m/${modules.size}.ts`, text, { overwrite: true });
-    // import() and import.meta, as syntax (a string or comment that mentions them is neither).
+    // import() and import.meta, as syntax (a string or comment that mentions them is neither): an
+    // import() of a string literal is the module's link, as a require is; of anything else, or
+    // import.meta, not in the subset yet.
+    const dynamic: string[] = [];
     if (/\bimport\s*[(.]/.test(text))
       sf.forEachDescendant((n) => {
-        if (
-          n.getKind() === SyntaxKind.CallExpression &&
-          n.getFirstChild()?.getKind() === SyntaxKind.ImportKeyword
-        )
-          throw new ProgramError(`a dynamic import() is not in the native subset yet (${id})`);
+        if (Node.isCallExpression(n) && n.getExpression().getKind() === SyntaxKind.ImportKeyword) {
+          const arg = n.getArguments()[0];
+          if (arg === undefined || !Node.isStringLiteral(arg))
+            throw new ProgramError(
+              `an import() of a computed specifier is not in the native subset yet (${id})`,
+            );
+          if (!dynamic.includes(arg.getLiteralValue())) dynamic.push(arg.getLiteralValue());
+        }
         if (n.getKind() === SyntaxKind.MetaProperty && n.getText().startsWith("import"))
           throw new ProgramError(`import.meta is not in the native subset yet (${id})`);
       });
+    /** The import() specifiers that resolve, each its module's (visited after this one). */
+    const linkDynamic = (requires: Record<string, string>, targets: string[]): void => {
+      for (const spec of dynamic) {
+        if (
+          spec.startsWith("node:") ||
+          (!spec.startsWith(".") && !spec.startsWith("/") && isBuiltin(spec))
+        )
+          continue;
+        let target: string;
+        try {
+          target = resolveSpecifier(spec, file);
+        } catch {
+          continue;
+        }
+        requires[spec] = idOf(target);
+        targets.push(target);
+      }
+    };
     if (isCommonJs(sf, file)) {
       // A CommonJS module (an npm package's, TypeScript's): each require of a specifier that
       // resolves is its module's; a platform module's or one that does not resolve stays unlinked,
@@ -139,13 +163,18 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
         requires[spec] = idOf(target);
         targets.push(target);
       }
+      linkDynamic(requires, targets);
       modules.set(id, { ...parsed.module, requires });
       for (const t of targets) visit(t);
       return;
     }
     const parsed = moduleOf(sf, file, id, (spec) => idOf(resolveSpecifier(spec, file)));
-    modules.set(id, parsed.module);
+    const requires: Record<string, string> = { ...(parsed.module.requires ?? {}) };
+    const targets: string[] = [];
+    linkDynamic(requires, targets);
+    modules.set(id, targets.length > 0 ? { ...parsed.module, requires } : parsed.module);
     for (const spec of parsed.specifiers) visit(resolveSpecifier(spec, file));
+    for (const t of targets) visit(t);
   };
   visit(resolve(entryFile));
   return { entry: idOf(resolve(entryFile)), modules: [...modules.values()] };

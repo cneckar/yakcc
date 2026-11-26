@@ -6533,6 +6533,19 @@ static yk promise_static_resolve(void *c, yk self, uint64_t argc, const yk *argv
   (void)c, (void)self;
   return promise_resolve(argc > 0 ? argv[0] : YK_UNDEFINED);
 }
+
+/* import(spec) (#1370): a promise of the module's namespace (an ECMAScript module's) or exports (a
+   CommonJS module's), the module loaded by its require in a job (a throw rejects the promise). */
+static yk import_job(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)self, (void)argc, (void)argv;
+  yk_closure *k = (yk_closure *)c;
+  return call_value(k->captures[0], YK_UNDEFINED, 1, &k->captures[1]);
+}
+yk yk_import(yk require, yk spec) {
+  yk done = promise_static_resolve(NULL, YK_UNDEFINED, 0, NULL);
+  yk load = yk_closure_new(import_job, 0, 2, (yk[]){require, to_string(spec)});
+  return call_method_key(done, ascii("then"), 1, &load);
+}
 static yk promise_static_reject(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
   yk p = promise_new();

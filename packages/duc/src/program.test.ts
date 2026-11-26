@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// A program record's modules (#1333): import() and import.meta are refused as syntax, not as text, so
-// a module that only mentions them (TypeScript's own diagnostics do) is read.
+// A program record's modules (#1333): import() and import.meta are found as syntax, not as text, so a
+// module that only mentions them (TypeScript's own diagnostics do) is read; an import() of a string
+// literal is a link, of anything else refused.
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { ProgramError, programRecord } from "./program.js";
@@ -14,7 +15,7 @@ describe("program records: what the native subset refuses (#1333)", () => {
       "src/__fixtures__/program/syntax/mentions.js",
     ]);
   });
-  it("a dynamic import() is refused", () => {
+  it("an import() of a computed specifier is refused", () => {
     expect(() =>
       programRecord(here("./__fixtures__/program/syntax/dynamic.js"), here("..")),
     ).toThrow(ProgramError);
