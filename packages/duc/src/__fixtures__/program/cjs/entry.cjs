@@ -26,5 +26,6 @@ exports.probe = (n) => {
     wrapped.viaShorthand,
     wrapped.hoisted,
     wrapped.keys,
+    wrapped.own,
   ];
 };
