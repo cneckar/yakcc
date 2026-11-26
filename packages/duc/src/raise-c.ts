@@ -2938,6 +2938,30 @@ function raiseBody(
             return `__ykAlloc(Math.max(1, ${count} * ${sizeOf(t.to)}), ${Math.max(8, alignOf(t.to))})`;
           }
         }
+        // An array of class objects (`new UnicodeString[n]`): each made by the default
+        // constructor; with a destructor to run, a cookie before the first, its count (Itanium's
+        // C++ ABI), which delete[] reads.
+        if (
+          (e as { isArray?: boolean }).isArray === true &&
+          (e as { isPlacement?: boolean }).isPlacement !== true
+        ) {
+          const t = typeOf(e);
+          if (t.k === "ptr" && t.to.k === "rec") {
+            const n = kids[0] as ClangNode;
+            const count = temp({ k: "f64" });
+            const base = temp({ k: "f64" });
+            const size = sizeOf(t.to);
+            const cookie = destroy("0", t.to).length > 0 ? Math.max(8, alignOf(t.to)) : 0;
+            const init = kids.find((k) => k.kind === "CXXConstructExpr");
+            const one = (at: string): string =>
+              init === undefined
+                ? "undefined"
+                : construct(at, { ...init, type: { qualType: t.to.name } } as ClangNode);
+            const i = temp({ k: "f64" });
+            const each = `(() => { for (${i} = 0; ${i} < ${count}; ${i}++) ${one(`(${base} + ${cookie} + ${i} * ${size})`)}; })()`;
+            return `((${count} = ${wide(typeOf(n)) ? `__ykBigToF64(${expr(n)})` : expr(n)}), (${base} = __ykAlloc(Math.max(1, ${cookie} + ${count} * ${size}), ${Math.max(8, alignOf(t.to))})), ${cookie > 0 ? `__ykStore64(${base}, __ykNumToBig(${count})), ` : ""}${each}, (${base} + ${cookie}))`;
+          }
+        }
         // (`new (std::nothrow) T(..)`: the plain new, which does not fail here.)
         const nothrow = /nothrow_t/.test(
           (e as { operatorNewDecl?: { type?: { qualType?: string } } }).operatorNewDecl?.type
@@ -2968,6 +2992,21 @@ function raiseBody(
         if (t.k !== "ptr") throw new RaiseCError("a delete of a non-pointer");
         const p = temp({ k: "f64" });
         let gone: string;
+        // delete[] of class objects with a destructor to run: each, last first, then the block
+        // from its cookie (see the array new).
+        if ((e as { isArrayAsWritten?: boolean }).isArrayAsWritten === true && t.to.k === "rec") {
+          const one = destroy("__ykEl", t.to);
+          if (one.length > 0) {
+            const cookie = Math.max(8, alignOf(t.to));
+            const n = temp({ k: "f64" });
+            const i = temp({ k: "f64" });
+            const size = sizeOf(t.to);
+            const each = one
+              .map((x) => x.replaceAll("__ykEl", `(${p} + ${i} * ${size})`))
+              .join(", ");
+            return `(((${p} = ${expr(k0)}) !== 0) ? ((${n} = __ykBigToF64(__ykI64(__ykLoad64(${p} - ${cookie})))), (() => { for (${i} = ${n} - 1; ${i} >= 0; ${i}--) { ${each}; } })(), __ykFree(${p} - ${cookie}), undefined) : undefined)`;
+          }
+        }
         const slot = t.to.k === "rec" ? unitCxx?.deletingSlotOf(t.to.name) : undefined;
         if (slot !== undefined) {
           const vt = `__ykBigToF64(__ykI64(__ykLoad64(${p})))`;
