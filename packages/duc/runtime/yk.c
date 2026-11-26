@@ -5109,11 +5109,15 @@ static yk object_parts(yk v, int which) {
     yk_object *o = (yk_object *)PTR(v);
     yk_array *keys = enumerable_keys(o);
     for (uint32_t i = 0; i < keys->len; i++) {
+      if (which == 0) {
+        push(r, keys->items[i]); /* Object.keys reads no value: a getter is not run */
+        continue;
+      }
       yk value;
       own_get(o, keys->items[i], &value);
       value = resolve_slot(value, v);
       yk pair[2] = {keys->items[i], value};
-      push(r, which == 0 ? keys->items[i] : which == 1 ? value : yk_array_of(2, pair));
+      push(r, which == 1 ? value : yk_array_of(2, pair));
     }
   } else if (is_array(v) || is_string(v)) {
     uint32_t n = is_array(v) ? arr(v)->len : str(v)->len;
@@ -5140,6 +5144,45 @@ static yk builtin_object_assign(void *c, yk s, uint64_t argc, const yk *argv) {
       yk_set(target, arr(entries->items[j])->items[0], arr(entries->items[j])->items[1]);
   }
   return target;
+}
+/* An ECMAScript import of a CommonJS module as a namespace (Node's interop): `default` is its
+   module.exports, and each of its own enumerable properties a name, in code-unit order as a module
+   namespace's keys are (ECMA-262 10.4.6), on no prototype. */
+int yk_string_is(yk v, const char *p, uint64_t n);
+static yk cjs_namespace_get(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)self, (void)argc, (void)argv;
+  yk_closure *k = (yk_closure *)c;
+  return yk_get(k->captures[0], k->captures[1]);
+}
+yk yk_cjs_namespace(yk exports) {
+  yk ns = yk_object_of(0, NULL, NULL);
+  ((yk_object *)PTR(ns))->proto = YK_NULL;
+  yk keys = is_reference(exports) ? object_parts(exports, 0) : yk_array_of(0, NULL);
+  yk_array *k = arr(keys);
+  int has_default = 0;
+  for (uint32_t i = 0; i < k->len; i++)
+    if (yk_string_is(k->items[i], "default", 7)) has_default = 1;
+  uint32_t n = k->len + (has_default ? 0 : 1);
+  yk *items = alloc((n ? n : 1) * sizeof(yk)), *tmp = alloc((n ? n : 1) * sizeof(yk));
+  for (uint32_t i = 0; i < k->len; i++) items[i] = k->items[i];
+  if (!has_default) items[k->len] = ascii("default");
+  merge_sort(items, tmp, n, YK_UNDEFINED);
+  for (uint32_t i = 0; i < n; i++) {
+    if (yk_string_is(items[i], "default", 7)) {
+      yk_set(ns, items[i], exports);
+      continue;
+    }
+    /* Each other name reads module.exports' property where it is read (a library's lazy getter
+       loads its module when the program reads it). */
+    yk caps[2] = {exports, items[i]};
+    define_accessor((yk_object *)PTR(ns), items[i], yk_closure_new(cjs_namespace_get, 0, 2, caps), 0);
+  }
+  return ns;
+}
+/* A CommonJS module's namespace, made once (an import's every read is the same object). */
+yk yk_cjs_namespace_once(yk *slot, yk exports) {
+  if (*slot == 0) *slot = yk_cjs_namespace(exports);
+  return *slot;
 }
 static yk builtin_identity(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return argc > 0 ? argv[0] : YK_UNDEFINED; }
 static yk builtin_object(void *c, yk s, uint64_t argc, const yk *argv) {

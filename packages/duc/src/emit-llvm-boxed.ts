@@ -5677,6 +5677,13 @@ export interface NativeModules {
   readonly symbols: Readonly<Record<string, string>>;
 }
 
+/** What an import or export names: a module's binding or namespace, or a CommonJS or Node module's. */
+type Resolved =
+  | { readonly slot: string }
+  | { readonly ns: number }
+  | { readonly cjs: number; readonly name: string }
+  | { readonly builtin: string; readonly name: string };
+
 /** A module id as a C symbol: `lib/parse.js` is `yk_module_lib_parse_js`. */
 export function moduleSymbol(id: string): string {
   return `yk_module_${id.replace(/[^A-Za-z0-9]/g, "_")}`;
@@ -5702,7 +5709,7 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     i: number,
     name: string,
     seen: Set<string> = new Set(),
-  ): { slot: string } | { ns: number } | undefined => {
+  ): Resolved | undefined => {
     const mod = modules[i] as NativeModule;
     const key = `${i}:${name}`;
     if (seen.has(key)) return undefined;
@@ -5725,13 +5732,73 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     }
     return undefined;
   };
+  // An import of a CommonJS module, or of Node's (a `node:` id no module of the record is, which a
+  // boot program's realm gives): its `default` is `module.exports`, `*` a namespace of it, and any
+  // other name that property of it, read where it is used (Node's interop, ECMA-262 16.2.1.7).
   const resolveImport = (
     imp: NativeImport,
     seen: Set<string> = new Set(),
-  ): { slot: string } | { ns: number } | undefined => {
+  ): Resolved | undefined => {
     const t = index.get(imp.module);
-    if (t === undefined) throw new LlvmEmitError(`the module ${imp.module} is not in the program`);
+    if (t === undefined) {
+      if (imp.module.startsWith("node:")) return { builtin: imp.module, name: imp.name };
+      throw new LlvmEmitError(`the module ${imp.module} is not in the program`);
+    }
+    if ((modules[t] as NativeModule).esm === undefined) return { cjs: t, name: imp.name };
     return resolveExport(t, imp.name, seen);
+  };
+  const namespaces = new Set<string>();
+  /** The value an import resolved to, emitted where it is read. */
+  const resolvedValue = (
+    target: Resolved,
+    from: number,
+    fresh: () => string,
+    emit: (line: string) => void,
+  ): string => {
+    const r = fresh();
+    if ("slot" in target) {
+      emit(`${r} = load i64, ptr ${target.slot}`);
+      return r;
+    }
+    if ("ns" in target) {
+      emit(`${r} = call i64 ${g(target.ns, "init")}()`);
+      return r;
+    }
+    if ("cjs" in target) emit(`${r} = call i64 ${g(target.cjs, "init")}()`);
+    else emitBuiltin(target.builtin, from, r, fresh, emit);
+    if (target.name === "default") return r;
+    const out = fresh();
+    if (target.name === "*") {
+      // One namespace per module, made at its first read.
+      const slot = `@"ns.${"cjs" in target ? `m${target.cjs}` : target.builtin}"`;
+      if (!namespaces.has(slot)) {
+        namespaces.add(slot);
+        globals.push(`${slot} = internal global i64 0`);
+      }
+      m.intrinsics.add("declare i64 @yk_cjs_namespace_once(ptr, i64)");
+      emit(`${out} = call i64 @yk_cjs_namespace_once(ptr ${slot}, i64 ${r})`);
+      return out;
+    }
+    const key = m.constant(target.name);
+    m.used.add("yk_get_named");
+    emit(`${out} = call i64 @yk_get_named(i64 ${r}, ptr ${key.ptr}, i64 ${key.length})`);
+    return out;
+  };
+  /** Node's module `node:<id>`, as a require of it from module `from` gives it. */
+  const emitBuiltin = (
+    spec: string,
+    from: number,
+    r: string,
+    fresh: () => string,
+    emit: (line: string) => void,
+  ): void => {
+    const key = m.constant(spec);
+    const who = m.constant((modules[from] as NativeModule).id);
+    const s = fresh();
+    m.used.add("yk_string_utf8");
+    m.intrinsics.add("declare i64 @yk_require_unresolved(i64, ptr, i64)");
+    emit(`${s} = call i64 @yk_string_utf8(ptr ${key.ptr}, i64 ${key.length})`);
+    emit(`${r} = call i64 @yk_require_unresolved(i64 ${s}, ptr ${who.ptr}, i64 ${who.length})`);
   };
   /** Every name a module exports, `export *`'s included (not their default). */
   const exportNames = (i: number, seen: Set<number> = new Set()): string[] => {
@@ -5902,11 +5969,8 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
             throw new LlvmEmitError(
               `${imp.module} has no export ${imp.name} (imported by ${mod.id})`,
             );
-          const r = fresh();
           // A live binding: the exporting module's own variable, read where it is used.
-          if ("slot" in target) emit(`${r} = load i64, ptr ${target.slot}`);
-          else emit(`${r} = call i64 ${g(target.ns, "init")}()`);
-          return r;
+          return resolvedValue(target, i, fresh, emit);
         }
         const r = fresh();
         emit(`${r} = load i64, ptr ${slot}`);
@@ -6060,10 +6124,15 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         const target = resolveExport(i, name);
         if (target === undefined) return;
         const key = m.constant(name);
-        if ("slot" in target) namespace.push(`  %nv${k} = load i64, ptr ${target.slot}`);
-        else namespace.push(`  %nv${k} = call i64 ${g(target.ns, "init")}()`);
+        let n = 0;
+        const v = resolvedValue(
+          target,
+          i,
+          () => `%nv${k}.${n++}`,
+          (line) => namespace.push(`  ${line}`),
+        );
         namespace.push(
-          `  call i64 @yk_set_named(i64 %ex, ptr ${key.ptr}, i64 ${key.length}, i64 %nv${k})`,
+          `  call i64 @yk_set_named(i64 %ex, ptr ${key.ptr}, i64 ${key.length}, i64 ${v})`,
         );
       });
     }
@@ -6093,10 +6162,21 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         `  store i64 %req, ptr ${g(i, "require")}`,
         // An ECMAScript module's dependencies are evaluated first, in order (a cycle sees a module
         // still being evaluated, as ECMA-262's does).
-        ...(mod.esm?.deps ?? []).map((d, k) => {
+        ...(mod.esm?.deps ?? []).flatMap((d, k) => {
           const t = index.get(d);
-          if (t === undefined) throw new LlvmEmitError(`the module ${d} is not in the program`);
-          return `  %dep${k} = call i64 ${g(t, "init")}()`;
+          if (t !== undefined) return [`  %dep${k} = call i64 ${g(t, "init")}()`];
+          if (!d.startsWith("node:"))
+            throw new LlvmEmitError(`the module ${d} is not in the program`);
+          const lines: string[] = [];
+          let n = 0;
+          emitBuiltin(
+            d,
+            i,
+            `%dep${k}`,
+            () => `%dep${k}.${n++}`,
+            (l) => lines.push(`  ${l}`),
+          );
+          return lines;
         }),
         ...init,
         ...namespace,
