@@ -2644,8 +2644,13 @@ function lowerFunction(
     const sp = unboxPtr(obj);
     const slen = fresh();
     emit(`${slen} = load i32, ptr ${sp}`);
+    // A rope's length word has its top bit set (not flat: the runtime's).
+    const flatS = fresh();
+    emit(`${flatS} = icmp sgt i32 ${slen}, -1`);
+    const inS0 = fresh();
+    emit(`${inS0} = icmp ult i32 ${i}, ${slen}`);
     const inS = fresh();
-    emit(`${inS} = icmp ult i32 ${i}, ${slen}`);
+    emit(`${inS} = and i1 ${flatS}, ${inS0}`);
     const strIn = freshLabel("getstrin");
     emit(`br i1 ${inS}, label %${strIn}, label %${slowL}`);
     block(strIn);
@@ -2782,8 +2787,13 @@ function lowerFunction(
     emit(`br i1 ${either}, label %${fastL}, label %${slowL}`);
     block(fastL);
     const p = unboxPtr(obj);
+    const n0 = fresh();
+    emit(`${n0} = load i32, ptr ${p}`);
+    // A string's length: a rope's with its top bit cleared.
+    const masked = fresh();
+    emit(`${masked} = and i32 ${n0}, 2147483647`);
     const n = fresh();
-    emit(`${n} = load i32, ptr ${p}`);
+    emit(`${n} = select i1 ${isS}, i32 ${masked}, i32 ${n0}`);
     const f = fresh();
     emit(`${f} = uitofp i32 ${n} to double`);
     const b = fresh();
@@ -4062,8 +4072,13 @@ function lowerFunction(
           const sp = unboxPtr(recv);
           const len = fresh();
           emit(`${len} = load i32, ptr ${sp}`);
+          // A rope (its length word's top bit set): the runtime's.
+          const flat = fresh();
+          emit(`${flat} = icmp sgt i32 ${len}, -1`);
+          const inL0 = fresh();
+          emit(`${inL0} = icmp ult i32 ${i}, ${len}`);
           const inL = fresh();
-          emit(`${inL} = icmp ult i32 ${i}, ${len}`);
+          emit(`${inL} = and i1 ${flat}, ${inL0}`);
           const ok = fresh();
           emit(`${ok} = and i1 ${whole}, ${inL}`);
           const l3 = freshLabel("cchit");
