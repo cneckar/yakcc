@@ -490,3 +490,48 @@ describe("integration: full production sequence through parseBlockTriplet", () =
     expect(result.merkleRoot).not.toBe(digitResult.merkleRoot);
   });
 });
+
+// ---------------------------------------------------------------------------
+// EC-L2: an L2 block's manifest is validated as L2 (#1421, DEC-PROOF-L2-VALIDATOR-001)
+// ---------------------------------------------------------------------------
+
+describe("EC-L2: an L2 block carries its smt_cert", () => {
+  const l2Spec = (): void =>
+    writeFileSync(
+      join(tmpDir, "spec.yak"),
+      JSON.stringify({
+        name: "test",
+        inputs: [],
+        outputs: [],
+        preconditions: [],
+        postconditions: [],
+        invariants: [],
+        effects: [],
+        level: "L2",
+      }),
+    );
+
+  it("parses an L2 block whose manifest has property tests and an smt_cert, and commits the record", () => {
+    l2Spec();
+    writeFileSync(
+      join(tmpDir, "proof", "manifest.json"),
+      JSON.stringify({
+        artifacts: [
+          { kind: "property_tests", path: "tests.fast-check.ts" },
+          { kind: "smt_cert", path: "l2.json", checker: "verify-l2/3 z3", theory: ["QF_FPBV"] },
+        ],
+      }),
+    );
+    writeFileSync(join(tmpDir, "proof", "l2.json"), '{"verdict":"proven"}\n');
+    const a = parseBlockTriplet(tmpDir);
+    expect(a.manifest.artifacts.map((x) => x.kind)).toEqual(["property_tests", "smt_cert"]);
+    // The record's bytes are part of proof_root, so changing them changes the block's root.
+    writeFileSync(join(tmpDir, "proof", "l2.json"), '{"verdict":"not-proven"}\n');
+    expect(parseBlockTriplet(tmpDir).merkleRoot).not.toBe(a.merkleRoot);
+  });
+
+  it("refuses an L2 block without its smt_cert", () => {
+    l2Spec();
+    expect(() => parseBlockTriplet(tmpDir)).toThrow(/validateProofManifestL2/);
+  });
+});

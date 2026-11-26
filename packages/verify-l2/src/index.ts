@@ -30,3 +30,14 @@ export {
 } from "./terms.js";
 export type { SolverAnswer } from "./solver.js";
 export { check, shutdownSolver, solverVersion } from "./solver.js";
+export type { L2Recheck, L2Record } from "./record.js";
+export {
+  L2_RECORD_FORMAT,
+  L2_THEORY,
+  contractFromSpec,
+  encodeL2Record,
+  l2Artifact,
+  l2Record,
+  l2RecordHash,
+  recheckL2,
+} from "./record.js";

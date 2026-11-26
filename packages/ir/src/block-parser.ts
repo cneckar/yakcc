@@ -22,7 +22,7 @@ import {
   type SpecYak,
   blockMerkleRoot,
   specHash,
-  validateProofManifestL0,
+  validateProofManifestForLevel,
   validateSpecYak,
 } from "@yakcc/contracts";
 import { Project } from "ts-morph";
@@ -186,7 +186,7 @@ function extractComposition(source: string, extraPatterns: readonly string[]): S
  * Reads three files from `directoryPath`:
  *   - spec.yak          — parsed as JSON, validated via validateSpecYak
  *   - impl.ts           — read as UTF-8; validated via the strict-subset rules
- *   - proof/manifest.json — parsed as JSON, validated via validateProofManifestL0
+ *   - proof/manifest.json — parsed as JSON, validated for the spec's level (validateProofManifestForLevel)
  *
  * Also reads the artifact bytes for each entry declared in proof/manifest.json
  * (paths are relative to the proof/ directory).
@@ -245,8 +245,10 @@ export function parseBlockTriplet(
   const manifestPath = join(directoryPath, "proof", "manifest.json");
   const manifestRaw = readFileSync(manifestPath, "utf-8");
   const manifestParsed: unknown = JSON.parse(manifestRaw);
-  // validateProofManifestL0 throws TypeError if not exactly one property_tests artifact
-  const manifest = validateProofManifestL0(manifestParsed);
+  // By the spec's declared level (#1421): an L2 block's manifest must carry its smt_cert (the L2
+  // record) over the L0 floor; every other level is validated as L0, as before. Each throws a
+  // TypeError naming its validator.
+  const manifest = validateProofManifestForLevel(spec.level, manifestParsed);
 
   // 4. Read artifact bytes for each artifact declared in the manifest.
   //    Paths are relative to proof/ directory.

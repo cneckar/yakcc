@@ -299,7 +299,7 @@ export async function emitAtom(
     // but parseBlockTriplet validates spec before manifest; both throw TypeError
     // with their function name in the message. Check the specific function name
     // strings to avoid false matches on substring "spec" in other error text.
-    if (msg.includes("validateProofManifestL0")) {
+    if (msg.includes("validateProofManifestL0") || msg.includes("validateProofManifestL2")) {
       logger.error(`gate:manifest-invalid — ${msg}`);
       return EMIT_ATOM_EXIT_MANIFEST_INVALID;
     }
