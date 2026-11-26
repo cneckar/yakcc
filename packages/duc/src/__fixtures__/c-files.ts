@@ -74,10 +74,20 @@ export function shaveCFiles(
     }
     for (const d of unit.statics.values())
       for (const item of d.init) if ("fn" in item && !atoms.has(item.fn)) todo.push(item.fn);
+    // Statics this unit uses that another file defines (zlib's tables, OpenSSL's constants):
+    // their definitions, in the next pass (a unit shaved for its statics uses others too).
+    for (const key of unit.statics.keys()) definedStatics.add(key);
+    for (const key of unit.staticRefs) {
+      if (key.includes(":") || definedStatics.has(key)) continue;
+      definedStatics.add(key);
+      const f = defs.get(key);
+      if (f !== undefined) pendingStatics.set(f, [...(pendingStatics.get(f) ?? []), key]);
+    }
   };
+  const pendingStatics = new Map<string, string[]>();
   // In waves: each file shaved once a wave, for every function of it the closure has reached (a
   // file's parse is most of a unit's cost).
-  while (todo.length > 0) {
+  while (todo.length > 0 || pendingStatics.size > 0) {
     const byFile = new Map<string, string[]>();
     while (todo.length > 0) {
       const name = todo.pop() as string;
@@ -90,7 +100,6 @@ export function shaveCFiles(
       }
       byFile.set(file, [...(byFile.get(file) ?? []), name]);
     }
-    const staticsByFile = new Map<string, string[]>();
     if (process.env.YAKCC_PROGRESS !== undefined)
       console.error(
         `c-files: wave of ${byFile.size} files, ${[...byFile.values()].flat().length} names; ${atoms.size} atoms so far`,
@@ -108,14 +117,9 @@ export function shaveCFiles(
       take(unit, file);
       if (process.env.YAKCC_PROGRESS !== undefined && Date.now() - t > 10_000)
         console.error(`c-files: ${basename(file)} took ${Date.now() - t} ms`);
-      // Statics this unit uses that another file defines (zlib's tables): their definitions.
-      for (const key of unit.staticRefs) {
-        if (key.includes(":") || definedStatics.has(key)) continue;
-        definedStatics.add(key);
-        const f = defs.get(key);
-        if (f !== undefined) staticsByFile.set(f, [...(staticsByFile.get(f) ?? []), key]);
-      }
     }
+    const staticsByFile = new Map(pendingStatics);
+    pendingStatics.clear();
     for (const [f, keys] of staticsByFile) {
       try {
         take(shaveCUnit(f, [], args, "clang", basename(f), keys), f);
