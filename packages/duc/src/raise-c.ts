@@ -6266,7 +6266,9 @@ export function shaveCUnit(
           }),
           externals: [...externals],
         });
-      } catch (e) {}
+      } catch (e) {
+        refused.set(key, e instanceof Error ? e.message : String(e));
+      }
     }
   }
   return {
