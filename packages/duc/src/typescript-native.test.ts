@@ -3,7 +3,8 @@
  * TypeScript's compiler, natively (#1370): typescript.js lifted statement by statement (its bundler
  * wrapper unwrapped, #1458), built by the native toolchain, and transpileModule run on sources of
  * this package: the output is Node's TypeScript's, byte for byte. About 16 minutes (an 11-minute
- * record, a 5-minute build), so it runs when YAKCC_TS_NATIVE=1.
+ * record, a 5-minute build), so it runs when YAKCC_TS_NATIVE=1; with YAKCC_TS_NATIVE_CROSS=1 too,
+ * on AArch64, RISC-V and ARMv7 as well, under QEMU.
  */
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -49,6 +50,22 @@ describe.skipIf(!canRun("x86_64-linux") || process.env.YAKCC_TS_NATIVE !== "1")(
         ),
       );
       expect(run.stdout.split("\n").slice(0, -1)).toEqual(want);
-    }, 3_600_000);
+      // The cross targets, with no C library, under QEMU (YAKCC_TS_NATIVE_CROSS=1: ~20 minutes more).
+      if (process.env.YAKCC_TS_NATIVE_CROSS === "1")
+        for (const [target, qemu] of [
+          ["aarch64-linux", "qemu-aarch64"],
+          ["riscv64-linux", "qemu-riscv64"],
+          ["arm-linux", "qemu-arm"],
+        ] as const) {
+          if (!canRun(target)) continue;
+          const cross = join(work, `tsc-native-${target}`);
+          buildRecord(record, cross, { target, noLibc: true });
+          const r = spawnSync(qemu, [cross, sources[0] as string], {
+            encoding: "utf8",
+            timeout: 900_000,
+          });
+          expect([target, r.status, r.stderr, r.stdout]).toEqual([target, 0, "", `${want[0]}\n`]);
+        }
+    }, 7_000_000);
   },
 );
