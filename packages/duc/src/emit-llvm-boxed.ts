@@ -3084,8 +3084,9 @@ function lowerFunction(
     );
     m.intrinsics.add("declare i64 @yk_closure_meta(i64, ptr, i64, i64)");
     if (ownName !== undefined && /^[A-Za-z_$][\w$]*$/.test(ownName)) {
-      const k = m.constant(ownName);
-      emit(`call i64 @yk_closure_meta(i64 ${r}, ptr ${k.ptr}, i64 ${k.length}, i64 ${length})`);
+      // The name as the module's one string of it (made once, not at each closure made).
+      m.intrinsics.add("declare i64 @yk_closure_meta_key(i64, i64, i64)");
+      emit(`call i64 @yk_closure_meta_key(i64 ${r}, i64 ${keyOf(ownName)}, i64 ${length})`);
     } else if (length > 0)
       emit(`call i64 @yk_closure_meta(i64 ${r}, ptr null, i64 0, i64 ${length})`);
     const made = mode === 0 ? r : call("yk_closure_mode", `i64 ${r}, i32 ${mode}`);
