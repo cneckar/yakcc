@@ -175,7 +175,7 @@ import { blake3 } from "@noble/hashes/blake3";
 import { bytesToHex } from "@noble/hashes/utils";
 import { canonicalAstHash } from "@yakcc/contracts";
 import type { CanonicalAstHash } from "@yakcc/contracts";
-import { type Node, Project, ScriptKind, SyntaxKind } from "ts-morph";
+import { type Node, Project, ScriptKind, SyntaxKind, ts } from "ts-morph";
 import type { ShaveRegistryView } from "../types.js";
 import { isAtom } from "./atom-test.js";
 import { matchesStefPredicate } from "./stef.js";
@@ -697,34 +697,62 @@ function detectEscapingFunctionScopedConstructs(node: Node): {
   await: boolean;
   yield: boolean;
 } {
+  // The walk reads the compiler's nodes, carrying down whether a function (an async one, a generator)
+  // lies between the node and each construct: the shave asks this of every node, and walking each
+  // one's descendants as ts-morph nodes, each construct's ancestors again, was quadratic in a large
+  // file (#1368). A construct no function inside the node binds is bound, or not, by the nearest
+  // function above the node, the same for every construct of its flavor; that is asked once.
+  const wrap = (n: ts.Node): Node =>
+    (node as unknown as { _getNodeFromCompilerNode(n: ts.Node): Node })._getNodeFromCompilerNode(n);
   const blockStart = node.getStart();
   const blockEnd = node.getEnd();
+  const above = new Map<"async" | "generator" | undefined, boolean>();
+  const boundAbove = (variant: "async" | "generator" | undefined): boolean => {
+    let bound = above.get(variant);
+    if (bound === undefined) {
+      bound = hasEnclosingBindingInside(node, blockStart, blockEnd, variant);
+      above.set(variant, bound);
+    }
+    return bound;
+  };
   let hasReturn = false;
   let hasAwait = false;
   let hasYield = false;
 
-  node.forEachDescendant((d) => {
-    // Short-circuit once all three flags are set.
-    if (hasReturn && hasAwait && hasYield) return;
-
-    const k = d.getKind();
-
-    if (!hasReturn && k === SyntaxKind.ReturnStatement) {
-      if (!hasEnclosingBindingInside(d, blockStart, blockEnd, undefined)) {
-        hasReturn = true;
-      }
+  // `fn`, `async` and `generator`: whether such a function lies between the node (itself included)
+  // and `n`'s children.
+  const scopes = (n: ts.Node, fn: boolean, async: boolean, generator: boolean) => {
+    if (!FUNCTION_KINDS.has(n.kind)) return { fn, async, generator };
+    const wrapped = wrap(n);
+    return {
+      fn: true,
+      async: async || nodeIsAsync(wrapped),
+      generator: generator || nodeIsGenerator(wrapped),
+    };
+  };
+  const visit = (n: ts.Node, fn: boolean, async: boolean, generator: boolean): boolean => {
+    const k = n.kind;
+    if (!hasReturn && k === SyntaxKind.ReturnStatement && !fn && !boundAbove(undefined)) {
+      hasReturn = true;
     }
-    if (!hasAwait && k === SyntaxKind.AwaitExpression) {
-      if (!hasEnclosingBindingInside(d, blockStart, blockEnd, "async")) {
-        hasAwait = true;
-      }
+    if (!hasAwait && k === SyntaxKind.AwaitExpression && !async && !boundAbove("async")) {
+      hasAwait = true;
     }
-    if (!hasYield && k === SyntaxKind.YieldExpression) {
-      if (!hasEnclosingBindingInside(d, blockStart, blockEnd, "generator")) {
-        hasYield = true;
-      }
+    if (!hasYield && k === SyntaxKind.YieldExpression && !generator && !boundAbove("generator")) {
+      hasYield = true;
     }
-  });
+    if (hasReturn && hasAwait && hasYield) return true;
+    const inner = scopes(n, fn, async, generator);
+    return (
+      ts.forEachChild(n, (c) => visit(c, inner.fn, inner.async, inner.generator) || undefined) ===
+      true
+    );
+  };
+  const top = scopes(node.compilerNode, false, false, false);
+  ts.forEachChild(
+    node.compilerNode,
+    (c) => visit(c, top.fn, top.async, top.generator) || undefined,
+  );
 
   return { return: hasReturn, await: hasAwait, yield: hasYield };
 }

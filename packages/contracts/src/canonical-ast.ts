@@ -72,30 +72,43 @@ function findEnclosingNode(
   file: SourceFile,
   range: { readonly start: number; readonly end: number },
 ): Node {
-  // SyntaxList is an internal grouping node that cannot be printed directly
-  // (ts-morph's printer throws "Unhandled SyntaxKind: SyntaxList"). Skip it
-  // when it covers the range — use its parent instead.
-  const UNPRINTABLE_KINDS = new Set([SyntaxKind.SyntaxList]);
+  // The walk reads the compiler's nodes and wraps only the node it finds: wrapping every child of
+  // each node on the way down (a bundle's body has thousands) cost a shave more than hashing did (#1368).
+  const sf = file.compilerNode;
+  const starts = (node: ts.Node): boolean => node.getStart(sf) <= range.start;
 
-  function walk(node: Node): Node | undefined {
-    const nodeStart = node.getStart();
-    const nodeEnd = node.getEnd();
-    if (nodeStart > range.start || nodeEnd < range.end) {
+  function walk(node: ts.Node): ts.Node | undefined {
+    if (!starts(node) || node.getEnd() < range.end) {
       return undefined; // node does not cover the range
     }
-    // This node covers the range. Try children to find a tighter cover.
-    for (const child of node.getChildren()) {
-      const result = walk(child);
+    // This node covers the range. Try children to find a tighter cover. Children are in order and
+    // apart, so their starts and ends only grow: the ones that end late enough begin at the first
+    // whose end reaches the range's end, and the ones after the range's start are past it.
+    const children = node.getChildren(sf);
+    let low = 0;
+    let high = children.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if ((children[middle] as ts.Node).getEnd() < range.end) low = middle + 1;
+      else high = middle;
+    }
+    for (let i = low; i < children.length && starts(children[i] as ts.Node); i++) {
+      const result = walk(children[i] as ts.Node);
       if (result !== undefined) return result;
     }
-    // Skip unprintable internal nodes — they cannot be used as a hash root.
-    if (UNPRINTABLE_KINDS.has(node.getKind())) {
-      return undefined;
-    }
+    // SyntaxList is an internal grouping node that cannot be printed directly (ts-morph's printer
+    // throws "Unhandled SyntaxKind: SyntaxList"). Skip it when it covers the range — use its parent.
+    if (node.kind === SyntaxKind.SyntaxList) return undefined;
     return node; // this is the tightest printable covering node
   }
 
-  const result = walk(file);
+  const found = walk(sf);
+  const result =
+    found === undefined
+      ? undefined
+      : (
+          file as unknown as { _getNodeFromCompilerNode(node: ts.Node): Node }
+        )._getNodeFromCompilerNode(found);
 
   if (result === undefined) {
     throw new CanonicalAstParseError("range-spans-multiple-nodes", []);
@@ -124,10 +137,9 @@ function findEnclosingNode(
  * `ts.canHaveModifiers` guards the call so we don't ask for modifiers on node
  * kinds that TypeScript disallows (e.g. token nodes, literals).
  */
-function hasExportModifier(node: Node): boolean {
-  const compilerNode = node.compilerNode;
-  if (!ts.canHaveModifiers(compilerNode)) return false;
-  const mods = ts.getModifiers(compilerNode);
+function hasExportModifier(node: ts.Node): boolean {
+  if (!ts.canHaveModifiers(node)) return false;
+  const mods = ts.getModifiers(node);
   if (mods === undefined) return false;
   return mods.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
 }
@@ -146,15 +158,15 @@ function hasExportModifier(node: Node): boolean {
  *
  * Conservative: when in doubt, return false (keep original name).
  */
-function isLocalBinding(declarationNode: Node, root: Node): boolean {
+function isLocalBinding(declarationNode: ts.Node, root: ts.Node, sf: ts.SourceFile): boolean {
   // Must be within the root sub-tree
-  const declStart = declarationNode.getStart();
+  const declStart = declarationNode.getStart(sf);
   const declEnd = declarationNode.getEnd();
-  const rootStart = root.getStart();
+  const rootStart = root.getStart(sf);
   const rootEnd = root.getEnd();
   if (declStart < rootStart || declEnd > rootEnd) return false;
 
-  const kind = declarationNode.getKind();
+  const kind = declarationNode.kind;
 
   // Only rename bindings from variable declarations and parameters of non-exported functions.
   if (
@@ -167,9 +179,9 @@ function isLocalBinding(declarationNode: Node, root: Node): boolean {
 
   // For parameters: only rename if the containing function is NOT exported.
   if (kind === SyntaxKind.Parameter) {
-    let ancestor: Node | undefined = declarationNode.getParent();
+    let ancestor: ts.Node | undefined = declarationNode.parent;
     while (ancestor !== undefined) {
-      const ancestorKind = ancestor.getKind();
+      const ancestorKind = ancestor.kind;
       if (
         ancestorKind === SyntaxKind.FunctionDeclaration ||
         ancestorKind === SyntaxKind.FunctionExpression ||
@@ -179,19 +191,19 @@ function isLocalBinding(declarationNode: Node, root: Node): boolean {
         // Check for export modifier on the function/method itself
         if (hasExportModifier(ancestor)) return false;
         // Also check the parent statement for export (e.g. `export function f`)
-        const parentOfFn = ancestor.getParent();
+        const parentOfFn: ts.Node | undefined = ancestor.parent;
         if (parentOfFn !== undefined && hasExportModifier(parentOfFn)) return false;
         break;
       }
-      ancestor = ancestor.getParent();
+      ancestor = ancestor.parent;
     }
   }
 
   // For variable declarations: check the containing VariableStatement for export.
   if (kind === SyntaxKind.VariableDeclaration || kind === SyntaxKind.BindingElement) {
-    let ancestor: Node | undefined = declarationNode.getParent();
+    let ancestor: ts.Node | undefined = declarationNode.parent;
     while (ancestor !== undefined) {
-      const ancestorKind = ancestor.getKind();
+      const ancestorKind = ancestor.kind;
       if (ancestorKind === SyntaxKind.VariableStatement) {
         if (hasExportModifier(ancestor)) return false;
         break;
@@ -207,7 +219,7 @@ function isLocalBinding(declarationNode: Node, root: Node): boolean {
       ) {
         break;
       }
-      ancestor = ancestor.getParent();
+      ancestor = ancestor.parent;
     }
   }
 
@@ -225,35 +237,37 @@ function isLocalBinding(declarationNode: Node, root: Node): boolean {
 function collectLocalRenames(root: Node): Map<string, string> {
   const renames = new Map<string, string>();
   let counter = 0;
+  // The walk reads the compiler's nodes: wrapping each one cost a shave of a large file more than
+  // printing it did (#1368). ts-morph's children are the compiler's, with comments between them,
+  // and a comment declares nothing.
+  const sf = root.getSourceFile().compilerNode;
+  const top = root.compilerNode;
 
-  function walk(node: Node): void {
-    const kind = node.getKind();
+  function walk(node: ts.Node): void {
+    const kind = node.kind;
 
     if (
       kind === SyntaxKind.VariableDeclaration ||
       kind === SyntaxKind.Parameter ||
       kind === SyntaxKind.BindingElement
     ) {
-      // The name child of a VariableDeclaration / Parameter is the binding identifier
-      // A JSDoc function type's parameters have no name, and ts-morph's getNameNode throws on them.
-      const named = (node.compilerNode as { name?: unknown }).name !== undefined;
-      const nameNode = named
-        ? (node as { getNameNode?: () => Node | undefined }).getNameNode?.()
-        : undefined;
-      if (nameNode !== undefined && nameNode.getKind() === SyntaxKind.Identifier) {
-        const name = nameNode.getText();
-        if (!renames.has(name) && isLocalBinding(node, root)) {
+      // The name child of a VariableDeclaration / Parameter is the binding identifier.
+      // A JSDoc function type's parameters have no name.
+      const nameNode = (node as { name?: ts.Node }).name;
+      if (nameNode !== undefined && nameNode.kind === SyntaxKind.Identifier) {
+        const name = nameNode.getText(sf);
+        if (!renames.has(name) && isLocalBinding(node, top, sf)) {
           renames.set(name, `__v${counter++}`);
         }
       }
     }
 
-    for (const child of node.getChildren()) {
+    for (const child of node.getChildren(sf)) {
       walk(child);
     }
   }
 
-  walk(root);
+  walk(top);
   return renames;
 }
 
@@ -265,11 +279,23 @@ function collectLocalRenames(root: Node): Map<string, string> {
  * The ts-morph printer handles whitespace normalization and comment stripping;
  * we only post-process for local renames.
  */
+const WORD_NAME = /^[A-Za-z0-9_]+$/;
+const PLACEHOLDER_NAME = /^__v\d+$/;
+const WORD_RUN = /[A-Za-z0-9_]+/g;
+
 function emitCanonical(root: Node, renames: Map<string, string>): string {
   // Use ts-morph's built-in printer with removeComments flag.
   // For a SourceFile, print() returns the full source text without comments.
   // For a sub-node, print() returns just that node's text.
   let text = root.print({ removeComments: true });
+
+  // A name of word characters only matches, whole-word, exactly the runs of word characters equal to
+  // it, and a placeholder is such a run too: unless a name is itself a placeholder's shape, replacing
+  // each run once is replacing each name in turn, without a pass over the text per name, which was
+  // quadratic in a large function's text (#1368).
+  if ([...renames.keys()].every((name) => WORD_NAME.test(name) && !PLACEHOLDER_NAME.test(name))) {
+    return text.replace(WORD_RUN, (word) => renames.get(word) ?? word);
+  }
 
   // Apply local renames: whole-word replacement to avoid replacing substrings.
   // Process in a stable order (insertion order of the Map is declaration order).
@@ -293,17 +319,24 @@ function emitCanonical(root: Node, renames: Map<string, string>): string {
  * parsing and checking the whole file for each was quadratic in its size (#1368). The hash reads the
  * tree and never changes it, so one parse serves every range. Small sources are not kept: parsing
  * them is cheap, and they would push the file out.
+ *
+ * Sources are kept by size, a few of each power of two. A shave hashes a fragment wrapped alone first
+ * and falls back to the whole file with a range: the fragments come once each, the file again and
+ * again, and in one shared list each pair of fragments pushed the file out, so a 9 MB file was parsed
+ * again every few seconds (#1368). A fragment now pushes out only a source of about its own size.
  */
-const PARSED = new Map<string, SourceFile | CanonicalAstParseError>();
+const PARSED = new Map<number, Map<string, SourceFile | CanonicalAstParseError>>();
 const PARSED_KEEP = 2;
 const PARSED_MIN_LENGTH = 4096;
 
 function parsed(source: string): SourceFile {
-  const kept = PARSED.get(source);
-  if (kept !== undefined) {
+  const size = Math.floor(Math.log2(Math.max(1, source.length)));
+  const sized = PARSED.get(size);
+  const kept = sized?.get(source);
+  if (sized !== undefined && kept !== undefined) {
     // Most recently used last.
-    PARSED.delete(source);
-    PARSED.set(source, kept);
+    sized.delete(source);
+    sized.set(source, kept);
     if (kept instanceof CanonicalAstParseError) throw kept;
     return kept;
   }
@@ -315,8 +348,10 @@ function parsed(source: string): SourceFile {
     result = e;
   }
   if (source.length >= PARSED_MIN_LENGTH) {
-    PARSED.set(source, result);
-    if (PARSED.size > PARSED_KEEP) PARSED.delete(PARSED.keys().next().value as string);
+    const keep = sized ?? new Map<string, SourceFile | CanonicalAstParseError>();
+    PARSED.set(size, keep);
+    keep.set(source, result);
+    if (keep.size > PARSED_KEEP) keep.delete(keep.keys().next().value as string);
   }
   if (result instanceof CanonicalAstParseError) throw result;
   return result;
@@ -535,14 +570,18 @@ export function canonicalAstHash(
   // Phase 1: Parse the source and gate it on syntax errors (once per large source; see parsed()).
   const file = parsed(source);
 
-  // Phase 2: Determine root node.
-  const root: Node = sourceRange !== undefined ? findEnclosingNode(file, sourceRange) : file;
+  // Phases 2-4 wrap each node they read; the wrappers are forgotten after, or a kept parse of a large
+  // file would hold one for every node it has (#1368).
+  const canonical = file.getProject().forgetNodesCreatedInBlock(() => {
+    // Phase 2: Determine root node.
+    const root: Node = sourceRange !== undefined ? findEnclosingNode(file, sourceRange) : file;
 
-  // Phase 3: Collect local renames within the root.
-  const renames = collectLocalRenames(root);
+    // Phase 3: Collect local renames within the root.
+    const renames = collectLocalRenames(root);
 
-  // Phase 4: Emit canonical text.
-  const canonical = emitCanonical(root, renames);
+    // Phase 4: Emit canonical text.
+    return emitCanonical(root, renames);
+  });
 
   // Phase 5: Hash via BLAKE3.
   const digest = blake3(TEXT_ENCODER.encode(canonical));
