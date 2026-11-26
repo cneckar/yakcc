@@ -633,6 +633,11 @@ function parseType(spelled: string, depth = 0): CType {
     .replace(/\*\s+(?=[*)\[])/g, "*")
     .replace(/\(\s+\*/g, "(*")
     .trim();
+  // A pointer to a data member (C++, `int N::*`, `char (N::*)[12]`): its offset, a ptrdiff_t.
+  if (
+    /^[^(]*\s[A-Za-z_][\w:<>, ]*::\*$|^[^(]*\((?:[A-Za-z_][\w:<>, ]*)::\*\)\s*(\[\d*\])+$/.test(raw)
+  )
+    return { k: "i64" };
   // A pointer to a member function (C++, `const char *(Locale::*)()`): a function's address.
   if (/^[^(]*\((?:[A-Za-z_][\w:<>, ]*)::\*\)\s*\(.*\)$/.test(raw))
     return { k: "ptr", to: { k: "fn" } };
@@ -770,6 +775,11 @@ function parseType(spelled: string, depth = 0): CType {
     if (args.some((a, i) => a !== parts.args[i]))
       return parseType(`${parts.head}<${args.join(", ")}>${parts.tail}`, depth + 1);
   }
+  // A record named without its tag (C++: `impl::DecNum`, partly qualified; `div_t`, a C typedef's
+  // unnamed struct, which takes the typedef's name).
+  if (/^[A-Za-z_][\w:]*$/.test(raw))
+    for (const tag of ["class", "struct", "union"])
+      if (unitLayout(`${tag} ${raw}`) !== undefined) return { k: "rec", name: `${tag} ${raw}` };
   throw new RaiseCError(`the C type "${raw}" is not raised yet`);
 }
 
@@ -1749,6 +1759,13 @@ function raiseBody(
 ): string {
   // (C++: a range-based for is the for loop clang spells it as.)
   const fn = flattenEnteredSwitches(lowerRangeFor(asWritten));
+  /** Whether a declaration is named outside a static_assert in the function. */
+  const readAtRunTime = (id: string): boolean => {
+    const walk = (n: ClangNode): boolean =>
+      n.kind !== "StaticAssertDecl" &&
+      ((n.kind === "DeclRefExpr" && n.referencedDecl?.id === id) || (n.inner ?? []).some(walk));
+    return walk(fn);
+  };
   // Each direct call's place among the calls of functions of its name (see Callee.at).
   const callOrder = emissionOrder(fn);
   // The constants at namespace or file scope the function reads: each a const at its top.
@@ -2279,6 +2296,20 @@ function raiseBody(
         };
       case "BinaryOperator":
       case "CompoundAssignOperator":
+        // A member through a pointer to a data member (C++, `that->*FIELD`): the object's address
+        // and the member's offset.
+        if (e.kind === "BinaryOperator" && (e.opcode === "->*" || e.opcode === ".*")) {
+          const obj = e.opcode === "->*" ? undefined : place(k0);
+          if (obj !== undefined && obj.k !== "mem")
+            throw new RaiseCError("a member pointer's object not in memory");
+          const base = obj === undefined ? expr(k0) : (obj as { addr: string }).addr;
+          return {
+            k: "mem",
+            addr: `(${base} + __ykBigToF64(${expr(kids[1] as ClangNode)}))`,
+            t: typeOf(e),
+          };
+        }
+
         // C++: an assignment (or a comma ending in an lvalue) is an lvalue; read, its value.
         return { k: "reg", e: expr(e), t: typeOf(e) };
       case "MemberExpr": {
@@ -2684,6 +2715,17 @@ function raiseBody(
         {
           const m = op === "&" ? stripParens(k0) : undefined;
           const md = m?.kind === "DeclRefExpr" ? (m.referencedDecl as ClangNode) : undefined;
+          // (A pointer to a data member, `&N::lang`: its offset in its class.)
+          if (md?.kind === "FieldDecl") {
+            const cls = /([A-Za-z_][\w:]*(?:<.*>)?)::\*/.exec(e.type?.qualType ?? "")?.[1];
+            const field =
+              cls === undefined
+                ? undefined
+                : (unitLayout(`class ${cls}`) ?? unitLayout(`struct ${cls}`));
+            const f = field?.fields.get(md.name ?? "");
+            if (f === undefined) throw new RaiseCError(`the member pointer ${e.type?.qualType}`);
+            return `${f.offset}n`;
+          }
           if (md?.kind === "CXXMethodDecl") {
             if (unitCxx?.isVirtual(md.id ?? "") === true)
               throw new RaiseCError("a pointer to a virtual member function");
@@ -4408,6 +4450,10 @@ function raiseBody(
               continue;
             }
           }
+          // A constant only static_asserts read (C++, `constexpr size_t capacity =
+          // std::extent_v<..>;`): no code.
+          if ((d as { constexpr?: boolean }).constexpr === true && !readAtRunTime(d.id ?? ""))
+            continue;
           // A reference (C++): the address of what it binds to (itself never in memory).
           if (init !== undefined && isReferenceType(d.type?.qualType ?? "")) {
             push(`let ${declName(d)} = ${argOf(init)};`);
@@ -6514,8 +6560,21 @@ export function shaveCUnit(
 export function irConstantStatic(ir: string, symbol: string): StaticDef | undefined {
   const globalLine = (name: string): string | undefined => {
     const q = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const m = new RegExp(`^@(?:"${q}"|${q}) = [^\\n]*?\\bconstant ([^\\n]*)$`, "m").exec(ir);
-    return m?.[1];
+    const m = new RegExp(`^@(?:"${q}"|${q}) = [^\\n]*?\\b(constant|global) ([^\\n]*)$`, "m").exec(
+      ir,
+    );
+    if (m === null) return undefined;
+    // (A writable one, C++'s constant-initialized object, `static UInitOnce once {};` of a
+    // constexpr constructor: its initializer is its value, unless code at startup sets it.)
+    if (m[1] === "global") {
+      const dynamic = [
+        ...ir.matchAll(/^define internal void @__cxx_global_var_init[^\n]*\{\n([\s\S]*?)^\}/gm),
+      ].some(
+        (f) => (f[1] as string).includes(`@${name}`) || (f[1] as string).includes(`@"${name}"`),
+      );
+      if (dynamic) return undefined;
+    }
+    return m[2];
   };
   const named = new Map<string, string>();
   const typeOfNamed = (n: string): string => {
@@ -7818,7 +7877,7 @@ function copiedSize(t: CType): number {
 
 /** Whether a C++ type is a reference (`T &`, `T &&`, `int (&)[5]`). */
 const isReferenceType = (qualType: string): boolean =>
-  /&$|\(&&?\)\s*(\[\d*\])+$/.test(qualType.trim()) ||
+  /&$|\(&&?\)\s*(\[\d*\])+$|&\s*(\[\d*\])+$/.test(qualType.trim()) ||
   // (std::add_lvalue_reference<T>::type, unique_ptr's operator* and operator[]: T &.)
   /^(?:typename )?(?:std::)?add_lvalue_reference(?:_t<.*>|<.*>::type)$/.test(qualType.trim());
 
