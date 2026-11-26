@@ -29,11 +29,23 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { type DucGraph, emitTypeScript, liftAtom } from "@yakcc/duc";
 import { Encoder, type GoalObligation, sortOf } from "./encoder.js";
 import { type SolverAnswer, check, solverVersion } from "./solver.js";
-import { PRELUDE, type Sort, type Term, Unsupported, f64FromBits, smtSort } from "./terms.js";
+import {
+  type ArraySort,
+  MAX_ARRAY_LENGTH,
+  MAX_STRING_LENGTH,
+  PRELUDE,
+  type Sort,
+  type Term,
+  Unsupported,
+  elementSort,
+  f64FromBits,
+  isArraySort,
+  smtSort,
+} from "./terms.js";
 import type { Callee, L2Contract } from "./types.js";
 
 /** The encoder's version: part of every record, since a query's meaning depends on it. */
-export const ENCODER_VERSION = "verify-l2/3";
+export const ENCODER_VERSION = "verify-l2/5";
 
 export interface L2Options {
   /** Per obligation, in milliseconds. Default 5000. */
@@ -54,7 +66,7 @@ export type Outcome = "proven" | "disproven" | "unknown" | "timeout" | "unsuppor
 /** One value of a counterexample. A number carries its bits, since NaN and -0 do not survive JSON. */
 export interface CounterexampleInput {
   readonly name: string;
-  readonly value: number | boolean;
+  readonly value: number | boolean | string | readonly unknown[];
   /** For a number: its binary64 bits, 16 hex digits. */
   readonly bits?: string;
   /** How ECMAScript prints it (`NaN`, `-0`, `Infinity`, `1e+308`). */
@@ -172,7 +184,13 @@ export async function verifyL2(
     sort === "F64" ? { sort, smt: `((_ to_fp 11 53) p${i})` } : { sort, smt: `p${i}` },
   );
   const declarations = sorts.map((sort, i) =>
-    sort === "F64" ? `(declare-const p${i} (_ BitVec 64))` : `(declare-const p${i} Bool)`,
+    sort === "F64"
+      ? `(declare-const p${i} (_ BitVec 64))`
+      : sort === "Str"
+        ? `(declare-const p${i} ${smtSort(sort)}) (assert (<= (seq.len p${i}) ${MAX_STRING_LENGTH}))`
+        : isArraySort(sort)
+          ? `(declare-const p${i} ${smtSort(sort)}) (assert (<= (seq.len p${i}) ${MAX_ARRAY_LENGTH}))`
+          : `(declare-const p${i} ${smtSort(sort)})`,
   );
   const enc = new Encoder(contract, params, options.callees ?? {});
 
@@ -190,7 +208,16 @@ export async function verifyL2(
       `the atom returns ${result.sort}, the contract says ${contract.outputs[0]?.type}`,
     );
   }
-  const resultDef = `(define-fun result () ${smtSort(resultSort)} ${result.smt})`;
+  const resultDef = [
+    `(define-fun result () ${smtSort(resultSort)} ${result.smt})`,
+    ...(result.int !== undefined ? [`(define-fun result_int () Int ${result.int})`] : []),
+  ].join("\n");
+  const resultTerm: Term = {
+    sort: resultSort,
+    smt: "result",
+    ...(result.int !== undefined ? { int: "result_int" } : {}),
+    ...(result.bound !== undefined ? { bound: result.bound } : {}),
+  };
 
   // The preconditions, assumed by every obligation.
   const pres: string[] = [];
@@ -210,7 +237,7 @@ export async function verifyL2(
         const holds = enc.condition(
           condition,
           [...names, "result"],
-          [...params, { sort: resultSort, smt: "result" }],
+          [...params, resultTerm],
           `post${i}`,
         );
         return { holds };
@@ -419,7 +446,9 @@ function judgeGoal(
       ? "the invariant does not hold when the loop is entered"
       : o.kind === "loop-preserve"
         ? "the invariant is not inductive: a pass from a state that satisfies it can leave it"
-        : "the callee's precondition can fail at this call";
+        : o.kind === "defined"
+          ? "the value can be undefined here"
+          : "the callee's precondition can fail at this call";
   return { outcome: "disproven", reason, ...(counterexample ? { counterexample } : {}) };
 }
 
@@ -429,7 +458,7 @@ function judgeGoal(
  */
 function replayPost(
   r: ReplayInputs,
-  args: readonly (number | boolean)[],
+  args: readonly unknown[],
   index: number,
 ): { result: unknown; presHold: boolean; postHolds: boolean } {
   const fn = (graph: DucGraph, name: string): string =>
@@ -472,6 +501,12 @@ function parseValues(
   const out: CounterexampleInput[] = [];
   for (const [i, sort] of sorts.entries()) {
     const smt = bareName(smts[i] as string);
+    if (sort === "Str" || isArraySort(sort)) {
+      const value = modelValue(values, smt, sort);
+      if (value === undefined) return undefined;
+      out.push({ name: names[i] as string, value, text: showValue(value) });
+      continue;
+    }
     const escaped = smt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const m = new RegExp(`\\(${escaped}\\s+(#x[0-9a-fA-F]{16}|true|false)\\)`).exec(values);
     if (m === null) return undefined;
@@ -486,6 +521,69 @@ function parseValues(
     }
   }
   return out;
+}
+
+type ModelValue = number | boolean | string | ModelValue[];
+
+/** The balanced term after `(name ` in a `(get-value …)` answer, parsed into an S-expression. */
+function sexpAt(values: string, name: string): unknown {
+  const start = values.indexOf(`(${name} `);
+  if (start < 0) return undefined;
+  const tokens = values.slice(start + name.length + 2).match(/\(|\)|[^\s()]+/g) ?? [];
+  let pos = 0;
+  const read = (): unknown => {
+    const tok = tokens[pos++];
+    if (tok !== "(") return tok;
+    const list: unknown[] = [];
+    while (pos < tokens.length && tokens[pos] !== ")") list.push(read());
+    pos++;
+    return list;
+  };
+  return read();
+}
+
+/** The elements of a sequence term (`seq.empty`, `seq.unit`, `seq.++`), as S-expressions. */
+function seqElements(t: unknown): unknown[] | undefined {
+  if (!Array.isArray(t)) return undefined;
+  if (t[0] === "as" && t[1] === "seq.empty") return [];
+  if (t[0] === "seq.unit") return [t[1]];
+  if (t[0] === "seq.++") {
+    const parts = t.slice(1).map(seqElements);
+    return parts.every((p) => p !== undefined) ? (parts as unknown[][]).flat() : undefined;
+  }
+  return undefined;
+}
+
+/** A model value of a string or array sort, from Z3's printing of sequences. */
+function modelValue(values: string, name: string, sort: Sort): ModelValue | undefined {
+  const convert = (t: unknown, s: Sort): ModelValue | undefined => {
+    if (s === "Str") {
+      const units = seqElements(t);
+      if (
+        units === undefined ||
+        units.some((u) => typeof u !== "string" || !/^#x[0-9a-fA-F]{4}$/.test(u))
+      )
+        return undefined;
+      return String.fromCharCode(
+        ...(units as string[]).map((u) => Number.parseInt(u.slice(2), 16)),
+      );
+    }
+    if (s === "F64")
+      return typeof t === "string" && /^#x[0-9a-fA-F]{16}$/.test(t)
+        ? f64FromBits(t.slice(2))
+        : undefined;
+    if (s === "Bool") return t === "true" ? true : t === "false" ? false : undefined;
+    const elems = seqElements(t);
+    if (elems === undefined) return undefined;
+    const out = elems.map((e) => convert(e, elementSort(s as ArraySort)));
+    return out.every((e) => e !== undefined) ? (out as ModelValue[]) : undefined;
+  };
+  return convert(sexpAt(values, name), sort);
+}
+
+function showValue(v: ModelValue): string {
+  if (Array.isArray(v)) return `[${v.map(showValue).join(", ")}]`;
+  return typeof v === "string" ? JSON.stringify(v) : show(v);
 }
 
 /** A fresh number is asked for through its bit-vector constant: `((_ to_fp 11 53) name)` → `name`. */
