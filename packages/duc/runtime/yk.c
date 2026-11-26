@@ -643,6 +643,7 @@ static uint32_t str_len(yk v) { return ((yk_string *)PTR(v))->len & ~ROPE_BIT; }
    last unit of a chain of appends is one step away: a writer asking whether its output ends in a
    space, as TypeScript's does after each write), else made flat. */
 static uint16_t str_unit(yk v, uint32_t i) {
+  uint32_t i0 = i;
   yk_string *s = (yk_string *)PTR(v);
   for (int steps = 0; (s->len & ROPE_BIT) != 0 && steps < 64; steps++) {
     yk_rope *r = (yk_rope *)s;
@@ -657,7 +658,8 @@ static uint16_t str_unit(yk v, uint32_t i) {
       s = (yk_string *)PTR(r->right);
     }
   }
-  if ((s->len & ROPE_BIT) != 0) s = flatten((yk_rope *)s);
+  /* Too deep: the whole string made flat (once: its every unit is then a step away). */
+  if ((s->len & ROPE_BIT) != 0) return str(v)->units[i0];
   return s->units[i];
 }
 static yk_array *arr(yk v) { return (yk_array *)PTR(v); }
