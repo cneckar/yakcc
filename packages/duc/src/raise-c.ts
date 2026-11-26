@@ -5040,6 +5040,11 @@ export function shaveCUnit(
   unit: string = file.split("/").pop() ?? file,
   /** Globals to define as statics even if no function here uses them (another unit's state). */
   defineStatics: readonly string[] = [],
+  /**
+   * C++ of several units: each function keyed by its symbol (its mangled name), and one another
+   * unit defines called by it, as a linker resolves them (see c-files).
+   */
+  bySymbol = false,
 ): ShavedUnit {
   // A large unit (an amalgamation), and any C++ one, is dumped once and indexed by declaration id;
   // a small C one, filtered per name.
@@ -5055,14 +5060,14 @@ export function shaveCUnit(
   const isCxx = /\+\+$/.test(clang) || /\.(cc|cpp|cxx)$/.test(file);
   // The roots, as the filters name them; in an indexed unit, the index's own nodes (its ids).
   // (C++: a filter can be a symbol, the mangled name another unit calls a function by.)
-  const bySymbol = indexed === undefined ? [] : filters.filter((f) => indexed.byMangled.has(f));
+  const symbolRoots = indexed === undefined ? [] : filters.filter((f) => indexed.byMangled.has(f));
   const roots = clangFunctions(
     file,
-    filters.filter((f) => !bySymbol.includes(f)),
+    filters.filter((f) => !symbolRoots.includes(f)),
     args,
     clang,
   );
-  for (const f of bySymbol)
+  for (const f of symbolRoots)
     roots.set(f, readDecl(indexed as UnitIndex, indexed?.byMangled.get(f) as IndexedDecl));
   if (indexed !== undefined)
     for (const [name, fn] of roots) {
@@ -5194,7 +5199,7 @@ export function shaveCUnit(
   const unitSuffix = (unit.split("/").pop() ?? unit).replace(/\.\w+$/, "").replace(/\W/g, "_");
   const keyBase = (decl: ClangNode, name: string): string => {
     const m = (decl as { mangledName?: string }).mangledName;
-    if (isCxx && m !== undefined && m !== name)
+    if (bySymbol && isCxx && m !== undefined && m !== name)
       return decl.storageClass === "static" || /_GLOBAL__N/.test(m) ? `${m}__${unitSuffix}` : m;
     return decl.kind === "FunctionDecl" && decl.storageClass === "static"
       ? `${ident(name)}__${unitSuffix}`
@@ -5388,6 +5393,8 @@ export function shaveCUnit(
       ? undefined
       : {
           mangledOf: (fnId) => {
+            // (A unit shaved alone names nothing another unit defines.)
+            if (!bySymbol) return undefined;
             let first = fnId;
             for (let g = 0; indexed.previous.has(first) && g < 1000; g++)
               first = indexed.previous.get(first) as string;

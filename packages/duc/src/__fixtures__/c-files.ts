@@ -64,6 +64,7 @@ export function shaveCFiles(
   clang = "clang",
 ): ShavedFiles {
   const defs = definitions(files, args, clang);
+  const cxx = /\+\+$/.test(clang);
   const atoms = new Map<string, { source: string; externals: readonly string[] }>();
   const units: ShavedUnit[] = [];
   const refused: string[] = [];
@@ -114,7 +115,7 @@ export function shaveCFiles(
       const t = Date.now();
       let unit: ShavedUnit;
       try {
-        unit = shaveCUnit(file, names, args, clang, basename(file));
+        unit = shaveCUnit(file, names, args, clang, basename(file), [], cxx);
       } catch (e) {
         // (A unit that fails as a whole, a static it cannot lay out: refused, and the rest on.)
         refused.push(`${names.join(", ")} (${basename(file)}): ${(e as Error).message}`);
@@ -128,7 +129,7 @@ export function shaveCFiles(
     pendingStatics.clear();
     for (const [f, keys] of staticsByFile) {
       try {
-        take(shaveCUnit(f, [], args, clang, basename(f), keys), f);
+        take(shaveCUnit(f, [], args, clang, basename(f), keys, cxx), f);
       } catch (e) {
         refused.push(`${keys.join(", ")} (${basename(f)}): ${(e as Error).message}`);
       }
