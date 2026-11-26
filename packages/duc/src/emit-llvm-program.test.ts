@@ -163,6 +163,10 @@ describe.skipIf(!canRun("x86_64-linux"))("programs, natively (#1333)", () => {
         "stepAll",
         [[1, 4294967295, -3, 2 ** 31, -(2 ** 31) - 1, 1.5, "z", Number.NaN, -0, null, 7]],
       ],
+      ["rounds", [[1, 4294967295, -3, 2 ** 31, 1.5, "z", Number.NaN, -0, null, 7, "12"], 5]],
+      ["rounds", [[3, 9, 2 ** 40], "3"]],
+      ["views", [7]],
+      ["views", [-123456]],
     ];
     const got = run(calls);
     const ref = (await import("./__fixtures__/program/records/entry.js")) as unknown as Record<

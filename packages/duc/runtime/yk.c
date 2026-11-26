@@ -7138,10 +7138,22 @@ static int dataview_method(yk_view *d, yk key, uint64_t argc, const yk *argv, yk
   static const char *const set_names[TA_COUNT] = {"setInt8",   "setUint8",   NULL,         "setInt16",
                                                   "setUint16", "setInt32",   "setUint32",  "setFloat32",
                                                   "setFloat64", "setBigInt64", "setBigUint64"};
+  /* get<Type> or set<Type>: the prefix once, then the type's name (#1370: a hash's every word). */
+  if (!is_string(key)) return 0;
+  yk_string *ks = str(key);
+  if (ks->len < 7 || ks->len > 12 || ks->units[1] != 'e' || ks->units[2] != 't' ||
+      (ks->units[0] != 'g' && ks->units[0] != 's'))
+    return 0;
+  int is_set = ks->units[0] == 's';
   for (int32_t type = 0; type < TA_COUNT; type++) {
-    int get = get_names[type] != NULL && key_is(key, get_names[type]);
-    int set = set_names[type] != NULL && key_is(key, set_names[type]);
-    if (!get && !set) continue;
+    const char *name = get_names[type];
+    static const uint8_t name_len[TA_COUNT] = {7, 8, 0, 8, 9, 8, 9, 10, 10, 11, 12};
+    if (name == NULL || name_len[type] != ks->len) continue;
+    uint32_t k = 3;
+    while (k < ks->len && ks->units[k] == (unsigned char)name[k]) k++;
+    if (k != ks->len) continue;
+    int get = !is_set, set = is_set;
+    (void)set_names;
     uint32_t at = to_index(argc > 0 ? argv[0] : YK_UNDEFINED, "Offset is outside the bounds of the DataView");
     yk little = argc > (uint64_t)(get ? 1 : 2) ? argv[get ? 1 : 2] : YK_UNDEFINED;
     uint8_t bytes[8];
