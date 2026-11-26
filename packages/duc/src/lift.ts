@@ -1264,6 +1264,34 @@ class Lifter {
         progress = true;
       }
     }
+    // A closure a statement makes (a class's method, a function expression) runs later, and reads a
+    // name the list declares after the statement when it runs (#1368: a class's method returning a
+    // class declared below it). As for a hoisted function, the name is a cell from here, which its
+    // declaration writes; a read outside any closure, before the declaration, is JavaScript's error.
+    const declaredAt = new Map<string, number>();
+    stmts.forEach((stmt, i) => {
+      if (Node.isVariableStatement(stmt))
+        for (const decl of stmt.getDeclarations())
+          for (const name of patternNames(decl.getNameNode()))
+            if (!declaredAt.has(name)) declaredAt.set(name, i);
+      if (Node.isClassDeclaration(stmt) && stmt.getName() !== undefined)
+        if (!declaredAt.has(stmt.getName() as string)) declaredAt.set(stmt.getName() as string, i);
+    });
+    if (declaredAt.size > 0)
+      stmts.forEach((stmt, i) => {
+        if (Node.isFunctionDeclaration(stmt)) return;
+        for (const fn of outermostClosures(stmt))
+          for (const read of this.readNamesOf(fn)) {
+            const at = declaredAt.get(read);
+            if (at === undefined || at <= i || hoistedNames.has(read)) continue;
+            // The list's own declaration only where no scope inside the statement declares the
+            // name again (a block's own `const r` that the closure reads).
+            const outer = fn
+              .getDescendantsOfKind(SyntaxKind.Identifier)
+              .some((id) => id.getText() === read && isValueRead(id) && !declaredWithin(id, stmt));
+            if (outer) this.hoistCell(read, cellsHere);
+          }
+      });
     // Function declarations that call one another (#1349): each is a cell from here, and each
     // declaration writes its cell, before any statement runs, as JavaScript hoists them. A function
     // that reads a later `let`, `const` or class is still bound where it stands.
@@ -2626,6 +2654,16 @@ class Lifter {
       else this.env.set(name, value);
       return;
     }
+    // A class with no name and no `export default` is a class expression cut out of where it stood
+    // (`X = class extends A { .. }`, #1368): the same class, as an expression statement's is.
+    if (
+      Node.isClassDeclaration(node) &&
+      node.getName() === undefined &&
+      !node.isDefaultExport() &&
+      !node.hasExportKeyword() &&
+      this.liftClass(node) !== undefined
+    )
+      return;
     if (Node.isFunctionDeclaration(node)) {
       // Bound by liftStatements when hoisted; otherwise bind at this position.
       const name = node.getName();
@@ -4943,7 +4981,11 @@ function scopeNames(scope: Node): Set<string> {
       const own = scope.getName();
       if (own !== undefined) names.add(own);
     }
-    // A `var` anywhere in the function, outside nested functions, is the function's.
+  }
+  // A `var` anywhere in the function, outside nested functions, is the function's; one outside any
+  // function is the module's (#1368: `var _a; (_a = globalThis).x`, a bundler's helper binding,
+  // was a write to a name outside the atom).
+  if (isFunctionLikeNode(scope) || Node.isSourceFile(scope)) {
     for (const list of scope.getDescendantsOfKind(SyntaxKind.VariableDeclarationList)) {
       if (list.getDeclarationKind() !== "var" || isInsideNestedFunction(list, scope)) continue;
       for (const d of list.getDeclarations()) add(d.getNameNode());
@@ -5393,6 +5435,32 @@ function decidedByLeft(n: ts.BinaryExpression): boolean {
     default:
       return false;
   }
+}
+
+/**
+ * The closures a statement makes, outermost only (an inner one's reads of outer names are its
+ * outer one's too), found on the compiler's nodes and wrapped as ts-morph's.
+ */
+function outermostClosures(stmt: Node): Node[] {
+  const sf = stmt.getSourceFile();
+  const found: Node[] = [];
+  const walk = (n: ts.Node): void => {
+    if (
+      ts.isFunctionExpression(n) ||
+      ts.isArrowFunction(n) ||
+      ts.isMethodDeclaration(n) ||
+      ts.isGetAccessorDeclaration(n) ||
+      ts.isSetAccessorDeclaration(n) ||
+      ts.isConstructorDeclaration(n) ||
+      ts.isFunctionDeclaration(n)
+    ) {
+      found.push(wrappedNode(sf, n));
+      return;
+    }
+    ts.forEachChild(n, walk);
+  };
+  ts.forEachChild(stmt.compilerNode, walk);
+  return found;
 }
 
 /**
@@ -5992,8 +6060,10 @@ function iterateLiftable(
   node: import("ts-morph").ForOfStatement | import("ts-morph").ForInStatement,
 ): boolean {
   if (Node.isForOfStatement(node) && node.isAwaited()) {
+    // At the top level it is a fragment of an async body, or a module's own top-level await, as a
+    // top-level `await` is (#1368: a `for await` cut from an async method).
     const fn = node.getAncestors().find(isFunctionLikeNode);
-    if (fn === undefined || !(fn as import("ts-morph").FunctionDeclaration).isAsync?.())
+    if (fn !== undefined && !(fn as import("ts-morph").FunctionDeclaration).isAsync?.())
       return false;
   }
   const init = node.getInitializer();
@@ -6398,7 +6468,14 @@ const HEAP_SYNTAX = new Set([
 
 /** Whether code may run a heap operation: a loop over it carries the heap token. */
 function touchesHeap(node: Node): boolean {
-  return node.getDescendants().some((d) => HEAP_SYNTAX.has(d.getKind()));
+  // The node itself too (#1368): a loop condition that is a call, `while (p())`, ran its call each
+  // pass with no order between passes, where `while ((p()))` had one.
+  if (HEAP_SYNTAX.has(node.getKind())) return true;
+  let found = false;
+  forEachCompilerDescendant(node.compilerNode, (d) => {
+    if (!found && HEAP_SYNTAX.has(d.kind)) found = true;
+  });
+  return found;
 }
 
 /** The function whose `this` a node sees: its nearest enclosing function that is not an arrow. */
