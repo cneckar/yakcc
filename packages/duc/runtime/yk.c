@@ -7213,12 +7213,34 @@ static yk promise_static_resolve(void *c, yk self, uint64_t argc, const yk *argv
 /* import(spec) (#1370): a promise of the module's namespace (an ECMAScript module's) or exports (a
    CommonJS module's), the module loaded by its require in a job (a throw rejects the promise). */
 yk yk_cjs_namespace_of(yk exports);
+/* An asynchronously evaluated module (one with a top-level await, or importing one): its
+   namespace's evaluation promise, which import() waits for. */
+static yk evaluating_modules;
+void yk_module_evaluating(yk ns, yk promise) {
+  if (evaluating_modules == 0) evaluating_modules = new_collection(1);
+  collection_put((yk_object *)PTR(evaluating_modules), ns, promise);
+}
+static yk import_value(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)self, (void)argc, (void)argv;
+  return ((yk_closure *)c)->captures[0];
+}
 static yk import_job(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)self, (void)argc, (void)argv;
   yk_closure *k = (yk_closure *)c;
   yk got = call_value(k->captures[0], YK_UNDEFINED, 1, &k->captures[1]);
-  /* An ECMAScript module's namespace as it is; a CommonJS or Node's module's exports as a namespace. */
-  if (is_object(got) && (((yk_object *)PTR(got))->accessors & 2)) return got;
+  /* An ECMAScript module's namespace as it is, once it has been evaluated; a CommonJS or Node's
+     module's exports as a namespace. */
+  if (is_object(got) && (((yk_object *)PTR(got))->accessors & 2)) {
+    if (evaluating_modules != 0) {
+      yk_object *m = (yk_object *)PTR(evaluating_modules);
+      int64_t i = collection_find(m, got);
+      if (i >= 0) {
+        yk then = yk_closure_new(import_value, 0, 1, &got);
+        return call_method_key(arr(m->entries->items[i])->items[1], ascii("then"), 1, &then);
+      }
+    }
+    return got;
+  }
   return yk_cjs_namespace_of(got);
 }
 yk yk_import(yk require, yk spec) {
