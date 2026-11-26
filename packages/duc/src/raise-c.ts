@@ -1272,9 +1272,14 @@ export interface CxxUnit {
       }
     | undefined;
   /** A class's destructor, if it declares one. */
-  readonly destructorOf: (
-    record: string,
-  ) => { readonly id: string; readonly body: boolean } | undefined;
+  readonly destructorOf: (record: string) =>
+    | {
+        readonly id: string;
+        readonly body: boolean;
+        /** Declared by the class (not implicit nor defaulted). */
+        readonly provided?: boolean;
+      }
+    | undefined;
   /** Whether a member function is virtual. */
   readonly isVirtual: (methodId: string) => boolean;
   /** A function's parameter's default argument (its expression), by the function's id. */
@@ -3452,7 +3457,7 @@ function raiseBody(
       });
       if (key === undefined) throw new RaiseCError(`the destructor of ${t.name}`);
       out.push(`${key}(${addr})`);
-    } else if (dtor !== undefined) {
+    } else if (dtor?.provided === true) {
       // (Defined in another unit: its symbol's; a defaulted one has none, and nothing to run.)
       const key = outside(dtor.id);
       if (key !== undefined) out.push(`${key}(${addr})`);
@@ -5484,9 +5489,13 @@ export function shaveCUnit(
             const dtor = (findRecord(record)?.inner ?? []).find(
               (c) => c.kind === "CXXDestructorDecl",
             );
-            return dtor === undefined
-              ? undefined
-              : { id: dtor.id ?? "", body: definitionIn(indexed, dtor.id ?? "") !== undefined };
+            if (dtor === undefined) return undefined;
+            const d = dtor as { isImplicit?: boolean; explicitlyDefaulted?: string };
+            return {
+              id: dtor.id ?? "",
+              body: definitionIn(indexed, dtor.id ?? "") !== undefined,
+              provided: d.isImplicit !== true && d.explicitlyDefaulted === undefined,
+            };
           },
           lambdaOf: (methodId) => {
             const m = indexed.byId.get(methodId);
