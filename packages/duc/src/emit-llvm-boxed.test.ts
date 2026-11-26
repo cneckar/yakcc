@@ -474,6 +474,11 @@ const PROGRAMS: [string, string, number][] = [
     "export function f(a, b) { const fn = function () {}; fn.x = a; Object.defineProperty(fn, 'h', { value: 3 }); class A { static s() {} static f = b; m() {} get g() { return 1; } } class B extends A {} const arrow = () => 1; arrow.k = 1; return [Object.keys(fn), Object.values(fn), Object.entries(arrow), Object.keys(A), Object.keys(A.prototype), Object.keys(B), Object.keys(new A()), { ...fn }, Object.keys(Array), Object.keys(Object), Object.keys(Promise), Object.keys(Math.max), JSON.stringify(Object.keys(A.prototype.constructor))]; }",
     2,
   ],
+  [
+    "a class extending Object; instanceof through a function's own Symbol.hasInstance (zod's $constructor, #1368)",
+    "export function f(a, b) { class D extends Object { constructor() { super(); this.v = a; } } class E extends Object {} const d = new D(); const e = new E(); function F() {} Object.defineProperty(F, Symbol.hasInstance, { value: (x) => x !== null && x !== undefined && x.v !== undefined }); return [d.v, d instanceof D, d instanceof Object, Object.getPrototypeOf(D.prototype) === Object.prototype, Object.keys(e), e instanceof E, d instanceof F, e instanceof F, [] instanceof F, b instanceof F, [{}, [], () => 1, Object.create(null), 1, 'x', null].map((x) => x instanceof Object)]; }",
+    2,
+  ],
 ];
 
 describe.skipIf(!canRun("x86_64-linux"))("boxed values, natively on this host (#1292)", () => {
