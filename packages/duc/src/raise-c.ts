@@ -2904,6 +2904,7 @@ function raiseBody(
         // A long double comparison of integers (x86-64's is 80-bit, not raised; ICU's
         // `result <= 1e18L`): exact, as bigints.
         if (
+          !unitLongDouble64 &&
           ["<", "<=", ">", ">=", "==", "!="].includes(op) &&
           (a.type?.qualType === "long double" || b.type?.qualType === "long double")
         ) {
