@@ -2762,6 +2762,20 @@ static int protected_call(yk f, uint64_t argc, const yk *argv, yk *result) {
 /* obj[key] = value. The graph's write yields the object, as written. */
 yk yk_set(yk obj, yk key, yk value) {
   if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 7 && buffer_set(obj, key, value)) return obj;
+  if (is_object(obj) && is_string(key)) {
+    /* An own data property of a plain object: written at once (a setter is the chain's only when
+       the object has no own property of the name). */
+    yk_object *o = (yk_object *)PTR(obj);
+    if (o->kind == 0) {
+      uint32_t n = o->len < 32 ? o->len : 32;
+      for (uint32_t i = 0; i < n; i++)
+        if (o->keys[i] == key) {
+          if (TAG(o->values[i]) == T_INTERNAL) break;
+          o->values[i] = value;
+          return obj;
+        }
+    }
+  }
   if (is_object(obj) || is_closure(obj)) {
     yk k = to_property_key(key), slot;
     /* A setter along the chain is called; otherwise the property is the object's own. */
@@ -2802,6 +2816,29 @@ yk yk_set(yk obj, yk key, yk value) {
   return obj;
 }
 
+/* A named write with its site's cache (#1370): an own data property of a plain object (where the
+   site last found its key, else by a scan) written at once, with no walk of the chain for a setter
+   (one is the chain's only when the object has no own property of the name); else yk_set's. */
+yk yk_set_ic(yk obj, yk key, yk value, uint32_t *site) {
+  if (is_object(obj)) {
+    yk_object *o = (yk_object *)PTR(obj);
+    if (o->kind == 0) {
+      uint32_t i = *site;
+      if (!(i < o->len && o->keys[i] == key)) {
+        uint32_t n = o->len < 32 ? o->len : 32;
+        for (i = 0; i < n && o->keys[i] != key; i++) {
+        }
+        if (i == n) return yk_set(obj, key, value);
+        *site = i;
+      }
+      if (TAG(o->values[i]) != T_INTERNAL) {
+        o->values[i] = value;
+        return obj;
+      }
+    }
+  }
+  return yk_set(obj, key, value);
+}
 yk yk_set_named(yk obj, const char *name, uint64_t n, yk value) {
   return yk_set(obj, interned(name, n), value);
 }
