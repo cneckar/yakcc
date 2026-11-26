@@ -60,7 +60,12 @@ typedef struct {
   yk props; /* its non-index properties (an object: an exec result's index, input, groups), or 0 */
   uint8_t *holes;    /* a bit per index it does not have ([, a], new Array(n), delete), or NULL */
   uint32_t holes_n;  /* bytes in holes */
+  uint32_t integrity; /* Object.preventExtensions / seal / freeze: INTEGRITY_* bits */
 } yk_array;
+/* An object's (or array's) integrity, as bits of its accessors (integrity) word. */
+#define INTEGRITY_NOEXT 4u
+#define INTEGRITY_SEALED 8u
+#define INTEGRITY_FROZEN 16u
 
 typedef struct {
   uint32_t len, cap;
@@ -83,7 +88,7 @@ typedef struct {
   uint32_t *cindex;       /* a Map's or Set's: each entry's position + 1, by its key's hash; NULL to rebuild */
   uint32_t cindex_cap;
   uint32_t accessors; /* bit 0: an accessor (or another internal slot) was set on it; bit 1: it is
-                         an ECMAScript module's namespace */
+                         an ECMAScript module's namespace; INTEGRITY_* bits (freeze, seal, …) */
 } yk_object;
 
 /* A BigInt: a sign and a magnitude, 32-bit limbs least significant first, no zero limb on top. */
@@ -786,6 +791,7 @@ static yk_array *iterable_items(yk v);
 static yk method_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
 static yk object_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
 static yk builtin_iter_new(yk src, int mode, int type);
+static _Noreturn void integrity_refused(const char *a, yk k, const char *b);
 /* Proxies (below): their internal methods. */
 static int is_proxy(yk v);
 static int is_obj_proxy(yk v);
@@ -1016,6 +1022,7 @@ static yk array_join(yk_array *a, yk_string *sep) {
 }
 
 static yk to_primitive(yk v);
+static yk to_primitive_string(yk v);
 yk yk_get(yk obj, yk key);
 
 /* --- symbols (ECMA-262 20.4): an internal value (kind 4) with its description; equal only to itself.
@@ -1071,7 +1078,7 @@ static int key_equal(yk a, yk b) {
 }
 /* ToPropertyKey: a symbol as it is; anything else its string. */
 static yk to_property_key(yk v) {
-  if (is_object(v) || is_closure(v)) v = to_primitive(v);
+  if (is_object(v) || is_closure(v)) v = to_primitive_string(v);
   return is_symbol(v) ? v : to_string(v);
 }
 /* SymbolDescriptiveString: Symbol(description). */
@@ -1081,7 +1088,7 @@ static yk symbol_descriptive(yk v) {
 }
 
 static yk to_string(yk v) {
-  if (is_object(v) || is_closure(v)) return to_string(to_primitive(v));
+  if (is_object(v) || is_closure(v)) return to_string(to_primitive_string(v));
   if (is_string(v)) return v;
   if (is_symbol(v)) type_error("Cannot convert a Symbol value to a string");
   if (is_number(v)) return number_to_string(num(v));
@@ -1098,17 +1105,22 @@ static yk to_string(yk v) {
  * toString, as Object.prototype's would be overridden, else "[object Object]"; a function has no
  * source text here, so it is a fixed string.
  */
-static yk to_primitive(yk v) {
+static yk to_primitive_hint(yk v, int string_hint);
+static yk to_primitive(yk v) { return to_primitive_hint(v, 0); }
+/* OrdinaryToPrimitive with hint string (ToString, ToPropertyKey, a template's substitutions):
+   toString before valueOf. */
+static yk to_primitive_string(yk v) { return to_primitive_hint(v, 1); }
+static yk to_primitive_hint(yk v, int string_hint) {
   if (is_array(v)) return to_string(v);
   if (is_closure(v)) return ascii("function () { [native code] }");
   if (!is_object(v)) return v;
   yk_object *self = (yk_object *)PTR(v);
   if (self->kind != 0 && is_object(self->proto)) {
     /* A subclass's (or the program's) own valueOf / toString first (a Buffer's toString). */
-    static const char *own_names[2] = {"valueOf", "toString"};
+    static const char *own_names[2][2] = {{"valueOf", "toString"}, {"toString", "valueOf"}};
     for (int i = 0; i < 2; i++) {
       yk f;
-      if (chain_get(v, ascii(own_names[i]), &f) && is_closure(f = resolve_slot(f, v)) && !is_thunk(f)) {
+      if (chain_get(v, ascii(own_names[string_hint][i]), &f) && is_closure(f = resolve_slot(f, v)) && !is_thunk(f)) {
         yk r = call_value(f, v, 0, NULL);
         if (!is_reference(r)) return r;
       }
@@ -1121,15 +1133,17 @@ static yk to_primitive(yk v) {
   if (self->kind == 8) return ascii("[object DataView]");
   if (self->kind == 3)
     return concat(str(concat(str(concat(str(ascii("/")), str(self->regex[0]))), str(ascii("/")))), str(self->regex[1]));
-  static const char *names[2] = {"valueOf", "toString"};
+  static const char *names[2][2] = {{"valueOf", "toString"}, {"toString", "valueOf"}};
   for (int i = 0; i < 2; i++) {
     yk f;
     /* A built-in's thunk (an intrinsic prototype's, along an explicit chain) is the runtime's own
-       conversion, below. */
-    if (chain_get(v, ascii(names[i]), &f) && is_closure(f = resolve_slot(f, v)) && !is_thunk(f)) {
+       conversion, below; found first for hint string (Object.prototype.toString), it is the one. */
+    int found = chain_get(v, ascii(names[string_hint][i]), &f);
+    if (found && is_closure(f = resolve_slot(f, v)) && !is_thunk(f)) {
       yk r = call_value(f, v, 0, NULL);
       if (!is_reference(r)) return r;
-    }
+    } else if (string_hint && i == 0 && (found ? is_thunk(f) : tail_proto(v) != 0))
+      break; /* the built-in toString (its chain's intrinsic one): the runtime's below */
   }
   if (self->error) {
     /* Error.prototype.toString: name, ": ", message (either alone when the other is empty). */
@@ -2049,13 +2063,16 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
     }
     if (key_is(key, "split")) {
       yk_array *r = new_array(4);
+      /* Its limit: ToUint32 (undefined: 2^32 - 1); 0 gives no parts. */
+      uint32_t limit = arg1 == YK_UNDEFINED ? 0xFFFFFFFFu : to_uint32(arg1);
+      if (limit == 0) return BOX(T_ARRAY, r);
       if (arg0 == YK_UNDEFINED) {
         push(r, recv);
         return BOX(T_ARRAY, r);
       }
       yk_string *sep = str(to_string(arg0));
       if (sep->len == 0) {
-        for (uint32_t i = 0; i < s0->len; i++) {
+        for (uint32_t i = 0; i < s0->len && r->len < limit; i++) {
           yk_string *c = new_string(1);
           c->units[0] = s0->units[i];
           push(r, string_of(c));
@@ -2068,6 +2085,7 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
           yk_string *part = new_string(i - start);
           memcpy(part->units, s0->units + start, (size_t)(i - start) * 2);
           push(r, string_of(part));
+          if (r->len == limit) return BOX(T_ARRAY, r);
           i += sep->len;
           start = i;
         } else
@@ -2770,6 +2788,10 @@ yk yk_closure_inherit(yk child, void *parent) {
 yk yk_delete(yk obj, yk key) {
   if (is_nullish(obj)) type_error("Cannot convert undefined or null to object");
   if (is_proxy(obj)) return proxy_delete(obj, to_property_key(key));
+  if (((is_object(obj) && (((yk_object *)PTR(obj))->accessors & INTEGRITY_SEALED)) ||
+       (is_array(obj) && (arr(obj)->integrity & INTEGRITY_SEALED))) &&
+      has_own(obj, to_property_key(key)))
+    integrity_refused("Cannot delete property '", to_property_key(key), "' of #<Object>");
   if (is_object(obj) || is_closure(obj)) {
     if (is_closure(obj) && ((yk_closure *)PTR(obj))->props == 0) return YK_TRUE;
     yk_object *o = own_props(obj);
@@ -2895,6 +2917,28 @@ static int protected_call(yk f, uint64_t argc, const yk *argv, yk *result) {
 }
 
 /* obj[key] = value. The graph's write yields the object, as written. */
+/* A write the integrity of an object refuses (strict code's TypeError, V8's message): to a frozen
+   object's property, or a new one on an object that is not extensible. */
+static _Noreturn void integrity_refused(const char *a, yk k, const char *b) {
+  yk m = concat(str(concat(str(ascii(a)), str(to_string(is_symbol(k) ? symbol_descriptive(k) : k)))), str(ascii(b)));
+  yk_throw(make_error("TypeError", m));
+}
+static void integrity_check_write(yk obj, yk_object *o, yk k) {
+  (void)obj;
+  yk slot;
+  int own = own_get(o, k, &slot);
+  if (own && (o->accessors & INTEGRITY_FROZEN) && !is_accessor(slot))
+    integrity_refused("Cannot assign to read only property '", k, "' of object '#<Object>'");
+  if (!own && (o->accessors & INTEGRITY_NOEXT)) integrity_refused("Cannot add property ", k, ", object is not extensible");
+}
+static void array_integrity_check(yk_array *a, yk key) {
+  int64_t i = is_symbol(key) ? -1 : index_of_key(key);
+  int own = i >= 0 && i < a->len && !array_hole(a, (uint32_t)i);
+  if (own && (a->integrity & INTEGRITY_FROZEN))
+    integrity_refused("Cannot assign to read only property '", to_string(key), "' of object '[object Array]'");
+  if (i >= 0 && !own && (a->integrity & INTEGRITY_NOEXT))
+    integrity_refused("Cannot add property ", to_string(key), ", object is not extensible");
+}
 yk yk_set(yk obj, yk key, yk value) {
   if (is_proxy(obj)) {
     proxy_set(obj, to_property_key(key), value, obj);
@@ -2905,7 +2949,7 @@ yk yk_set(yk obj, yk key, yk value) {
     /* An own data property of a plain object: written at once (a setter is the chain's only when
        the object has no own property of the name). */
     yk_object *o = (yk_object *)PTR(obj);
-    if (o->kind == 0) {
+    if (o->kind == 0 && !(o->accessors & INTEGRITY_FROZEN)) {
       uint32_t n = o->len < 32 ? o->len : 32;
       for (uint32_t i = 0; i < n; i++)
         if (o->keys[i] == key) {
@@ -2919,6 +2963,8 @@ yk yk_set(yk obj, yk key, yk value) {
     yk k = to_property_key(key), slot;
     /* No object along the chain has an accessor: the property is the object's own, with no
        lookup along it. */
+    if (is_object(obj) && (((yk_object *)PTR(obj))->accessors & (INTEGRITY_NOEXT | INTEGRITY_FROZEN)))
+      integrity_check_write(obj, own_props(obj), k);
     if (is_object(obj)) {
       yk v = obj;
       while (v != 0 && is_object(v) && !(((yk_object *)PTR(v))->accessors & 1)) v = ((yk_object *)PTR(v))->proto;
@@ -2939,6 +2985,7 @@ yk yk_set(yk obj, yk key, yk value) {
   }
   if (is_array(obj)) {
     yk_array *a = arr(obj);
+    if (a->integrity & (INTEGRITY_NOEXT | INTEGRITY_FROZEN)) array_integrity_check(a, key);
     int64_t i = is_symbol(key) ? -1 : index_of_key(key);
     if (i < 0) {
       if (!is_symbol(key) && key_is(to_string(key), "length")) {
@@ -2982,7 +3029,7 @@ yk yk_set(yk obj, yk key, yk value) {
 yk yk_set_ic(yk obj, yk key, yk value, uint32_t *site) {
   if (is_object(obj)) {
     yk_object *o = (yk_object *)PTR(obj);
-    if (o->kind == 0) {
+    if (o->kind == 0 && !(o->accessors & INTEGRITY_FROZEN)) {
       uint32_t i = *site;
       if (!(i < o->len && o->keys[i] == key)) {
         uint32_t n = o->len < 32 ? o->len : 32;
@@ -3655,6 +3702,41 @@ static yk group_by(uint64_t argc, const yk *argv, int map) {
 }
 static yk object_group_by(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return group_by(argc, argv, 0); }
 static yk map_group_by(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return group_by(argc, argv, 1); }
+/* Object.preventExtensions / seal / freeze, and their predicates: bits of the object's integrity. */
+static uint32_t *integrity_word(yk v) {
+  if (is_array(v)) return &arr(v)->integrity;
+  if (is_object(v)) return &((yk_object *)PTR(v))->accessors;
+  if (is_closure(v)) return &own_props(v)->accessors;
+  return NULL;
+}
+static yk set_integrity(uint64_t argc, const yk *argv, uint32_t bits) {
+  yk v = arg_or_undefined(argc, argv, 0);
+  uint32_t *w = integrity_word(v);
+  if (w != NULL) *w |= bits;
+  return v;
+}
+static yk object_freeze(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return set_integrity(argc, argv, INTEGRITY_NOEXT | INTEGRITY_SEALED | INTEGRITY_FROZEN); }
+static yk object_seal(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return set_integrity(argc, argv, INTEGRITY_NOEXT | INTEGRITY_SEALED); }
+static yk object_prevent_extensions(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return set_integrity(argc, argv, INTEGRITY_NOEXT); }
+static int has_own_keys(yk v) {
+  if (is_array(v)) return arr(v)->len > 0;
+  if (is_object(v)) return ((yk_object *)PTR(v))->len > 0;
+  return 1;
+}
+static yk test_integrity(uint64_t argc, const yk *argv, uint32_t bit) {
+  yk v = arg_or_undefined(argc, argv, 0);
+  uint32_t *w = integrity_word(v);
+  if (w == NULL) return YK_TRUE; /* a primitive is frozen, sealed, and not extensible */
+  /* Not extensible with no own properties: sealed and frozen too. */
+  return yk_bool((*w & bit) || ((*w & INTEGRITY_NOEXT) && !has_own_keys(v)));
+}
+static yk object_is_frozen(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return test_integrity(argc, argv, INTEGRITY_FROZEN); }
+static yk object_is_sealed(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return test_integrity(argc, argv, INTEGRITY_SEALED); }
+static yk object_is_extensible(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  uint32_t *w = integrity_word(arg_or_undefined(argc, argv, 0));
+  return yk_bool(w != NULL && !(*w & INTEGRITY_NOEXT));
+}
 static yk object_false(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s, (void)argc, (void)argv; return YK_FALSE; }
 static yk object_true(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s, (void)argc, (void)argv; return YK_TRUE; }
 static yk object_first(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return arg_or_undefined(argc, argv, 0); }
@@ -9863,13 +9945,13 @@ static yk global_raw(const char *name, uint64_t n) {
                                           "create", "hasOwn", "fromEntries", "isFrozen", "isSealed",
                                           "isExtensible", "preventExtensions", "seal", "groupBy"};
         static const yk_code k[23] = {builtin_object_keys, builtin_object_values, builtin_object_entries,
-                                      builtin_object_assign, builtin_identity, builtin_object_is,
+                                      builtin_object_assign, object_freeze, builtin_object_is,
                                       reflect_get_prototype_of, reflect_set_prototype_of,
                                       object_get_own_property_names, object_get_own_property_symbols,
                                       reflect_get_own_property_descriptor, object_get_own_property_descriptors,
                                       object_define_property, object_define_properties, object_create,
-                                      object_has_own, object_from_entries, object_false, object_false,
-                                      object_true, object_first, object_first, object_group_by};
+                                      object_has_own, object_from_entries, object_is_frozen, object_is_sealed,
+                                      object_is_extensible, object_prevent_extensions, object_seal, object_group_by};
         return fns[i] = with_methods(builtin_object, 23, m, k);
       }
       return fns[i] = yk_closure_new(codes[i], 0, 0, NULL);
