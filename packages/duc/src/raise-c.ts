@@ -2868,6 +2868,44 @@ function raiseBody(
         const op = e.opcode ?? "";
         const a = kids[0] as ClangNode;
         const b = kids[1] as ClangNode;
+        // A long double comparison of integers (x86-64's is 80-bit, not raised; ICU's
+        // `result <= 1e18L`): exact, as bigints.
+        if (
+          ["<", "<=", ">", ">=", "==", "!="].includes(op) &&
+          (a.type?.qualType === "long double" || b.type?.qualType === "long double")
+        ) {
+          const exact = (n: ClangNode): string | undefined => {
+            const x = stripParens(n);
+            if (x.kind === "ImplicitCastExpr" && x.castKind === "IntegralToFloating") {
+              const i = (x.inner ?? [])[0] as ClangNode;
+              const it = typeOf(i);
+              const v = expr(i);
+              return wide(it)
+                ? it.k === "u64"
+                  ? `BigInt.asUintN(64, ${v})`
+                  : v
+                : `__ykNumToBig(${v})`;
+            }
+            if (x.kind === "FloatingLiteral") {
+              const m = /^(-?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(String(x.value ?? ""));
+              if (m === null) return undefined;
+              const digits = `${m[2]}${m[3] ?? ""}`;
+              const exp = Number(m[4] ?? "0") - (m[3] ?? "").length;
+              if (exp < 0 && !/^0*$/.test(digits.slice(digits.length + exp))) return undefined;
+              const n0 =
+                exp >= 0
+                  ? BigInt(digits) * 10n ** BigInt(exp)
+                  : BigInt(digits.slice(0, digits.length + exp) || "0");
+              return `${m[1] === "-" ? "-" : ""}${n0}n`;
+            }
+            return undefined;
+          };
+          const x = exact(a);
+          const y = exact(b);
+          if (x === undefined || y === undefined)
+            throw new RaiseCError("a long double operation (x86-64's 80-bit)");
+          return `((${x} ${op === "==" ? "===" : op === "!=" ? "!==" : op} ${y}) ? 1 : 0)`;
+        }
         if (op === "=") {
           const pun = punOf(stripCasts(a));
           if (pun !== undefined) {
@@ -3674,8 +3712,15 @@ function raiseBody(
         for (const [b, o] of l.bases ?? []) steps.push(construct(at(o), dflt(b)));
         for (const [name, f] of l.fields) {
           if (f.bit !== undefined || isReferenceType(f.type)) continue;
-          const ft = parseType(f.type);
           const given = unitCxx.memberInitOf(t.name, name);
+          // (A scalar member left to its indeterminate value, max_align_t's long double: none.)
+          let ft: CType;
+          try {
+            ft = parseType(f.type);
+          } catch (err) {
+            if (given === undefined) continue;
+            throw err;
+          }
           if (given !== undefined)
             steps.push(
               ...initialize(at(f.offset), ft, given).map((x) => `(${x.replace(/;$/, "")})`),
