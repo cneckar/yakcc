@@ -18,7 +18,7 @@
  */
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -42,8 +42,82 @@ export interface ProgramRecord {
   readonly modules: readonly NativeModule[];
 }
 
-/** Where a module specifier, imported by a file, resolves to. */
-function resolveSpecifier(spec: string, from: string): string {
+/** The conditions an ECMAScript import resolves a package's exports with, Node 22's. */
+const IMPORT_CONDITIONS = ["node", "import", "module-sync", "default"];
+
+/** A package's exports target for a subpath (PACKAGE_EXPORTS_RESOLVE), or undefined. */
+function exportsTarget(
+  exports: unknown,
+  subpath: string,
+  conditions: readonly string[],
+): string | undefined {
+  const target = (t: unknown, star: string | undefined): string | undefined => {
+    if (typeof t === "string") return star === undefined ? t : t.replaceAll("*", star);
+    if (Array.isArray(t)) {
+      for (const x of t) {
+        const r = target(x, star);
+        if (r !== undefined) return r;
+      }
+      return undefined;
+    }
+    if (t !== null && typeof t === "object") {
+      for (const [k, v] of Object.entries(t))
+        if (k === "default" || conditions.includes(k)) {
+          const r = target(v, star);
+          if (r !== undefined) return r;
+        }
+    }
+    return undefined;
+  };
+  const map =
+    typeof exports === "string" ||
+    Array.isArray(exports) ||
+    (exports !== null &&
+      typeof exports === "object" &&
+      !Object.keys(exports).some((k) => k.startsWith(".")))
+      ? { ".": exports }
+      : (exports as Record<string, unknown>);
+  if (Object.hasOwn(map, subpath)) return target(map[subpath], undefined);
+  // A pattern key ("./*", "./lib/*.js"): the one with the longest prefix before its "*" that
+  // matches (PATTERN_KEY_COMPARE).
+  let best: { key: string; star: string; pre: number } | undefined;
+  for (const key of Object.keys(map)) {
+    const at = key.indexOf("*");
+    if (at < 0) continue;
+    const pre = key.slice(0, at);
+    const post = key.slice(at + 1);
+    if (!subpath.startsWith(pre) || !subpath.endsWith(post) || subpath.length < key.length - 1)
+      continue;
+    if (best === undefined || pre.length > best.pre)
+      best = {
+        key,
+        star: subpath.slice(pre.length, subpath.length - post.length),
+        pre: pre.length,
+      };
+  }
+  return best === undefined ? undefined : target(map[best.key], best.star);
+}
+
+/** A bare specifier an ECMAScript module imports, by Node's ESM resolution (its exports' import conditions). */
+function resolvePackageImport(spec: string, from: string): string | undefined {
+  const parts = spec.split("/");
+  const name = spec.startsWith("@") ? parts.slice(0, 2).join("/") : (parts[0] as string);
+  const subpath = `.${spec.slice(name.length)}`;
+  for (let dir = dirname(from); ; dir = dirname(dir)) {
+    const pkgDir = join(dir, "node_modules", name);
+    const pkgFile = join(pkgDir, "package.json");
+    if (existsSync(pkgFile)) {
+      const pkg = JSON.parse(readFileSync(pkgFile, "utf8")) as { exports?: unknown };
+      if (pkg.exports === undefined) return undefined;
+      const t = exportsTarget(pkg.exports, subpath, IMPORT_CONDITIONS);
+      return t === undefined ? undefined : resolve(pkgDir, t);
+    }
+    if (dirname(dir) === dir) return undefined;
+  }
+}
+
+/** Where a module specifier, imported by a file, resolves to (an import's, `esm`, by Node's ESM resolution). */
+function resolveSpecifier(spec: string, from: string, esm = false): string {
   if (
     spec.startsWith("node:") ||
     (!spec.startsWith(".") && !spec.startsWith("/") && isBuiltin(spec))
@@ -62,9 +136,15 @@ function resolveSpecifier(spec: string, from: string): string {
       resolve(base, "index.ts"),
       resolve(base, "index.js"),
     ];
-    const hit = candidates.find((c) => existsSync(c) && !c.endsWith("/"));
+    // A file (a directory of the name is its index's, below).
+    const hit = candidates.find((c) => existsSync(c) && statSync(c).isFile());
     if (hit === undefined) throw new ProgramError(`${spec} does not resolve (imported by ${from})`);
     return hit;
+  }
+  if (esm) {
+    const hit = resolvePackageImport(spec, from);
+    // Its real path, as Node's ESM resolution gives (one module, however it is reached).
+    if (hit !== undefined && existsSync(hit)) return realpathSync(hit);
   }
   try {
     return createRequire(from).resolve(spec);
@@ -135,7 +215,7 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
           continue;
         let target: string;
         try {
-          target = resolveSpecifier(spec, file);
+          target = resolveSpecifier(spec, file, true);
         } catch {
           continue;
         }
@@ -198,7 +278,7 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
       esmSf,
       file,
       id,
-      (spec) => builtinOf(spec) ?? idOf(resolveSpecifier(spec, file)),
+      (spec) => builtinOf(spec) ?? idOf(resolveSpecifier(spec, file, true)),
       prelude,
     );
     const requires: Record<string, string> = { ...(parsed.module.requires ?? {}) };
@@ -213,7 +293,7 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
       Object.keys(requires).length > 0 ? { ...parsed.module, requires } : parsed.module,
     );
     for (const spec of parsed.specifiers)
-      if (builtinOf(spec) === undefined) visit(resolveSpecifier(spec, file));
+      if (builtinOf(spec) === undefined) visit(resolveSpecifier(spec, file, true));
     for (const t of targets) visit(t);
   };
   visit(resolve(entryFile));
@@ -310,8 +390,16 @@ function moduleOf(
       continue;
     const exported = hasModifier(st, "export");
     const isDefault = hasModifier(st, "default");
+    // `export default function () {}` / `export default class {}`: the module's default binding,
+    // the function or class named "default" (ECMA-262 16.2.1.6.4's SetFunctionName).
+    const anonymous =
+      isDefault &&
+      (Node.isFunctionDeclaration(st) || Node.isClassDeclaration(st)) &&
+      st.getName() === undefined;
     const record = lift(
-      withoutExport(st.getText()),
+      anonymous
+        ? `const ${DEFAULT_BINDING} = { default: ${withoutExport(st.getText())} }.default;`
+        : withoutExport(st.getText()),
       `a statement at line ${st.getStartLineNumber()}`,
     );
     statements.push(record);

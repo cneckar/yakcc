@@ -232,10 +232,15 @@ describe.skipIf(!canRun("x86_64-linux"))("programs, natively (#1333)", () => {
     expect(native.status).toBe(0);
   }, 600_000);
 
-  it("zod 4 (yakcc's closure): schemas built, parsed and refused as Node's (#1368, #1361 P2)", () => {
+  it("zod 4 (yakcc's closure): its ECMAScript build, schemas built, parsed and refused as Node's (#1368, #1361 P2)", () => {
     const entry = here("./__fixtures__/program/zod/entry.mjs");
     const exe = join(work, "zod-run");
-    buildProgram(entry, exe, { root: here("../../..") });
+    const built = buildProgram(entry, exe, { root: here("../../..") });
+    // An import resolves a package's exports as Node's ESM does (the import condition): zod's
+    // ECMAScript build, its locales' anonymous default exports among it; not its CommonJS one.
+    expect(built.modules.some((m) => m.endsWith("/zod/index.js"))).toBe(true);
+    expect(built.modules.some((m) => m.endsWith(".cjs"))).toBe(false);
+    expect(built.modules.some((m) => /\/zod\/v4\/locales\/\w+\.js$/.test(m))).toBe(true);
     const native = spawnSync(exe, [], { encoding: "utf8", timeout: 60_000 });
     const node = spawnSync(process.execPath, [entry], { encoding: "utf8", timeout: 60_000 });
     expect(native.stderr).toBe("");
