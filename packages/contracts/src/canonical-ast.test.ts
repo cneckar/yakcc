@@ -528,3 +528,69 @@ describe("canonicalAstHash – a large source is parsed once for all its ranges 
     expect(() => canonicalAstHash(broken, { start: 0, end: 10 })).toThrow(CanonicalAstParseError);
   });
 });
+
+describe("canonicalAstHash – grammar a fragment takes from its context (#1368)", () => {
+  const rejects = (source: string): boolean => {
+    try {
+      canonicalAstHash(source);
+      return false;
+    } catch (e) {
+      if (e instanceof CanonicalAstParseError) return true;
+      throw e;
+    }
+  };
+
+  it("rejects a jump or an await with nothing around it to belong to", () => {
+    expect(rejects("return 1;")).toBe(true);
+    expect(rejects("if (a) { return; }")).toBe(true);
+    expect(rejects("const x = await f();")).toBe(true);
+    expect(rejects("function g() { return await f(); }")).toBe(true);
+    expect(rejects("for await (const x of xs) g(x);")).toBe(true);
+    expect(rejects("break;")).toBe(true);
+    expect(rejects("continue;")).toBe(true);
+    expect(rejects("for (;;) { const h = () => { break; }; }")).toBe(true);
+    expect(rejects("outer: { for (;;) { continue outer; } }")).toBe(true);
+    expect(rejects("for (;;) { break missing; }")).toBe(true);
+    expect(rejects("yield next();")).toBe(true);
+    expect(rejects("function g() { yield 1; }")).toBe(true);
+    expect(rejects("class extends Base {}")).toBe(true);
+    expect(rejects("if (a);")).toBe(true);
+  });
+
+  it("accepts the same statements where they belong", () => {
+    expect(rejects("function g() { return 1; }")).toBe(false);
+    expect(rejects("const g = async () => await f();")).toBe(false);
+    expect(rejects("async function g() { for await (const x of xs) h(x); }")).toBe(false);
+    expect(rejects("for (;;) { if (a) break; else continue; }")).toBe(false);
+    expect(rejects("switch (a) { case 1: break; }")).toBe(false);
+    expect(rejects("outer: for (;;) { for (;;) { continue outer; } }")).toBe(false);
+    expect(rejects("block: { break block; }")).toBe(false);
+    expect(rejects("class C { static { const x = 1; } }")).toBe(false);
+    expect(rejects("function* g() { yield 1; }")).toBe(false);
+    expect(rejects("const C = class extends Base {};")).toBe(false);
+  });
+
+  it("does not add the checker's grammar errors to a source that did not parse", () => {
+    // The checker reports grammar errors only where the parse had none (2809 here is a parse
+    // error outside 1xxx): the `await` below is not one more error.
+    expect(rejects("{ a, b } = await f()")).toBe(false);
+  });
+
+  it("names the first error by position", () => {
+    expect(() => canonicalAstHash("break;\nreturn 1;")).toThrow(/'break' statement/);
+  });
+});
+
+describe("canonicalAstHash – a JSDoc function type's nameless parameters", () => {
+  it("hashes a method documented with {function(T)}", () => {
+    const source = [
+      "class Tree {",
+      "  /**",
+      "   * @param {function(Node)} f Visitor function.",
+      "   */",
+      "  traverse(f) { f(this.root); }",
+      "}",
+    ].join("\n");
+    expect(canonicalAstHash(source)).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
