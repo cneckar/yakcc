@@ -21,6 +21,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { Node, Project, type SourceFile, type Statement, SyntaxKind, ts } from "ts-morph";
 import type {
   NativeEsm,
@@ -110,6 +111,7 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
     // import() of a string literal is the module's link, as a require is; of anything else, or
     // import.meta, not in the subset yet.
     const dynamic: string[] = [];
+    const metas: [number, number][] = [];
     if (/\bimport\s*[(.]/.test(text))
       sf.forEachDescendant((n) => {
         if (Node.isCallExpression(n) && n.getExpression().getKind() === SyntaxKind.ImportKeyword) {
@@ -121,7 +123,7 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
           if (!dynamic.includes(arg.getLiteralValue())) dynamic.push(arg.getLiteralValue());
         }
         if (n.getKind() === SyntaxKind.MetaProperty && n.getText().startsWith("import"))
-          throw new ProgramError(`import.meta is not in the native subset yet (${id})`);
+          metas.push([n.getStart(), n.getEnd()]);
       });
     /** The import() specifiers that resolve, each its module's (visited after this one). */
     const linkDynamic = (requires: Record<string, string>, targets: string[]): void => {
@@ -172,17 +174,54 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
       for (const t of targets) visit(t);
       return;
     }
-    const parsed = moduleOf(sf, file, id, (spec) => idOf(resolveSpecifier(spec, file)));
+    // import.meta: the module's own object (its url, filename and dirname, Node's), a binding
+    // its first statement makes, read where the module names it.
+    let esmSf = sf;
+    let prelude: string | undefined;
+    if (metas.length > 0) {
+      let rewritten = text;
+      for (const [start, end] of [...metas].sort((a, b) => b[0] - a[0]))
+        rewritten = `${rewritten.slice(0, start)}${IMPORT_META}${rewritten.slice(end)}`;
+      esmSf = project.createSourceFile(`/m/${modules.size}.meta.ts`, rewritten, {
+        overwrite: true,
+      });
+      prelude = `const ${IMPORT_META} = { dirname: ${JSON.stringify(dirname(file))}, filename: ${JSON.stringify(file)}, url: ${JSON.stringify(pathToFileURL(file).href)} };`;
+    }
+    // A specifier of Node's module is named node:<id>, as a CommonJS module's require of it is.
+    const builtinOf = (spec: string): string | undefined =>
+      spec.startsWith("node:")
+        ? spec
+        : !spec.startsWith(".") && !spec.startsWith("/") && isBuiltin(spec)
+          ? `node:${spec}`
+          : undefined;
+    const parsed = moduleOf(
+      esmSf,
+      file,
+      id,
+      (spec) => builtinOf(spec) ?? idOf(resolveSpecifier(spec, file)),
+      prelude,
+    );
     const requires: Record<string, string> = { ...(parsed.module.requires ?? {}) };
+    for (const spec of parsed.specifiers) {
+      const b = builtinOf(spec);
+      if (b !== undefined) requires[spec] = b;
+    }
     const targets: string[] = [];
     linkDynamic(requires, targets);
-    modules.set(id, targets.length > 0 ? { ...parsed.module, requires } : parsed.module);
-    for (const spec of parsed.specifiers) visit(resolveSpecifier(spec, file));
+    modules.set(
+      id,
+      Object.keys(requires).length > 0 ? { ...parsed.module, requires } : parsed.module,
+    );
+    for (const spec of parsed.specifiers)
+      if (builtinOf(spec) === undefined) visit(resolveSpecifier(spec, file));
     for (const t of targets) visit(t);
   };
   visit(resolve(entryFile));
   return { entry: idOf(resolve(entryFile)), modules: [...modules.values()] };
 }
+
+/** The binding a module's `import.meta` becomes (a name no source of the program declares). */
+const IMPORT_META = "yakcc$importMeta";
 
 /** One module's statements and linking, with the specifiers it names (to visit). */
 function moduleOf(
@@ -190,6 +229,7 @@ function moduleOf(
   file: string,
   id: string,
   target: (spec: string) => string,
+  prelude?: string,
 ): { module: NativeModule; specifiers: string[] } {
   const statements: NativeModuleStatement[] = [];
   const imports: Record<string, NativeImport> = {};
@@ -216,6 +256,7 @@ function moduleOf(
       throw new ProgramError(`${id}: ${what} does not lift: ${(e as Error).message}`);
     }
   };
+  if (prelude !== undefined) statements.push(lift(prelude, "import.meta"));
   for (const st of sf.getStatements()) {
     if (Node.isImportDeclaration(st)) {
       if (st.isTypeOnly()) continue;

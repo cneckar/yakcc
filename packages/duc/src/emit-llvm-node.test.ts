@@ -159,6 +159,32 @@ describe.skipIf(!canRun("x86_64-linux"))("a user program over Node's library (#1
     expect(r.stdout).toBe(want.stdout);
     expect(r.status).toBe(0);
   }, 1_200_000);
+
+  it("an ECMAScript program: Node's modules imported (default, named, namespace), CommonJS imported, import.meta", () => {
+    const entry = join(here, "__fixtures__/program/node-user-esm/entry.mjs");
+    const user = programRecord(entry, join(here, ".."));
+    const record = nodeBootProgram(
+      lib,
+      { id: "main", source: "" },
+      {
+        bindings,
+        user,
+        include: ["internal/util/comparisons", "internal/v8/startup_snapshot"],
+        ...(process.env.YAKCC_LIFT_CACHE !== undefined
+          ? { liftCache: process.env.YAKCC_LIFT_CACHE }
+          : {}),
+      },
+    );
+    const ids = record.modules.map((m) => m.id);
+    for (const id of ["path", "events", "util"]) expect(ids).toContain(id);
+    const exe = join(work, "node-user-esm");
+    buildRecord(record, exe);
+    const r = spawnSync(exe, [], { encoding: "utf8" });
+    const want = spawnSync(process.execPath, [entry], { encoding: "utf8" });
+    expect(r.stderr).toBe(want.stderr);
+    expect(r.stdout).toBe(want.stdout);
+    expect(r.status).toBe(0);
+  }, 1_200_000);
 });
 
 const TICK_PROGRAM = `const out = [];
