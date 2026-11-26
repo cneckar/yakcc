@@ -801,33 +801,50 @@ export function unwrapModuleFunction(text: string): string | undefined {
   return `${text.slice(0, st.getStart(sf))}${bindings}${inner}\n${text.slice(st.end)}`;
 }
 
-/** A CommonJS module's statements, and its requires: every one, and those its top level makes. */
+/**
+ * A CommonJS module's statements, and its requires: every one, and those its top level makes. Read
+ * with the compiler's own parser, not ts-morph's wrappers: ts-morph keeps a wrapper of every node it
+ * visits, millions for a 9 MB module (TypeScript's), all held while its statements lift (#1370).
+ */
 function commonJsModuleOf(
-  project: Project,
+  _project: Project,
   text0: string,
   id: string,
 ): { module: NativeModule; topLevel: string[] } {
   const text = unwrapModuleFunction(text0) ?? text0;
-  const sf = project.createSourceFile(`/cjs/${id.replace(/[^A-Za-z0-9]/g, "_")}.js`, text, {
-    overwrite: true,
-  });
+  const sf = ts.createSourceFile("m.js", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   const requires: Record<string, string> = {};
   const topLevel: string[] = [];
-  sf.forEachDescendant((n) => {
-    if (!Node.isCallExpression(n)) return;
-    const callee = n.getExpression();
-    const arg = n.getArguments()[0];
-    if (!Node.isIdentifier(callee) || callee.getText() !== "require") return;
-    if (arg === undefined || !Node.isStringLiteral(arg)) return;
-    const spec = arg.getLiteralValue();
-    requires[spec] = spec;
-    const inFunction = n.getAncestors().some((a) => Node.isFunctionLikeDeclaration(a));
-    if (!inFunction && !topLevel.includes(spec)) topLevel.push(spec);
-  });
+  const visit = (n: ts.Node, inFunction: boolean): void => {
+    if (ts.isCallExpression(n)) {
+      const callee = n.expression;
+      const arg = n.arguments[0];
+      if (
+        ts.isIdentifier(callee) &&
+        callee.text === "require" &&
+        arg !== undefined &&
+        ts.isStringLiteral(arg)
+      ) {
+        const spec = arg.text;
+        requires[spec] = spec;
+        if (!inFunction && !topLevel.includes(spec)) topLevel.push(spec);
+      }
+    }
+    const fn =
+      ts.isFunctionDeclaration(n) ||
+      ts.isFunctionExpression(n) ||
+      ts.isArrowFunction(n) ||
+      ts.isMethodDeclaration(n) ||
+      ts.isConstructorDeclaration(n) ||
+      ts.isGetAccessorDeclaration(n) ||
+      ts.isSetAccessorDeclaration(n);
+    ts.forEachChild(n, (c) => visit(c, inFunction || fn));
+  };
+  visit(sf, false);
   const statements: NativeModuleStatement[] = [];
-  for (const st of sf.getStatements()) {
-    if (Node.isEmptyStatement(st)) continue;
-    const textOf = st.getText();
+  for (const st of sf.statements) {
+    if (ts.isEmptyStatement(st)) continue;
+    const textOf = st.getText(sf);
     const shape = atomShape(textOf);
     try {
       statements.push({
@@ -837,8 +854,9 @@ function commonJsModuleOf(
         graph: liftAtom(textOf),
       });
     } catch (e) {
+      const line = sf.getLineAndCharacterOfPosition(st.getStart(sf)).line + 1;
       throw new ProgramError(
-        `${id}: a statement at line ${st.getStartLineNumber()} does not lift: ${(e as Error).message}`,
+        `${id}: a statement at line ${line} does not lift: ${(e as Error).message}`,
       );
     }
   }
