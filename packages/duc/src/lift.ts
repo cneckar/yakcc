@@ -470,7 +470,10 @@ function parsedAlone(text: string): SourceFile {
  * (`throw e; n--;`) makes `n` a binding the atom writes, which the emitted source does not. A function
  * declaration there is hoisted and stays; a `var` keeps its binding without its initializer. A list
  * whose dead statements declare a `let`, `const` or `class` (a binding of the block's, though never
- * initialized) is left as it is. Undefined when nothing is dropped.
+ * initialized) is left as it is. The right side of a short-circuit its left literal decides (`0 && e`,
+ * `true || e`, `1 ?? e`) never runs either, and the expression is that literal (#1368): a bundler
+ * writes `0 && (module.exports = { .. })`, a list of names for a tool to read, none of them bound.
+ * Undefined when nothing is dropped.
  */
 function dropUnreachable(sf: SourceFile): string | undefined {
   const file = sf.compilerNode;
@@ -485,6 +488,8 @@ function dropUnreachable(sf: SourceFile): string | undefined {
   const lists: (readonly ts.Statement[])[] = [file.statements];
   forEachCompilerDescendant(file, (n) => {
     if (ts.isBlock(n) || ts.isCaseClause(n) || ts.isDefaultClause(n)) lists.push(n.statements);
+    if (ts.isBinaryExpression(n) && decidedByLeft(n))
+      edits.push({ start: n.getStart(file), end: n.getEnd(), text: n.left.getText(file) });
   });
   for (const list of lists) {
     const at = list.findIndex(jump);
@@ -5332,6 +5337,37 @@ function topLevelDeclaredNames(stmt: Node): string[] {
 }
 
 /**
+ * Whether a short-circuit's left side is a literal that decides it, so its right side never runs: a
+ * falsy one before `&&`, a truthy one before `||`, one that is not null before `??`. `undefined` is a
+ * name, which a scope can bind, and is not one.
+ */
+function decidedByLeft(n: ts.BinaryExpression): boolean {
+  const left = n.left;
+  const truthy = ts.isNumericLiteral(left)
+    ? Number(left.text) !== 0
+    : ts.isStringLiteral(left) || ts.isNoSubstitutionTemplateLiteral(left)
+      ? left.text !== ""
+      : left.kind === SyntaxKind.TrueKeyword
+        ? true
+        : left.kind === SyntaxKind.FalseKeyword ||
+            left.kind === SyntaxKind.NullKeyword ||
+            (ts.isVoidExpression(left) && ts.isNumericLiteral(left.expression))
+          ? false
+          : undefined;
+  if (truthy === undefined) return false;
+  switch (n.operatorToken.kind) {
+    case SyntaxKind.AmpersandAmpersandToken:
+      return !truthy;
+    case SyntaxKind.BarBarToken:
+      return truthy;
+    case SyntaxKind.QuestionQuestionToken:
+      return left.kind !== SyntaxKind.NullKeyword && !ts.isVoidExpression(left);
+    default:
+      return false;
+  }
+}
+
+/**
  * Each node under `node`, in order, read from the compiler's nodes: ts-morph's getDescendants wraps
  * every node it passes, and a pass over each source the slicer lifts paid that for the whole source
  * (#1368).
@@ -5970,6 +6006,17 @@ function iterateGuard(loop: Node): Node | undefined {
     return undefined;
   let c: Node = test.getOperand();
   while (Node.isParenthesizedExpression(c)) c = c.getExpression();
+  // The loop's condition is tested before the element is bound: a guard that reads the loop's own
+  // variable (`for (const v of a) { if (!p(v)) break; .. }`) is a test of each element, a break
+  // like any other, not a condition the lowering wrote (#1368).
+  const init = loop.getInitializer();
+  const own = Node.isVariableDeclarationList(init)
+    ? init.getDeclarations().flatMap((d) => patternNames(d.getNameNode()))
+    : [init.getText()];
+  const reads = (n: Node): boolean =>
+    (Node.isIdentifier(n) && own.includes(n.getText())) ||
+    n.getDescendantsOfKind(SyntaxKind.Identifier).some((id) => own.includes(id.getText()));
+  if (reads(c)) return undefined;
   return c;
 }
 
