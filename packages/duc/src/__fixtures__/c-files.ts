@@ -125,8 +125,13 @@ export function shaveCFiles(
         continue;
       }
       take(unit, file);
-      if (process.env.YAKCC_PROGRESS !== undefined && Date.now() - t > 10_000)
-        console.error(`c-files: ${basename(file)} took ${Date.now() - t} ms`);
+      if (
+        process.env.YAKCC_PROGRESS !== undefined &&
+        (Date.now() - t > 10_000 || process.memoryUsage().heapUsed > 3 * 2 ** 30)
+      )
+        console.error(
+          `c-files: ${basename(file)} took ${Date.now() - t} ms, heap ${Math.round(process.memoryUsage().heapUsed / 2 ** 20)} MB`,
+        );
     }
     const staticsByFile = new Map(pendingStatics);
     pendingStatics.clear();
