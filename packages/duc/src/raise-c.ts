@@ -3143,6 +3143,31 @@ function raiseBody(
           }) === undefined
         )
           return argOf(kids[1] as ClangNode);
+        // std::call_once (ICU's umutex): one thread here, so its flag (a once_flag's int, 0 until
+        // done) is set and the function called the first time.
+        if (
+          name === "call_once" &&
+          unitCxx !== undefined &&
+          /^std\b/.test(unitCxx.namespaceOf(callee.referencedDecl?.id ?? "")) &&
+          kids.length >= 3
+        ) {
+          const flag = argOf(kids[1] as ClangNode);
+          const f = stripCasts(kids[2] as ClangNode);
+          const fd = f.kind === "DeclRefExpr" ? (f.referencedDecl as ClangNode) : undefined;
+          const key =
+            fd?.kind === "FunctionDecl"
+              ? (resolve({
+                  name: fd.name ?? "",
+                  kind: fd.kind,
+                  type: normType(fd.type?.qualType ?? ""),
+                  id: fd.id,
+                }) ?? outside(fd.id))
+              : undefined;
+          if (key === undefined) throw new RaiseCError("a call_once of a function not named");
+          const rest = kids.slice(3).map(argOf);
+          const a = temp({ k: "f64" });
+          return `(((${a} = ${flag}), __ykLoad32(${a}) === 0) ? (__ykStore32(${a}, 1), ${key}(${rest.join(", ")}), undefined) : undefined)`;
+        }
         // libstdc++'s throws and failed assertions: the program ends (no handler is raised).
         if (/^(__throw_\w+|__glibcxx_assert_fail)$/.test(name)) {
           externals.add("abort");
@@ -6445,9 +6470,15 @@ export function shaveCUnit(
       }
       return negative ? "int" : "unsigned int";
     }
+    // (A named one, `typedef struct UDataMemory UDataMemory;` in C++, where the typedef reads as
+    // its record: the record.)
+    if (node.name !== undefined && node.name !== "" && RECORD_KINDS.has(node.kind))
+      return `${(node as { tagUsed?: string }).tagUsed ?? "struct"} ${node.name}`;
     const fields = (node.inner ?? [])
       .filter((f) => f.kind === "FieldDecl")
       .map((f) => f.name ?? "");
+    // (No fields to tell it by: not one of the unnamed records.)
+    if (fields.length === 0) return undefined;
     layout(""); // the layouts, read
     const same = [...(layouts ?? [])]
       .filter(
@@ -6602,6 +6633,69 @@ export function shaveCUnit(
     return decl ?? tentative;
   };
   const staticHook = (d: ClangNode, fnName?: string, dynamic = false): string | undefined => {
+    // C++ of several units: a global by its symbol (a class's static member, a namespace's
+    // variable); one this unit only declares, another's (see c-files), as a linker resolves it.
+    if (bySymbol && isCxx && fnName === undefined && indexed !== undefined && d.id !== undefined) {
+      const m = symbolOfId(d.id);
+      if (m !== undefined && m !== d.name) {
+        const id = `g:${m}`;
+        if (staticKeys.has(id)) return staticKeys.get(id);
+        let def: ClangNode | undefined;
+        let first = d.id;
+        for (let g = 0; indexed.previous.has(first) && g < 1000; g++)
+          first = indexed.previous.get(first) as string;
+        for (let at: string | undefined = first, g = 0; at !== undefined && g < 1000; g++) {
+          const r = indexed.byId.get(at);
+          if (r !== undefined && r.kind === "VarDecl") {
+            const n = readDecl(indexed, r);
+            const inClass =
+              r.parent !== undefined && RECORD_KINDS.has(indexed.byId.get(r.parent)?.kind ?? "");
+            if (initOf(n) !== undefined || (!inClass && n.storageClass !== "extern")) def = n;
+          }
+          at = indexed.next.get(at);
+        }
+        const internal = def?.storageClass === "static" || /_GLOBAL__N/.test(m);
+        const key = internal ? `${m}__${unitSuffix}` : m;
+        staticKeys.set(id, key);
+        if (def === undefined) return key;
+        try {
+          statics.set(
+            key,
+            staticDefinition(def, {
+              staticKey: (g) => staticHook(g),
+              constInit: (g) => {
+                const c = resolveGlobal(g.name ?? "", normType(g.type?.qualType ?? ""), g.id);
+                return c === undefined ? undefined : initOf(c);
+              },
+              fnKey: (f) =>
+                resolve({
+                  name: f.name ?? "",
+                  kind: f.kind,
+                  type: normType(f.type?.qualType ?? ""),
+                  id: f.id,
+                }) ??
+                (f.id !== undefined ? symbolOfId(f.id) : undefined) ??
+                f.name ??
+                "",
+            }),
+          );
+        } catch (e) {
+          const fromIR = (() => {
+            try {
+              return irConstantStatic(unitIR(), m);
+            } catch {
+              return undefined;
+            }
+          })();
+          if (fromIR === undefined)
+            throw new RaiseCError(
+              `the static "${d.name}": ${e instanceof Error ? e.message : String(e)}`,
+            );
+          statics.set(key, fromIR);
+        }
+        return key;
+      }
+    }
     const id = fnName === undefined ? `g:${d.name}` : (d.id ?? "");
     if (staticKeys.has(id)) return staticKeys.get(id);
     if (dynamic && fnName !== undefined) {
@@ -6719,8 +6813,18 @@ export function shaveCUnit(
     unitEnumValue = enumValue;
     unitOffsetOf = offsetOf;
     try {
-      for (const name of defineStatics)
-        staticHook({ kind: "VarDecl", name, type: { qualType: "" } } as ClangNode);
+      for (const name of defineStatics) {
+        // (C++ of several units: by its symbol, the declaration with that mangled name.)
+        const bySym =
+          bySymbol && indexed !== undefined
+            ? [...indexed.byId.values()].find((x) => x.kind === "VarDecl" && x.mangled === name)
+            : undefined;
+        staticHook(
+          bySym !== undefined && indexed !== undefined
+            ? readDecl(indexed, bySym)
+            : ({ kind: "VarDecl", name, type: { qualType: "" } } as ClangNode),
+        );
+      }
     } finally {
       [unitTypedef, unitLayout, unitLongDouble64, unitEnumValue, unitOffsetOf] = saved;
     }
