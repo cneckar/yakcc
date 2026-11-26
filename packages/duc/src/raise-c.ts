@@ -2953,10 +2953,11 @@ function raiseBody(
             const size = sizeOf(t.to);
             const cookie = destroy("0", t.to).length > 0 ? Math.max(8, alignOf(t.to)) : 0;
             const init = kids.find((k) => k.kind === "CXXConstructExpr");
+            const recName = t.to.name;
             const one = (at: string): string =>
               init === undefined
                 ? "undefined"
-                : construct(at, { ...init, type: { qualType: t.to.name } } as ClangNode);
+                : construct(at, { ...init, type: { qualType: recName } } as ClangNode);
             const i = temp({ k: "f64" });
             const each = `(() => { for (${i} = 0; ${i} < ${count}; ${i}++) ${one(`(${base} + ${cookie} + ${i} * ${size})`)}; })()`;
             return `((${count} = ${wide(typeOf(n)) ? `__ykBigToF64(${expr(n)})` : expr(n)}), (${base} = __ykAlloc(Math.max(1, ${cookie} + ${count} * ${size}), ${Math.max(8, alignOf(t.to))})), ${cookie > 0 ? `__ykStore64(${base}, __ykNumToBig(${count})), ` : ""}${each}, (${base} + ${cookie}))`;
