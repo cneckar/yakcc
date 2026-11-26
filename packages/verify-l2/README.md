@@ -66,6 +66,7 @@ const report = await verifyL2(
 | 4 | `Math.abs floor ceil trunc sqrt min max sign fround` (ECMAScript's NaN and ±0 rules). Calls of supplied callees (`options.callees`, by link spec, `module#symbol` or symbol): their preconditions are obligations, their postconditions a fact only when `proven` |
 | 5 | `throw` in a branch: the branch is a path that does not return. Postconditions assume it is not taken. `report.throws` says whether each throw is reachable under the preconditions, with an input |
 | arrays, `undefined` | `number[]`, `boolean[]`, `string[]` (also `readonly T[]`, `Array<T>`) as read-only sequences, numbers by their 64 bits. Literals, `length`, `xs[i]`, `slice`, `concat`; `includes`, `indexOf` on strings and booleans (not numbers: `includes` finds NaN, `indexOf` does not, both find -0 for 0). `s[i]` and `xs[i]` are `undefined` unless `i` is an integer in range; `undefined` is converted as ECMAScript does (NaN, `"undefined"`, false, equality, `??`). A result, carried value or argument that may be undefined is an obligation (`defined_<n>`) |
+| records | Object types (`{ x: number; y?: string; z: { w: boolean[] } }`, `readonly` fields) as records of their fields: one constant per field, a Bool for an optional one. Object literals with plain keys, field reads (a missing field is `undefined`), selects of records with the same fields, records as results (`result.x` in a postcondition), counterexamples assembled as objects. Spreads, computed keys, writes, `===` on records, records carried by loops or passed to callees are refused |
 | strings | `string` as a sequence of UTF-16 code units (`(Seq (_ BitVec 16))`), at most 2^53 - 1 long (a longer result is a RangeError). Literals, templates, `+` (concatenation; with booleans), `=== !== == !=`, truthiness. `length`; `charCodeAt`, `charAt`, `slice`, `substring` with ECMAScript's index rules; `startsWith`, `endsWith`, `includes`, `indexOf` without a position |
 
 **Unsupported** (named in the reason):
@@ -78,6 +79,26 @@ const report = await verifyL2(
   listed, and the search methods with a position;
 - writes, `push` and other mutation, `===` on arrays, `includes`/`indexOf` on number arrays, empty
   array literals, objects.
+
+## Callbacks: not encoded, and why
+
+`map`, `filter`, `every`, `some`, `reduce` and `findIndex` take functions. Their meaning over an
+array of any length needs either induction or quantifiers, and neither works well enough with this
+solver to ship (probes of 2026-11-26, z3-solver 5.4.1):
+
+- **Folds** (`seq.foldl` with a lambda) time out on every goal tried, even `filter` returning no
+  more elements than it was given: those need induction, which the solver does not do.
+- **`seq.map`** proves length facts at once, but reading an element of its result errors inside
+  Z3 ("Formulas should not contain unbound variables").
+- **Quantified specifications** (`map` as a fresh array whose element k is f(xs[k]), `every` as a
+  bounded forall):
+  - the disproofs are fast;
+  - the proofs end "incomplete quantifiers" or time out, even with the witness given;
+  - over a sequence of binary64 elements, one probe crashed the solver ("memory access out of
+    bounds" in the WebAssembly build), which would take its process down.
+
+A loop with an invariant is what proves these facts today. Rewriting a callback as an index loop
+lets the existing loop slice prove it. A native Z3, or a solver with induction, could revisit this.
 
 ## The record and the registry (slice 6)
 

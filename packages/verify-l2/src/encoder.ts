@@ -38,6 +38,7 @@ import {
   MAX_ARRAY_LENGTH,
   MAX_STRING_LENGTH,
   PLATFORM_NUMBERS,
+  type Rec,
   STRING_METHODS,
   type Sort,
   type Term,
@@ -144,7 +145,7 @@ interface GraphCtx {
   /** Regions that contain a throw directly. */
   readonly throwing: ReadonlySet<string>;
   readonly loopIndex: ReadonlyMap<NodeId, number>;
-  readonly params: readonly Term[];
+  readonly params: readonly (Term | Rec)[];
   /** Whether loop invariants and throws apply: the atom itself, not a condition. */
   readonly isAtom: boolean;
 }
@@ -161,6 +162,7 @@ interface Env {
 /** A value that is not a number or a boolean, which only some nodes accept. */
 type Value =
   | Term
+  | Rec
   | { readonly sort: "Undef" }
   | {
       readonly sort: "Fn";
@@ -178,6 +180,40 @@ function and(xs: readonly string[]): string {
     : real.length === 1
       ? (real[0] as string)
       : `(and ${real.join(" ")})`;
+}
+
+/** A select of two records with the same fields, field by field. */
+function selectRecords(c: Term, t: Value, e: Value): Rec {
+  if (t.sort !== "Rec" || e.sort !== "Rec") {
+    throw new Unsupported("union", "a select of a record and another value");
+  }
+  const keys = [...t.fields.keys()];
+  if (keys.length !== e.fields.size || keys.some((k) => !e.fields.has(k))) {
+    throw new Unsupported("union", "a select of two records with different fields");
+  }
+  const fields = new Map<string, Term | Rec>();
+  for (const k of keys) {
+    const a = t.fields.get(k) as Term | Rec;
+    const b = e.fields.get(k) as Term | Rec;
+    if (a.sort === "Rec" || b.sort === "Rec") {
+      fields.set(k, selectRecords(c, a, b));
+      continue;
+    }
+    const x = adapt(a, b);
+    const y = adapt(b, a);
+    if (x.sort !== y.sort)
+      throw new Unsupported("union", `a select whose field ${k} has two types`);
+    const defined =
+      x.defined !== undefined || y.defined !== undefined
+        ? `(ite ${c.smt} ${x.defined ?? "true"} ${y.defined ?? "true"})`
+        : undefined;
+    fields.set(k, {
+      sort: x.sort,
+      smt: `(ite ${c.smt} ${x.smt} ${y.smt})`,
+      ...(defined !== undefined ? { defined } : {}),
+    });
+  }
+  return { sort: "Rec", fields };
 }
 
 /** The encoder of one atom with its conditions: one instance per verification. */
@@ -199,12 +235,12 @@ export class Encoder {
 
   constructor(
     private readonly contract: L2Contract,
-    private readonly paramTerms: readonly Term[],
+    private readonly paramTerms: readonly (Term | Rec)[],
     private readonly callees: Readonly<Record<string, Callee>> = {},
   ) {}
 
   /** Encodes the atom; returns its result. Records throw sites for the caller. */
-  atom(graph: DucGraph): Term {
+  atom(graph: DucGraph): Term | Rec {
     const gc = this.graphCtx(graph, this.paramTerms, true);
     const env: Env = { gc, ns: "impl", bind: new Map(), ctx: [] };
     for (const region of gc.throwing) {
@@ -218,7 +254,7 @@ export class Encoder {
         text: site?.origin?.text ?? "throw",
       });
     }
-    const result = this.definite(
+    const result = this.definiteValue(
       this.value(gc.g.obs[0] as ValueId, env),
       "the result",
       env,
@@ -251,7 +287,12 @@ export class Encoder {
   }
 
   /** A condition (an ECMAScript expression over `names`) as a Bool term, with `names` bound. */
-  condition(source: string, names: readonly string[], params: readonly Term[], ns: string): string {
+  condition(
+    source: string,
+    names: readonly string[],
+    params: readonly (Term | Rec)[],
+    ns: string,
+  ): string {
     let graph: DucGraph;
     try {
       graph = liftAtom(`function __condition(${names.join(", ")}) { return (${source}); }`);
@@ -280,7 +321,7 @@ export class Encoder {
     return { sort, smt: `((_ to_fp 11 53) ${name})` };
   }
 
-  private graphCtx(graph: DucGraph, params: readonly Term[], isAtom: boolean): GraphCtx {
+  private graphCtx(graph: DucGraph, params: readonly (Term | Rec)[], isAtom: boolean): GraphCtx {
     const g = ecmaScriptView(graph);
     if (g.mode !== undefined) throw new Unsupported(g.mode, `an ${g.mode} function`);
     if (g.obs.length !== 1) {
@@ -308,6 +349,15 @@ export class Encoder {
       g.nodes.filter((n) => n.kind === "loop").map((n, i) => [n.id, i] as const),
     );
     return { g, defOf, branches, throwing, loopIndex, params, isAtom };
+  }
+
+  /** A value that is a term or a record, each field required not to be undefined. */
+  private definiteValue(v: Value, what: string, env: Env, region: string | undefined): Term | Rec {
+    if (v.sort !== "Rec") return this.definite(v, what, env, region);
+    const fields = new Map<string, Term | Rec>();
+    for (const [name, f] of v.fields)
+      fields.set(name, this.definiteValue(f, `${what}.${name}`, env, region));
+    return { sort: "Rec", fields };
   }
 
   /** A term, with the literal `undefined` as {@link UNDEFINED}: for uses that convert it as ECMAScript does. */
@@ -338,6 +388,8 @@ export class Encoder {
   private term(v: Value, what: string): Term {
     if (v.sort === "Undef") throw new Unsupported("undefined", `${what} may be undefined`);
     if (v.sort === "Fn") throw new Unsupported("function", `${what} is a function`);
+    if (v.sort === "Rec")
+      throw new Unsupported("record", `${what} is a record (only its fields are read)`);
     return v;
   }
 
@@ -367,6 +419,7 @@ export class Encoder {
     if (
       result.sort === "Undef" ||
       result.sort === "Fn" ||
+      result.sort === "Rec" ||
       n.kind === "param-source" ||
       n.kind === "literal-source" ||
       n.kind === "diamond-source" ||
@@ -474,8 +527,11 @@ export class Encoder {
     if (thenThrows && !elseThrows) return this.value(ev, env);
     if (elseThrows && !thenThrows) return this.value(tv, env);
     const c = truthy(this.term(this.value(cv, env), "a condition"));
-    const t0 = this.operand(this.value(tv, env), "a branch's value");
-    const e0 = this.operand(this.value(ev, env), "a branch's value");
+    const tvv = this.value(tv, env);
+    const evv = this.value(ev, env);
+    if (tvv.sort === "Rec" || evv.sort === "Rec") return selectRecords(c, tvv, evv);
+    const t0 = this.operand(tvv, "a branch's value");
+    const e0 = this.operand(evv, "a branch's value");
     const t = adapt(t0, e0);
     const e = adapt(e0, t0);
     if (t.sort !== e.sort) {
@@ -498,6 +554,9 @@ export class Encoder {
   private op(n: DucNode, env: Env): Value {
     const label = n.label ?? "";
     const operands = n.order === 1 ? n.inputs.slice(0, -1) : n.inputs;
+    if (label.startsWith(".") && label.endsWith("=")) {
+      throw new Unsupported(label, `the write ${label}: an effect`);
+    }
     if (label.startsWith(".")) {
       const name = label.slice(1);
       const target = this.value(operands[0] as ValueId, env);
@@ -505,6 +564,7 @@ export class Encoder {
         if (!MATH_EXACT.has(name)) throw new Unsupported(`Math.${name}`, `Math.${name}: not exact`);
         return { sort: "Fn", fn: { kind: "math", name } };
       }
+      if (target.sort === "Rec") return target.fields.get(name) ?? UNDEFINED;
       if (target.sort !== "Fn" && target.sort !== "Undef" && target.defined !== undefined) {
         throw new Unsupported(
           label,
@@ -552,6 +612,31 @@ export class Encoder {
         throw new Unsupported("ElementAccess", "an element read with other operands");
       }
       return elementAccess(target, key);
+    }
+    if (label.startsWith("object:")) {
+      let keys: unknown;
+      try {
+        keys = JSON.parse(label.slice("object:".length));
+      } catch {
+        keys = undefined;
+      }
+      if (
+        !Array.isArray(keys) ||
+        keys.some((k) => typeof k !== "string") ||
+        new Set(keys).size !== keys.length ||
+        keys.length !== operands.length
+      ) {
+        throw new Unsupported(
+          "object",
+          `the object literal ${label} (only plain, distinct keys: no spread or computed key)`,
+        );
+      }
+      const fields = new Map<string, Term | Rec>();
+      keys.forEach((k: string, i) => {
+        const v = this.value(operands[i] as ValueId, env);
+        fields.set(k, v.sort === "Rec" ? v : this.operand(v, `the field ${k}`));
+      });
+      return { sort: "Rec", fields };
     }
     if (label === "ArrayLiteral") {
       return arrayLiteral(operands.map((a) => this.term(this.value(a, env), "an array element")));
@@ -733,4 +818,56 @@ export function sortOf(type: string, what: string): Sort {
   const sort = SORT_OF_TYPE[t];
   if (sort === undefined) throw new Unsupported(type, `${what}: the type ${type || "(none)"}`);
   return sort;
+}
+
+/** A contract type L2 reads: a sort, or a record of fields. */
+export type L2Type =
+  | { readonly kind: "sort"; readonly sort: Sort }
+  | {
+      readonly kind: "record";
+      readonly fields: readonly {
+        readonly name: string;
+        readonly optional: boolean;
+        readonly type: L2Type;
+      }[];
+    };
+
+/**
+ * A contract type: a sort (`sortOf`), or an object type of fields (`{ x: number; y?: string }`,
+ * `readonly` fields, nested), its fields separated by `;` or `,`. Anything else is unsupported.
+ */
+export function typeOf(type: string, what: string): L2Type {
+  const t = type.trim();
+  if (!t.startsWith("{")) return { kind: "sort", sort: sortOf(t, what) };
+  if (!t.endsWith("}")) throw new Unsupported(t, `${what}: the type ${t}`);
+  // Split the body at top-level separators.
+  const body = t.slice(1, -1);
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of body) {
+    if ("{[(<".includes(ch)) depth++;
+    if ("}])>".includes(ch)) depth--;
+    if ((ch === ";" || ch === ",") && depth === 0) {
+      parts.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  parts.push(cur);
+  const fields = parts
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .map((p) => {
+      const m = /^(?:readonly\s+)?([A-Za-z_$][\w$]*)(\?)?\s*:\s*([\s\S]+)$/.exec(p);
+      if (m === null) throw new Unsupported(t, `${what}: the field ${p}`);
+      return {
+        name: m[1] as string,
+        optional: m[2] === "?",
+        type: typeOf(m[3] as string, `${what}.${m[1]}`),
+      };
+    });
+  if (new Set(fields.map((f) => f.name)).size !== fields.length) {
+    throw new Unsupported(t, `${what}: a field named twice`);
+  }
+  return { kind: "record", fields };
 }

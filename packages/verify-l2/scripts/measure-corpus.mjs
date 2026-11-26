@@ -17,6 +17,7 @@ import {
   Unsupported,
   shutdownSolver,
   sortOf,
+  typeOf,
   verifyL2,
 } from "../dist/index.js";
 
@@ -28,6 +29,16 @@ const require = createRequire(join(root, "packages", "registry", "package.json")
 const Database = require("better-sqlite3");
 const db = new Database(dbPath, { readonly: true });
 
+// Whether L2 has a type for a declared type (a sort or a record of them).
+const hasType = (t) => {
+  try {
+    typeOf(String(t), "");
+    return true;
+  } catch (e) {
+    if (e instanceof Unsupported) return false;
+    throw e;
+  }
+};
 // The sort of a declared type, or undefined (sortOf refuses what L2 has no sort for).
 const sortOfType = (t) => {
   try {
@@ -60,7 +71,7 @@ for (const row of rows) {
   if ((spec.preconditions ?? []).length > 0) stats.withPreconditions++;
   const inputs = spec.inputs ?? [];
   const outputs = spec.outputs ?? [];
-  const nonScalar = [...inputs, ...outputs].find((p) => sortOfType(p.type) === undefined);
+  const nonScalar = [...inputs, ...outputs].find((p) => !hasType(p.type));
   const scalar = nonScalar === undefined && outputs.length === 1;
   if (scalar) stats.scalarSignature++;
   else
@@ -146,7 +157,10 @@ const kindSort = (a) => {
   return undefined;
 };
 for (const atom of sample) {
-  const scalar = atom.args.every((a) => kindSort(a) !== undefined);
+  const typed = (a) =>
+    kindSort(a) !== undefined ||
+    (typeof a === "object" && a !== null && "obj" in a && Object.values(a.obj).every(typed));
+  const scalar = atom.args.every(typed);
   if (scalar) sampleScalar++;
   try {
     const graph = liftAtom(atom.source);
