@@ -1515,6 +1515,30 @@ yk yk_get(yk obj, yk key) {
   }
   return yk_get_slow(obj, key);
 }
+/* A named read with its site's cache (#1370): the index of the key in the last object the site
+   found it own in, tried first; a plain object's own keys scanned (all of them) else, the index
+   kept; anything else yk_get's. */
+yk yk_get_ic(yk obj, yk key, uint32_t *site) {
+  if (is_object(obj)) {
+    yk_object *o = (yk_object *)PTR(obj);
+    if (o->kind == 0) {
+      uint32_t i = *site;
+      if (i < o->len && o->keys[i] == key) {
+        yk v = o->values[i];
+        return TAG(v) != T_INTERNAL ? v : resolve_slot(v, obj);
+      }
+      uint32_t n = o->len < 32 ? o->len : 32;
+      for (i = 0; i < n; i++)
+        if (o->keys[i] == key) {
+          *site = i;
+          yk v = o->values[i];
+          return TAG(v) != T_INTERNAL ? v : resolve_slot(v, obj);
+        }
+      if (o->len <= 32) return yk_get_slow(obj, key); /* not its own: its chain's */
+    }
+  }
+  return yk_get(obj, key);
+}
 static __attribute__((noinline)) yk yk_get_slow(yk obj, yk key) {
   /* An element by an integer index: an array's (not a hole), a typed array's, in range. */
   if (is_number(key)) {

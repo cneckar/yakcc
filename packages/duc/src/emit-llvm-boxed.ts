@@ -433,6 +433,8 @@ function atomFunction(m: ModuleBuilder, atom: string): string {
 /** The module being built: its constants, the runtime functions it calls, its functions. */
 class ModuleBuilder {
   readonly globals: string[] = [];
+  /** Named member reads' caches made so far (yk.ic.N). */
+  icSites = 0;
   readonly used = new Set<string>();
   /** The LLVM intrinsics the functions call, declared once. */
   readonly intrinsics = new Set<string>();
@@ -1606,6 +1608,18 @@ function lowerFunction(
    * A property name as a key (#1369): the module's one string of it, made at its first use and kept
    * in a global (one per name), so a read, a write or a call by name makes and hashes no string.
    */
+  /**
+   * A named member read with its site's cache (#1370): the index its key was last found at in an
+   * object's own keys, tried first (objects made alike have it at the same place).
+   */
+  const getNamed = (obj: string, key: string): string => {
+    const site = `@yk.ic.${m.icSites++}`;
+    m.globals.push(`${site} = internal global i32 0`);
+    m.intrinsics.add("declare i64 @yk_get_ic(i64, i64, ptr)");
+    const r = fresh();
+    emit(`${r} = call i64 @yk_get_ic(i64 ${obj}, i64 ${key}, ptr ${site})`);
+    return r;
+  };
   const keyOf = (name: string): string => {
     let g0 = m.keys.get(name);
     if (g0 === undefined) {
@@ -3488,7 +3502,9 @@ function lowerFunction(
         out,
         lbl === ".length" && (!compact || inLoop(n))
           ? lengthRead(obj, key)
-          : call("yk_get", `i64 ${obj}, i64 ${key}`),
+          : lbl === ".length"
+            ? call("yk_get", `i64 ${obj}, i64 ${key}`)
+            : getNamed(obj, key),
       );
       return;
     }
