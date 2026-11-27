@@ -158,6 +158,17 @@ describe("the npm closure's last round trips (#1368)", () => {
     );
   });
 
+  it("a literal a short circuit's left side holds is written as a const, not folded away", () => {
+    // TypeScript's checker: `let hasStringConstituent = false; .. if (hasStringConstituent && x)`.
+    // Written inline, `false && x` is one its literal decides, which the lifter reads as `false`.
+    for (const source of [
+      "function g() { let h = false; if (h && x) {} }",
+      "function g() { let h = true; return h || x(); }",
+      "function g() { let h = 0; return h ?? x; }",
+    ])
+      roundTrips(source);
+  });
+
   it("a loop condition that makes a closure is written at the top of the body", () => {
     const source =
       "export function f(b: number[]) { let i = 0; while (b.some((x) => x > i)) { i++; } return i; }";
