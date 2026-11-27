@@ -1266,6 +1266,7 @@ int yk_truthy(yk v) {
   if (is_string(v)) return str_len(v) > 0;
   if (is_reference(v)) return 1;
   if (is_bigint(v)) return ((yk_bigint *)PTR(v))->len != 0;
+  if (is_symbol(v)) return 1; /* a symbol is truthy */
   return v == YK_TRUE;
 }
 
