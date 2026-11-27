@@ -3484,10 +3484,12 @@ function raiseBody(
         // C++: an argument bound to a reference parameter is its object's address; a default
         // argument, the callee's.
         if (fixed === undefined) callArgs = withDefaults(kids.slice(1), d.id).map(argOf);
-        // (C++: a record returned is made in the caller's slot; the C library's, returned as C
-        // does, is copied there.)
+        // (C++: a record returned is made in the caller's slot, a C++ function of another unit's
+        // or V8's API's as one of this unit's; the C library's, returned as C does, is copied
+        // there.)
         if (fixed === undefined && ret.applies) {
-          if (key !== undefined) return `${target}(${[...ret.slot(), ...callArgs].join(", ")})`;
+          if (key !== undefined || there !== undefined)
+            return `${target}(${[...ret.slot(), ...callArgs].join(", ")})`;
           const into = ret.slot()[0] as string;
           const r = temp({ k: "f64" });
           return `((${r} = ${target}(${callArgs.join(", ")})), ${copyBytes(into, r, sizeOf(typeOf(e))).join(", ")}, __ykFree(${r}), ${into})`;

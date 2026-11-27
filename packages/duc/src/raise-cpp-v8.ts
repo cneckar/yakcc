@@ -131,6 +131,7 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
     return i;
   };
 
+  const stores = new Map<number, ArrayBuffer>();
   // An ArrayBuffer's bytes, mapped once.
   const mapped = new WeakMap<ArrayBufferLike, number>();
   const dataOf = (ab: ArrayBufferLike): number => {
@@ -245,10 +246,22 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
         (value(self as number) as HostContext).embedder[i as number] = p as number;
       };
     if (
-      d === "v8::HandleScope::HandleScope(v8::Isolate*)" ||
-      d === "v8::HandleScope::~HandleScope()"
+      [
+        "v8::HandleScope::HandleScope(v8::Isolate*)",
+        "v8::HandleScope::~HandleScope()",
+        "v8::EscapableHandleScope::EscapableHandleScope(v8::Isolate*)",
+        "v8::EscapableHandleScope::~EscapableHandleScope()",
+        "v8::EscapableHandleScopeBase::~EscapableHandleScopeBase()",
+      ].includes(d)
     )
       return () => undefined;
+    if (/^v8::Local<.*> v8::EscapableHandleScope::Escape<.*>\(v8::Local<.*>\)$/.test(d))
+      return (ret, _self, v) => st64(ret as number, ld64(v as number));
+    if (
+      /^v8::MaybeLocal<.*> v8::EscapableHandleScope::EscapeMaybe<.*>\(v8::MaybeLocal<.*>\)$/.test(d)
+    )
+      return (ret, _self, v) => st64(ret as number, ld64(v as number));
+    if (d === "v8::Isolate::AdjustAmountOfExternalAllocatedMemory(long)") return () => 0n;
     // Values.
     if (d === "v8::Integer::New(v8::Isolate*, int)")
       return (ret, _i, n) => put(ret as number, n as number);
@@ -361,6 +374,36 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
         const src = new Uint8Array(v.buffer, v.byteOffset, m);
         src.forEach((x, j) => st8((dest as number) + j, x));
         return BigInt(m);
+      };
+    // Backing stores (Node's Buffer::New): a store is an address naming a fresh ArrayBuffer, its
+    // Data() the buffer's bytes; a std::unique_ptr or std::shared_ptr of one holds it first.
+    if (d === "v8::ArrayBuffer::NewBackingStore(v8::Isolate*, unsigned long)")
+      return (ret, _i, n) => {
+        const bs = alloc(16);
+        stores.set(bs, new ArrayBuffer(Number(n as bigint)));
+        st64(ret as number, bs);
+      };
+    if (d === "v8::BackingStore::Data() const")
+      return (self) => dataOf(stores.get(self as number) as ArrayBuffer);
+    if (d === "v8::BackingStore::ByteLength() const")
+      return (self) => BigInt((stores.get(self as number) as ArrayBuffer).byteLength);
+    if (d === "v8::BackingStore::~BackingStore()") return () => undefined;
+    if (d === "v8::ArrayBuffer::New(v8::Isolate*, std::shared_ptr<v8::BackingStore>)")
+      return (ret, _i, sp) => put(ret as number, stores.get(ld64(sp as number)));
+    if (d === "v8::Uint8Array::New(v8::Local<v8::ArrayBuffer>, unsigned long, unsigned long)")
+      return (ret, ab, off, n) =>
+        put(
+          ret as number,
+          new Uint8Array(
+            at(ab as number) as ArrayBuffer,
+            Number(off as bigint),
+            Number(n as bigint),
+          ),
+        );
+    if (d === "v8::Object::SetPrototype(v8::Local<v8::Context>, v8::Local<v8::Value>)")
+      return (ret, self, _c, proto) => {
+        Object.setPrototypeOf(value(self as number) as object, at(proto as number) as object);
+        just(ret as number);
       };
     // Functions: a template's function calls its callback with a FunctionCallbackInfo.
     if (d.startsWith("v8::FunctionTemplate::New(v8::Isolate*, void (*)(v8::FunctionCallbackInfo"))
