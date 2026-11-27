@@ -2337,6 +2337,35 @@ function raiseBody(
         break;
       case "SubstNonTypeTemplateParmExpr":
         return place(kids[kids.length - 1] as ClangNode);
+      // A user-defined literal (`"abcd"sv`): a call of its operator (`operator""sv("abcd", 4)`).
+      case "UserDefinedLiteral":
+        return place({ ...e, kind: "CallExpr" });
+      // A std::initializer_list made of braces (`{a, 2, 3}`): its array in a frame slot, and the
+      // list, libstdc++'s, that array's address and its length.
+      case "CXXStdInitializerListExpr": {
+        const t = typeOf(e);
+        const array = stripParens(k0);
+        const at = typeOf(array);
+        if (at.k !== "arr" || at.size === undefined)
+          throw new RaiseCError("an initializer list not of an array");
+        const items = array.kind === "MaterializeTemporaryExpr" ? (array.inner ?? [])[0] : array;
+        const arr = `__tmp${temps++}`;
+        top.push(
+          `const ${arr} = __ykAlloc(${Math.max(8, sizeOf(at))}, ${Math.max(8, alignOf(at))});`,
+        );
+        frame.push(arr);
+        const list = `__tmp${temps++}`;
+        top.push(`const ${list} = __ykAlloc(16, 8);`);
+        frame.push(list);
+        const steps = initialize(arr, at, items as ClangNode).map(
+          (x) => `(${x.replace(/;$/, "")})`,
+        );
+        return {
+          k: "mem",
+          addr: `(${[...steps, `__ykStore64(${list}, __ykNumToBig(${arr}))`, `__ykStore64((${list} + 8), ${at.size}n)`, list].join(", ")})`,
+          t,
+        };
+      }
       // A call that returns a reference (an lvalue): the object at the address it returns.
       case "CallExpr":
       case "CXXMemberCallExpr":
@@ -2706,6 +2735,10 @@ function raiseBody(
         const v = temp(t);
         return `((${v} = ${code}), ${steps.join(", ")}, ${v})`;
       }
+      case "UserDefinedLiteral":
+        return expr({ ...e, kind: "CallExpr" });
+      case "CXXStdInitializerListExpr":
+        return (place(e) as Place & { k: "mem" }).addr;
       case "ParenExpr":
       case "ConstantExpr":
       case "MaterializeTemporaryExpr":
