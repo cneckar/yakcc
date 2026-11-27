@@ -568,10 +568,10 @@ int main(void) { static char line[1 << 16], in[1 << 14], base[1 << 14], out[1 <<
       ],
       ["readAt", "export function f(p: number): number { return __ykLoad32(p); }"],
       [
-        // Accesses at constant offsets inside the function's own frame, before and after it is
-        // freed and its bytes reused, and one past its end (#1369).
+        // Accesses at constant offsets inside the function's own frame, and another block's after
+        // it is freed (#1369).
         "frameUse",
-        "export function f(n: number, past: boolean): unknown { const a = __ykAlloc(24, 8); __ykStoreF64(a + 8, n); __ykStore32(a + (2 * 8), n); const x = __ykLoadF64(a + (1 * 8)); const y = __ykLoad32(a + 16); if (past) return [x, y, __ykLoad8(a + 32)]; __ykFree(a); const b = __ykAlloc(24, 8); __ykStoreF64(b + 8, 1.5); return [x, y, b > a, __ykLoadF64(a + 8)]; }",
+        "export function f(n: number, past: boolean): unknown { const a = __ykAlloc(24, 8); __ykStoreF64(a + 8, n); __ykStore32(a + (2 * 8), n); const x = __ykLoadF64(a + (1 * 8)); const y = __ykLoad32(a + 16); if (past) return [x, y]; __ykFree(a); const b = __ykAlloc(24, 8); __ykStoreF64(b + 8, 1.5); const z = __ykLoadF64(b + 8); __ykFree(b); return [x, y, z]; }",
       ],
       [
         // A pointer parameter read and written at constant offsets: its span looked up on entry.
@@ -585,12 +585,6 @@ int main(void) { static char line[1 << 16], in[1 << 14], base[1 << 14], out[1 <<
       [
         "tFrame",
         "export function f(n: number, past: boolean): unknown { try { return frameUse(n, past); } catch (e) { return (e as Error).message; } }",
-      ],
-      [
-        // One access site, its cache holding a region that is freed and whose bytes are reused:
-        // the stale address still traps (#1369).
-        "tStale",
-        "export function f(n: number): unknown { const a = __ykAlloc(16, 8); __ykStore32(a, n); const d = __ykAlloc(16, 8); __ykStore32(d, n + 1); const x = readAt(a); const e = __ykAlloc(16, 8); const y = readAt(d) + readAt(a); __ykFree(a); const c = __ykAlloc(16, 8); __ykStore32(c, 7); try { return [x, y, e - d, readAt(a)]; } catch (err) { return [x, y, readAt(c), (err as Error).message]; } }",
       ],
       [
         // Blocks whose address never escapes (a C front end's spilled locals): a bit cast through
@@ -619,21 +613,6 @@ int main(void) { static char line[1 << 16], in[1 << 14], base[1 << 14], out[1 <<
       [
         "tRaw",
         "export function f(x: number, n: number): unknown { const y = __ykAlloc(16, 8); const a = rawPass(y, x); const r = [a, __ykLoadF64(y), __ykLoadF64(y + 8)]; let t = false; const z = __ykAlloc(12, 4); try { if (n > 0) rawOver(z); } catch (e) { t = true; } __ykFree(z); __ykFree(y); return [r, t]; }",
-      ],
-      [
-        // Accesses at a computed offset (each site's cache, not a span): a 4- and a 2-byte read and
-        // a 4-byte write at every offset to past the end of a 10-byte block, so the last that fits
-        // and the first that does not (#1369).
-        "readAtK",
-        "export function f(p: number, k: number, w: number): unknown { if (w === 4) return __ykLoad32(p + k); if (w === 2) return __ykLoad16(p + k); __ykStore32(p + k, 7); return __ykLoad8(p + k); }",
-      ],
-      [
-        "tEdge",
-        "export function f(n: number): unknown { const a = __ykAlloc(10, 2); for (let i = 0; i < 10; i++) __ykStore8(a + i, i + n); const out: unknown[] = []; for (const w of [4, 2, 1]) for (let k = 0; k < 12; k++) { try { out.push(readAtK(a, k, w)); } catch (e) { out.push((e as Error).name); } } __ykFree(a); return out; }",
-      ],
-      [
-        "tTrap",
-        "export function f(n: number): unknown { const a = __ykAlloc(8, 8); __ykFree(a); try { return __ykLoad8(a + n); } catch (e) { return [(e as Error).name, (e as Error).message]; } }",
       ],
     ];
     const run = nativeUnitWith("musl", atoms, DRIVERS);
@@ -687,19 +666,16 @@ int main(void) { static char line[1 << 16], in[1 << 14], base[1 << 14], out[1 <<
         ],
       ]);
     }
+    // Memory is the machine's natively (#1516): an access outside a live block (past its end, after
+    // its free, a store into constant data) is undefined, as in C, where the JavaScript definition
+    // traps; only the defined accesses are compared, and an address that is not a number traps in
+    // both.
     calls.push(
-      ["tTrap", [0]],
-      ["tTrap", [99]],
-      ["tEdge", [3]],
-      ["tEdge", [250]],
-      ["tStale", [5]],
-      ["tStale", [-3]],
-      ...[0, 1, 2, 3, 4].flatMap((kind) =>
-        [0, 1, 2].map((mode) => ["tSpan", [kind, mode]] as [string, unknown[]]),
-      ),
+      ["tSpan", [0, 0]],
+      ["tSpan", [0, 2]],
+      ...[0, 1, 2].map((mode) => ["tSpan", [2, mode]] as [string, unknown[]]),
       ["tFrame", [7, false]],
       ["tFrame", [-2.5, false]],
-      ["tFrame", [3, true]],
       ["tRaw", [1.25, 12]],
       ["tRaw", [-3, 0]],
       ["tRaw", [Number.NaN, 12]],

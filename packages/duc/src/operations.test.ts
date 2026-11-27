@@ -150,16 +150,30 @@ describe("links: an operation reference is linked to its atom's root", () => {
       byRoot.set(r, [...(byRoot.get(r) ?? []), name]);
     }
     const shared = [...byRoot.values()].filter((names) => names.length > 1);
-    // numeric_limits<double>::quiet_NaN() and signaling_NaN() both raise to `return NaN`.
-    expect(shared).toEqual([["quiet_NaN", "signaling_NaN"]]);
+    // numeric_limits<double>::quiet_NaN() and signaling_NaN() both raise to `return NaN`; libm.h's
+    // FORCE_EVAL helpers, static in each of musl's floor.c, ceil.c and trunc.c, are one function.
+    expect(shared).toEqual([
+      [
+        "fp_force_eval__ceil",
+        "fp_force_eval__floor",
+        "fp_force_eval__trunc",
+        "fp_force_evalf__ceil",
+        "fp_force_evalf__floor",
+        "fp_force_evalf__trunc",
+        "fp_force_evall__ceil",
+        "fp_force_evall__floor",
+        "fp_force_evall__trunc",
+      ],
+      ["quiet_NaN", "signaling_NaN"],
+    ]);
     for (const names of shared)
       expect(new Set(names.map((n) => graphIdentity(atomGraph(n)))).size).toBe(1);
   }, 60_000);
 });
 
 describe("the atom library: every atom lifts whole and is closed over leaves and atoms", () => {
-  it("36 atoms: V8's 21 functions, their kernels and header code, and musl's scalbn", () => {
-    expect(atomNames()).toHaveLength(36);
+  it("49 atoms: V8's 21 functions, their kernels and header code, and musl's scalbn, floor, ceil, trunc and fabs", () => {
+    expect(atomNames()).toHaveLength(49);
     for (const ref of OPERATION_REFERENCES.values()) expect(atomNames()).toContain(ref.atom);
   });
 
