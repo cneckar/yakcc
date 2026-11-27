@@ -36,8 +36,9 @@ Source: `examples/v2-self-shave-poc/corpus.manifest.json` (`_meta.generatedFrom`
 
 The full registry (`bootstrap/yakcc.registry.sqlite`: every atom's block, and its DUC graph at the locked
 format) is about 144 MB, over GitHub's per-file limit. It is kept as the release asset
-`bootstrap-registry`, which CI replaces on each push to main (DEC-BOOTSTRAP-REGISTRY-RELEASE-001,
-`.github/workflows/bootstrap-accumulate.yml`):
+`bootstrap-registry`, which is replaced only on request: a manual run of the `bootstrap-accumulate`
+workflow (Actions → bootstrap-accumulate → Run workflow), never a merge
+(DEC-BOOTSTRAP-REGISTRY-RELEASE-001, `.github/workflows/bootstrap-accumulate.yml`):
 
 ```
 gh release download bootstrap-registry -p 'yakcc.registry.sqlite.xz' -D bootstrap --clobber
