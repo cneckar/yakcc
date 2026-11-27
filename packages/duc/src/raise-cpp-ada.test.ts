@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
+import { ADA_CASES as CASES } from "./__fixtures__/ada-cases.js";
 import { type Fn, link } from "./__fixtures__/c-link.js";
 import { shaveMusl, withMuslInit } from "./__fixtures__/c-musl.js";
 import { createCMemory, createCSystem, shaveCUnit } from "./raise-c.js";
@@ -25,65 +26,6 @@ const hasClang = (() => {
 const ADA = fileURLToPath(new URL("../vendor/ada/", import.meta.url));
 const FIXTURE = fileURLToPath(new URL("./__fixtures__/c/ada-run.cpp", import.meta.url));
 const ARGS = ["-std=c++17", "-DNDEBUG", "-D_GLIBCXX_ASSERTIONS", `-I${ADA}`];
-
-/** Each case: a URL, and the base it is parsed against (none: undefined). */
-const CASES: readonly [string, string?][] = [
-  ["https://example.com"],
-  ["https://user:pass@sub.example.com:8080/p/a/t/h?query=string#hash"],
-  ["HTTP://EXAMPLE.COM/A/../B/./C"],
-  ["http://example.com:80/"],
-  ["https://example.com:443/x"],
-  ["ftp://ftp.example.org:21/file.txt"],
-  ["ws://localhost:3000/socket"],
-  ["file:///C:/Windows/System32"],
-  ["file://server/share/file"],
-  ["mailto:someone@example.com"],
-  ["javascript:alert(1)"],
-  ["data:text/plain;base64,SGVsbG8="],
-  ["http://[::1]:8080/"],
-  ["http://[2001:db8::ff00:42:8329]/"],
-  ["http://[::ffff:192.0.2.128]/"],
-  ["http://192.168.0.1/"],
-  ["http://0x7f.1/"],
-  ["http://127.0.0.1.:80/"],
-  ["http://4294967295/"],
-  ["http://4294967296/"],
-  ["http://example.com/%7Efoo/%7ebar"],
-  ["http://example.com/a b?c d#e f"],
-  ["http://example.com/\u00e9t\u00e9?\u00e7a=\u00e0#\u00fc"],
-  ["https://m\u00fcnchen.de/"],
-  ["https://\u0444\u0443\u043d\u043a\u0446\u0438\u044f.\u0440\u0444/"],
-  ["https://xn--mnchen-3ya.de/"],
-  ["https://EXAMPLE.\u3002com/"],
-  ["https://faß.de/"],
-  ["http://a.b.c.d.e/"],
-  ["http://ex ample.com/"],
-  ["http://exa%mple.com/"],
-  ["http://[::1/"],
-  ["http://:80/"],
-  ["https://"],
-  ["not a url"],
-  [""],
-  ["  https://trimmed.example.com/  "],
-  ["https://example.com/\t\nwith/tabs"],
-  ["https://example.com?a=1&b=2&a=3"],
-  ["https://example.com/#"],
-  ["https://example.com/?"],
-  ["blob:https://example.com/uuid"],
-  ["../up/one", "https://example.com/a/b/c"],
-  ["./same", "https://example.com/a/b/c"],
-  ["/absolute/path", "https://example.com/a/b/c"],
-  ["?only=query", "https://example.com/a/b?old=1#h"],
-  ["#only-hash", "https://example.com/a/b?q"],
-  ["//other.host/x", "https://example.com/a"],
-  ["https://full.example/", "https://example.com/a"],
-  ["", "https://example.com/a?b#c"],
-  ["..", "file:///a/b/c"],
-  ["x", "mailto:a@b"],
-  ["x", "not a base"],
-  ["http:relative", "http://example.com/dir/"],
-  ["\\\\backslash\\path", "http://example.com/"],
-];
 
 const work = mkdtempSync(join(tmpdir(), "yakcc-raise-cpp-ada-"));
 afterAll(() => rmSync(work, { recursive: true, force: true }));

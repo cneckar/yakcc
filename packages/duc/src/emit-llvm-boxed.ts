@@ -232,6 +232,8 @@ const LEAVES: Readonly<Record<string, [string, number]>> = nameTable({
   __ykF32: ["yk_leaf_f32", 1],
   __ykFnAddr: ["yk_leaf_fn_addr", 1],
   __ykFnAt: ["yk_leaf_fn_at", 1],
+  // A static's block (raised C's globals): its getter's call, the module's (native-statics.ts).
+  __ykStatic: ["yk_leaf_static", 1],
 });
 /**
  * The memory leaves with an inline fast path (#1369): an access to the region the runtime's cache
@@ -637,6 +639,8 @@ interface ModuleScope {
   readonly rawArgs?: (name: string) => ReadonlySet<number> | undefined;
   /** For a direct callee: how many parameters it has. */
   readonly arity?: (name: string) => number | undefined;
+  /** The binding of the getter of a static, by its key (native-statics.ts). */
+  readonly staticGetter?: (key: string) => string | undefined;
   /** For a direct callee with a `.rec` variant: its record result's keys (#1369). */
   readonly record?: (name: string) => readonly string[] | undefined;
   /** For a direct callee: its result's integer range, and its record result's keys' (#1369). */
@@ -655,8 +659,13 @@ interface ModuleScope {
  * those (the callee's free name, the argument's position), which the module's fixpoint resolves.
  * Such a block needs no region, and the callee no span lookup.
  */
-function rawArgUses(source: DucGraph): Map<number, { deps: [string, number][] }> {
-  const out = new Map<number, { deps: [string, number][] }>();
+/**
+ * A raw argument passed on: the callee, the position, and each argument position's parameter of
+ * this function at that call (-1: not one), so a callee's other raw positions there are checked too.
+ */
+type RawDep = [string, number, readonly number[]];
+function rawArgUses(source: DucGraph): Map<number, { deps: RawDep[] }> {
+  const out = new Map<number, { deps: RawDep[] }>();
   if (source.mode !== undefined) return out;
   const { graph: g } = loweringView(ecmaScriptView(source));
   const alias = new Map<ValueId, ValueId>();
@@ -715,7 +724,7 @@ function rawArgUses(source: DucGraph): Map<number, { deps: [string, number][] }>
     (u.order === 1 && i === u.inputs.length - 1) ||
     (u.kind === "sel" && u.label === "heap") ||
     (u.label ?? "").endsWith(":heap");
-  const usesOk = (v: ValueId, off: number, depth: number, deps: [string, number][]): boolean => {
+  const usesOk = (v: ValueId, off: number, depth: number, deps: RawDep[]): boolean => {
     if (held.has(v)) return false;
     return (usersOf.get(v) ?? []).every((u) =>
       u.inputs.every((x, i) => {
@@ -743,7 +752,14 @@ function rawArgUses(source: DucGraph): Map<number, { deps: [string, number][] }>
           leaf === undefined &&
           diamond(u.inputs[0] as ValueId)?.diamond?.reason === "free-identifier"
         ) {
-          deps.push([diamond(u.inputs[0] as ValueId)?.diamond?.symbol as string, i - 1]);
+          const end = u.order === 1 ? u.inputs.length - 1 : u.inputs.length;
+          const site = u.inputs.slice(1, end).map((x) => {
+            const q = producer.get(resolve(x as ValueId));
+            return q?.kind === "param-source" && !(q.label ?? "").endsWith("...")
+              ? paramIndex(q.label)
+              : -1;
+          });
+          deps.push([diamond(u.inputs[0] as ValueId)?.diamond?.symbol as string, i - 1, site]);
           used++;
           return true;
         }
@@ -754,7 +770,7 @@ function rawArgUses(source: DucGraph): Map<number, { deps: [string, number][] }>
   let used = 0;
   for (const p of g.nodes) {
     if (p.kind !== "param-source" || (p.label ?? "").endsWith("...")) continue;
-    const deps: [string, number][] = [];
+    const deps: RawDep[] = [];
     used = 0;
     if (usesOk(p.outputs[0] as ValueId, 0, 0, deps) && used > 0)
       out.set(paramIndex(p.label), { deps });
@@ -3771,6 +3787,7 @@ function lowerFunction(
               ...(scope.arity !== undefined ? { arity: scope.arity } : {}),
               ...(scope.ranges !== undefined ? { ranges: scope.ranges } : {}),
               ...(scope.record !== undefined ? { record: scope.record } : {}),
+              ...(scope.staticGetter !== undefined ? { staticGetter: scope.staticGetter } : {}),
             }
           : {
               // The module's require (a global of the module's own) for an import() in it.
@@ -4740,6 +4757,20 @@ function lowerFunction(
     if (lbl === "CallExpression" && leafValue.has(resolve(ins[0] as ValueId))) {
       // A leaf: the runtime's function for it, called directly.
       const leafName = leafValue.get(resolve(ins[0] as ValueId)) as string;
+      if (leafName === "__ykStatic") {
+        // __ykStatic("key"): its getter's result (the static's block, made at its first use).
+        const kp = producer.get(resolve(ins[1] as ValueId));
+        const text = kp?.kind === "literal-source" ? (kp.label ?? "") : "";
+        const key = text.startsWith('"') ? (JSON.parse(text) as string) : undefined;
+        const getter = key === undefined ? undefined : scope?.staticGetter?.(key);
+        const fnv = getter === undefined ? undefined : scope?.read(getter, emit, fresh);
+        if (fnv === undefined)
+          throw new LlvmEmitError(
+            `the static ${key ?? "(not a literal key)"} has no definition here (${scope?.staticGetter === undefined ? "no statics in scope" : getter === undefined ? "no getter" : `${getter} unread`})`,
+          );
+        set(out, call("yk_call", `i64 ${fnv}, i64 ${UNDEFINED}, i64 0, ptr null`));
+        return;
+      }
       const [fn, arity] = LEAVES[leafName] as [string, number];
       if (ins.length - 1 !== arity)
         throw new LlvmEmitError(`the leaf ${fn} takes ${arity} arguments`);
@@ -5104,6 +5135,38 @@ function lowerFunction(
             call(
               "yk_math_minmax",
               `i32 ${callee.name === "max" ? 1 : 0}, i64 ${args.length}, ptr ${list(args)}`,
+            ),
+          );
+          return;
+        }
+        if (callee.name === "clz32") {
+          // The leading zeros of ToUint32(x): on a number, its ToInt32's bits; else ToUint32's.
+          m.intrinsics.add("declare i32 @llvm.ctlz.i32(i32, i1)");
+          const x = args[0] ?? UNDEFINED;
+          const count = (i: string): string => {
+            const c = fresh();
+            emit(`${c} = call i32 @llvm.ctlz.i32(i32 ${i}, i1 false)`);
+            const d = fresh();
+            emit(`${d} = sitofp i32 ${c} to double`);
+            const b = fresh();
+            emit(`${b} = bitcast double ${d} to i64`);
+            return b;
+          };
+          set(
+            out,
+            numberFast(
+              [x],
+              ([d]) => count(toInt32(d as string)),
+              () => {
+                const u = call("yk_ushr", `i64 ${x}, i64 ${boxedNumber(0)}`);
+                const d = fresh();
+                emit(`${d} = bitcast i64 ${u} to double`);
+                const w = fresh();
+                emit(`${w} = fptoui double ${d} to i32`);
+                return count(w);
+              },
+              ([d]) => smallDouble(d as string),
+              allNumbers([ins[1] as ValueId]),
             ),
           );
           return;
@@ -6966,6 +7029,8 @@ export interface NativeModule {
   readonly requires?: Readonly<Record<string, string>>;
   /** An ECMAScript module's linking (#1333): its imports, exports and dependencies. */
   readonly esm?: NativeEsm;
+  /** Each static's getter binding, by its key (native-statics.ts's withStatics). */
+  readonly statics?: Readonly<Record<string, string>>;
 }
 
 /** Where a name an ECMAScript module imports or re-exports comes from: a module, and its export. */
@@ -7197,7 +7262,7 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
   };
   // Raw block arguments (#1369): each direct function's, the greatest fixpoint of rawArgUses (an
   // argument passed on must be one its callee takes raw).
-  const rawUses = new Map<string, { i: number; uses: Map<number, { deps: [string, number][] }> }>();
+  const rawUses = new Map<string, { i: number; uses: Map<number, { deps: RawDep[] }> }>();
   modules.forEach((mod, i) =>
     mod.statements.forEach((st, k) => {
       const fn = `m${i}_s${k}`;
@@ -7270,9 +7335,15 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     for (const [fn, r] of rawUses) {
       const set = rawSets.get(fn) as Set<number>;
       for (const j of [...set]) {
-        const ok = (r.uses.get(j)?.deps ?? []).every(([callee, pos]) => {
+        const ok = (r.uses.get(j)?.deps ?? []).every(([callee, pos, site]) => {
           const t = directOf(r.i, callee);
-          return t !== undefined && rawSets.get(t)?.has(pos) === true;
+          const ts = t === undefined ? undefined : rawSets.get(t);
+          // Each position the callee takes raw is, at this call, a parameter of this function's
+          // taken raw too (the `.raw` variant takes all its raw arguments as blocks).
+          return (
+            ts?.has(pos) === true &&
+            [...ts].every((q) => (site[q] ?? -1) >= 0 && set.has(site[q] as number))
+          );
         });
         if (!ok) {
           set.delete(j);
@@ -7290,6 +7361,8 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     globals.push(`${g(i, "state")} = internal global i32 0`);
     if (asyncModules.has(i)) globals.push(`${g(i, "promise")} = internal global i64 0`);
     const scope = (outs?: readonly string[]): ModuleScope => ({
+      staticGetter: (key) =>
+        mod.statics !== undefined && Object.hasOwn(mod.statics, key) ? mod.statics[key] : undefined,
       read: (name, emit, fresh) => {
         const slot =
           name === "module" || name === "exports" || name === "require"

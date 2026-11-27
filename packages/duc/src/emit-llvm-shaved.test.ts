@@ -18,13 +18,21 @@ import * as zlib from "node:zlib";
 import fc from "fast-check";
 import { ts } from "ts-morph";
 import { afterAll, describe, expect, it } from "vitest";
+import { ADA_CASES } from "./__fixtures__/ada-cases.js";
 import { shaveCFiles } from "./__fixtures__/c-files.js";
 import { shaveMusl, withMuslInit } from "./__fixtures__/c-musl.js";
 import { canRun, decode, encode, same } from "./__fixtures__/native-harness.js";
 import { emitNativeModules } from "./emit-llvm-boxed.js";
 import { liftAtom } from "./lift.js";
+import { withStatics } from "./native-statics.js";
 import { compileObject, compileRuntime } from "./native.js";
-import { C_LEAVES_JS, type ShavedUnit, createCMemory, shaveCUnit } from "./raise-c.js";
+import {
+  C_LEAVES_JS,
+  type ShavedUnit,
+  type StaticDef,
+  createCMemory,
+  shaveCUnit,
+} from "./raise-c.js";
 
 const here = (p: string): string => fileURLToPath(new URL(p, import.meta.url));
 const V8 = here("../vendor/v8/");
@@ -77,6 +85,7 @@ function nativeUnitWith(
   name: string,
   atoms: ReadonlyMap<string, { readonly source: string }>,
   extra: readonly [string, string][],
+  statics: ReadonlyMap<string, StaticDef> = new Map(),
 ): (calls: readonly [string, unknown[]][]) => unknown[] {
   const names = [...atoms.keys(), ...extra.map(([n]) => n)];
   const sources = new Map([...[...atoms].map(([n, a]) => [n, a.source] as const), ...extra]);
@@ -92,7 +101,9 @@ function nativeUnitWith(
       graph: liftAtom(`module.exports = { ${names.join(", ")} };`),
     },
   ];
-  const { ir, symbols } = emitNativeModules([{ id: `${name}.js`, statements }]);
+  const { ir, symbols } = emitNativeModules(
+    withStatics([{ id: `${name}.js`, statements }], statics),
+  );
   const dir = join(work, name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "m.ll"), ir);
@@ -234,6 +245,136 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
     });
     expect(bad).toEqual([]);
   }, 900_000);
+
+  it("C's statics natively: globals, a static local, function pointers, strings, a static's address in another", () => {
+    const unit = shaveCUnit(
+      here("./__fixtures__/c/statics.c"),
+      ["statics_sum"],
+      ["-std=c11"],
+      "clang",
+    );
+    expect([...unit.refused]).toEqual([]);
+    const run = nativeUnitWith(
+      "statics",
+      unit.atoms,
+      [
+        [
+          "tS",
+          "export function f(i: number, k: number): number { return Number(statics_sum(i, k)); }",
+        ],
+      ],
+      unit.statics,
+    );
+    const calls: [string, unknown[]][] = Array.from({ length: 12 }, (_, j) => [
+      "tS",
+      [j * 7 + 1, j % 3],
+    ]);
+    const got = run(calls);
+    // The same calls, in order, of the C compiled natively.
+    const dir = join(work, "statics-c");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "main.c"),
+      `#include <stdio.h>\nlong long statics_sum(int i, int k);\nint main(void) { for (int j = 0; j < 12; j++) printf("%lld\\n", statics_sum(j * 7 + 1, j % 3)); return 0; }\n`,
+    );
+    execFileSync("clang", [
+      "-std=c11",
+      "-O0",
+      join(dir, "main.c"),
+      here("./__fixtures__/c/statics.c"),
+      "-o",
+      join(dir, "run"),
+    ]);
+    const want = execFileSync(join(dir, "run"), { encoding: "utf8" })
+      .trim()
+      .split("\n")
+      .map(Number);
+    expect(got).toEqual(want);
+  }, 600_000);
+
+  // About 20 minutes (833 atoms, ~300 MB of IR): run with YAKCC_NATIVE_SLOW=1.
+  it.skipIf(process.env.YAKCC_NATIVE_SLOW !== "1")(
+    "ada (Node's URL parser), shaved from C++ over musl, natively equals the C++ compiled by clang",
+    () => {
+      const ADA = here("../vendor/ada/");
+      const FIXTURE = here("./__fixtures__/c/ada-run.cpp");
+      const ARGS = ["-std=c++17", "-DNDEBUG", "-D_GLIBCXX_ASSERTIONS", `-I${ADA}`];
+      const unit = shaveCUnit(FIXTURE, ["yk_url"], ARGS, "clang++", "ada-run.cpp");
+      const externals = [...new Set([...unit.atoms.values()].flatMap((a) => a.externals))].filter(
+        (x) => !unit.atoms.has(x),
+      );
+      const musl = withMuslInit(shaveMusl(externals));
+      const statics = new Map([...musl.units, unit].flatMap((u) => [...u.statics]));
+      // The drivers' names are no C or C++ function's (ada's has a `put`).
+      const run = nativeUnitWith(
+        "ada",
+        new Map([...musl.atoms, ...unit.atoms]),
+        [
+          [
+            "yk$put",
+            "export function f(bytes: number[]): number { const a = __ykAlloc(bytes.length + 1, 16); for (let i = 0; i < bytes.length; i++) __ykStore8(a + i, bytes[i] as number); __ykStore8(a + bytes.length, 0); return a; }",
+          ],
+          [
+            "yk$url",
+            "export function f(u: number[], b: number[], hasBase: boolean): unknown { const pu = yk$put(u); const pb = yk$put(b); const cap = 65536; const out = __ykAlloc(cap, 16); const r = yk_url(pu, u.length, pb, hasBase ? b.length : -1, out, cap) as number; const o: number[] = []; for (let i = 0; i < r; i++) o.push(__ykLoad8(out + i)); return [r, o]; }",
+          ],
+          ["yk$init", "export function f(): number { yk_musl_init(); return 0; }"],
+        ],
+        statics,
+      );
+      const got = run([
+        ["yk$init", []],
+        ...ADA_CASES.map(([u, b]): [string, unknown[]] => [
+          "yk$url",
+          [
+            [...Buffer.from(u, "utf8")],
+            b === undefined ? [] : [...Buffer.from(b, "utf8")],
+            b !== undefined,
+          ],
+        ]),
+      ]).slice(1);
+      const dir = join(work, "ada-c");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "driver.c"),
+        `#include <stdio.h>
+#include <string.h>
+int yk_url(const char *in, int n, const char *base, int bn, char *out, int cap);
+static int unhex(const char *h, char *out) { int n = 0; unsigned v; for (; h[0] && h[0] != ' ' && h[0] != '\\n'; h += 2) { sscanf(h, "%2x", &v); out[n++] = (char)v; } return n; }
+int main(void) { static char line[1 << 16], in[1 << 14], base[1 << 14], out[1 << 16];
+  while (fgets(line, sizeof line, stdin)) { char *sp = strchr(line, ' '); int n = unhex(line + 1, in); int bn = line[0] == 'b' ? unhex(sp + 1, base) : -1;
+    int r = yk_url(in, n, base, bn, out, sizeof out); printf("%d:", r); for (int i = 0; i < r; i++) printf("%02x", (unsigned char)out[i]); putchar('\\n'); } return 0; }
+`,
+      );
+      execFileSync("clang++", [...ARGS, "-O2", "-c", FIXTURE, "-o", join(dir, "ada-run.o")], {
+        maxBuffer: 1 << 26,
+      });
+      execFileSync("clang++", [
+        "-x",
+        "c",
+        join(dir, "driver.c"),
+        "-x",
+        "none",
+        join(dir, "ada-run.o"),
+        "-o",
+        join(dir, "ref"),
+      ]);
+      const hexOf = (x: string): string => Buffer.from(x, "utf8").toString("hex");
+      const want = execFileSync(join(dir, "ref"), {
+        input: `${ADA_CASES.map(([u, b]) => (b === undefined ? `u${hexOf(u)} -` : `b${hexOf(u)} ${hexOf(b)}`)).join("\n")}\n`,
+        encoding: "utf8",
+      }).split("\n");
+      const bad = got.flatMap((g, i) => {
+        const [r, o] = g as [number, number[]];
+        const text = `${r}:${Buffer.from(o).toString("hex")}`;
+        return text === want[i]
+          ? []
+          : [`${JSON.stringify(ADA_CASES[i])}\n  native ${text}\n  clang  ${want[i]}`];
+      });
+      expect(bad).toEqual([]);
+    },
+    7_200_000,
+  );
 
   it("V8's Math, shaved from ieee754.cc, natively equals Node's Math bit for bit", () => {
     const v8: ShavedUnit = shaveCUnit(
