@@ -11,6 +11,8 @@ import { brotliCompressSync } from "node:zlib";
 import { type SpecYak, specHash } from "@yakcc/contracts";
 import {
   type DucGraph,
+  ECMASCRIPT,
+  NODE,
   byMeaning,
   contractSignature,
   graphIdentity,
@@ -63,7 +65,7 @@ function implementation(
     lifterVersion: packed.lifterVersion,
     links: packed.links,
     evidence,
-    baseSet: { target: "ecmascript", version: 1 },
+    baseSet: { target: ECMASCRIPT.target, version: ECMASCRIPT.version },
     ...over,
   };
 }
@@ -240,7 +242,7 @@ describe("the receiver's checks, in order (#1287)", () => {
   it("6 capabilities: a capability or nondeterminism the contract does not declare", async () => {
     const env = liftAtom("export function f(k: string) { return process.env[k]; }");
     const pure = contract("f", ["string"], "unknown");
-    const node = { baseSet: { target: "node", version: 2 } };
+    const node = { baseSet: { target: NODE.target, version: NODE.version } };
     const v1 = await verdictOf(implementation(pure, env, [], node));
     expect(v1?.refused?.check).toBe("capabilities");
     expect(v1?.refused?.reason).toContain('"process"');

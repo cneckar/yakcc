@@ -14,8 +14,14 @@ import { canonicalizeGraph, graphIdentity } from "./canonical.js";
 import { operationReference } from "./operation-refs.js";
 import type { DiamondLabel, DucGraph } from "./types.js";
 
-/** The version of the stored structure's encoding. Version 2 adds the ordering flag (#1285). */
-export const GRAPH_FORMAT_VERSION = 2;
+/**
+ * The version of the graph format (DEC-DUC-FORMAT-001). Version 2 added the ordering flag (#1285);
+ * version 3 is the locked format (#1292): the BLAKE3 identity and root, literals in normal form, the
+ * completion record, operations by meaning, and the semantics of #1370 (parameter defaults in
+ * labels, ordered conversions, array destructuring as the iterator protocol). A change to anything
+ * DEC-DUC-FORMAT-001 lists is a new version with a migration.
+ */
+export const GRAPH_FORMAT_VERSION = 3;
 
 /**
  * One reference's link: the reference, by reason, symbol and module, and what it links to: a

@@ -26,8 +26,11 @@ const COMPARISONS = new Set(["<", "<=", ">", ">="]);
 /** An operation's label as the ECMAScript operator it is a case of: one key across the vocabulary. */
 const opLabel = (n: DucNode): string =>
   n.kind === "op" ? ecmaScriptLabel(n.label ?? "") : (n.label ?? "");
+/** An operation's operands: its inputs but the heap token that orders it (#1285, #1370). */
+const operandsOf = (n: DucNode): readonly ValueId[] =>
+  n.order === 1 ? n.inputs.slice(0, -1) : n.inputs;
 const mirrored = (n: DucNode): boolean =>
-  n.kind === "op" && n.inputs.length === 2 && MIRROR[opLabel(n)] !== undefined;
+  n.kind === "op" && operandsOf(n).length === 2 && MIRROR[opLabel(n)] !== undefined;
 
 /** A node's key; a parameter is keyed by its position, so `a < b` and `a > b` stay apart. */
 const nodeKey = (n: DucNode, params: ReadonlyMap<DucNode, number>): string => {
@@ -71,12 +74,14 @@ export function structuralBag(g: DucGraph): Map<string, number> {
       add(`n${depth}|${key(n)}`);
       // The comparison as written, at half weight: a weak signal beside the mirrored entries, which
       // breaks a tie toward the operator the query used.
-      if (n.kind === "op" && n.inputs.length === 2 && COMPARISONS.has(opLabel(n)))
+      if (n.kind === "op" && operandsOf(n).length === 2 && COMPARISONS.has(opLabel(n)))
         add(`r${depth}|${opLabel(n)}`, 0.5);
       const flip = mirrored(n);
+      const operands = operandsOf(n);
       n.inputs.forEach((v, i) => {
         const p = producer.get(v);
-        const at = flip ? 1 - i : i;
+        // The token is an edge of its own kind: what the node is ordered after.
+        const at = i >= operands.length ? "t" : flip ? 1 - i : i;
         add(`e${depth}|${p !== undefined ? key(p) : "?"}>${key(n)}#${at}`);
       });
       if (n.closure !== undefined) walk(n.closure, depth + 1);
@@ -92,11 +97,13 @@ export function structuralBag(g: DucGraph): Map<string, number> {
     for (let round = 1; round <= WL_ROUNDS; round++) {
       const next = new Map<DucNode, string>();
       for (const n of canon.nodes) {
-        const ins = n.inputs.map((v) => {
+        const label = (v: ValueId): string => {
           const p = producer.get(v);
           return p !== undefined ? (labels.get(p) ?? "?") : "?";
-        });
+        };
+        const ins = operandsOf(n).map(label);
         if (mirrored(n)) ins.reverse();
+        if (n.order === 1) ins.push(`^${label(n.inputs[n.inputs.length - 1] as ValueId)}`);
         next.set(n, intern(`${labels.get(n)}(${ins.join(",")})`));
       }
       labels = next;

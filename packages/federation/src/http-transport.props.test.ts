@@ -24,17 +24,11 @@ it("property: prop_fetchBlock_200_returns_body_as_wire", async () => {
 });
 
 it("property: prop_fetchBlock_non2xx_with_error_envelope_throws_TransportError", async () => {
-  await fc.assert(
-    prop_fetchBlock_non2xx_with_error_envelope_throws_TransportError,
-    opts,
-  );
+  await fc.assert(prop_fetchBlock_non2xx_with_error_envelope_throws_TransportError, opts);
 });
 
 it("property: prop_fetchBlock_non2xx_without_envelope_throws_internal_error", async () => {
-  await fc.assert(
-    prop_fetchBlock_non2xx_without_envelope_throws_internal_error,
-    opts,
-  );
+  await fc.assert(prop_fetchBlock_non2xx_without_envelope_throws_internal_error, opts);
 });
 
 it("property: prop_fetchSpec_404_returns_empty_array", async () => {

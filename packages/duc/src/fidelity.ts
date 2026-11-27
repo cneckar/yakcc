@@ -72,6 +72,26 @@ function isWithin(node: ts.Node, ancestor: ts.Node): boolean {
   return false;
 }
 
+/** Whether the source destructures an array pattern (`const [a] = x`, `[a, b] = x`, `([a]) =>`). */
+function arrayDestructures(source: string): boolean {
+  const file = parseAtomSource(source).file.compilerNode;
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (ts.isArrayBindingPattern(n)) found = true;
+    else if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isArrayLiteralExpression(n.left)
+    )
+      found = true;
+    else if (ts.isForOfStatement(n) && ts.isArrayLiteralExpression(n.initializer)) found = true;
+    else ts.forEachChild(n, visit);
+  };
+  visit(file);
+  return found;
+}
+
 /** The names an atom's source reads without declaring them, by TypeScript's binder. */
 export function sourceFreeNames(source: string): Set<string> {
   // What never runs is not read: the lifter drops it, and so does this (esbuild's `__name(f, "f")`
@@ -188,7 +208,13 @@ export function liftFidelity(source: string, graph: DucGraph): LiftFidelity {
   const inGraph = graphFreeNames(graph);
   const missing = [...inSource].filter((n) => !inGraph.has(n)).sort();
   const module = topLevelNames(source);
-  const extra = [...inGraph].filter((n) => !inSource.has(n) && !module.has(n)).sort();
+  // Array destructuring is lifted as ECMAScript's iterator protocol, which reads Symbol.iterator
+  // (#1370): the one name a graph may read that its source does not write, when it destructures.
+  const destructures = arrayDestructures(source);
+  const intrinsic = (n: string): boolean => n === "Symbol" && destructures;
+  const extra = [...inGraph]
+    .filter((n) => !inSource.has(n) && !module.has(n) && !intrinsic(n))
+    .sort();
   return { holds: missing.length === 0 && extra.length === 0, missing, extra };
 }
 

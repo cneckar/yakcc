@@ -383,6 +383,7 @@ function inferGraph(
       loopOf.set(loop.iterate.element, { node: n, loop, index: 0, role: "element" });
   }
 
+  let widening = false;
   const compute = (n: DucNode): DucType[] => {
     const at = (i: number): DucType => typeOf(n.inputs[i] as ValueId);
     switch (n.kind) {
@@ -405,14 +406,15 @@ function inferGraph(
           if (info.loop.iterate?.of === "keys") return [STRING];
           return [elementOf(of)];
         }
-        // A carried value: its start, widened by its next values (the loop's fixpoint below).
+        // A carried value: its start, widened by its next values (the loop's fixpoint below), once
+        // the starts are settled.
         const start = typeOf(info.node.inputs[info.index] as ValueId);
-        const next = types.get(info.loop.next[info.index] as ValueId);
+        const next = widening ? types.get(info.loop.next[info.index] as ValueId) : undefined;
         return [next !== undefined ? union([start, next]) : start];
       }
       case "loop":
         return n.outputs.map((_, i) =>
-          union([at(i), typeOf((n.loop as DucLoop).next[i] as ValueId)]),
+          widening ? union([at(i), typeOf((n.loop as DucLoop).next[i] as ValueId)]) : at(i),
         );
       case "op":
         return [opType(n, at, depth, ambiguities)];
@@ -427,20 +429,49 @@ function inferGraph(
     if (src !== undefined) extra.set(src, [...info.node.inputs]);
   }
   const sequence = order(g, producer, extra);
-  for (let round = 0; round < 8; round++) {
-    let changed = false;
-    for (const n of sequence) {
-      const outs = compute(n);
-      n.outputs.forEach((v, i) => {
-        const t = outs[i] ?? UNKNOWN;
-        const prev = types.get(v);
-        if (prev === undefined || !sameType(prev, t)) {
-          types.set(v, t);
-          changed = true;
-        }
-      });
+  // The fixpoint ascends from nothing known (#1370): a node is typed once its inputs are, a carry once
+  // its start is, so a value not yet typed is never read as unknown, which no union narrows again
+  // (a carry read before its next value, in an order the heap's edges chose, kept unknown for good).
+  const typed = (v: ValueId | undefined): boolean =>
+    v === undefined || types.has(v) || !producer.has(v);
+  const ready = (n: DucNode): boolean => {
+    if (n.kind === "carry-source") {
+      const info = loopOf.get(n.outputs[0] as ValueId);
+      if (info === undefined) return true;
+      const offset = info.loop.carry.length + (info.loop.iterate !== undefined ? 1 : 0);
+      return typed(
+        info.node.inputs[
+          info.role === "carry"
+            ? info.index
+            : info.role === "invariant"
+              ? offset + info.index
+              : info.loop.carry.length
+        ],
+      );
     }
-    if (!changed) break;
+    if (n.kind === "loop") return n.inputs.every(typed);
+    return n.inputs.every(typed);
+  };
+  // Two phases (#1370): every carry at its start, until the types settle (no value reads a loop's next
+  // values, so no unknown read early is carried on); then the carries widened by their next values.
+  for (const phase of [false, true]) {
+    widening = phase;
+    for (let round = 0; round < MAX_ROUNDS; round++) {
+      let changed = false;
+      for (const n of sequence) {
+        if (!ready(n)) continue;
+        const outs = compute(n);
+        n.outputs.forEach((v, i) => {
+          const t = outs[i] ?? UNKNOWN;
+          const prev = types.get(v);
+          if (prev === undefined || !sameType(prev, t)) {
+            types.set(v, t);
+            changed = true;
+          }
+        });
+      }
+      if (!changed) break;
+    }
   }
 
   if (depth === 0) {
@@ -469,6 +500,9 @@ function hasEmptyArray(t: DucType): boolean {
   if (t.k === "object") return Object.values(t.fields).some(hasEmptyArray);
   return false;
 }
+
+/** The most rounds of the forward pass, which stops when nothing changes. */
+const MAX_ROUNDS = 64;
 
 /** The nodes in an order where each comes after the producers of its inputs (loop edges aside). */
 function order(

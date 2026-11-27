@@ -27,7 +27,13 @@ import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./lin
 import { operationReference } from "./operations.js";
 import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
-import { isRestParam, paramIndex } from "./params.js";
+import {
+  PRIMITIVE_COMMENT,
+  isDefaultedParam,
+  isPrimitiveParam,
+  isRestParam,
+  paramIndex,
+} from "./params.js";
 import { RUNTIME_MODULE } from "./runtime.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
@@ -141,7 +147,14 @@ export function emitTypeScript(
       ? params
       : params.map((p, i) => {
           const t = signature.inputs[i];
-          return t === undefined ? p : `${p}: ${typeToTypeScript(parseType(t))}`;
+          if (t === undefined) return p;
+          // The contract's type replaces the primitive mark's, before a default.
+          const defaulted = p.endsWith(DEFAULT_UNDEFINED);
+          const head = (defaulted ? p.slice(0, -DEFAULT_UNDEFINED.length) : p).replace(
+            PRIMITIVE_ANNOTATION,
+            "",
+          );
+          return `${head}: ${typeToTypeScript(parseType(t))}${defaulted ? DEFAULT_UNDEFINED : ""}`;
         });
   const result =
     signature?.output !== undefined ? `: ${typeToTypeScript(parseType(signature.output))}` : "";
@@ -154,6 +167,13 @@ export function emitTypeScript(
     "",
   ].join("\n");
 }
+
+/**
+ * A parameter declared a primitive (`0:prim`, #1370) is declared one again, so it lifts back the
+ * same. The mark is a comment (a Flow comment type), so the lowering stays JavaScript that runs.
+ */
+const PRIMITIVE_ANNOTATION = ` ${PRIMITIVE_COMMENT}`;
+const DEFAULT_UNDEFINED = " = undefined";
 
 /**
  * Where each entry of an object literal's label takes its inputs: a computed key's input, then the
@@ -700,15 +720,27 @@ function emitFunction(
   const indent = (lines: string[]): string[] => lines.map((l) => `  ${l}`);
   const nodeIndex = new Map(g.nodes.map((n, i) => [n.id, i] as const));
 
+  // Each set once per node, its first occurrences in order: inline nodes share inputs, and an
+  // operator ordered among the heap operations (#1370) reaches the one before it, so walking every
+  // path again is exponential in a chain of them.
+  const once = (vs: ValueId[]): ValueId[] => [...new Set(vs)];
+  const needsMemo = new Map<string, ValueId[]>();
   /** The values a node needs, through the inline nodes it writes. */
-  const needs = (node: DucNode): ValueId[] =>
-    [...node.inputs, ...(after.get(node.id) ?? [])].flatMap((v) => {
-      const p = producer.get(v);
-      // A class needs what its members capture. A heap-ordered inline value (a spread) is still
-      // needed itself: the statement that writes it is where it is made.
-      if (p === undefined || !(inline.has(p.id) || classMembers.has(p.id))) return [v];
-      return heapOrdered(p) ? [v, ...needs(p)] : needs(p);
-    });
+  const needs = (node: DucNode): ValueId[] => {
+    const hit = needsMemo.get(node.id);
+    if (hit !== undefined) return hit;
+    const out = once(
+      [...node.inputs, ...(after.get(node.id) ?? [])].flatMap((v) => {
+        const p = producer.get(v);
+        // A class needs what its members capture. A heap-ordered inline value (a spread) is still
+        // needed itself: the statement that writes it is where it is made.
+        if (p === undefined || !(inline.has(p.id) || classMembers.has(p.id))) return [v];
+        return heapOrdered(p) ? [v, ...needs(p)] : needs(p);
+      }),
+    );
+    needsMemo.set(node.id, out);
+    return out;
+  };
   /** A node ordered among the heap operations: its place is structure (#1285). */
   const heapOrdered = (n: DucNode): boolean =>
     isHeapLabel(n.label ?? "") || (after.get(n.id)?.length ?? 0) > 0;
@@ -716,12 +748,20 @@ function emitFunction(
    * The values of the heap-ordered inline nodes a node writes (a spread), through the inline nodes
    * it writes: a statement ordered after one of them comes after the statement that writes it.
    */
-  const writtenInline = (node: DucNode): ValueId[] =>
-    node.inputs.flatMap((v) => {
-      const p = producer.get(v);
-      if (p === undefined || !inline.has(p.id)) return [];
-      return [...(heapOrdered(p) ? p.outputs : []), ...writtenInline(p)];
-    });
+  const writtenMemo = new Map<string, ValueId[]>();
+  const writtenInline = (node: DucNode): ValueId[] => {
+    const hit = writtenMemo.get(node.id);
+    if (hit !== undefined) return hit;
+    const out = once(
+      node.inputs.flatMap((v) => {
+        const p = producer.get(v);
+        if (p === undefined || !inline.has(p.id)) return [];
+        return [...(heapOrdered(p) ? p.outputs : []), ...writtenInline(p)];
+      }),
+    );
+    writtenMemo.set(node.id, out);
+    return out;
+  };
   /** The values made inside a region (a branch side or a loop body), nested regions included. */
   const madeWithin = (path: string): ValueId[] =>
     g.nodes.filter((n) => isPrefix(path, n.region)).flatMap((n) => n.outputs);
@@ -883,7 +923,7 @@ function emitFunction(
         // What it writes inline is made where it is: a heap token of an inline spread orders what
         // follows after this statement.
         produces: [...node.outputs, ...writtenInline(node)],
-        requires: needs(node).filter((v) => !writtenInline(node).includes(v)),
+        requires: needs(node).filter((v) => !new Set(writtenInline(node)).has(v)),
         lines: () => statementsOf(node),
       });
     }
@@ -982,7 +1022,10 @@ function emitFunction(
   const params = g.nodes
     .filter((n) => n.kind === "param-source" && paramIndex(n.label) >= bound.length)
     .sort((a, b) => paramIndex(a.label) - paramIndex(b.label))
-    .map((n) => `${isRestParam(n.label) ? "..." : ""}${nameOf(n.outputs[0] as ValueId)}`);
+    .map(
+      (n) =>
+        `${isRestParam(n.label) ? "..." : ""}${nameOf(n.outputs[0] as ValueId)}${isPrimitiveParam(n.label) ? PRIMITIVE_ANNOTATION : ""}${isDefaultedParam(n.label) ? DEFAULT_UNDEFINED : ""}`,
+    );
   const body = [...unread, ...emitScope(undefined)];
   if (asModule) {
     // Each declared name is a module-level name, given its value at the end; the statements are in

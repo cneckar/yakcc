@@ -92,19 +92,18 @@ const specHashArb: fc.Arbitrary<SpecHash> = fc
  * createHttpTransport returns the body as-is (no validation); these properties
  * test the transport layer, not the integrity gate.
  */
-const wireBodyArb: fc.Arbitrary<WireBlockTriplet> = fc
-  .record({
-    blockMerkleRoot: blockRootArb,
-    specHash: specHashArb,
-    specCanonicalBytes: fc.constant("aGVsbG8="), // base64("hello")
-    implSource: fc.constant("export function f() {}"),
-    proofManifestJson: fc.constant('{"artifacts":[{"kind":"property_tests","path":"f.fc.ts"}]}'),
-    artifactBytes: fc.constant({ "f.fc.ts": "dGVzdA==" }),
-    level: fc.constant("L0" as const),
-    createdAt: fc.integer({ min: 1_000_000, max: 9_999_999_999_999 }),
-    canonicalAstHash: blockRootArb, // same shape: 64 hex chars
-    parentBlockRoot: fc.constant(null),
-  });
+const wireBodyArb: fc.Arbitrary<WireBlockTriplet> = fc.record({
+  blockMerkleRoot: blockRootArb,
+  specHash: specHashArb,
+  specCanonicalBytes: fc.constant("aGVsbG8="), // base64("hello")
+  implSource: fc.constant("export function f() {}"),
+  proofManifestJson: fc.constant('{"artifacts":[{"kind":"property_tests","path":"f.fc.ts"}]}'),
+  artifactBytes: fc.constant({ "f.fc.ts": "dGVzdA==" }),
+  level: fc.constant("L0" as const),
+  createdAt: fc.integer({ min: 1_000_000, max: 9_999_999_999_999 }),
+  canonicalAstHash: blockRootArb, // same shape: 64 hex chars
+  parentBlockRoot: fc.constant(null),
+});
 
 // ---------------------------------------------------------------------------
 // A5.1: createHttpTransport — properties
@@ -145,23 +144,22 @@ export const prop_fetchBlock_200_returns_body_as_wire = fc.asyncProperty(
  * Invariant (DEC-HTTP-TRANSPORT-020, FEDERATION_PROTOCOL.md §3 "Errors"):
  * Non-2xx with parseable envelope → TransportError({ code: error, message }).
  */
-export const prop_fetchBlock_non2xx_with_error_envelope_throws_TransportError =
-  fc.asyncProperty(
-    remotePeerArb,
-    blockRootArb,
-    fc.constantFrom("not_found", "rate_limited", "internal_error", "forbidden"),
-    fc.integer({ min: 400, max: 599 }),
-    async (remote, root, errorCode, status) => {
-      const envelope = { error: errorCode, message: `stub: ${errorCode}` };
-      const transport = createHttpTransport({ fetch: makeFetch(status, envelope) });
-      try {
-        await transport.fetchBlock(remote, root);
-        return false; // must have thrown
-      } catch (err) {
-        return err instanceof TransportError && err.code === errorCode;
-      }
-    },
-  );
+export const prop_fetchBlock_non2xx_with_error_envelope_throws_TransportError = fc.asyncProperty(
+  remotePeerArb,
+  blockRootArb,
+  fc.constantFrom("not_found", "rate_limited", "internal_error", "forbidden"),
+  fc.integer({ min: 400, max: 599 }),
+  async (remote, root, errorCode, status) => {
+    const envelope = { error: errorCode, message: `stub: ${errorCode}` };
+    const transport = createHttpTransport({ fetch: makeFetch(status, envelope) });
+    try {
+      await transport.fetchBlock(remote, root);
+      return false; // must have thrown
+    } catch (err) {
+      return err instanceof TransportError && err.code === errorCode;
+    }
+  },
+);
 
 /**
  * prop_fetchBlock_non2xx_without_envelope_throws_internal_error
@@ -172,21 +170,20 @@ export const prop_fetchBlock_non2xx_with_error_envelope_throws_TransportError =
  * Invariant (FEDERATION_PROTOCOL.md §3): protocol violation (non-JSON body on error)
  * is classified as "internal_error" to prevent information leakage.
  */
-export const prop_fetchBlock_non2xx_without_envelope_throws_internal_error =
-  fc.asyncProperty(
-    remotePeerArb,
-    blockRootArb,
-    fc.integer({ min: 500, max: 599 }),
-    async (remote, root, status) => {
-      const transport = createHttpTransport({ fetch: makeFetchNonJson(status) });
-      try {
-        await transport.fetchBlock(remote, root);
-        return false;
-      } catch (err) {
-        return err instanceof TransportError && err.code === "internal_error";
-      }
-    },
-  );
+export const prop_fetchBlock_non2xx_without_envelope_throws_internal_error = fc.asyncProperty(
+  remotePeerArb,
+  blockRootArb,
+  fc.integer({ min: 500, max: 599 }),
+  async (remote, root, status) => {
+    const transport = createHttpTransport({ fetch: makeFetchNonJson(status) });
+    try {
+      await transport.fetchBlock(remote, root);
+      return false;
+    } catch (err) {
+      return err instanceof TransportError && err.code === "internal_error";
+    }
+  },
+);
 
 /**
  * prop_fetchSpec_404_returns_empty_array

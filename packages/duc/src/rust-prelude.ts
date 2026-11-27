@@ -604,6 +604,11 @@ pub fn arg(args: &[V], i: usize) -> V {
     args.get(i).cloned().unwrap_or(V::Undef)
 }
 
+// prim_arg is arg for a parameter declared a primitive (#1370): the name keeps the mark.
+pub fn prim_arg(args: &[V], i: usize) -> V {
+    arg(args, i)
+}
+
 pub fn rest_args(args: &[V], i: usize) -> V {
     arr(args.iter().skip(i).cloned().collect())
 }

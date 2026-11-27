@@ -4,6 +4,7 @@
 import { type EmbeddingProvider, type SpecYak, specHash } from "@yakcc/contracts";
 import {
   type DucGraph,
+  ECMASCRIPT,
   byMeaning,
   contractSignature,
   liftAtom,
@@ -58,7 +59,7 @@ function implementation(
     lifterVersion: packed.lifterVersion,
     links: packed.links,
     evidence,
-    baseSet: { target: "ecmascript", version: 1 },
+    baseSet: { target: ECMASCRIPT.target, version: ECMASCRIPT.version },
     ...over,
   };
 }

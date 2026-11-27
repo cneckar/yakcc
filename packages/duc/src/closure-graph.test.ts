@@ -96,10 +96,11 @@ describe("closures as graphs (#1275)", () => {
 
   it("a hand-written closure parses to the lifted one", () => {
     const text = [
-      "param x",
+      // Declared numbers are primitives (#1370): `prim`, and an operator on them is not ordered.
+      "param x prim",
       "function g with x",
       "  param cx",
-      "  param y",
+      "  param y prim",
       "  op + y cx -> r",
       "  out r",
       "end",
@@ -108,7 +109,8 @@ describe("closures as graphs (#1275)", () => {
       'lit "3" -> three',
       // The second call comes after the first: its last operand, ^a, is the heap token (#1285).
       "op CallExpression g three ^a -> b",
-      "op + a b -> s",
+      // A call's result may be an object: the operator on it is ordered after the call.
+      "op + a b ^b -> s",
       "out s",
     ].join("\n");
     expect(graphIdentity(parseLineForm(text))).toBe(graphIdentity(liftAtom(SOURCES[0] as string)));

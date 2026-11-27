@@ -7,7 +7,8 @@
  * the same writer. It reads the lowering's own dialect, not Python in general.
  */
 import { execFileSync } from "node:child_process";
-import { type Expr, RaiseError, type Stmt, writeFunction } from "./raise-rust.js";
+import { PRIMITIVE_COMMENT } from "./params.js";
+import { type Expr, RaiseError, type Stmt, paramText, writeFunction } from "./raise-rust.js";
 
 /** A table's own entry for a key: never one of Object.prototype's (`hasOwnProperty`, `constructor`). */
 function entry<T>(table: Readonly<Record<string, T>> | undefined, key: string): T | undefined {
@@ -246,16 +247,23 @@ class Reader {
   constructor(private readonly lines: Line[]) {}
 
   /** A function's parameters, from its header's `(..)`, and its body below it. */
-  fn(header: string, indent: number): { params: { name: string; rest: boolean }[]; body: Stmt[] } {
+  fn(
+    header: string,
+    indent: number,
+  ): { params: { name: string; rest: boolean; prim?: boolean }[]; body: Stmt[] } {
     const inside = header.slice(header.indexOf("(") + 1, header.lastIndexOf(")"));
-    const params: { name: string; rest: boolean }[] = [];
+    const params: { name: string; rest: boolean; prim?: boolean }[] = [];
     let usesArgs = false;
     let restName: string | undefined;
     for (const raw of inside.split(",").map((x) => x.trim())) {
       if (raw === "*_args") usesArgs = true;
       else if (raw === "*_rest" || raw === "") continue;
       else if (raw.startsWith("*")) restName = raw.slice(1);
-      else params.push({ name: raw.replace(/=.*$/, ""), rest: false });
+      else {
+        // `v0: "primitive"=UNDEFINED` is a parameter declared a primitive (#1370).
+        const prim = /^\w+\s*:\s*"primitive"/.test(raw);
+        params.push({ name: raw.replace(/[:=].*$/, "").trim(), rest: false, prim });
+      }
     }
     const body = this.block(indent);
     const out: Stmt[] = [];
@@ -307,7 +315,7 @@ class Reader {
             e: {
               t: "call",
               fn: "__params",
-              args: params.map((p) => ({ t: "str", v: `${p.rest ? "..." : ""}${p.name}` })),
+              args: params.map((p) => ({ t: "str", v: paramText(p) })),
             },
           },
           ...body,
@@ -724,10 +732,22 @@ class PySourceRaiser {
     const first = params.length - defaults.length;
     const locals = [...this.storedNames(nodes(fn.body))].filter((n) => !this.scope.has(n));
     for (const l of locals) this.scope.add(l);
+    // A parameter hinted `float`, `int`, `str` or `bool` is declared a primitive, as TypeScript's
+    // `number` is (#1370): no operator on it runs a dunder method.
+    const hinted = nodes(args.args).map((a) => {
+      const t = a.annotation as PyNode | undefined;
+      return (
+        t !== undefined &&
+        t !== null &&
+        node(t)._t === "Name" &&
+        ["float", "int", "str", "bool"].includes(String(node(t).id))
+      );
+    });
     const head = params
-      .map((p, i) =>
-        i >= first ? `${this.id(p)} = ${this.expr(defaults[i - first] as PyNode)}` : this.id(p),
-      )
+      .map((p, i) => {
+        const name = `${this.id(p)}${hinted[i] === true ? ` ${PRIMITIVE_COMMENT}` : ""}`;
+        return i >= first ? `${name} = ${this.expr(defaults[i - first] as PyNode)}` : name;
+      })
       .join(", ");
     const body = [
       ...locals.map((l) => `let ${this.id(l)} = undefined;`),

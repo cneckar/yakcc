@@ -1,8 +1,14 @@
 import { canonicalizeGraph } from "./canonical.js";
-import { isHeapLabel } from "./heap-labels.js";
+import { isHeapLabel, mayCallUserCode, primitiveLiteral, primitiveResult } from "./heap-labels.js";
 import { normalizeLiteral } from "./literal.js";
-import { namedOperation } from "./ops.js";
-import { isRestParam } from "./params.js";
+import { jsOperation, namedOperation } from "./ops.js";
+import {
+  PRIMITIVE_PARAM,
+  isDefaultedParam,
+  isPrimitiveParam,
+  isRestParam,
+  paramIndex,
+} from "./params.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The line form: the authoring format a model writes (#1275). One directive per line, in
@@ -11,7 +17,9 @@ import { isRestParam } from "./params.js";
  *
  * Grammar:
  *
- *   param <name>                        the next parameter (index = order of param lines); top level only
+ *   param <name> [prim] [... | =]       the next parameter (index = order of param lines); top level only;
+ *                                       `prim` declared a primitive, `...` a rest parameter, `=` one
+ *                                       with a default
  *   lit "<text>" -> <name>              a literal: <text> is a JavaScript literal (a number, a quoted
  *                                       string, true, false, null, undefined, a big integer or a
  *                                       regular expression). Literals are constants: identical ones
@@ -164,6 +172,14 @@ export function bodyPathOf(node: DucNode): string {
 
 /** Parse and validate the line form, and return the canonical graph it denotes. */
 export function parseLineForm(text: string): DucGraph {
+  return parseProgram(text, new Set());
+}
+
+/**
+ * A program of the line form. `primitiveCaptures` are the parameters (by index) of a closure's
+ * program whose captured outer values are certainly primitives, as the lifter knows them (#1370).
+ */
+function parseProgram(text: string, primitiveCaptures: ReadonlySet<number>): DucGraph {
   let names = new Map<string, ValueId>();
   // One unknown, one source: a symbol that is referenced twice is the same diamond, as in the lifter.
   const diamondValues = new Map<string, ValueId>();
@@ -250,6 +266,42 @@ export function parseLineForm(text: string): DucGraph {
     if (v === undefined) throw new LineFormError(line, `"${name}" is used before it is defined`);
     return visible(v);
   };
+  // Whether a value is certainly a primitive, as the lifter decides it: a literal, a primitive
+  // constant, an operator's result, or a join of those. An operator on others may convert an
+  // object, so it is ordered (#1370).
+  const producer = (v: ValueId): Omit<DucNode, "id"> | undefined =>
+    nodes.find((n) => n.outputs.includes(v));
+  const isNullish = (v: ValueId): boolean => {
+    const p = producer(v);
+    return (
+      (p?.kind === "literal-source" && (p.label === "null" || p.label === "undefined")) ||
+      (p?.kind === "diamond-source" && p.diamond?.symbol === "undefined")
+    );
+  };
+  const isPrimitive = (v: ValueId, depth: number): boolean => {
+    const p = producer(v);
+    if (p === undefined) return false;
+    if (p.kind === "literal-source") return primitiveLiteral(p.label);
+    if (p.kind === "param-source")
+      return isPrimitiveParam(p.label) || primitiveCaptures.has(paramIndex(p.label));
+    if (p.kind === "diamond-source")
+      return (
+        p.diamond?.reason === "platform-primitive" &&
+        ["NaN", "Infinity", "undefined"].includes(p.diamond.symbol)
+      );
+    if (p.kind === "op") {
+      const l = p.label ?? "";
+      const arity = p.inputs.length - (p.order === 1 ? 1 : 0);
+      const operands = p.inputs.slice(0, arity);
+      return primitiveResult(
+        l.startsWith("template:") ? l : jsOperation(l, arity),
+        () => depth > 0 && operands.every((x) => isPrimitive(x, depth - 1)),
+      );
+    }
+    if (p.kind === "sel" && depth > 0 && p.label === undefined)
+      return p.inputs.slice(1).every((x) => isPrimitive(x, depth - 1));
+    return false;
+  };
   const add = (node: Omit<DucNode, "id">, region: string | undefined): void => {
     nodes.push({
       id: `n${nodes.length}` as DucNode["id"],
@@ -319,17 +371,26 @@ export function parseLineForm(text: string): DucGraph {
 
     if (head === "param") {
       if (open.length > 0) throw new LineFormError(line, "param must come before any if or loop");
-      // `param xs ...` is a rest parameter: the arguments from there on, as an array.
-      const restParam = rest.length === 2 && rest[1] === "...";
-      if (rest.length !== 1 && !restParam)
-        throw new LineFormError(line, "expected: param <name> [...]");
-      const out = define(rest[0] as string, line);
+      // `param xs ...` is a rest parameter: the arguments from there on, as an array. `param b =`
+      // has a default, applied in the body; `param n prim` is declared a primitive (#1370).
+      const [name, ...marks] = rest;
+      const primitive = marks[0] === "prim";
+      const suffix = primitive ? marks.slice(1) : marks;
+      const restParam = suffix.length === 1 && suffix[0] === "...";
+      const defaulted = suffix.length === 1 && suffix[0] === "=";
+      if (
+        name === undefined ||
+        (suffix.length !== 0 && !restParam && !defaulted) ||
+        (primitive && restParam)
+      )
+        throw new LineFormError(line, "expected: param <name> [prim] [... | =]");
+      const out = define(name, line);
       add(
         {
           kind: "param-source",
           inputs: [],
           outputs: [out],
-          label: `${paramCount++}${restParam ? "..." : ""}`,
+          label: `${paramCount++}${primitive ? PRIMITIVE_PARAM : ""}${restParam ? "..." : defaulted ? "=" : ""}`,
         },
         undefined,
       );
@@ -357,7 +418,9 @@ export function parseLineForm(text: string): DucGraph {
       if (
         implicitHeap &&
         currentRegion() === undefined &&
-        (isHeapLabel(label) || label === "throw")
+        (isHeapLabel(label) ||
+          label === "throw" ||
+          mayCallUserCode(label, inputs, (v) => isPrimitive(v, 4), isNullish))
       ) {
         if (lastHeap !== undefined) {
           inputs.push(lastHeap);
@@ -747,7 +810,8 @@ export function parseLineForm(text: string): DucGraph {
       if ((lines[j] as string).trim() !== "end") throw new LineFormError(j + 1, "expected: end");
       let inner: DucGraph;
       try {
-        inner = parseLineForm(lines.slice(i + 1, j).join("\n"));
+        const primitive = new Set(captures.flatMap((v, k) => (isPrimitive(v, 4) ? [k] : [])));
+        inner = parseProgram(lines.slice(i + 1, j).join("\n"), primitive);
       } catch (e) {
         if (e instanceof LineFormError)
           throw new LineFormError(line + e.line, e.message.replace(/^line \d+: /, ""));
@@ -996,7 +1060,7 @@ export function printLineForm(g: DucGraph): string {
     switch (node.kind) {
       case "param-source": {
         if (out === undefined) throw new Error("param-source without an output");
-        return `param ${out}${isRestParam(node.label) ? " ..." : ""}`;
+        return `param ${out}${isPrimitiveParam(node.label) ? " prim" : ""}${isRestParam(node.label) ? " ..." : isDefaultedParam(node.label) ? " =" : ""}`;
       }
       case "literal-source": {
         if (out === undefined || node.label === undefined)

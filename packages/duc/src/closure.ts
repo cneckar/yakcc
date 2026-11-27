@@ -186,10 +186,37 @@ export function requireSpecifiers(g: DucGraph, into: (string | null)[] = []): (s
       }
     }
   }
-  for (const n of g.nodes) {
-    if (n.closure !== undefined) requireSpecifiers(n.closure, into);
-    if (n.kind === "op" && n.label === "CallExpression" && requireValues.has(n.inputs[0] as string))
-      into.push(literal.get(n.inputs[1] as string) ?? null);
-  }
+  // In the order the calls run: each is a heap operation, ordered after the one before it by the
+  // token (#1285); the canonical order of the nodes is structure, not that order.
+  const producer = new Map<string, (typeof g.nodes)[number]>();
+  for (const n of g.nodes) for (const v of n.outputs) producer.set(v, n);
+  const depth = new Map<string, number>();
+  const depthOf = (n: (typeof g.nodes)[number]): number => {
+    const known = depth.get(n.id);
+    if (known !== undefined) return known;
+    depth.set(n.id, 0);
+    const tokens =
+      n.order === 1
+        ? [n.inputs[n.inputs.length - 1]]
+        : n.kind === "sel" && n.label === "heap"
+          ? n.inputs.slice(1)
+          : [];
+    let d = 0;
+    for (const t of tokens) {
+      const p = t !== undefined ? producer.get(t) : undefined;
+      if (p !== undefined) d = Math.max(d, depthOf(p) + 1);
+    }
+    depth.set(n.id, d);
+    return d;
+  };
+  const calls = g.nodes
+    .filter(
+      (n) =>
+        n.kind === "op" && n.label === "CallExpression" && requireValues.has(n.inputs[0] as string),
+    )
+    .map((n, i) => ({ n, i, d: depthOf(n) }))
+    .sort((a, b) => a.d - b.d || a.i - b.i);
+  for (const n of g.nodes) if (n.closure !== undefined) requireSpecifiers(n.closure, into);
+  for (const { n } of calls) into.push(literal.get(n.inputs[1] as string) ?? null);
   return into;
 }

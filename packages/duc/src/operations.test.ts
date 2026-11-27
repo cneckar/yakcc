@@ -53,7 +53,7 @@ const labels = (g: DucGraph): string[] =>
 describe("lifting Math's functions as operations that reference atoms", () => {
   it("Math.sin(x) is the operation Math.sin, pure, with no read of Math", () => {
     const g = liftAtom("export function f(x: number): number { return Math.sin(x); }");
-    expect(printLineForm(g).trimEnd()).toBe("param v0\nop Math.sin v0 -> v1\nout v1");
+    expect(printLineForm(g).trimEnd()).toBe("param v0 prim\nop Math.sin v0 -> v1\nout v1");
   });
 
   it("each operation reference, at its arity", () => {
@@ -62,7 +62,8 @@ describe("lifting Math's functions as operations that reference atoms", () => {
       const g = liftAtom(
         `export function f(${params.map((p) => `${p}: number`).join(", ")}): number { return ${ref.label}(${params.join(", ")}); }`,
       );
-      expect(labels(g), ref.label).toEqual([...params.map((_, i) => String(i)), ref.label]);
+      // Each parameter is declared a number: `0:prim` (#1370).
+      expect(labels(g), ref.label).toEqual([...params.map((_, i) => `${i}:prim`), ref.label]);
     }
   });
 
