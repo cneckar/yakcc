@@ -94,6 +94,12 @@ const REFERENCE_LEAVES: readonly LeafFunction[] = [
   leaf("__ykFnAddr", ["f64"], "addr", "a function's address: one per function, never 0"),
   leaf("__ykFnAt", ["addr"], "f64", "the function at an address from __ykFnAddr"),
   leaf("__ykStatic", ["f64"], "addr", "a static's block, by its key: defined once, initialized"),
+  leaf(
+    "__ykDynCast",
+    ["addr", "addr"],
+    "addr",
+    "C++'s dynamic_cast: the object as the class of a type_info, by its RTTI; 0 if it is not one",
+  ),
 ];
 
 /**

@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { type ShavedUnit, shaveCUnit } from "../raise-c.js";
+import { type ShavedUnit, isV8Api, shaveCUnit } from "../raise-c.js";
 
 export interface ShavedFiles {
   readonly atoms: Map<string, { source: string; externals: readonly string[] }>;
@@ -46,7 +46,8 @@ function definitions(
       if (!existsSync(obj)) throw new Error(`clang could not compile ${files[i]}`);
       const syms = execFileSync("nm", ["--defined-only", obj], { encoding: "utf8" });
       for (const line of syms.split("\n")) {
-        const m = /^[0-9a-f]+ [TDRBC] (\w+)$/.exec(line.trim());
+        // (Weak ones too, `W`/`V`: a template's instance, an inline function, a class's vtable.)
+        const m = /^[0-9a-f]+ [TDRBCWV] (\w+)$/.exec(line.trim());
         if (m !== null && !out.has(m[1] as string)) out.set(m[1] as string, files[i] as string);
       }
     }
@@ -100,7 +101,14 @@ export function shaveCFiles(
       const name = todo.pop() as string;
       if (seen.has(name) || atoms.has(name)) continue;
       seen.add(name);
-      const file = defs.get(name);
+      // (V8's API, which every C++ file of node/src defines inline: the runtime's leaves.)
+      if (isV8Api(name)) {
+        externals.add(name);
+        continue;
+      }
+      // (A complete object's constructor or destructor, `C1`/`D1`, that code generation emits
+      // only as the base object's, `C2`/`D2`: the file of that one.)
+      const file = defs.get(name) ?? defs.get(name.replace(/([CD])1(E|I)/, "$12$2")) ?? undefined;
       if (file === undefined) {
         externals.add(name);
         continue;
@@ -122,8 +130,13 @@ export function shaveCFiles(
         continue;
       }
       take(unit, file);
-      if (process.env.YAKCC_PROGRESS !== undefined && Date.now() - t > 10_000)
-        console.error(`c-files: ${basename(file)} took ${Date.now() - t} ms`);
+      if (
+        process.env.YAKCC_PROGRESS !== undefined &&
+        (Date.now() - t > 10_000 || process.memoryUsage().heapUsed > 3 * 2 ** 30)
+      )
+        console.error(
+          `c-files: ${basename(file)} took ${Date.now() - t} ms, heap ${Math.round(process.memoryUsage().heapUsed / 2 ** 20)} MB`,
+        );
     }
     const staticsByFile = new Map(pendingStatics);
     pendingStatics.clear();
