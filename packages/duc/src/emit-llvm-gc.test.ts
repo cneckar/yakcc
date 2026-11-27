@@ -29,6 +29,23 @@ afterAll(() => {
 
 const PROGRAMS: [string, string, unknown[][]][] = [
   [
+    "generators resumed from the main stack while it holds values in callee-saved registers (its loops' iterators and results)",
+    `export function f(n) {
+      const log = [];
+      function* inner(k) { try { for (let i = 0; i < k; i++) yield { i, s: "v" + i }; } finally { log.push("inner " + k); } }
+      function* outer(k) { try { yield* inner(k); } finally { log.push("outer " + k); } }
+      const out = [];
+      for (let round = 0; round < n; round++) {
+        const it = inner(4);
+        let r = it.next();
+        while (!r.done) { out.push(r.value.s); r = it.next(); }
+        for (const x of outer(3)) { out.push(x.i); if (!(x.i < 1)) break; }
+      }
+      return [out.length, out.slice(0, 12), log.slice(0, 6), log.length];
+    }`,
+    [[40], [200]],
+  ],
+  [
     "objects, strings, arrays, maps and sets made and dropped; a comparator that allocates",
     `export function f(n) {
       const keep = [];
