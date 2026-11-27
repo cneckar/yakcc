@@ -7,7 +7,7 @@
 // takes, the same strings and the same state bytes after every decode and the flush.
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { type Fn, link } from "./__fixtures__/c-link.js";
+import { type Fn, link, runInitializers } from "./__fixtures__/c-link.js";
 import { shaveBinding } from "./__fixtures__/c-node.js";
 import { createCMemory, createCSystem } from "./raise-c.js";
 import { createV8 } from "./raise-cpp-v8.js";
@@ -93,6 +93,8 @@ describe.skipIf(!hasClang)("Node's string_decoder binding, shaved from node/src"
       { ...(system.leaves as unknown as Record<string, Fn>), ...v8.leaves },
     );
     env.yk_musl_init?.();
+    // (Node's C++ globals constructed, as its startup does.)
+    runInitializers(env, [...shaved.files.units, ...shaved.units]);
     // The context, tagged as Node's and given its Environment; the binding's initializer on it.
     const context = memory.leaves.__ykAlloc(8, 8);
     memory.leaves.__ykStore64(context, BigInt(v8.context));

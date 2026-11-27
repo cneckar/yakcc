@@ -443,6 +443,33 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
         const a = ld64(self as number);
         if (a !== 0) L.__ykFree?.(a);
       };
+    // The primitives (`v8::Null(isolate)`) and a property defined with V8's attributes (ReadOnly
+    // 1, DontEnum 2, DontDelete 4), as Object.defineProperty does.
+    const primitive: Record<string, unknown> = {
+      "v8::Null(v8::Isolate*)": null,
+      "v8::Undefined(v8::Isolate*)": undefined,
+      "v8::True(v8::Isolate*)": true,
+      "v8::False(v8::Isolate*)": false,
+    };
+    if (Object.hasOwn(primitive, d)) return R((ret) => put(ret as number, primitive[d]));
+    if (
+      d ===
+      "v8::Object::DefineOwnProperty(v8::Local<v8::Context>, v8::Local<v8::Name>, v8::Local<v8::Value>, v8::PropertyAttribute)"
+    )
+      return R((ret, self, _c, k, v, attrs) => {
+        const a = attrs as number;
+        Object.defineProperty(value(self as number) as object, at(k as number) as PropertyKey, {
+          value: at(v as number),
+          writable: (a & 1) === 0,
+          enumerable: (a & 2) === 0,
+          configurable: (a & 4) === 0,
+        });
+        just(ret as number);
+      });
+    if (d === "v8::String::NewFromUtf8Literal(v8::Isolate*, char const*, v8::NewStringType, int)")
+      return R((ret, _i, p, _t, n) =>
+        put(ret as number, utf8.decode(bytes(p as number, n as number))),
+      );
     // Strings.
     if (d === "v8::String::Empty(v8::Isolate*)") return R((ret) => put(ret as number, ""));
     if (d === "v8::String::Length() const")

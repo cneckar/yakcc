@@ -10,9 +10,17 @@ import { shaveMusl, withMuslInit } from "./c-musl.js";
 export const NODE = fileURLToPath(new URL("../../vendor/node/", import.meta.url));
 const FIXTURES = fileURLToPath(new URL("./c/", import.meta.url));
 
-/** node.gyp's and node.gypi's defines and include directories (Linux, x64, the bundled deps). */
+/**
+ * node.gyp's and node.gypi's defines and include directories (Linux, x64, the bundled deps), and
+ * common.gypi's flags for C++ on Linux (no RTTI, no exceptions, no strict aliasing; its
+ * -std=gnu++17 is configure.py's gnu++20 in Node 22, whose src/ needs it).
+ */
 export const NODE_ARGS: readonly string[] = [
   "-std=gnu++20",
+  "-fno-rtti",
+  "-fno-exceptions",
+  "-fno-strict-aliasing",
+  "-D__STDC_FORMAT_MACROS",
   "-DNODE_WANT_INTERNALS=1",
   '-DNODE_ARCH="x64"',
   '-DNODE_PLATFORM="linux"',

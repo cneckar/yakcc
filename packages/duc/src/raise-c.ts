@@ -4906,7 +4906,9 @@ function raiseBody(
           // A static whose initializer runs code (C++: `static std::u32string s = U"";`):
           // initialized the first time its declaration is reached, then a guard says so.
           if (d.storageClass === "static" && initializerRuns(d) !== undefined) {
-            const key = unitStatic?.(d, symbolOf(fn), true);
+            // (Or a global's, constructed by its unit's initializer atom: its own key.)
+            const key =
+              (d as { ykGlobalKey?: string }).ykGlobalKey ?? unitStatic?.(d, symbolOf(fn), true);
             if (key === undefined) throw new RaiseCError(`the static variable "${d.name}"`);
             const addr = `__ykStatic(${JSON.stringify(key)})`;
             const guard = `__ykStatic(${JSON.stringify(`${key}#guard`)})`;
@@ -5695,6 +5697,13 @@ export interface ShavedUnit {
   readonly staticRefs: ReadonlySet<string>;
   /** The unit's source file. */
   readonly file: string;
+  /**
+   * C++: the atoms that construct the unit's globals whose initializers run code
+   * (`std::shared_ptr<PerProcessOptions> cli_options{new PerProcessOptions()}`), in their order
+   * in the unit: what a program's startup runs (its `__cxx_global_var_init`s), after the C
+   * library's (see c-link's runInitializers).
+   */
+  readonly initializers?: readonly string[];
 }
 
 /**
@@ -7324,6 +7333,36 @@ export function shaveCUnit(
     bySymbol && /^_Z/.test(fnSymbol) && !/^_ZL|L\d|_GLOBAL__N|\$_/.test(fnSymbol)
       ? `${fnSymbol}.${name}`
       : `${unit}:${fnSymbol}.${name}`;
+  // C++ globals whose initializers run code: each constructed by an atom of its own, a function
+  // whose body declares it (as a static local is constructed where it is declared), by the
+  // global's key; in the unit's order.
+  const initializers: { key: string; order: number }[] = [];
+  const dynamicGlobal = (key: string, decl: ClangNode): void => {
+    const t = ctype(decl.type);
+    statics.set(key, { size: Math.max(1, sizeOf(t)), align: Math.max(1, alignOf(t)), init: [] });
+    statics.set(`${key}#guard`, { size: 1, align: 1, init: [] });
+    const initKey = `__yk_init__${key.replace(/\W/g, "_")}`;
+    if (found.has(initKey)) return;
+    found.set(initKey, {
+      kind: "FunctionDecl",
+      id: `yk-init:${key}`,
+      name: initKey,
+      type: { qualType: "void (void)" },
+      inner: [
+        {
+          kind: "CompoundStmt",
+          inner: [
+            {
+              kind: "DeclStmt",
+              inner: [{ ...decl, storageClass: "static", ykGlobalKey: key } as ClangNode],
+            },
+          ],
+        },
+      ],
+    } as ClangNode);
+    const at = decl.id === undefined ? undefined : indexed?.byId.get(decl.id)?.start;
+    initializers.push({ key: initKey, order: at ?? Number.MAX_SAFE_INTEGER });
+  };
   const staticHook = (d: ClangNode, fnName?: string, dynamic = false): string | undefined => {
     // C++ of several units: a global by its symbol (a class's static member, a namespace's
     // variable); one this unit only declares, another's (see c-files), as a linker resolves it.
@@ -7379,6 +7418,10 @@ export function shaveCUnit(
               return undefined;
             }
           })();
+          if (fromIR === undefined && isCxx && initializerRuns(def) !== undefined) {
+            dynamicGlobal(key, def);
+            return key;
+          }
           if (fromIR === undefined)
             throw new RaiseCError(
               `the static "${d.name}": ${e instanceof Error ? e.message : String(e)}`,
@@ -7486,6 +7529,15 @@ export function shaveCUnit(
         } catch {
           fromIR = undefined;
         }
+        if (
+          fromIR === undefined &&
+          isCxx &&
+          fnName === undefined &&
+          initializerRuns(decl) !== undefined
+        ) {
+          dynamicGlobal(key, decl);
+          return key;
+        }
         if (fromIR === undefined)
           throw new RaiseCError(
             `the static "${d.name}": ${e instanceof Error ? e.message : String(e)}`,
@@ -7563,6 +7615,10 @@ export function shaveCUnit(
     refused,
     statics,
     staticRefs: new Set([...staticKeys.values()].filter((k): k is string => k !== undefined)),
+    initializers: initializers
+      .filter((i) => atoms.has(i.key))
+      .sort((a, b) => a.order - b.order)
+      .map((i) => i.key),
   };
 }
 

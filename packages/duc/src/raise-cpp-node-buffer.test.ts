@@ -8,7 +8,7 @@
 // btoa, fill), the same results and the same bytes in its buffers after it.
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { type Fn, link } from "./__fixtures__/c-link.js";
+import { type Fn, link, runInitializers } from "./__fixtures__/c-link.js";
 import { shaveBinding } from "./__fixtures__/c-node.js";
 import { createCMemory, createCSystem } from "./raise-c.js";
 import { createV8 } from "./raise-cpp-v8.js";
@@ -97,6 +97,8 @@ describe.skipIf(!hasClang)("Node's buffer binding, shaved from node/src", () => 
       { ...(system.leaves as unknown as Record<string, Fn>), ...v8.leaves },
     );
     env.yk_musl_init?.();
+    // (Node's C++ globals constructed, as its startup does.)
+    runInitializers(env, [...shaved.files.units, ...shaved.units]);
     const context = memory.leaves.__ykAlloc(8, 8);
     memory.leaves.__ykStore64(context, BigInt(v8.context));
     (env.yk_node_environment as Fn)(v8.isolate, context);
