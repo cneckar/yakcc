@@ -31,3 +31,17 @@ yakcc bootstrap --registry bootstrap/yakcc.registry.sqlite
 ```
 
 Source: `examples/v2-self-shave-poc/corpus.manifest.json` (`_meta.generatedFrom`).
+
+## Getting the bootstrap registry
+
+The full registry (`bootstrap/yakcc.registry.sqlite`: every atom's block, and its DUC graph at the locked
+format) is about 144 MB, over GitHub's per-file limit. It is kept as the release asset
+`bootstrap-registry`, which CI replaces on each push to main (DEC-BOOTSTRAP-REGISTRY-RELEASE-001,
+`.github/workflows/bootstrap-accumulate.yml`):
+
+```
+gh release download bootstrap-registry -p 'yakcc.registry.sqlite.xz' -D bootstrap --clobber
+xz -d -f bootstrap/yakcc.registry.sqlite.xz
+```
+
+Or build it from the sources (about 20 minutes): `YAKCC_AIRGAP=1 node packages/cli/dist/bin.js bootstrap`.

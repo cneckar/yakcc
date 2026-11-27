@@ -32,7 +32,7 @@
 //   The inline helper uses the same cosine formula and produces identical
 //   rankings on the fixture corpus — verified manually against the production impl.
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,6 +67,24 @@ function resolveBootstrapCorpusPath(): string | null {
 }
 
 const BOOTSTRAP_CORPUS_PATH = resolveBootstrapCorpusPath();
+
+/**
+ * The corpus the tests read: a temporary copy of the bootstrap registry, since opening it writes to
+ * the file (#1291: no test writes to a committed database).
+ */
+const CORPUS_COPY_DIR =
+  BOOTSTRAP_CORPUS_PATH === null ? null : mkdtempSync(join(tmpdir(), "yakcc-export-corpus-"));
+const CORPUS_COPY =
+  BOOTSTRAP_CORPUS_PATH === null || CORPUS_COPY_DIR === null
+    ? null
+    : (() => {
+        const copy = join(CORPUS_COPY_DIR, "yakcc.registry.sqlite");
+        copyFileSync(BOOTSTRAP_CORPUS_PATH, copy);
+        return copy;
+      })();
+afterAll(() => {
+  if (CORPUS_COPY_DIR !== null) rmSync(CORPUS_COPY_DIR, { recursive: true, force: true });
+});
 
 // ---------------------------------------------------------------------------
 // BGE-matching stub provider
@@ -243,8 +261,9 @@ afterAll(() => {
 // T1 — outputs + counts (corpus-backed)
 //
 // Run exportAtomIndex against the bootstrap corpus. Assert:
-//   - atoms.json exists with .atoms.length === 4829
-//   - embeddings.json exists with .count === 4829 and .vectors.length === 4829
+//   - atoms.json exists, with at least one atom
+//   - embeddings.json exists, with one vector per atom
+// The corpus is regenerated as the sources change (#1291), so the counts are not pinned.
 // ---------------------------------------------------------------------------
 
 describe.skipIf(BOOTSTRAP_CORPUS_PATH === null)(
@@ -258,7 +277,7 @@ describe.skipIf(BOOTSTRAP_CORPUS_PATH === null)(
       const logger = new CollectingLogger();
       exitCode = await exportAtomIndex(["--out", outDir], logger, {
         embeddings: bgeStubEmbeddings,
-        corpusPath: BOOTSTRAP_CORPUS_PATH as string,
+        corpusPath: CORPUS_COPY as string,
       });
     }, 120_000);
 
@@ -274,17 +293,17 @@ describe.skipIf(BOOTSTRAP_CORPUS_PATH === null)(
       expect(existsSync(join(outDir, "embeddings.json"))).toBe(true);
     });
 
-    it("atoms.json.atoms.length === 4829", () => {
-      const raw = readFileSync(join(outDir, "atoms.json"), "utf-8");
-      const parsed = JSON.parse(raw) as { atoms: unknown[] };
-      expect(parsed.atoms.length).toBe(4829);
-    });
-
-    it("embeddings.json.count === 4829 and .vectors.length === 4829", () => {
-      const raw = readFileSync(join(outDir, "embeddings.json"), "utf-8");
-      const parsed = JSON.parse(raw) as { count: number; vectors: unknown[] };
-      expect(parsed.count).toBe(4829);
-      expect(parsed.vectors.length).toBe(4829);
+    it("atoms.json has atoms, and embeddings.json one vector per atom", () => {
+      const atoms = (
+        JSON.parse(readFileSync(join(outDir, "atoms.json"), "utf-8")) as { atoms: unknown[] }
+      ).atoms;
+      const parsed = JSON.parse(readFileSync(join(outDir, "embeddings.json"), "utf-8")) as {
+        count: number;
+        vectors: unknown[];
+      };
+      expect(atoms.length).toBeGreaterThan(0);
+      expect(parsed.count).toBe(atoms.length);
+      expect(parsed.vectors.length).toBe(atoms.length);
     });
   },
 );
@@ -304,7 +323,7 @@ describe.skipIf(BOOTSTRAP_CORPUS_PATH === null)("T2 — atom card schema (bootst
     const logger = new CollectingLogger();
     await exportAtomIndex(["--out", outDir], logger, {
       embeddings: bgeStubEmbeddings,
-      corpusPath: BOOTSTRAP_CORPUS_PATH as string,
+      corpusPath: CORPUS_COPY as string,
     });
   }, 120_000);
 
@@ -389,7 +408,7 @@ describe.skipIf(BOOTSTRAP_CORPUS_PATH === null)("T3 — model stamp (bootstrap c
     const logger = new CollectingLogger();
     await exportAtomIndex(["--out", outDir], logger, {
       embeddings: bgeStubEmbeddings,
-      corpusPath: BOOTSTRAP_CORPUS_PATH as string,
+      corpusPath: CORPUS_COPY as string,
     });
   }, 120_000);
 
@@ -707,7 +726,7 @@ describe.skipIf(BOOTSTRAP_CORPUS_PATH === null)(
       const logger = new CollectingLogger();
       await exportAtomIndex(["--out", outDir], logger, {
         embeddings: bgeStubEmbeddings,
-        corpusPath: BOOTSTRAP_CORPUS_PATH as string,
+        corpusPath: CORPUS_COPY as string,
       });
     }, 180_000);
 

@@ -10,7 +10,7 @@
 // keeps shave testable with lightweight noop stubs and decoupled from storage.
 
 import type { BlockMerkleRoot, CanonicalAstHash, SpecHash } from "@yakcc/contracts";
-import type { BlockTripletRow } from "@yakcc/registry";
+import type { BlockTripletRow, DucImplementationRow } from "@yakcc/registry";
 import type { IntentCard } from "./intent/types.js";
 // DEC-LICENSE-GATE-REMOVE-001: LicenseDetection import removed (WI-682, 2026-05-17).
 import type { SlicePlanEntry } from "./universalize/types.js";
@@ -363,6 +363,11 @@ export interface ShaveRegistryView {
    * each novel atom it persists. When absent, persistence is silently skipped.
    */
   storeBlock?(row: BlockTripletRow): Promise<void>;
+  /**
+   * Optional: store an atom's DUC implementation, its graph beside the block (#1279, #1291). When
+   * present, shave() stores the graph of each novel atom it persists; when absent, the block alone.
+   */
+  storeDucImplementation?(row: DucImplementationRow): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
