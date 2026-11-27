@@ -4725,7 +4725,7 @@ function raiseBody(
           // A static whose initializer runs code (C++: `static std::u32string s = U"";`):
           // initialized the first time its declaration is reached, then a guard says so.
           if (d.storageClass === "static" && initializerRuns(d) !== undefined) {
-            const key = unitStatic?.(d, fn.name, true);
+            const key = unitStatic?.(d, symbolOf(fn), true);
             if (key === undefined) throw new RaiseCError(`the static variable "${d.name}"`);
             const addr = `__ykStatic(${JSON.stringify(key)})`;
             const guard = `__ykStatic(${JSON.stringify(`${key}#guard`)})`;
@@ -4748,7 +4748,7 @@ function raiseBody(
           ) {
             // A static local that is written: module state, in static memory (its initializer is
             // its definition's, applied once).
-            const key = unitStatic?.(d, fn.name);
+            const key = unitStatic?.(d, symbolOf(fn));
             if (key === undefined)
               throw new RaiseCError(`the static variable "${d.name}" is state`);
             vars.set(d.id ?? "", t);
@@ -6947,6 +6947,15 @@ export function shaveCUnit(
     for (const n of dumpOf(name)) walk(n, false);
     return decl ?? tentative;
   };
+  /**
+   * A function's local static's key, by the function's symbol: its unit's; C++ of several units,
+   * one of an external function (an inline one's in every unit that has it is one object, as
+   * the language makes it), every unit's alike.
+   */
+  const localStaticKey = (fnSymbol: string, name: string): string =>
+    bySymbol && /^_Z/.test(fnSymbol) && !/^_ZL|L\d|_GLOBAL__N|\$_/.test(fnSymbol)
+      ? `${fnSymbol}.${name}`
+      : `${unit}:${fnSymbol}.${name}`;
   const staticHook = (d: ClangNode, fnName?: string, dynamic = false): string | undefined => {
     // C++ of several units: a global by its symbol (a class's static member, a namespace's
     // variable); one this unit only declares, another's (see c-files), as a linker resolves it.
@@ -7014,7 +7023,7 @@ export function shaveCUnit(
     const id = fnName === undefined ? `g:${d.name}` : (d.id ?? "");
     if (staticKeys.has(id)) return staticKeys.get(id);
     if (dynamic && fnName !== undefined) {
-      const key = `${unit}:${fnName}.${d.name}`;
+      const key = localStaticKey(fnName, d.name ?? "");
       const t = ctype(d.type);
       statics.set(key, { size: Math.max(1, sizeOf(t)), align: Math.max(1, alignOf(t)), init: [] });
       statics.set(`${key}#guard`, { size: 1, align: 1, init: [] });
@@ -7025,7 +7034,7 @@ export function shaveCUnit(
     let key: string;
     let decl: ClangNode | undefined;
     if (fnName !== undefined) {
-      key = `${unit}:${fnName}.${d.name}`;
+      key = localStaticKey(fnName, d.name ?? "");
       decl = d;
     } else {
       decl = definitionOf(d.name ?? "", normType(d.type?.qualType ?? ""));
