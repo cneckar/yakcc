@@ -137,14 +137,14 @@ jobs:
         # @rationale
         #   At the locked format the registry holds every atom's graph beside its block. It is
         #   ~144 MB, over GitHub's 100 MB per-file limit, and it is regenerated from the sources.
-        #   So the copy that is kept is the release asset `bootstrap-registry`, replaced on each
-        #   push to main: xz-compressed (~53 MB), outside git history, so no clone downloads it.
+        #   So the copy that is kept is the release asset `bootstrap-registry`, replaced only when
+        #   someone asks for it: a manual run of this workflow (Actions → bootstrap-accumulate →
+        #   Run workflow), never a merge. xz-compressed (~53 MB), outside git history, so no clone
+        #   downloads it.
         #   Get it with:
         #     gh release download bootstrap-registry -p 'yakcc.registry.sqlite.xz' -D bootstrap
         #     xz -d bootstrap/yakcc.registry.sqlite.xz
-        if: >-
-          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-          github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -152,7 +152,7 @@ jobs:
           sha256sum bootstrap/yakcc.registry.sqlite | cut -d' ' -f1 > bootstrap/yakcc.registry.sqlite.sha256
           xz -T0 -9 -k -f bootstrap/yakcc.registry.sqlite
           commit=$(git rev-parse HEAD)
-          notes="yakcc bootstrap of main at ${commit}: bootstrap/yakcc.registry.sqlite, xz-compressed, with its sha256 (uncompressed). Replaced on each push to main."
+          notes="yakcc bootstrap of main at ${commit}: bootstrap/yakcc.registry.sqlite, xz-compressed, with its sha256 (uncompressed). Replaced only by a manual run of bootstrap-accumulate."
           gh release view bootstrap-registry >/dev/null 2>&1 \
             || gh release create bootstrap-registry --title "Bootstrap registry" --notes "$notes" --prerelease --target "$commit"
           gh release edit bootstrap-registry --notes "$notes"
