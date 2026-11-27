@@ -51,6 +51,7 @@ typedef uint64_t yk;
 
 typedef struct {
   uint32_t len;
+  uint32_t hash; /* its key_hash, once computed (0: not yet) */
   uint16_t units[];
 } yk_string;
 
@@ -602,6 +603,7 @@ static void *grow(void *p, size_t old, size_t n) {
 static yk_string *new_string(uint32_t len) {
   yk_string *s = alloc_noscan(sizeof(yk_string) + (size_t)len * 2);
   s->len = len;
+  s->hash = 0;
   return s;
 }
 
@@ -1080,9 +1082,13 @@ static yk case_convert(yk v, int upper);
 static int date_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
 static yk date_string(double t, int what);
 /* Property keys equal: the same symbol, or strings of the same units. */
-static int key_equal(yk a, yk b) {
+static inline int key_equal(yk a, yk b) {
   if (a == b) return 1;
-  return is_string(a) && is_string(b) && string_equal(str(a), str(b));
+  if (!is_string(a) || !is_string(b)) return 0;
+  yk_string *x = (yk_string *)PTR(a), *y = (yk_string *)PTR(b);
+  /* Lengths (a rope's too) or kept hashes that differ: not equal, no units compared. */
+  if (x->len != y->len || (x->hash != 0 && y->hash != 0 && x->hash != y->hash)) return 0;
+  return string_equal(str(a), str(b));
 }
 /* ToPropertyKey: a symbol as it is; anything else its string. */
 static yk to_property_key(yk v) {
@@ -1313,7 +1319,8 @@ yk yk_dec(yk a) {
 int yk_is_nullish(yk a) { return is_nullish(a); }
 
 static int string_equal(yk_string *a, yk_string *b) {
-  return a->len == b->len && memcmp(a->units, b->units, (size_t)a->len * 2) == 0;
+  if (a->len != b->len || (a->hash != 0 && b->hash != 0 && a->hash != b->hash)) return 0;
+  return memcmp(a->units, b->units, (size_t)a->len * 2) == 0;
 }
 
 static int strict_equal(yk a, yk b) {
@@ -2307,8 +2314,13 @@ static yk bound_new(yk target, yk self, uint64_t argc, const yk *argv) {
 static uint32_t key_hash(yk key) {
   uint64_t h = 1469598103934665603ull;
   if (is_string(key)) {
+    /* A string's is computed once and kept (a string's units never change once made). */
     yk_string *s = str(key);
+    if (s->hash != 0) return s->hash;
     for (uint32_t i = 0; i < s->len; i++) h = (h ^ s->units[i]) * 1099511628211ull;
+    uint32_t r = (uint32_t)(h ^ (h >> 32));
+    s->hash = r != 0 ? r : 1;
+    return s->hash;
   } else
     h = (key ^ (key >> 29)) * 0x9E3779B97F4A7C15ull;
   return (uint32_t)(h ^ (h >> 32));
@@ -2339,6 +2351,10 @@ static struct {
 } own_found[512];
 static int64_t own_find(yk_object *o, yk key) {
   if (o->len < 8) {
+    /* Names are made once: the key itself, by pointer, first; else one equal to it. */
+    for (uint32_t i = 0; i < o->len; i++)
+      if (o->keys[i] == key) return i;
+    if (!is_string(key)) return -1;
     for (uint32_t i = 0; i < o->len; i++)
       if (key_equal(o->keys[i], key)) return i;
     return -1;
@@ -7914,8 +7930,8 @@ _Static_assert(offsetof(yk_view, buffer) == offsetof(struct yk_view_mirror, buff
                "yk_view's layout is the lowering's");
 _Static_assert(offsetof(yk_buffer, data) == offsetof(struct yk_buffer_mirror, data),
                "yk_buffer's layout is the lowering's");
-_Static_assert(offsetof(yk_string, len) == 0 && offsetof(yk_string, units) == 4,
-               "a string's length, then its units");
+_Static_assert(offsetof(yk_string, len) == 0 && offsetof(yk_string, units) == 8,
+               "a string's length, its hash, then its units");
 
 enum { TA_I8, TA_U8, TA_U8C, TA_I16, TA_U16, TA_I32, TA_U32, TA_F32, TA_F64, TA_BI64, TA_BU64, TA_COUNT };
 static const char *const ta_names[TA_COUNT] = {"Int8Array",   "Uint8Array",    "Uint8ClampedArray",

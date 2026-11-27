@@ -2802,7 +2802,7 @@ function lowerFunction(
     emit(`br i1 ${inS}, label %${strIn}, label %${slowL}`);
     block(strIn);
     const unitsP = fresh();
-    emit(`${unitsP} = getelementptr i8, ptr ${sp}, i32 4`);
+    emit(`${unitsP} = getelementptr i8, ptr ${sp}, i32 8`);
     const up = fresh();
     emit(`${up} = getelementptr i16, ptr ${unitsP}, i32 ${i}`);
     const u = fresh();
@@ -4264,7 +4264,7 @@ function lowerFunction(
           emit(`br i1 ${ok}, label %${l3}, label %${slowL}`);
           block(l3);
           const units = fresh();
-          emit(`${units} = getelementptr i8, ptr ${sp}, i32 4`);
+          emit(`${units} = getelementptr i8, ptr ${sp}, i32 8`);
           const up = fresh();
           emit(`${up} = getelementptr i16, ptr ${units}, i32 ${i}`);
           const u = fresh();
