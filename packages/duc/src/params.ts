@@ -4,6 +4,20 @@
  * from there on as an array) is its index then `...` (#1276).
  */
 
+/**
+ * The mark of a parameter declared a primitive (`0:prim`, #1370): an operator on it converts no
+ * object, so it is not ordered. It comes after the index and before `...` or `=`.
+ */
+export const PRIMITIVE_PARAM = ":prim";
+
+/** How a lowering to JavaScript writes the mark after the parameter's name (a Flow comment type). */
+export const PRIMITIVE_COMMENT = "/*: primitive */";
+
+/** Whether a parameter is declared a primitive. */
+export function isPrimitiveParam(label: string | undefined): boolean {
+  return label?.includes(PRIMITIVE_PARAM) === true;
+}
+
 /** The index of a parameter, from its label. */
 export function paramIndex(label: string | undefined): number {
   return Number.parseInt(label ?? "", 10);

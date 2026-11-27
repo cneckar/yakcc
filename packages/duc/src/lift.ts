@@ -33,10 +33,11 @@ import {
 } from "ts-morph";
 import { KNOWN_PRIMITIVES } from "./base-set.js";
 import { canonicalizeGraph } from "./canonical.js";
-import { isHeapLabel } from "./heap-labels.js";
+import { isHeapLabel, mayCallUserCode, primitiveLiteral, primitiveResult } from "./heap-labels.js";
 import { normalizeLiteral } from "./literal.js";
 import { mathOperation } from "./operations.js";
 import { jsOperation } from "./ops.js";
+import { PRIMITIVE_COMMENT, PRIMITIVE_PARAM } from "./params.js";
 import { RUNTIME_MODULE } from "./runtime.js";
 import type {
   DiamondReason,
@@ -1024,13 +1025,164 @@ class Lifter {
    * be a primitive (a literal, or another operator's result) is not converted by a call.
    */
   private mayCallUserCode(label: string, inputs: readonly ValueId[]): boolean {
-    const name = label.startsWith("template:") ? "template" : jsOperation(label, inputs.length);
-    if (!TO_PRIMITIVE_OPERATIONS.has(name)) return false;
-    // `x == null` and `x != null` never convert: null and undefined are equal only to each other.
-    if (name === "js.loose_eq" || name === "js.loose_ne") {
-      if (inputs.some((v) => this.isNullish(v))) return false;
+    return mayCallUserCode(
+      label,
+      inputs,
+      (v) => this.isPrimitive(v, 4),
+      (v) => this.isNullish(v),
+    );
+  }
+
+  /**
+   * The carried names that are certainly primitives on every pass (#1370), by a greatest fixpoint
+   * over the bindings the loop writes: the carried names, and each pass's own `let` and `const`.
+   * Every one is assumed a primitive; one is dropped when a value written to it (its value before
+   * the loop or its initializer, then every assignment) is not one under what is still assumed;
+   * until none is dropped. What is left holds only such primitives, on every pass, by induction.
+   * It reads the syntax, so the source and its lowering, which names every value, agree.
+   */
+  private primitiveCarries(
+    carried: readonly string[],
+    inits: readonly ValueId[],
+    parts: readonly (Node | undefined)[],
+  ): Set<string> {
+    const within = parts.filter((p): p is Node => p !== undefined);
+    const inside = (n: Node): boolean =>
+      within.some(
+        (p) =>
+          n.getSourceFile() === p.getSourceFile() &&
+          n.getPos() >= p.getPos() &&
+          n.getEnd() <= p.getEnd(),
+      );
+    // A binding is a carried name (by its name) or a pass's own declaration (by its node).
+    type Key = string | Node;
+    const keyOf = (id: Node): Key | undefined => {
+      const decl = id.getSymbol()?.getDeclarations()[0];
+      if (decl !== undefined && inside(decl)) return decl;
+      return carried.includes(id.getText()) ? id.getText() : undefined;
+    };
+    // The values written to each binding: an expression, or undefined for one no expression says
+    // (a pattern, the target of a for-in or for-of), which drops it.
+    const writes = new Map<Key, (Node | undefined)[]>();
+    const write = (k: Key | undefined, value: Node | undefined): void => {
+      if (k === undefined) return;
+      writes.set(k, [...(writes.get(k) ?? []), value]);
+    };
+    const assumed = new Set<Key>();
+    carried.forEach((name, i) => {
+      const init = inits[i];
+      if (
+        !name.startsWith("%") &&
+        name !== HEAP &&
+        !this.cells.has(name) &&
+        init !== undefined &&
+        this.isPrimitive(init, 4)
+      )
+        assumed.add(name);
+    });
+    const undefinedValue: Node | undefined = undefined;
+    for (const part of within)
+      for (const n of [part, ...part.getDescendants()]) {
+        if (Node.isVariableDeclaration(n)) {
+          const name = n.getNameNode();
+          if (!Node.isIdentifier(name)) {
+            for (const id of name.getDescendantsOfKind(SyntaxKind.Identifier))
+              write(keyOf(id), undefinedValue);
+            continue;
+          }
+          const list = n.getParent();
+          const iterated =
+            Node.isForOfStatement(list?.getParent()) || Node.isForInStatement(list?.getParent());
+          assumed.add(n);
+          // `let x;` holds undefined, a primitive: no write is needed for it.
+          const init = n.getInitializer();
+          if (iterated) write(n, undefinedValue);
+          else if (init !== undefined) write(n, init);
+        } else if (Node.isBinaryExpression(n)) {
+          const k = n.getOperatorToken().getKind();
+          if (k !== SyntaxKind.EqualsToken && !COMPOUND_ASSIGN.has(k)) continue;
+          const left = n.getLeft();
+          // `x = e` writes e; `x += e` writes `x + e`, and `x ||= e` x or e: both sides, as `safe`
+          // reads them.
+          if (Node.isIdentifier(left))
+            write(keyOf(left), k === SyntaxKind.EqualsToken ? n.getRight() : n);
+          else if (Node.isArrayLiteralExpression(left) || Node.isObjectLiteralExpression(left))
+            for (const id of left.getDescendantsOfKind(SyntaxKind.Identifier))
+              write(keyOf(id), undefinedValue);
+        } else if (
+          (Node.isPrefixUnaryExpression(n) || Node.isPostfixUnaryExpression(n)) &&
+          [SyntaxKind.PlusPlusToken, SyntaxKind.MinusMinusToken].includes(n.getOperatorToken()) &&
+          Node.isIdentifier(n.getOperand())
+        )
+          write(keyOf(n.getOperand()), n);
+        else if (
+          (Node.isForOfStatement(n) || Node.isForInStatement(n)) &&
+          Node.isIdentifier(n.getInitializer())
+        )
+          write(keyOf(n.getInitializer()), undefinedValue);
+      }
+    const COMPARISON = new Set([
+      SyntaxKind.LessThanToken,
+      SyntaxKind.GreaterThanToken,
+      SyntaxKind.LessThanEqualsToken,
+      SyntaxKind.GreaterThanEqualsToken,
+      SyntaxKind.EqualsEqualsToken,
+      SyntaxKind.ExclamationEqualsToken,
+      SyntaxKind.EqualsEqualsEqualsToken,
+      SyntaxKind.ExclamationEqualsEqualsToken,
+      SyntaxKind.InKeyword,
+      SyntaxKind.InstanceOfKeyword,
+    ]);
+    // Whether an expression's value is such a primitive, given the bindings still assumed.
+    const safe = (e: Node): boolean => {
+      if (Node.isParenthesizedExpression(e)) return safe(e.getExpression());
+      if (
+        Node.isNumericLiteral(e) ||
+        Node.isStringLiteral(e) ||
+        Node.isNoSubstitutionTemplateLiteral(e) ||
+        Node.isTrueLiteral(e) ||
+        Node.isFalseLiteral(e) ||
+        Node.isNullLiteral(e) ||
+        Node.isTemplateExpression(e) ||
+        Node.isTypeOfExpression(e) ||
+        Node.isVoidExpression(e)
+      )
+        return true;
+      if (Node.isConditionalExpression(e)) return safe(e.getWhenTrue()) && safe(e.getWhenFalse());
+      if (Node.isPrefixUnaryExpression(e) || Node.isPostfixUnaryExpression(e)) {
+        const t = e.getOperatorToken();
+        if (t === SyntaxKind.ExclamationToken || t === SyntaxKind.PlusToken) return true;
+        return safe(e.getOperand());
+      }
+      if (Node.isBinaryExpression(e)) {
+        const k = e.getOperatorToken().getKind();
+        if (COMPARISON.has(k)) return true;
+        if (k === SyntaxKind.CommaToken || k === SyntaxKind.EqualsToken) return safe(e.getRight());
+        if (TO_PRIMITIVE_TOKENS.has(k) || COMPOUND_ASSIGN.has(k))
+          return safe(e.getLeft()) && safe(e.getRight());
+        return false;
+      }
+      if (Node.isIdentifier(e)) {
+        const k = keyOf(e);
+        if (k !== undefined) return assumed.has(k);
+        const name = e.getText();
+        if (primitiveParameter(e)) return true;
+        const outer = this.env.get(name);
+        if (outer === undefined)
+          return name === "undefined" || name === "NaN" || name === "Infinity";
+        return !this.cells.has(name) && this.isPrimitive(outer, 4);
+      }
+      return false;
+    };
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const k of [...assumed])
+        if (!(writes.get(k) ?? []).every((w) => w !== undefined && safe(w))) {
+          assumed.delete(k);
+          changed = true;
+        }
     }
-    return inputs.some((v) => !this.isPrimitive(v, 4));
+    return new Set(carried.filter((name) => assumed.has(name)));
   }
 
   /** Whether a value is the literal null or undefined. */
@@ -1046,7 +1198,8 @@ class Lifter {
   private isPrimitive(v: ValueId, depth: number): boolean {
     const p = this.producers.get(v);
     if (p === undefined) return false;
-    if (p.kind === "literal-source" || this.knownPrimitive.has(v)) return true;
+    if (this.knownPrimitive.has(v)) return true;
+    if (p.kind === "literal-source") return primitiveLiteral(p.label);
     // A loop invariant is the value outside the loop: a literal there is one inside.
     const outer = this.invariantOuter.get(v);
     if (outer !== undefined) return this.isPrimitive(outer, depth);
@@ -1056,8 +1209,11 @@ class Lifter {
         ["NaN", "Infinity", "undefined"].includes(p.diamond.symbol)
       );
     if (p.kind === "op") {
-      const l = p.label ?? "";
-      return l.startsWith("template:") || PRIMITIVE_RESULTS.has(l);
+      const operands = p.inputs.slice(0, p.inputs.length - (p.order === 1 ? 1 : 0));
+      return primitiveResult(
+        p.label ?? "",
+        () => depth > 0 && operands.every((x) => this.isPrimitive(x, depth - 1)),
+      );
     }
     if (p.kind === "sel" && depth > 0 && p.label === undefined)
       return p.inputs.slice(1).every((x) => this.isPrimitive(x, depth - 1));
@@ -1197,10 +1353,15 @@ class Lifter {
       // parameter with one is marked (`1=`), as a rest one is (`1...`): together they are the
       // function's `length` (#1370). A default of `undefined` changes no value, only the length.
       const init = param.getInitializer();
+      // A parameter declared a primitive (`x: number`, `s: string | undefined`) is one: the contract
+      // says so, and an operator on it converts no object (#1370). It is marked in the label (`0:prim`),
+      // so the graph says it of itself and a lowering declares it again.
+      const primitive = declaredPrimitive(param);
       const [value] = this.emit("param-source", [], 1, {
         origin: { kind: "Parameter", text: truncate(nameNode.getText()) },
-        label: `${paramOffset + index}${param.isRestParameter() ? "..." : init !== undefined ? "=" : ""}`,
+        label: `${paramOffset + index}${primitive ? PRIMITIVE_PARAM : ""}${param.isRestParameter() ? "..." : init !== undefined ? "=" : ""}`,
       });
+      if (primitive) this.knownPrimitive.add(value as ValueId);
       const noOp =
         init !== undefined &&
         Node.isIdentifier(init) &&
@@ -3274,6 +3435,7 @@ class Lifter {
         : []),
     ];
     const inits = carried.map((name) => this.env.get(name) as ValueId);
+    const primitive = this.primitiveCarries(carried, inits, [cond, body, incrementor]);
 
     // The body runs on a copy of the environment, and the original object is restored after it: an
     // enclosing branch holds that object, so it must see the loop's results.
@@ -3301,6 +3463,7 @@ class Lifter {
           });
           carrySources.push(value as ValueId);
           this.env.set(name, value as ValueId);
+          if (primitive.has(name)) this.knownPrimitive.add(value as ValueId);
         });
         // With exits: the loop continues while no exit is set, and then while its condition holds.
         const stopped = (): ValueId | undefined => {
@@ -3420,6 +3583,7 @@ class Lifter {
     };
     carried.forEach((name, i) => {
       const out = results[i];
+      if (out !== undefined && primitive.has(name)) this.knownPrimitive.add(out);
       if (out !== undefined) this.env.set(name, out);
     });
     return true;
@@ -3483,6 +3647,14 @@ class Lifter {
       assigned.unshift(existing.getText());
     const carried = [...byDeclaration(node, assigned), ...exitNames, HEAP];
     const inits = carried.map((name) => this.env.get(name) as ValueId);
+    // A name the iteration writes holds the elements, which may be objects.
+    const primitive = this.primitiveCarries(
+      carried.filter((name) => name !== existing?.getText()),
+      carried
+        .filter((name) => name !== existing?.getText())
+        .map((name) => this.env.get(name) as ValueId),
+      [body],
+    );
 
     const saved = this.env;
     this.env = new Map(saved);
@@ -3509,6 +3681,7 @@ class Lifter {
           });
           carrySources.push(value as ValueId);
           this.env.set(name, value as ValueId);
+          if (primitive.has(name)) this.knownPrimitive.add(value as ValueId);
         });
         [element] = this.emit("carry-source", [], 1, {
           label: "element",
@@ -3573,6 +3746,7 @@ class Lifter {
     };
     carried.forEach((name, i) => {
       const out = results[i];
+      if (out !== undefined && primitive.has(name)) this.knownPrimitive.add(out);
       if (out !== undefined) this.env.set(name, out);
     });
     return true;
@@ -6605,62 +6779,67 @@ const RUNTIME_PRIMITIVES = new Set([
 ]);
 
 /**
- * The operations that convert an operand with ToPrimitive, ToNumeric or ToString (#1370): on an
- * object they call its `valueOf`, `toString` or `Symbol.toPrimitive`, and they throw on a Symbol,
- * or on a BigInt mixed with a Number. `template` is a template literal with substitutions.
+ * Whether a parameter is declared a primitive (#1370): its type is one (primitiveType), or a
+ * lowering marked it so (PRIMITIVE_COMMENT). A rest parameter is an array.
  */
-const TO_PRIMITIVE_OPERATIONS = new Set([
-  "js.add",
-  "js.sub",
-  "js.mul",
-  "js.div",
-  "js.rem",
-  "js.pow",
-  "js.lt",
-  "js.gt",
-  "js.le",
-  "js.ge",
-  "js.loose_eq",
-  "js.loose_ne",
-  "js.shl",
-  "js.sar",
-  "js.shr",
-  "js.bitand",
-  "js.bitor",
-  "js.bitxor",
-  "js.neg",
-  "js.tonumber",
-  "js.bitnot",
-  "js.inc",
-  "js.dec",
-  "js.postinc",
-  "js.postdec",
-  "js.add_assign",
-  "js.sub_assign",
-  "js.mul_assign",
-  "js.div_assign",
-  "js.rem_assign",
-  "js.pow_assign",
-  "js.shl_assign",
-  "js.sar_assign",
-  "js.shr_assign",
-  "js.bitand_assign",
-  "js.bitor_assign",
-  "js.bitxor_assign",
-  "template",
-]);
+function declaredPrimitive(param: import("ts-morph").ParameterDeclaration): boolean {
+  if (param.isRestParameter()) return false;
+  return (
+    primitiveType(param.getTypeNode()) ||
+    param
+      .getNameNode()
+      .getTrailingCommentRanges()
+      .some((c) => c.getText() === PRIMITIVE_COMMENT)
+  );
+}
 
-/** Operations whose result is always a primitive, whatever their operands. */
-const PRIMITIVE_RESULTS = new Set([
-  ...[...TO_PRIMITIVE_OPERATIONS].filter((o) => o !== "template"),
-  "js.strict_eq",
-  "js.strict_ne",
-  "js.not",
-  "js.typeof",
-  "js.void",
-  "js.in",
-  "js.instanceof",
-]);
+/**
+ * Whether a name read is a parameter declared a primitive (declaredPrimitive) that nothing assigns:
+ * the nearest declaration of the name, in the scopes around the read, is that parameter.
+ */
+function primitiveParameter(id: Node): boolean {
+  const cached = primitiveParameterCache.get(id.compilerNode);
+  if (cached !== undefined) return cached;
+  // TypeScript's binder resolves the name to its declaration (no type checking is involved).
+  const decl = id.getSymbol()?.getDeclarations()[0];
+  const result =
+    decl !== undefined &&
+    Node.isParameterDeclaration(decl) &&
+    Node.isIdentifier(decl.getNameNode()) &&
+    declaredPrimitive(decl) &&
+    !assignmentTargets(decl.getParentOrThrow()).some(
+      (t) => Node.isIdentifier(t) && t.getSymbol() === decl.getSymbol(),
+    );
+  primitiveParameterCache.set(id.compilerNode, result);
+  return result;
+}
+
+const primitiveParameterCache = new WeakMap<object, boolean>();
+
+/**
+ * Whether a declared type is certainly a primitive no operator converts by calling code, and not a
+ * BigInt or a Symbol (which an operator mixed with a Number throws on): `number`, `string`,
+ * `boolean`, their literal and template literal types, `null`, `undefined`, and unions of those.
+ */
+function primitiveType(t: Node | undefined): boolean {
+  if (t === undefined) return false;
+  if (Node.isParenthesizedTypeNode(t)) return primitiveType(t.getTypeNode());
+  if (Node.isUnionTypeNode(t)) return t.getTypeNodes().every(primitiveType);
+  if (Node.isLiteralTypeNode(t)) {
+    const l = t.getLiteral();
+    // `-1` is a number; `1n` and `-1n` are BigInts.
+    if (Node.isPrefixUnaryExpression(l)) return Node.isNumericLiteral(l.getOperand());
+    return !Node.isBigIntLiteral(l);
+  }
+  if (Node.isTemplateLiteralTypeNode(t)) return true;
+  return [
+    SyntaxKind.NumberKeyword,
+    SyntaxKind.StringKeyword,
+    SyntaxKind.BooleanKeyword,
+    SyntaxKind.UndefinedKeyword,
+    SyntaxKind.NullKeyword,
+  ].includes(t.getKind());
+}
 
 /** Binary operator tokens that convert their operands (TO_PRIMITIVE_OPERATIONS, as syntax). */
 const TO_PRIMITIVE_TOKENS = new Set([
@@ -6702,7 +6881,7 @@ function syntacticallyPrimitive(e: Node): boolean {
     Node.isVoidExpression(e)
   )
     return true;
-  if (Node.isIdentifier(e)) return e.getText() === "undefined";
+  if (Node.isIdentifier(e)) return e.getText() === "undefined" || primitiveParameter(e);
   if (Node.isPrefixUnaryExpression(e)) {
     const t = e.getOperatorToken();
     if (t === SyntaxKind.ExclamationToken) return true;

@@ -186,7 +186,9 @@ describe("exits (#1276)", () => {
     const g = liftAtom(
       "export function f(n: number, a: boolean, b: boolean) { let i = 0; let s = 0; while (i < n) { const j = i + 1; if (a) { s = 1; } else if (b) { throw new Error('b'); } else { s = 2; } i = j; } return [i, s]; }",
     );
-    const sels = g.nodes.filter((n) => n.kind === "sel");
+    // The joins of values: the heap token's join orders, and joins no value (#1370: the counter's
+    // `+` is ordered, a carry not being known a primitive as its body is lifted).
+    const sels = g.nodes.filter((n) => n.kind === "sel" && n.label !== "heap");
     const plus = g.nodes.find((n) => n.label === "js.add")?.outputs[0];
     expect(sels.some((n) => n.inputs.includes(plus as string))).toBe(false);
   });

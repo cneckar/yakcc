@@ -27,7 +27,13 @@ import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./lin
 import { operationReference } from "./operations.js";
 import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
-import { isDefaultedParam, isRestParam, paramIndex } from "./params.js";
+import {
+  PRIMITIVE_COMMENT,
+  isDefaultedParam,
+  isPrimitiveParam,
+  isRestParam,
+  paramIndex,
+} from "./params.js";
 import { RUNTIME_MODULE } from "./runtime.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
@@ -141,7 +147,14 @@ export function emitTypeScript(
       ? params
       : params.map((p, i) => {
           const t = signature.inputs[i];
-          return t === undefined ? p : `${p}: ${typeToTypeScript(parseType(t))}`;
+          if (t === undefined) return p;
+          // The contract's type replaces the primitive mark's, before a default.
+          const defaulted = p.endsWith(DEFAULT_UNDEFINED);
+          const head = (defaulted ? p.slice(0, -DEFAULT_UNDEFINED.length) : p).replace(
+            PRIMITIVE_ANNOTATION,
+            "",
+          );
+          return `${head}: ${typeToTypeScript(parseType(t))}${defaulted ? DEFAULT_UNDEFINED : ""}`;
         });
   const result =
     signature?.output !== undefined ? `: ${typeToTypeScript(parseType(signature.output))}` : "";
@@ -154,6 +167,13 @@ export function emitTypeScript(
     "",
   ].join("\n");
 }
+
+/**
+ * A parameter declared a primitive (`0:prim`, #1370) is declared one again, so it lifts back the
+ * same. The mark is a comment (a Flow comment type), so the lowering stays JavaScript that runs.
+ */
+const PRIMITIVE_ANNOTATION = ` ${PRIMITIVE_COMMENT}`;
+const DEFAULT_UNDEFINED = " = undefined";
 
 /**
  * Where each entry of an object literal's label takes its inputs: a computed key's input, then the
@@ -968,7 +988,7 @@ function emitFunction(
     .sort((a, b) => paramIndex(a.label) - paramIndex(b.label))
     .map(
       (n) =>
-        `${isRestParam(n.label) ? "..." : ""}${nameOf(n.outputs[0] as ValueId)}${isDefaultedParam(n.label) ? " = undefined" : ""}`,
+        `${isRestParam(n.label) ? "..." : ""}${nameOf(n.outputs[0] as ValueId)}${isPrimitiveParam(n.label) ? PRIMITIVE_ANNOTATION : ""}${isDefaultedParam(n.label) ? DEFAULT_UNDEFINED : ""}`,
     );
   const body = [...unread, ...emitScope(undefined)];
   if (asModule) {

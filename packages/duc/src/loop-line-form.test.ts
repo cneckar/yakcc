@@ -1,10 +1,11 @@
-// SPDX-License-Identifier: Apache-2.0
-// The `loop` directives of the line form (loops, #1275): a loop prints as a block whose body reads
-// the outside only through its invariants, and parses back to the same structure.
 import { describe, expect, it } from "vitest";
 import { graphIdentity } from "./canonical.js";
 import { liftAtom } from "./lift.js";
 import { parseLineForm, printLineForm } from "./line-form.js";
+// SPDX-License-Identifier: Apache-2.0
+// The `loop` directives of the line form (loops, #1275): a loop prints as a block whose body reads
+// the outside only through its invariants, and parses back to the same structure.
+import { paramIndex } from "./params.js";
 
 const SOURCES = [
   "export function f(n: number, x: number): number { let s = 0; let i = 0; while (i < n) { s = s + x; i = i + 1; } return s; }",
@@ -34,20 +35,23 @@ describe("loops in the line form (#1275)", () => {
 
   it("a hand-written while loop parses to the graph the lifter produces for it", () => {
     const text = [
-      "param n",
-      "param x",
+      // Declared numbers (#1370): no operator on them is ordered. The loop still carries the heap
+      // token, as the lifter decides by the body's syntax whether it may need it.
+      "param n prim",
+      "param x prim",
       'lit "0" -> s0',
       'lit "0" -> i0',
-      "loop s0 i0 with n x",
-      "carry s i",
+      'lit "undefined" -> h0',
+      "loop s0 i0 h0 with n x",
+      "carry s i ^h",
       "invariant nn xx",
       "op + s xx -> s2",
       'lit "1" -> one',
       "op + i one -> i2",
       "op < i nn -> c",
       "while c",
-      "next s2 i2",
-      "end r ii",
+      "next s2 i2 h",
+      "end r ii hh",
       "out r",
     ].join("\n");
     expect(graphIdentity(parseLineForm(text))).toBe(graphIdentity(liftAtom(SOURCES[0] as string)));
@@ -58,7 +62,7 @@ describe("loops in the line form (#1275)", () => {
     // show that: the outer loop's inputs include the parameter x, as an invariant.
     const g = liftAtom(SOURCES[2] as string);
     const outer = g.nodes.find((n) => n.kind === "loop" && n.region === undefined);
-    const param = g.nodes.find((n) => n.kind === "param-source" && n.label === "1");
+    const param = g.nodes.find((n) => n.kind === "param-source" && paramIndex(n.label) === 1);
     expect(outer?.inputs).toContain(param?.outputs[0]);
   });
 
@@ -79,7 +83,7 @@ describe("loops in the line form (#1275)", () => {
     it("a hand-written for...of parses to the graph the lifter produces for it", () => {
       const text = [
         "param xs",
-        "param k",
+        "param k prim",
         'lit "0" -> s0',
         // An iterating loop reads its iterable at each step, so it carries the heap token (#1285).
         'lit "undefined" -> h0',
@@ -87,9 +91,10 @@ describe("loops in the line form (#1275)", () => {
         "carry s ^h",
         "invariant kk",
         "element x",
-        "op * x kk -> t",
-        "op + s t -> s2",
-        "next s2 h",
+        // An element may be an object: the operators on it are ordered (#1370).
+        "op * x kk ^h -> t",
+        "op + s t ^t -> s2",
+        "next s2 s2",
         "end r h1",
         "out r",
       ].join("\n");

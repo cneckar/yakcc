@@ -38,8 +38,8 @@ describe("structured if in the line form (#1275)", () => {
   it("a hand-written if parses to the graph the lifter produces for the same function", () => {
     const text = [
       "# let r = x; if (c) { r = x * 2 }; return r",
-      "param c",
-      "param x",
+      "param c prim",
+      "param x prim",
       "if c",
       'lit "2" -> k',
       "op * x k -> t",
