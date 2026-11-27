@@ -13,3 +13,26 @@ export function paramIndex(label: string | undefined): number {
 export function isRestParam(label: string | undefined): boolean {
   return label?.endsWith("...") === true;
 }
+
+/**
+ * Whether a parameter has a default (`b = 1`): its index then `=` (#1370). The default itself is in
+ * the body, applied when the argument is undefined; the mark is what a function's `length` needs.
+ */
+export function isDefaultedParam(label: string | undefined): boolean {
+  return label?.endsWith("=") === true;
+}
+
+/**
+ * ExpectedArgumentCount (ECMA-262 15.1.5), a function's `length`: its own parameters (those after
+ * the `captures` it is made with) before the first that has a default or is a rest parameter.
+ */
+export function expectedArgumentCount(
+  params: readonly { readonly label?: string }[],
+  captures: number,
+): number {
+  const own = params
+    .filter((p) => paramIndex(p.label) >= captures)
+    .sort((a, b) => paramIndex(a.label) - paramIndex(b.label));
+  const first = own.findIndex((p) => isRestParam(p.label) || isDefaultedParam(p.label));
+  return first < 0 ? own.length : first;
+}

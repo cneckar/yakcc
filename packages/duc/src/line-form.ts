@@ -2,7 +2,7 @@ import { canonicalizeGraph } from "./canonical.js";
 import { isHeapLabel } from "./heap-labels.js";
 import { normalizeLiteral } from "./literal.js";
 import { namedOperation } from "./ops.js";
-import { isRestParam } from "./params.js";
+import { isDefaultedParam, isRestParam } from "./params.js";
 // SPDX-License-Identifier: Apache-2.0
 /**
  * The line form: the authoring format a model writes (#1275). One directive per line, in
@@ -11,7 +11,8 @@ import { isRestParam } from "./params.js";
  *
  * Grammar:
  *
- *   param <name>                        the next parameter (index = order of param lines); top level only
+ *   param <name> [... | =]              the next parameter (index = order of param lines); top level only;
+ *                                       `...` a rest parameter, `=` one with a default
  *   lit "<text>" -> <name>              a literal: <text> is a JavaScript literal (a number, a quoted
  *                                       string, true, false, null, undefined, a big integer or a
  *                                       regular expression). Literals are constants: identical ones
@@ -319,17 +320,19 @@ export function parseLineForm(text: string): DucGraph {
 
     if (head === "param") {
       if (open.length > 0) throw new LineFormError(line, "param must come before any if or loop");
-      // `param xs ...` is a rest parameter: the arguments from there on, as an array.
+      // `param xs ...` is a rest parameter: the arguments from there on, as an array. `param b =`
+      // has a default, applied in the body (#1370).
       const restParam = rest.length === 2 && rest[1] === "...";
-      if (rest.length !== 1 && !restParam)
-        throw new LineFormError(line, "expected: param <name> [...]");
+      const defaulted = rest.length === 2 && rest[1] === "=";
+      if (rest.length !== 1 && !restParam && !defaulted)
+        throw new LineFormError(line, "expected: param <name> [... | =]");
       const out = define(rest[0] as string, line);
       add(
         {
           kind: "param-source",
           inputs: [],
           outputs: [out],
-          label: `${paramCount++}${restParam ? "..." : ""}`,
+          label: `${paramCount++}${restParam ? "..." : defaulted ? "=" : ""}`,
         },
         undefined,
       );
@@ -996,7 +999,7 @@ export function printLineForm(g: DucGraph): string {
     switch (node.kind) {
       case "param-source": {
         if (out === undefined) throw new Error("param-source without an output");
-        return `param ${out}${isRestParam(node.label) ? " ..." : ""}`;
+        return `param ${out}${isRestParam(node.label) ? " ..." : isDefaultedParam(node.label) ? " =" : ""}`;
       }
       case "literal-source": {
         if (out === undefined || node.label === undefined)

@@ -30,7 +30,7 @@ import { bodyPathOf, joinOwners, sidePath } from "./line-form.js";
 import { atomGraph, atomNames, mathOperation, operationReference } from "./operations.js";
 import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
-import { paramIndex } from "./params.js";
+import { expectedArgumentCount, paramIndex } from "./params.js";
 import { RegexCompileError, regexMatcherGraph } from "./regex.js";
 import { type ScopeItem, scopePlanner } from "./scopes.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
@@ -387,6 +387,17 @@ function llvmBytes(text: string): { body: string; length: number } {
         ? String.fromCharCode(b)
         : `\\${b.toString(16).toUpperCase().padStart(2, "0")}`;
   return { body, length: bytes.length };
+}
+
+/** Whether a closure reads `super`: itself, or an arrow inside it, whose `super` is its own. */
+function usesSuper(g: DucGraph | undefined): boolean {
+  if (g === undefined) return false;
+  return g.nodes.some(
+    (n) =>
+      (n.label ?? "").startsWith("super.") ||
+      n.label === "super[]" ||
+      ((n.label === "closure" || n.label === "async closure") && usesSuper(n.closure)),
+  );
 }
 
 /** A slot of an object literal's label: a named or computed key, a method, a spread. */
@@ -3074,13 +3085,10 @@ function lowerFunction(
     const text = n.origin?.text ?? "";
     const ownName =
       /^(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(/.exec(text)?.[1] ?? text;
-    const params = graph.nodes.filter(
-      (p) => p.kind === "param-source" && Number(p.label ?? "0") >= n.inputs.length,
-    );
-    const rest = params.findIndex((p) => (p.label ?? "").endsWith("..."));
-    const length = Math.min(
-      rest < 0 ? params.length : rest,
-      expectedArgumentCount(text) ?? Number.POSITIVE_INFINITY,
+    // Its length is the graph's: own parameters before the first with a default or a rest one (#1370).
+    const length = expectedArgumentCount(
+      graph.nodes.filter((p) => p.kind === "param-source"),
+      n.inputs.length,
     );
     m.intrinsics.add("declare i64 @yk_closure_meta(i64, ptr, i64, i64)");
     if (ownName !== undefined && /^[A-Za-z_$][\w$]*$/.test(ownName)) {
@@ -4830,6 +4838,10 @@ function lowerFunction(
       return;
     }
     if (lbl.startsWith("object:")) {
+      // A method or accessor that reads `super` has this literal as its home object (#1370). The
+      // runtime resolves `super` through a class only, so it would read undefined here: refused.
+      if (ins.some((v) => usesSuper(producer.get(v)?.closure)))
+        throw new LlvmEmitError("super in an object literal's method is not in the subset yet");
       const slots = slotsOf(lbl);
       const isProto = (x: Slot): boolean => x.kind === "named" && x.name === "__proto__";
       if (
@@ -5841,60 +5853,6 @@ type Resolved =
   | { readonly ns: number }
   | { readonly cjs: number; readonly name: string }
   | { readonly builtin: string; readonly name: string };
-
-/**
- * ExpectedArgumentCount (ECMA-262 15.1.5) from a function's source text: its parameters before the
- * first with a default or a rest one; undefined when the text does not show its whole list.
- */
-function expectedArgumentCount(text: string): number | undefined {
-  const arrow = /^(?:async\s+)?([A-Za-z_$][\w$]*)\s*=>/.exec(text);
-  if (arrow !== null) return 1;
-  const open = text.indexOf("(");
-  if (open < 0) return undefined;
-  let depth = 0;
-  let quote = "";
-  let count = 0;
-  let current = "";
-  for (let i = open + 1; i < text.length; i++) {
-    const c = text[i] as string;
-    if (quote !== "") {
-      if (c === "\\") i++;
-      else if (c === quote) quote = "";
-      current += c;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") quote = c;
-    if (c === "(" || c === "[" || c === "{") depth++;
-    if (c === "]" || c === "}") depth--;
-    if (c === ")") {
-      if (depth === 0) {
-        const p = current.trim();
-        return p === "" || /^\.\.\./.test(p) || topLevelDefault(p) ? count : count + 1;
-      }
-      depth--;
-    }
-    if (c === "," && depth === 0) {
-      const p = current.trim();
-      if (/^\.\.\./.test(p) || topLevelDefault(p)) return count;
-      count++;
-      current = "";
-      continue;
-    }
-    current += c;
-  }
-  return undefined;
-}
-/** Whether a parameter's text has a default of its own (an `=` outside its pattern's brackets). */
-function topLevelDefault(param: string): boolean {
-  let depth = 0;
-  for (let i = 0; i < param.length; i++) {
-    const c = param[i];
-    if (c === "(" || c === "[" || c === "{") depth++;
-    else if (c === ")" || c === "]" || c === "}") depth--;
-    else if (c === "=" && depth === 0 && param[i + 1] !== ">" && param[i + 1] !== "=") return true;
-  }
-  return false;
-}
 
 /** A module id as a C symbol: `lib/parse.js` is `yk_module_lib_parse_js`. */
 export function moduleSymbol(id: string): string {

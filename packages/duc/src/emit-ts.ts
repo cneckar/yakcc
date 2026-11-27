@@ -27,7 +27,7 @@ import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./lin
 import { operationReference } from "./operations.js";
 import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
-import { isRestParam, paramIndex } from "./params.js";
+import { isDefaultedParam, isRestParam, paramIndex } from "./params.js";
 import { RUNTIME_MODULE } from "./runtime.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
@@ -966,7 +966,10 @@ function emitFunction(
   const params = g.nodes
     .filter((n) => n.kind === "param-source" && paramIndex(n.label) >= bound.length)
     .sort((a, b) => paramIndex(a.label) - paramIndex(b.label))
-    .map((n) => `${isRestParam(n.label) ? "..." : ""}${nameOf(n.outputs[0] as ValueId)}`);
+    .map(
+      (n) =>
+        `${isRestParam(n.label) ? "..." : ""}${nameOf(n.outputs[0] as ValueId)}${isDefaultedParam(n.label) ? " = undefined" : ""}`,
+    );
   const body = [...unread, ...emitScope(undefined)];
   if (asModule) {
     // Each declared name is a module-level name, given its value at the end; the statements are in
