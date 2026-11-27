@@ -509,6 +509,11 @@ const PROGRAMS: [string, string, number][] = [
     "export function f(a, b) { return [(() => { try { return (() => { class C { constructor() { this.t = new.target.name; } } class D extends C {} class E extends C { constructor() { super(); this.u = new.target === E; } } return [new C().t, new D().t, new E().t, new E().u]; })(); } catch (e) { return 'threw ' + e.name; } })(), (() => { try { return (() => { class A { constructor() { this.nt = new.target; } } class B {} const x = Reflect.construct(A, [], B); return [x instanceof B, x.nt === B, Reflect.construct(Date, [0]) instanceof Date]; })(); } catch (e) { return 'threw ' + e.name; } })(), (() => { try { return (() => { const g = (function* () { try { yield 1; yield 2; } finally { yield 'cleanup'; } })(); return [g.next().value, g.return(9).value, g.next(), g.next()]; })(); } catch (e) { return 'threw ' + e.name; } })(), (() => { try { return (() => { const log = []; const g = (function* () { try { yield 1; } finally { log.push('fin'); } })(); return [g.next(), g.return(4), g.next(), log]; })(); } catch (e) { return 'threw ' + e.name; } })(), (() => { try { return (() => { function* inner() { try { yield 'a'; } finally { yield 'fin'; } return 'r'; } function* outer() { const v = yield* inner(); yield 'after ' + v; } const g = outer(); return [g.next().value, g.return(5).value, g.next(), g.next()]; })(); } catch (e) { return 'threw ' + e.name; } })(), (() => { try { return (() => { function f() {} return [String(f).startsWith('function f()'), String(f).endsWith('}'), typeof Function.prototype, typeof Function.prototype.call]; })(); } catch (e) { return 'threw ' + e.name; } })()]; }",
     2,
   ],
+  [
+    "truthiness of each kind of value (a symbol's is true), by !, a condition and Boolean (#1331)",
+    "export function f(a, b) { return (() => { const xs = [0, 1, '', 'a', null, undefined, {}, [], NaN, true, false, 0n, 1n, Symbol('s')]; return [xs.map((x) => !x), xs.map((x) => (x ? 1 : 0)), xs.filter(Boolean).length]; })(); }",
+    2,
+  ],
 ];
 
 describe.skipIf(!canRun("x86_64-linux"))("boxed values, natively on this host (#1292)", () => {
