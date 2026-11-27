@@ -186,6 +186,14 @@ const PROGRAMS: [string, string, fc.Arbitrary<unknown[]>][] = [
     ].join(", ")}]; }`,
     fc.tuple(double, double, fc.oneof(fc.integer(), double), fc.oneof(fc.integer(), double)),
   ],
+  [
+    // A function of BigInt parameters (raised C's 64-bit integers): its clone taking them as i128s
+    // when each is below 2^64 in magnitude, else its general lowering. A carry that reads itself
+    // (`c = (c >> 1n) ^ …`) through a select and an early return, % and / (by zero, the RangeError).
+    "BigInt parameters, carries that read themselves, selects, % and /, as a clone and not",
+    "export function f(x, k) { function step(c, n, d) { c = __ykU64(~c) & 0xffffffffn; let i = 0; let q = 0n; while (n !== 0n) { n = __ykU64(n - 1n); c = (c >> 1n) ^ ((c & 1n) !== 0n ? 0xedb88320n : 0n); if (c === 0x12345n) return -1n; q = __ykU64(q + c % 7n + c / d); i = (i + 1) | 0; } return [c ^ 0xffffffffn, q, i, c % d]; } try { return step(x, typeof k === 'bigint' ? k & 63n : 5n, typeof k === 'bigint' ? k % 5n : 3n); } catch (e) { return `threw ${e.name}`; } }",
+    fc.tuple(big, big),
+  ],
 ];
 
 describe.skipIf(!canRun("x86_64-linux"))("BigInt and the leaves, natively (#1361)", () => {

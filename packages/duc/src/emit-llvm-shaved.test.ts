@@ -14,9 +14,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import * as zlib from "node:zlib";
 import fc from "fast-check";
 import { ts } from "ts-morph";
 import { afterAll, describe, expect, it } from "vitest";
+import { shaveCFiles } from "./__fixtures__/c-files.js";
+import { shaveMusl, withMuslInit } from "./__fixtures__/c-musl.js";
 import { canRun, decode, encode, same } from "./__fixtures__/native-harness.js";
 import { emitNativeModules } from "./emit-llvm-boxed.js";
 import { liftAtom } from "./lift.js";
@@ -162,6 +165,76 @@ const DOUBLES = [
 ];
 
 describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361)", () => {
+  it("Node's zlib crc32 and adler32, shaved from C over musl, natively equal Node's", () => {
+    const ZLIB = here("../vendor/node/deps/zlib/");
+    const ARGS = ["-std=c11", "-DHAVE_HIDDEN", `-I${ZLIB}`, "-DCPU_NO_SIMD"];
+    const fixture = shaveCUnit(
+      here("./__fixtures__/c/node-zlib.c"),
+      ["yk_node_crc32", "yk_node_adler32"],
+      ARGS,
+      "clang",
+      "node-zlib.c",
+    );
+    const roots = [...new Set([...fixture.atoms.values()].flatMap((a) => a.externals))];
+    const files = ["adler32.c", "crc32.c", "cpu_features.c", "zutil.c"].map((f) => `${ZLIB}${f}`);
+    const z = shaveCFiles(files, roots, ARGS);
+    const libc = [...new Set(z.externals)].filter((x) => !fixture.atoms.has(x));
+    const musl = withMuslInit(shaveMusl(libc));
+    expect([...fixture.refused, ...z.refused, ...musl.refused, ...musl.missing]).toEqual([]);
+    const atoms = new Map([...musl.atoms, ...z.atoms, ...fixture.atoms]);
+    const PUT =
+      "export function f(bytes: number[]): number { const a = __ykAlloc(Math.max(bytes.length, 1), 16); for (let i = 0; i < bytes.length; i++) __ykStore8(a + i, bytes[i] as number); return a; }";
+    const run = nativeUnitWith("zlib-checksums", atoms, [
+      ["put", PUT],
+      [
+        "tCrc",
+        "export function f(bytes: number[], init: number): number { return Number(yk_node_crc32(put(bytes), BigInt(bytes.length), BigInt(init))); }",
+      ],
+      [
+        "tAdler",
+        "export function f(bytes: number[]): number { return Number(yk_node_adler32(put(bytes), BigInt(bytes.length))); }",
+      ],
+    ]);
+    const inputs: number[][] = [
+      [],
+      [0],
+      [255],
+      [...Buffer.from("The quick brown fox jumps over the lazy dog")],
+      Array(5552).fill(255),
+      Array(70_000).fill(7),
+      ...fc.sample(
+        fc.uint8Array({ maxLength: 3000 }).map((b) => [...b]),
+        { numRuns: 40, seed: 1516 },
+      ),
+    ];
+    const inits = [0, 1, 0xffffffff, 0x12345678];
+    const calls: [string, unknown[]][] = [];
+    inputs.forEach((b, i) => {
+      calls.push(["tCrc", [b, inits[i % inits.length] as number]]);
+      calls.push(["tAdler", [b]]);
+    });
+    const got = run(calls);
+    const adler = (b: readonly number[]): number => {
+      let a = 1;
+      let c = 0;
+      for (const x of b) {
+        a = (a + x) % 65521;
+        c = (c + a) % 65521;
+      }
+      return (c * 65536 + a) >>> 0;
+    };
+    const bad: string[] = [];
+    calls.forEach(([f, a], i) => {
+      const b = a[0] as number[];
+      const want = f === "tCrc" ? zlib.crc32(Buffer.from(b), a[1] as number) : adler(b);
+      if (got[i] !== want && bad.length < 10)
+        bad.push(
+          `${f}(${b.length} bytes${f === "tCrc" ? `, ${a[1]}` : ""}) = ${got[i]}, want ${want}`,
+        );
+    });
+    expect(bad).toEqual([]);
+  }, 900_000);
+
   it("V8's Math, shaved from ieee754.cc, natively equals Node's Math bit for bit", () => {
     const v8: ShavedUnit = shaveCUnit(
       `${V8}src/base/ieee754.cc`,
