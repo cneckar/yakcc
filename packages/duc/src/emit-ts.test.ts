@@ -169,6 +169,16 @@ describe("the npm closure's last round trips (#1368)", () => {
       roundTrips(source);
   });
 
+  it("an object rest reads the object where the source does, before a later write to it (#1330)", () => {
+    for (const source of [
+      "export function f(o) { const { ...r } = o; o.x = 1; return r; }",
+      "export function f(o) { let a, r; ({ a, ...r } = o); o.b = 2; return [a, r]; }",
+    ]) {
+      const code = roundTrips(source);
+      expect(run(code, [{ a: 1 }])).toEqual(runSource(source, [{ a: 1 }]));
+    }
+  });
+
   it("a loop condition that makes a closure is written at the top of the body", () => {
     const source =
       "export function f(b: number[]) { let i = 0; while (b.some((x) => x > i)) { i++; } return i; }";

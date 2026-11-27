@@ -36,6 +36,8 @@ export function isHeapLabel(named: string): boolean {
     label.startsWith("delete.") ||
     label.startsWith("super.") ||
     label === "super[]" ||
+    // An object rest reads each of the object's own enumerable properties, a getter's too (#1330).
+    label.startsWith("ObjectRest:") ||
     label.startsWith("ElementAccess") ||
     (label.startsWith(".") && label.length > 1)
   );
