@@ -611,6 +611,10 @@ const BUILTIN: Readonly<Record<string, CType>> = {
 
 function ctype(t: { qualType: string; desugaredQualType?: string } | undefined): CType {
   if (t === undefined) throw new RaiseCError("a node with no type");
+  // (A desugared type with its default arguments left out, `std::_Sp_counted_base<>` for
+  // `_Sp_counted_base<(_Lock_policy)2U>`: the written one, whose arguments say which instance.)
+  if (/<>/.test(t.desugaredQualType ?? "") && /<[^>]/.test(t.qualType))
+    return ctype({ qualType: t.qualType });
   // (C++: a member alias desugared one step, `const value_type *`: its names in the class that
   // declares it, `basic_string_view<char>`.)
   const alias = (t as { typeAliasDeclId?: string }).typeAliasDeclId;
@@ -1158,6 +1162,7 @@ const LEAF_CALLS: Readonly<Record<string, (args: readonly string[]) => string>> 
   __atomic_thread_fence: () => "undefined",
   __atomic_signal_fence: () => "undefined",
   __atomic_is_lock_free: (a) => `(${a[0]} <= 8n ? 1 : 0)`,
+  __atomic_always_lock_free: (a) => `(${a[0]} <= 8n ? 1 : 0)`,
   // alloca's memory, from the heap (it outlives the call: never freed, as no frame frees it here).
   __builtin_alloca: (a) => `__ykAlloc(__ykBigToF64(${a[0]}), 16)`,
 };
@@ -1779,7 +1784,15 @@ function baseOffset(derived: string, base: string): number | undefined {
   // (One record whatever its tag is spelled: the dump's `class`, a type's `struct`.)
   const untagged = (n: string): string => recordKey(n).replace(/^(?:struct|class|union) /, "");
   if (untagged(derived) === untagged(base)) return 0;
+  // (Or one layout under two spellings: an enumeration's argument as a cast in a type,
+  // `_Sp_counted_base<(_Lock_policy)2U>`, and as its enumerator in the dump.)
   const l = unitLayout(derived);
+  if (l !== undefined && /\(/.test(base)) {
+    const bl = ["struct", "class", "union"]
+      .map((t) => unitLayout(`${t} ${base.replace(/^(?:struct|class|union) /, "")}`))
+      .find((x) => x !== undefined);
+    if (bl === l) return 0;
+  }
   for (const [b, o] of l?.bases ?? []) {
     const rest = baseOffset(b, base);
     if (rest !== undefined) return o + rest;
@@ -1964,6 +1977,22 @@ function raiseBody(
   // used as a pointer (passed, assigned, offset), or they are records.
   const b0 = body(fn);
   if (b0 === undefined) throw new RaiseCError(`${fn.name} has no body`);
+  // A body's own typedefs and aliases (libstdc++'s `using _Sp_cd_type = ..;` in a constructor):
+  // in scope for its locals' types, which are laid out before its statements are raised.
+  {
+    const walk = (n: ClangNode): void => {
+      if (n.kind === "DeclStmt")
+        for (const d of n.inner ?? [])
+          if (
+            (d.kind === "TypedefDecl" || d.kind === "TypeAliasDecl") &&
+            !localTypedefs.has(d.name ?? "")
+          )
+            localTypedefs.set(d.name ?? "", d.type?.desugaredQualType ?? d.type?.qualType ?? "");
+      if (n.kind === "LambdaExpr") return;
+      for (const k of n.inner ?? []) walk(k);
+    };
+    walk(b0);
+  }
   const inMemory = new Set<string>();
   // C++: an object a reference binds to (an lvalue argument, a reference's initializer) is in
   // memory: the reference is its address.
@@ -2615,13 +2644,68 @@ function raiseBody(
     return `(${p} ${sign} ${scaled(indexNum(n, nt), size)})`;
   };
 
+  // C++: the temporaries of the full expression being raised as a value (an ExprWithCleanups):
+  // each one's destruction, run once its value is taken, last made first. (Not one a reference
+  // extends; not one only one arm of a ?:, && or || makes, which this does not track.)
+  const cleanups: string[][] = [];
+  let armDepth = 0;
+  const temporary = (slot: string, t: CType, made: ClangNode | undefined): void => {
+    if (cleanups.length === 0 || armDepth > 0 || t.k !== "rec" || made === undefined) return;
+    // (A temporary with a destructor to run, as clang marks it: through its casts, a functional
+    // one's, `__shared_count<_Lp>(std::move(__r))`.)
+    let n = made;
+    while (
+      [
+        "ImplicitCastExpr",
+        "ParenExpr",
+        "ConstantExpr",
+        "CXXFunctionalCastExpr",
+        "CXXStaticCastExpr",
+      ].includes(n.kind) &&
+      n.inner?.[0] !== undefined
+    )
+      n = n.inner[0] as ClangNode;
+    if (n.kind !== "CXXBindTemporaryExpr") return;
+    (cleanups[cleanups.length - 1] as string[]).unshift(...destroy(slot, t));
+  };
   const expr = (e: ClangNode): string => {
+    const arms =
+      e.kind === "ConditionalOperator" ||
+      e.kind === "BinaryConditionalOperator" ||
+      (e.kind === "BinaryOperator" && (e.opcode === "&&" || e.opcode === "||"));
+    if (arms) armDepth++;
+    try {
+      return exprOf(e);
+    } finally {
+      if (arms) armDepth--;
+    }
+  };
+  const exprOf = (e: ClangNode): string => {
     const kids = e.inner ?? [];
     const k0 = kids[0] as ClangNode;
     switch (e.kind) {
+      case "ExprWithCleanups": {
+        // (A record's value is its temporary's address: left as it was, not destroyed.)
+        if (typeOf(e).k === "rec") return `(${expr(k0)})`;
+        cleanups.push([]);
+        let code: string;
+        let steps: string[];
+        const depth = armDepth;
+        armDepth = 0;
+        try {
+          code = expr(k0);
+        } finally {
+          steps = cleanups.pop() as string[];
+          armDepth = depth;
+        }
+        if (steps.length === 0) return `(${code})`;
+        const t = typeOf(e);
+        if (t.k === "void") return `(${code}, ${steps.join(", ")}, undefined)`;
+        const v = temp(t);
+        return `((${v} = ${code}), ${steps.join(", ")}, ${v})`;
+      }
       case "ParenExpr":
       case "ConstantExpr":
-      case "ExprWithCleanups":
       case "MaterializeTemporaryExpr":
         return `(${expr(k0)})`;
       // A template argument's value where its parameter is used: the argument (the last child).
@@ -2844,7 +2928,9 @@ function raiseBody(
           const from = typeOf(k0);
           const to = typeOf(e);
           if (from.k !== "ptr" || to.k !== "ptr" || from.to.k !== "rec" || to.to.k !== "rec")
-            throw new RaiseCError(`the cast ${ck} of a ${from.k}`);
+            throw new RaiseCError(
+              `the cast ${ck} of a ${from.k} (${k0.type?.qualType} to ${e.type?.qualType})`,
+            );
           const [d, b] =
             ck === "BaseToDerived" ? [to.to.name, from.to.name] : [from.to.name, to.to.name];
           const off = baseOffset(d, b);
@@ -3165,7 +3251,12 @@ function raiseBody(
                 madeBy.kind !== "InitListExpr" &&
                 madeBy.kind !== "ParenListExpr"
                 ? copyFrom(a, t.to, init).join(", ")
-                : construct(a, init)
+                : madeBy?.kind === "InitListExpr"
+                  ? // (An aggregate's braces, `new B{x, 2}`: its members, as a variable's.)
+                    initialize(a, t.to, init)
+                      .map((x) => `(${x.replace(/;$/, "")})`)
+                      .join(", ") || "undefined"
+                  : construct(a, init)
               : storeAt(a, t.to, expr(init));
         return `((${a} = __ykAlloc(${Math.max(1, sizeOf(t.to))}, ${Math.max(8, alignOf(t.to))})), ${made}, ${a})`;
       }
@@ -3558,7 +3649,14 @@ function raiseBody(
             `const ${slot} = __ykAlloc(${Math.max(8, sizeOf(t))}, ${Math.max(8, alignOf(t))});`,
           );
           frame.push(slot);
-          return `(${[...copyFrom(slot, t, e), slot].join(", ")})`;
+          const made = `(${[...copyFrom(slot, t, e), slot].join(", ")})`;
+          if (e.kind === "CXXBindTemporaryExpr") temporary(slot, t, e);
+          else if (
+            e.kind === "MaterializeTemporaryExpr" &&
+            (e as { extendingDecl?: unknown }).extendingDecl === undefined
+          )
+            temporary(slot, t, k0);
+          return made;
         }
         if (e.kind === "ExprWithCleanups" || e.kind === "CXXBindTemporaryExpr") return expr(k0);
         throw new RaiseCError(`the expression ${e.kind} is not raised yet`);
@@ -3995,7 +4093,12 @@ function raiseBody(
       top.push(`const ${slot} = __ykAlloc(${Math.max(8, sizeOf(t))}, ${Math.max(8, alignOf(t))});`);
       frame.push(slot);
       const inner = (n.inner ?? [])[0] as ClangNode;
-      if (t.k === "rec") return `(${copyFrom(slot, t, inner).join(", ")}, ${slot})`;
+      if (t.k === "rec") {
+        const made = `(${copyFrom(slot, t, inner).join(", ")}, ${slot})`;
+        if ((n as { extendingDecl?: unknown }).extendingDecl === undefined)
+          temporary(slot, t, inner);
+        return made;
+      }
       return `(${storeAt(slot, t, expr(inner))}, ${slot})`;
     }
     const p = place(n);
@@ -4767,14 +4870,13 @@ function raiseBody(
       case "DeclStmt":
         for (const d of kids) {
           // A compile-time declaration computes nothing; a typedef names a type for what follows.
-          if (d.kind === "TypedefDecl") {
+          if (d.kind === "TypedefDecl" || d.kind === "TypeAliasDecl") {
             localTypedefs.set(d.name ?? "", d.type?.desugaredQualType ?? d.type?.qualType ?? "");
             continue;
           }
           if (
             [
               "StaticAssertDecl",
-              "TypeAliasDecl",
               "UsingDecl",
               "UsingDirectiveDecl",
               "UsingShadowDecl",
@@ -5188,8 +5290,18 @@ function raiseBody(
           // evaluated for what computing it does.)
           const st = typeOf(s);
           if ((st.k === "rec" || st.k === "arr") && s.valueCategory === "lvalue") {
-            const p = place(s);
+            // (Its temporaries destroyed after it, `_M_refcount = __shared_count(..)`'s.)
+            const full = s.kind === "ExprWithCleanups";
+            if (full) cleanups.push([]);
+            let p: Place;
+            let steps: string[] = [];
+            try {
+              p = place(s);
+            } finally {
+              if (full) steps = cleanups.pop() as string[];
+            }
             push(`${p.k === "mem" ? p.addr : p.k === "reg" ? p.e : "undefined"};`);
+            for (const step of steps) push(`${step};`);
             return;
           }
           push(`${expr(s)};`);
@@ -5313,11 +5425,20 @@ function raiseBody(
       } catch {
         emptyBase = made?.k === "rec" && unitLayout(made.name) === undefined;
       }
+      // (Or by layout: one record under two spellings, `_Sp_counted_base<(_Lock_policy)2U>` and
+      // the dump's `_Sp_counted_base<>`.)
+      const byLayout = (): number | undefined => {
+        const want = named?.k === "rec" ? unitLayout(named.name) : undefined;
+        if (want === undefined) return undefined;
+        for (const [k, o] of l.bases ?? []) if (unitLayout(k) === want) return o;
+        return undefined;
+      };
       const off =
         baseAt(`struct ${base.qualType ?? ""}`) ??
         baseAt(`class ${base.qualType ?? ""}`) ??
         (named?.k === "rec" ? baseAt(named.name) : undefined) ??
         (made?.k === "rec" ? baseAt(made.name) : undefined) ??
+        byLayout() ??
         (emptyBase ? 0 : undefined);
       if (off === undefined)
         throw new RaiseCError(
@@ -5860,14 +5981,20 @@ export function shaveCUnit(
     const bare = record.replace(/^(struct|class|union) /, "");
     // (An integer argument without its suffix: `256UL` is `256`; a bool as clang's dump has it,
     // `true` as -1 or 1.)
-    const canon = (t: string): string =>
-      recordKey(t)
+    const canon = (t: string): string => {
+      const c = recordKey(t)
         .replace(/\s+/g, "")
+        // (An enumeration's value as a cast, `(_Lock_policy)2U`: the number.)
+        .replace(/^\([A-Za-z_][\w:]*\)(?=-?\d)/, "")
         .replace(/^(-?\d+)[uUlL]*$/, "$1")
         .replace(/^true$/, "1")
         .replace(/^false$/, "0")
         // (A declaration's, `&ures_close_78`: by its name.)
         .replace(/^&/, "");
+      // (An enumerator, `__gnu_cxx::_S_atomic`, as the instance records it: its value.)
+      const e = /^[A-Za-z_]\w*$/.test(c) ? enumValue(c) : undefined;
+      return e === undefined ? c : String(e);
+    };
     // (A pack's arguments, a variadic template's, `tuple<void *&, unsigned long &>`: each.)
     const templateArgs = (node: ClangNode): ClangNode[] =>
       (node.inner ?? [])
@@ -5892,9 +6019,13 @@ export function shaveCUnit(
         .replace(/^::/, "");
     const qualArgsOf = (node: ClangNode): string[] =>
       templateArgs(node).map((a) => qualified(a.type?.qualType ?? ""));
-    const pick = (candidates: Iterable<ClangNode>, name: string): ClangNode | undefined => {
+    const pick = (from: Iterable<ClangNode>, name: string): ClangNode | undefined => {
+      // (Read once: a generator's are read twice below.)
+      const candidates = [...from];
       const lt = name.indexOf("<");
-      const spelled = lt < 0 ? [] : splitTemplateArgs(name.slice(lt + 1, name.lastIndexOf(">")));
+      const spelled = (
+        lt < 0 ? [] : splitTemplateArgs(name.slice(lt + 1, name.lastIndexOf(">")))
+      ).filter((a) => a.trim() !== "");
       const want = spelled.map(canon);
       const wantQ = spelled.map(qualified);
       const matching: ClangNode[] = [];
@@ -5907,6 +6038,18 @@ export function shaveCUnit(
           (want.length > 0 || args.length === 0)
         )
           matching.push(node);
+      }
+      // (Spelled with its default arguments alone, `__shared_count<>`: the one instance there
+      // is, whose arguments are those defaults.)
+      // (Not the class template's pattern, also without arguments, whose members are
+      // dependent.)
+      if (want.length === 0) {
+        const complete = candidates.filter(
+          (node) =>
+            node.kind === "ClassTemplateSpecializationDecl" &&
+            (node as { completeDefinition?: boolean }).completeDefinition === true,
+        );
+        if (complete.length === 1) return complete[0];
       }
       if (matching.length <= 1) return matching[0];
       // Several of these arguments without their namespaces: the one whose arguments have the
@@ -6478,9 +6621,26 @@ export function shaveCUnit(
                 let plain = text
                   .replace(/\(anonymous namespace\)::/g, "")
                   .replace(/\s*\[[A-Za-z_]\w* = .*\]$/, "");
-                for (let prev = "", i = 0; prev !== plain && i < 8; i++) {
-                  prev = plain;
-                  plain = plain.replace(/<[^<>()]*>(?=::)/g, "");
+                // (Each class's argument list before a `::`, balanced: `<B *, std::default_delete
+                // <B>, ..>::_M_dispose`.)
+                for (let i = 0, out = ""; i <= plain.length; i++) {
+                  if (i === plain.length) {
+                    plain = out;
+                    break;
+                  }
+                  if (plain[i] === "<") {
+                    let depth = 0;
+                    let j = i;
+                    for (; j < plain.length; j++) {
+                      if (plain[j] === "<") depth++;
+                      else if (plain[j] === ">" && --depth === 0) break;
+                    }
+                    if (plain.startsWith("::", j + 1)) {
+                      i = j;
+                      continue;
+                    }
+                  }
+                  out += plain[i];
                 }
                 const head = plain.slice(0, plain.indexOf("("));
                 // (Its return type before its scope, `int N::eq`, not part of its class's name.)
@@ -6488,7 +6648,9 @@ export function shaveCUnit(
                   (head.split("::").slice(-2, -1)[0] ?? "").split(/[\s*&]+/).pop() ?? "";
                 const name = head.split("::").pop() ?? "";
                 const want = memberKey(name, plain.slice(plain.indexOf("(")));
-                let id: string | undefined;
+                // (Of the classes of that name, the instance's, defined here or by its symbol: not
+                // a class template's pattern, whose method is dependent.)
+                const ids: string[] = [];
                 for (const d of indexed.byName.get(owner) ?? []) {
                   if (!RECORD_KINDS.has(d.kind)) continue;
                   const node = readDecl(indexed, d);
@@ -6497,14 +6659,20 @@ export function shaveCUnit(
                       c.kind === "CXXMethodDecl" &&
                       memberKey(c.name ?? "", c.type?.qualType ?? "") === want,
                   );
-                  if (m !== undefined) id = m.id;
+                  if (m?.id !== undefined) ids.unshift(m.id);
                 }
-                // (Defined in another unit, C++ of several: its symbol, which that unit defines.)
-                const fnKey =
-                  id === undefined
-                    ? undefined
-                    : (resolve({ name, kind: "CXXMethodDecl", type: "", id }) ??
-                      (bySymbol ? symbolOfId(id) : undefined));
+                let fnKey: string | undefined;
+                for (const id of ids) {
+                  fnKey =
+                    (definitionIn(indexed, id) !== undefined
+                      ? resolve({ name, kind: "CXXMethodDecl", type: "", id })
+                      : undefined) ?? (bySymbol ? symbolOfId(id) : undefined);
+                  if (fnKey !== undefined) break;
+                }
+                if (fnKey === undefined && ids.length > 0)
+                  fnKey =
+                    resolve({ name, kind: "CXXMethodDecl", type: "", id: ids[0] as string }) ??
+                    undefined;
                 if (fnKey === undefined) throw new RaiseCError(`the overrider ${text}`);
                 init.push({ offset, fn: fnKey });
               }
@@ -6969,6 +7137,43 @@ export function shaveCUnit(
       }
       layouts = recordLayouts(dump);
     }
+    // An enumeration's argument as clang spells it in a type, a cast (`_Sp_counted_deleter<..,
+    // (_Lock_policy)2U>`): the dump's, its enumerator (`__gnu_cxx::_S_atomic`), first.
+    if (/[<,]\s*\([A-Za-z_][\w:]*\)-?\d/.test(name)) {
+      const named = name.replace(
+        /([<,]\s*)\(([A-Za-z_][\w:]*)\)(-?\d+)[uUlL]*(?=\s*[,>])/g,
+        (m, pre: string, type: string, n: string) => {
+          const bare = type.split("::").pop() ?? type;
+          for (const d of dumpOf(bare)) {
+            const walk = (x: ClangNode): string | undefined => {
+              if (x.kind === "EnumDecl" && x.name === bare) {
+                let next = 0n;
+                for (const k of x.inner ?? []) {
+                  if (k.kind !== "EnumConstantDecl") continue;
+                  const v = enumInitValue(k);
+                  if (v !== undefined) next = BigInt(v);
+                  if (next === BigInt(n)) return k.name;
+                  next += 1n;
+                }
+                return undefined;
+              }
+              for (const c of x.inner ?? []) {
+                const r = walk(c);
+                if (r !== undefined) return r;
+              }
+              return undefined;
+            };
+            const hit = walk(d);
+            if (hit !== undefined) return `${pre}${hit}`;
+          }
+          return m;
+        },
+      );
+      if (named !== name) {
+        const l = layout(named);
+        if (l !== undefined) return l;
+      }
+    }
     // A name with namespaces (`class simdjson::fallback::ondemand::parser`, or `ondemand::
     // json_iterator` as written in a namespace): the record of those namespaces, by its last ones.
     // (recordKey's name without them is any of the records of that name.)
@@ -7008,6 +7213,38 @@ export function shaveCUnit(
         }
       }
     }
+    // (An enumeration's argument as its value, `_Sp_counted_deleter<.., 2>` as an instance's
+    // arguments record it, against the dump's enumerator, `_S_atomic`: the layout whose
+    // arguments are these, an enumerator equal to its value.)
+    {
+      const want = recordKey(name);
+      const lt = want.indexOf("<");
+      if (lt > 0 && /[<,]\s*-?\d+\s*[,>]/.test(want)) {
+        const head = want.slice(0, lt + 1);
+        // (Token by token, a nested class's too, `<.., 2>::_Impl`.)
+        const tokens = (x: string): string[] =>
+          x
+            .split(/([<>,]|::)/)
+            .map((t) => t.trim())
+            .filter((t) => t !== "");
+        const wt = tokens(want);
+        for (const [k, l] of layouts) {
+          if (!k.startsWith(head)) continue;
+          const kt = tokens(k);
+          if (
+            kt.length === wt.length &&
+            kt.every(
+              (a, i) =>
+                a === wt[i] ||
+                (/^-?\d+$/.test(wt[i] ?? "") &&
+                  /^[A-Za-z_]\w*$/.test(a) &&
+                  enumValue(a) === BigInt(wt[i] as string)),
+            )
+          )
+            return l;
+        }
+      }
+    }
     // (A class template's instance spelled with its default arguments, which the dump omits.)
     let key = recordKey(name);
     for (let tries = 0; tries < 8; tries++) {
@@ -7022,7 +7259,9 @@ export function shaveCUnit(
       }
       if (gt < 0) break;
       const args = splitTemplateArgs(key.slice(lt + 1, gt));
-      if (args.length < 2) break;
+      // (To none: `_Sp_counted_base<2>`, its one argument its default, is the dump's
+      // `_Sp_counted_base<>`.)
+      if (args.length < 1 || (args.length === 1 && args[0] === "")) break;
       key = `${key.slice(0, lt + 1)}${args.slice(0, -1).join(", ")}${key.slice(gt)}`;
     }
     // (Default arguments spelled at any depth, `<const char *, basic_string<char, char_traits<
@@ -8800,6 +9039,9 @@ const recordKey = (name: string): string =>
       // qualified one's too (`<const class simdjson::implementation>`).
       .replace(/([<,]\s*)(?:struct|class|union|enum) /g, "$1")
       .replace(/([<,]\s*(?:const |volatile )+)(?:struct|class|union|enum) /g, "$1")
+      // An enumeration's argument as clang spells it in a type, a cast (`<(_Lock_policy)2U>`):
+      // its number.
+      .replace(/([<,]\s*)\([A-Za-z_][\w:]*\)(?=-?\d)/g, "$1")
       // An integer argument without its suffix (`_Tuple_impl<0UL, ..>` is `<0, ..>`).
       .replace(/([<,]\s*)(-?\d+)(?:ULL|ull|LL|ll|UL|ul|U|u|L|l)(?=\s*[,>])/g, "$1$2")
       .replace(

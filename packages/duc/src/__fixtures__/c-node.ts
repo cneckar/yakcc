@@ -92,7 +92,11 @@ export function shaveBinding(
     ...new Set([...env.atoms.values(), ...root.atoms.values()].flatMap((a) => a.externals)),
   ].filter((x) => !own.has(x));
   const files = shaveCFiles(
-    [...others.map((f) => `${NODE}${f}`), `${FIXTURES}libstdcxx-inst.cpp`],
+    [
+      ...others.map((f) => `${NODE}${f}`),
+      `${FIXTURES}libstdcxx-inst.cpp`,
+      `${FIXTURES}cxx-runtime.cpp`,
+    ],
     wanted,
     NODE_ARGS,
     "clang++",
