@@ -601,6 +601,50 @@ describe.skipIf(!canRun("x86_64-linux"))("async functions and promises, natively
     });
     expect(disagreements(source, inputs)).toEqual([]);
   }, 180_000);
+  it("computes what Node computes: the runtime's bitwise operators on numbers (a compact function's calls)", () => {
+    const source =
+      "export function f(n, s) { const v = typeof n === 'number' ? n : 7; const w = typeof s === 'number' ? s : 3; const o = { a: s, b: [s, s], c: { d: s }, e: String(s), g: [o0(), s] }; function o0() { return { k: s, l: [s], m: { n: s } }; } const p = { x: o.a, y: o.b, z: o.c.d, t: typeof s, u: s === o.a, k: Object.keys(o), q: [o, o.g, o.e], r: { o }, h: o.c, i: o.b[0], j: o.g[1] }; return [v & w, v | w, v ^ w, v << w, v >> w, v >>> w, ~v, p.t, p.k.length]; }";
+    // Compact (little numeric work for its size): each operator is the runtime's call.
+    const ir = emitLlvmBoxed(liftAtom(source)).ir;
+    for (const f of [
+      "yk_bitand",
+      "yk_bitor",
+      "yk_bitxor",
+      "yk_shl",
+      "yk_shr",
+      "yk_ushr",
+      "yk_bitnot",
+    ])
+      expect(ir).toContain(`call i64 @${f}(`);
+    const edges = [
+      0,
+      -0,
+      1,
+      -1,
+      2.9,
+      -2.9,
+      31,
+      32,
+      33,
+      -33,
+      2 ** 31,
+      -(2 ** 31),
+      2 ** 31 - 1,
+      2 ** 32,
+      2 ** 32 + 5,
+      -(2 ** 32) - 5,
+      2 ** 53 + 2,
+      9.2e18,
+      1e19,
+      -1e19,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      1.5e-300,
+    ];
+    const inputs = edges.flatMap((a) => edges.map((b) => [a, b]));
+    expect(disagreements(source, inputs)).toEqual([]);
+  }, 180_000);
   it("computes what Node computes: a long key made by + (a rope) is the same key as its flat string", () => {
     const source =
       "export function f(n, s) { const t = typeof s === 'string' ? s : 'q'; const flat = 'k'.repeat(300) + t; const rope = 'k'.repeat(150) + ('k'.repeat(150) + t); const o = {}; o[flat] = 1; const small = { [rope]: 2, x: 3 }; const big = {}; for (let i = 0; i < 12; i++) big['p' + i] = i; big[flat] = 'big'; const m = new Map([[flat, 'm']]); return [o[rope], small[flat], big[rope], rope in o, flat === rope, Object.keys(small).length, m.get(rope), new Set([flat, rope]).size, Object.hasOwn(big, rope)]; }";
