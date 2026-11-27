@@ -11,6 +11,7 @@
 import { type SpecYak, specHash } from "@yakcc/contracts";
 import {
   type DucGraph,
+  ECMASCRIPT,
   LineFormError,
   byMeaning,
   contractSignature,
@@ -79,7 +80,7 @@ export async function checkAuthoredGraph(
         root: packed.root,
         links: packed.links,
         evidence: vectors,
-        baseSet: options.baseSet ?? { target: "ecmascript", version: 1 },
+        baseSet: options.baseSet ?? { target: ECMASCRIPT.target, version: ECMASCRIPT.version },
       },
     ],
     store,

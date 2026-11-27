@@ -70,10 +70,7 @@ export function createCommonsSubmitter(
     try {
       body = JSON.stringify(serializeWireBlockTriplet(row));
     } catch (err) {
-      options.onError?.(
-        err instanceof Error ? err : new Error(String(err)),
-        row.blockMerkleRoot,
-      );
+      options.onError?.(err instanceof Error ? err : new Error(String(err)), row.blockMerkleRoot);
       return;
     }
 
@@ -96,10 +93,7 @@ export function createCommonsSubmitter(
         }
       })
       .catch((err) => {
-        options.onError?.(
-          err instanceof Error ? err : new Error(String(err)),
-          row.blockMerkleRoot,
-        );
+        options.onError?.(err instanceof Error ? err : new Error(String(err)), row.blockMerkleRoot);
       });
   };
 }

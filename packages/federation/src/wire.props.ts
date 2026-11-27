@@ -82,8 +82,7 @@ function makeRow(overrides: Partial<BlockTripletRow> = {}): BlockTripletRow {
   const implSource = overrides.implSource ?? TEST_IMPL_SOURCE;
   const manifest =
     (anyOverrides.manifest as LocalTriplet["manifest"] | undefined) ?? VALID_MANIFEST;
-  const artifacts =
-    (overrides.artifacts as Map<string, Uint8Array> | undefined) ?? TEST_ARTIFACTS;
+  const artifacts = (overrides.artifacts as Map<string, Uint8Array> | undefined) ?? TEST_ARTIFACTS;
 
   const specCanonicalBytes = canonicalize(spec as unknown as Parameters<typeof canonicalize>[0]);
   const merkleRoot = blockMerkleRoot({ spec, implSource, manifest, artifacts });
@@ -141,20 +140,17 @@ function wireTransit(row: BlockTripletRow): unknown {
  * Invariant: serializeWireBlockTriplet is a pure projection — no randomness,
  * no clock, no side-effects.
  */
-export const prop_serialize_is_deterministic = fc.property(
-  blockTripletRowArb,
-  (row) => {
-    const w1 = serializeWireBlockTriplet(row);
-    const w2 = serializeWireBlockTriplet(row);
-    if (w1.blockMerkleRoot !== w2.blockMerkleRoot) return false;
-    if (w1.specHash !== w2.specHash) return false;
-    if (w1.specCanonicalBytes !== w2.specCanonicalBytes) return false;
-    if (w1.implSource !== w2.implSource) return false;
-    if (w1.proofManifestJson !== w2.proofManifestJson) return false;
-    if (JSON.stringify(w1.artifactBytes) !== JSON.stringify(w2.artifactBytes)) return false;
-    return true;
-  },
-);
+export const prop_serialize_is_deterministic = fc.property(blockTripletRowArb, (row) => {
+  const w1 = serializeWireBlockTriplet(row);
+  const w2 = serializeWireBlockTriplet(row);
+  if (w1.blockMerkleRoot !== w2.blockMerkleRoot) return false;
+  if (w1.specHash !== w2.specHash) return false;
+  if (w1.specCanonicalBytes !== w2.specCanonicalBytes) return false;
+  if (w1.implSource !== w2.implSource) return false;
+  if (w1.proofManifestJson !== w2.proofManifestJson) return false;
+  if (JSON.stringify(w1.artifactBytes) !== JSON.stringify(w2.artifactBytes)) return false;
+  return true;
+});
 
 /**
  * prop_serialize_maps_null_parentBlockRoot
@@ -164,14 +160,11 @@ export const prop_serialize_is_deterministic = fc.property(
  *
  * Invariant per wire.ts: `parentBlockRoot: row.parentBlockRoot ?? null`.
  */
-export const prop_serialize_maps_null_parentBlockRoot = fc.property(
-  blockTripletRowArb,
-  (row) => {
-    const rowWithNull = { ...row, parentBlockRoot: null };
-    const wire = serializeWireBlockTriplet(rowWithNull);
-    return wire.parentBlockRoot === null;
-  },
-);
+export const prop_serialize_maps_null_parentBlockRoot = fc.property(blockTripletRowArb, (row) => {
+  const rowWithNull = { ...row, parentBlockRoot: null };
+  const wire = serializeWireBlockTriplet(rowWithNull);
+  return wire.parentBlockRoot === null;
+});
 
 /**
  * prop_serialize_artifactBytes_keys_match_artifacts_map
@@ -203,26 +196,23 @@ export const prop_serialize_artifactBytes_keys_match_artifacts_map = fc.property
  * The serialized WireBlockTriplet must contain none of the ownership field names
  * enumerated by DEC-NO-OWNERSHIP-011.
  */
-export const prop_serialize_no_ownership_fields = fc.property(
-  blockTripletRowArb,
-  (row) => {
-    const OWNERSHIP_FIELDS = new Set([
-      "author",
-      "authorEmail",
-      "signer",
-      "signature",
-      "owner",
-      "account",
-      "username",
-      "organization",
-      "sessionId",
-      "submitter",
-    ]);
-    const wire = serializeWireBlockTriplet(row);
-    const wireKeys = Object.keys(wire);
-    return wireKeys.every((k) => !OWNERSHIP_FIELDS.has(k));
-  },
-);
+export const prop_serialize_no_ownership_fields = fc.property(blockTripletRowArb, (row) => {
+  const OWNERSHIP_FIELDS = new Set([
+    "author",
+    "authorEmail",
+    "signer",
+    "signature",
+    "owner",
+    "account",
+    "username",
+    "organization",
+    "sessionId",
+    "submitter",
+  ]);
+  const wire = serializeWireBlockTriplet(row);
+  const wireKeys = Object.keys(wire);
+  return wireKeys.every((k) => !OWNERSHIP_FIELDS.has(k));
+});
 
 // ---------------------------------------------------------------------------
 // A2.2: deserializeWireBlockTriplet — round-trip and integrity gate properties
@@ -236,13 +226,10 @@ export const prop_serialize_no_ownership_fields = fc.property(
  * Invariant: the round-trip is lossless for the primary block identity field.
  * This is the most important invariant: blockMerkleRoot is the content-address key.
  */
-export const prop_roundtrip_preserves_merkle_root = fc.property(
-  blockTripletRowArb,
-  (row) => {
-    const recovered = deserializeWireBlockTriplet(wireTransit(row));
-    return recovered.blockMerkleRoot === row.blockMerkleRoot;
-  },
-);
+export const prop_roundtrip_preserves_merkle_root = fc.property(blockTripletRowArb, (row) => {
+  const recovered = deserializeWireBlockTriplet(wireTransit(row));
+  return recovered.blockMerkleRoot === row.blockMerkleRoot;
+});
 
 /**
  * prop_roundtrip_preserves_spec_hash
@@ -251,13 +238,10 @@ export const prop_roundtrip_preserves_merkle_root = fc.property(
  *
  * Invariant: specHash is the spec-identity key; it must survive the round-trip byte-identical.
  */
-export const prop_roundtrip_preserves_spec_hash = fc.property(
-  blockTripletRowArb,
-  (row) => {
-    const recovered = deserializeWireBlockTriplet(wireTransit(row));
-    return recovered.specHash === row.specHash;
-  },
-);
+export const prop_roundtrip_preserves_spec_hash = fc.property(blockTripletRowArb, (row) => {
+  const recovered = deserializeWireBlockTriplet(wireTransit(row));
+  return recovered.specHash === row.specHash;
+});
 
 /**
  * prop_roundtrip_preserves_implSource
@@ -265,13 +249,10 @@ export const prop_roundtrip_preserves_spec_hash = fc.property(
  * serialize → wireTransit → deserialize preserves implSource exactly (no truncation,
  * no encoding transformation beyond JSON string escaping).
  */
-export const prop_roundtrip_preserves_implSource = fc.property(
-  blockTripletRowArb,
-  (row) => {
-    const recovered = deserializeWireBlockTriplet(wireTransit(row));
-    return recovered.implSource === row.implSource;
-  },
-);
+export const prop_roundtrip_preserves_implSource = fc.property(blockTripletRowArb, (row) => {
+  const recovered = deserializeWireBlockTriplet(wireTransit(row));
+  return recovered.implSource === row.implSource;
+});
 
 /**
  * prop_deserialize_rejects_non_object
@@ -317,8 +298,7 @@ export const prop_deserialize_rejects_level_L1_L2_L3 = fc.property(
       return false;
     } catch (err) {
       return (
-        err instanceof IntegrityError &&
-        (err as IntegrityError).reason === "level_unsupported"
+        err instanceof IntegrityError && (err as IntegrityError).reason === "level_unsupported"
       );
     }
   },
@@ -345,10 +325,7 @@ export const prop_deserialize_rejects_tampered_blockMerkleRoot = fc.property(
       deserializeWireBlockTriplet(tampered);
       return false;
     } catch (err) {
-      return (
-        err instanceof IntegrityError &&
-        (err as IntegrityError).reason === "integrity_failed"
-      );
+      return err instanceof IntegrityError && (err as IntegrityError).reason === "integrity_failed";
     }
   },
 );

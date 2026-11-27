@@ -7,7 +7,7 @@
 // records of the submission are stored by their root.
 
 import { type SpecYak, canonicalize } from "@yakcc/contracts";
-import { recordRoot, retrievalSignature, unpackGraph } from "@yakcc/duc";
+import { ECMASCRIPT, recordRoot, retrievalSignature, unpackGraph } from "@yakcc/duc";
 import type { DucImplementationRow, Registry } from "@yakcc/registry";
 import {
   type ConformanceVector,
@@ -135,7 +135,7 @@ export function sharedImplementationOf(
   const base =
     row.baseSet !== null && row.baseSet !== undefined
       ? (JSON.parse(row.baseSet) as { target: string; version: number })
-      : { target: "ecmascript", version: 1 };
+      : { target: ECMASCRIPT.target, version: ECMASCRIPT.version };
   return {
     spec,
     specHash: row.specHash,
