@@ -553,30 +553,6 @@ function keyConstructor(m: ModuleBuilder): string[] {
   ];
 }
 
-/**
- * A debugging aid (YK_TRACE=1, temporary): each function, on entry, writes its name to a ring of
- * the last 64 entered (yk_trace, yk_trace_i), for a debugger to read where the program stopped.
- */
-function traceEntry(m: ModuleBuilder, name: string): string[] {
-  if (process.env.YK_TRACE !== "1") return [];
-  if (!m.globals.includes("@yk_trace = global [64 x ptr] zeroinitializer")) {
-    m.globals.push("@yk_trace = global [64 x ptr] zeroinitializer");
-    m.globals.push("@yk_trace_i = global i64 0");
-  }
-  const text = name.replace(/[^\w.$]/g, "_");
-  const g = `@"yk.tn.${text}"`;
-  if (!m.globals.some((x) => x.startsWith(`${g} =`)))
-    m.globals.push(`${g} = private unnamed_addr constant [${text.length + 1} x i8] c"${text}\\00"`);
-  return [
-    "  %tr.i = load i64, ptr @yk_trace_i",
-    "  %tr.j = and i64 %tr.i, 63",
-    "  %tr.p = getelementptr [64 x ptr], ptr @yk_trace, i64 0, i64 %tr.j",
-    `  store ptr ${g}, ptr %tr.p`,
-    "  %tr.n = add i64 %tr.i, 1",
-    "  store i64 %tr.n, ptr @yk_trace_i",
-  ];
-}
-
 /** The module being built: its constants, the runtime functions it calls, its functions. */
 class ModuleBuilder {
   readonly globals: string[] = [];
@@ -1529,7 +1505,7 @@ function lowerFunction(
               continue;
             }
           }
-          const width = process.env.YK_NO_SELT === "1" ? undefined : bigRule(n, widthOf);
+          const width = bigRule(n, widthOf);
           if (width !== undefined && width <= 127) {
             bigWidth.set(out, width);
             changed = true;
@@ -1668,7 +1644,7 @@ function lowerFunction(
           // (so, by induction, every iteration's is); else as wide as the next one is then, again
           // checked, up to 127 bits. The next value's width is computed under the assumption alone.
           if (!bigWidth.has(v)) {
-            const w = process.env.YK_NO_IND === "1" ? undefined : inductCarry(n, j, new Map(), 0);
+            const w = inductCarry(n, j, new Map(), 0);
             if (w !== undefined) {
               bigWidth.set(v, w);
               changed = true;
@@ -1861,7 +1837,6 @@ function lowerFunction(
       if (n.kind !== "op" || n.label !== "ArrayLiteral" || n.inputs.length === 0) continue;
       const out = n.outputs[0] as ValueId;
       if (escaping.has(out)) continue;
-      if (process.env.YK_NO_T2 === "1") continue;
       const rows = n.inputs.map((v) => producer.get(resolve(v as ValueId)));
       if (!rows.every((r) => r?.kind === "op" && r.label === "ArrayLiteral")) continue;
       const cells = (rows as DucNode[]).map((r) =>
@@ -3038,7 +3013,7 @@ function lowerFunction(
       byKey.set(key, [...(byKey.get(key) ?? []), { n, base, off, size: mem.size }]);
     }
     for (const [key, members] of byKey) {
-      if (members.length < 2 || process.env.YK_NO_GROUPS === "1") continue;
+      if (members.length < 2) continue;
       const lo = Math.min(...members.map((x) => x.off));
       const hi = Math.max(...members.map((x) => x.off + x.size));
       for (const x of members) accessGroups.set(x.n, { key, base: x.base, off: x.off, lo, hi });
@@ -6432,7 +6407,7 @@ function lowerFunction(
       i >= closure.captures &&
       !(p.label ?? "").endsWith("...") &&
       rawParams?.has(i - closure.captures) !== true;
-    const speculatedBig = process.env.YK_NO_BIGP === "1" ? [] : params.filter(
+    const speculatedBig = params.filter(
       (p, i) => candidate(p, i) && bigUse.has(p.outputs[0] as ValueId),
     );
     const speculated = params.filter(
@@ -6966,7 +6941,6 @@ function lowerFunction(
         ...[...bigSlots.values()].map((s) => `  ${s} = alloca i128`),
         ...[...intSlots.values()].map((s) => `  ${s} = alloca i64`),
         ...entryAllocas,
-        ...traceEntry(m, name),
         ...body,
         "}",
         "",
