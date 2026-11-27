@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { type ShavedUnit, shaveCUnit } from "../raise-c.js";
+import { type ShavedUnit, isV8Api, shaveCUnit } from "../raise-c.js";
 
 export interface ShavedFiles {
   readonly atoms: Map<string, { source: string; externals: readonly string[] }>;
@@ -101,6 +101,11 @@ export function shaveCFiles(
       const name = todo.pop() as string;
       if (seen.has(name) || atoms.has(name)) continue;
       seen.add(name);
+      // (V8's API, which every C++ file of node/src defines inline: the runtime's leaves.)
+      if (isV8Api(name)) {
+        externals.add(name);
+        continue;
+      }
       // (A complete object's constructor or destructor, `C1`/`D1`, that code generation emits
       // only as the base object's, `C2`/`D2`: the file of that one.)
       const file = defs.get(name) ?? defs.get(name.replace(/([CD])1(E|I)/, "$12$2")) ?? undefined;

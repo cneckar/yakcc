@@ -1789,6 +1789,15 @@ export const symbolOf = (fn: ClangNode): string =>
   (fn as { mangledName?: string }).mangledName ?? fn.name ?? "";
 
 /**
+ * V8's public API (`v8::String::NewFromUtf8`, `v8::Local<T>::IsEmpty`, ..): the boundary node/src
+ * is written against, the runtime's leaves (raise-cpp-v8.ts), never raised, even where its header
+ * defines it inline (its inline functions read V8's heap layout). Not V8's own implementation
+ * (`v8::base`, `v8::internal`, `v8::bigint`), which is shaved.
+ */
+export const isV8Api = (symbol: string): boolean =>
+  /^_ZNK?2v8/.test(symbol) && !/^_ZNK?2v8(?:4base|8internal|6bigint)/.test(symbol);
+
+/**
  * Each direct call in a function, numbered among the calls of functions of the same name, in
  * the order code generation emits them: a call's arguments (and their calls) before it, a for
  * loop's body before its increment.
@@ -2687,6 +2696,26 @@ function raiseBody(
         const v = e.name === "sizeof" ? sizeOf(t) : alignOf(t);
         return wide(typeOf(e)) ? `${v}n` : String(v);
       }
+      case "SizeOfPackExpr": {
+        // `sizeof...(args)` in a template's instance (the dump gives no value): a function
+        // parameter pack's, its expanded parameters (each named as the pack); a type pack's, the
+        // instance's one pack argument.
+        const named = params.filter((p) => p.name === e.name).length;
+        const packs = (fn.inner ?? []).filter(
+          (c) => c.kind === "TemplateArgument" && (c as { isPack?: boolean }).isPack === true,
+        );
+        const v =
+          named > 0
+            ? named
+            : packs.length === 1
+              ? ((packs[0] as ClangNode).inner ?? []).length
+              : undefined;
+        if (v === undefined) throw new RaiseCError(`sizeof...(${e.name}) is not known`);
+        return wide(typeOf(e)) ? `${v}n` : String(v);
+      }
+      // C++20's rewritten comparison (`a != b` as `!(a == b)`, `a < b` through `<=>`): its form.
+      case "CXXRewrittenBinaryOperator":
+        return expr(k0);
       case "OffsetOfExpr": {
         const v = unitOffsetOf(e);
         if (v === undefined) throw new RaiseCError("an offsetof whose member is not known");
@@ -3844,12 +3873,15 @@ function raiseBody(
     const out: string[] = [];
     const dtor = unitCxx.destructorOf(t.name);
     if (dtor?.body) {
-      const key = resolve({
-        name: `~${className(t.name)}`,
-        kind: "CXXDestructorDecl",
-        type: "",
-        id: dtor.id,
-      });
+      const key =
+        resolve({
+          name: `~${className(t.name)}`,
+          kind: "CXXDestructorDecl",
+          type: "",
+          id: dtor.id,
+          // (V8's API, `v8::String::ExternalStringResource`'s, as node/src's classes derive it:
+          // the runtime's leaf.)
+        }) ?? outside(dtor.id);
       if (key === undefined) throw new RaiseCError(`the destructor of ${t.name}`);
       out.push(`${key}(${addr})`);
     } else if (dtor?.provided === true) {
@@ -5735,6 +5767,7 @@ export function shaveCUnit(
           return already;
         }
         const decl = readDecl(indexed, def);
+        if (isV8Api(symbolOf(decl))) return undefined;
         const base = keyBase(decl, c.name);
         let key = base;
         for (let n = 2; found.has(key); n++) key = `${base}_${n}`;
@@ -5748,7 +5781,7 @@ export function shaveCUnit(
     const known = keyOf.get(sig(c.name, c.type));
     const { decl, ambiguous } = lookup(c);
     if (!ambiguous && known !== undefined) return known;
-    if (decl === undefined) return undefined;
+    if (decl === undefined || isV8Api(symbolOf(decl))) return undefined;
     const bySymbol = keyBySymbol.get(symbolOf(decl));
     if (bySymbol !== undefined) return bySymbol;
     const base = keyBase(decl, c.name);
@@ -6763,6 +6796,33 @@ export function shaveCUnit(
       for (const n of dumpOf(owner)) findOwner(n);
       if (found === undefined) return undefined;
     }
+    // (A qualified name in an indexed unit, `simdutf::result`: an enumeration inside a namespace or
+    // class of the qualifier's name, not one of the bare name elsewhere: an enum `result` of
+    // another library is not simdutf's struct.)
+    const qualifier =
+      inTemplate === null
+        ? name
+            .replace(/^enum /, "")
+            .split("::")
+            .slice(0, -1)
+        : [];
+    if (found === undefined && indexed !== undefined && qualifier.length > 0) {
+      const scopes = (indexed.byName.get(qualifier[qualifier.length - 1] as string) ?? []).filter(
+        (d) => d.kind === "NamespaceDecl" || d.kind === "CXXRecordDecl",
+      );
+      const hit = (indexed.byName.get(bare) ?? []).find(
+        (d) => d.kind === "EnumDecl" && scopes.some((c) => c.start < d.start && d.end <= c.end),
+      );
+      if (hit !== undefined) found = readDecl(indexed, hit);
+      // (None there, and the name is a class's: the class. A namespace alias, `icu::`, or a C
+      // enumeration named through a namespace finds its enumeration below.)
+      else if (
+        ["struct", "class", "union"].some(
+          (tag) => layout(recordKey(`${tag} ${name}`)) !== undefined,
+        )
+      )
+        return undefined;
+    }
     const find = (n: ClangNode): void => {
       if (found !== undefined) return;
       if (n.kind === "EnumDecl" && n.name === bare) {
@@ -7629,7 +7689,10 @@ function staticDefinition(
     throw new RaiseCError(`the initializer ${e.kind}`);
   };
   const address = (e: ClangNode): Const => {
-    const n = stripParens(e);
+    let n = stripParens(e);
+    // (`__func__`, `__PRETTY_FUNCTION__`: its string, as CHECK's assertion info records it.)
+    if (n.kind === "PredefinedExpr" && n.inner?.[0]?.kind === "StringLiteral")
+      n = n.inner[0] as ClangNode;
     if (n.kind === "StringLiteral")
       return { k: "data", kind: "u8", values: cStringBytes(n.value ?? '""') };
     if (n.kind === "DeclRefExpr") {
@@ -9198,6 +9261,18 @@ export function createCMemory() {
       const r = regions[regions.length - 1] as Region;
       r.bytes.set(bytes);
       return a;
+    },
+    /**
+     * Bytes the host owns, as a region of their own (not copied): what the C code stores there,
+     * the host reads, and the other way (a JavaScript ArrayBuffer's backing store, V8's API's
+     * `Data()`). Its address; the region is never freed.
+     */
+    map(bytes: Uint8Array): number {
+      const base = Math.ceil(next / 16) * 16;
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      regions.push({ base, bytes, view, constant: false, live: true });
+      next = base + Math.max(16, bytes.length) + 16;
+      return base;
     },
     /** `n` bytes at `a` (for a test's outputs). */
     get(a: number, n: number): Uint8Array {
