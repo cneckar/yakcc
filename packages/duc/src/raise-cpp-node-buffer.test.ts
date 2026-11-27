@@ -205,6 +205,7 @@ describe.skipIf(!hasClang)("Node's buffer binding, shaved from node/src", () => 
         return [`throw ${(e as Error).name} ${(e as Error).message}`];
       }
     });
-    expect(results).toEqual(node);
+    // (Both as JSON: the oracle's results come through it, an undefined in an array as null.)
+    expect(JSON.parse(JSON.stringify(results))).toEqual(node);
   });
 });

@@ -2355,7 +2355,13 @@ function raiseBody(
         const at = typeOf(array);
         if (at.k !== "arr" || at.size === undefined)
           throw new RaiseCError("an initializer list not of an array");
-        const items = array.kind === "MaterializeTemporaryExpr" ? (array.inner ?? [])[0] : array;
+        let items = (array.kind === "MaterializeTemporaryExpr" ? (array.inner ?? [])[0] : array) as
+          | ClangNode
+          | undefined;
+        // (An array of objects with destructors, `{"a", "bc"}` of std::strings, bound as a
+        // temporary: each destroyed after the full expression, unless a reference extends it.)
+        const bound = items?.kind === "CXXBindTemporaryExpr";
+        if (bound) items = (items?.inner ?? [])[0];
         const arr = `__tmp${temps++}`;
         top.push(
           `const ${arr} = __ykAlloc(${Math.max(8, sizeOf(at))}, ${Math.max(8, alignOf(at))});`,
@@ -2367,6 +2373,20 @@ function raiseBody(
         const steps = initialize(arr, at, items as ClangNode).map(
           (x) => `(${x.replace(/;$/, "")})`,
         );
+        if (
+          bound &&
+          at.of.k === "rec" &&
+          cleanups.length > 0 &&
+          armDepth === 0 &&
+          (array as { extendingDecl?: unknown }).extendingDecl === undefined
+        ) {
+          const size = sizeOf(at.of);
+          const of = at.of;
+          for (let i = 0; i < at.size; i++)
+            (cleanups[cleanups.length - 1] as string[]).unshift(
+              ...destroy(i === 0 ? arr : `(${arr} + ${i * size})`, of),
+            );
+        }
         return {
           k: "mem",
           addr: `(${[...steps, `__ykStore64(${list}, __ykNumToBig(${arr}))`, `__ykStore64((${list} + 8), ${at.size}n)`, list].join(", ")})`,
@@ -4944,6 +4964,18 @@ function raiseBody(
           // (A function declared in a block, `extern int getentropy(void *, size_t);`: no code.)
           if (d.kind === "FunctionDecl") continue;
           if (d.kind !== "VarDecl") throw new RaiseCError(`the declaration ${d.kind}`);
+          // (A constant of a type trait, `__is_trivial(T)`, whose value the dump does not give,
+          // that no expression of the body reads: libstdc++'s `const bool __can_memmove`, read
+          // only in a template's argument, which code generation has chosen. Nothing to run.)
+          {
+            const hasTrait = (n: ClangNode): boolean =>
+              n.kind === "TypeTraitExpr" || (n.inner ?? []).some(hasTrait);
+            const reads = (n: ClangNode): boolean =>
+              (n.kind === "DeclRefExpr" && n.referencedDecl?.id === d.id) ||
+              (n.inner ?? []).some(reads);
+            const init = initOf(d);
+            if (init !== undefined && hasTrait(init) && !reads(b0)) continue;
+          }
           const t = ctype(d.type);
           // A static whose initializer runs code (C++: `static std::u32string s = U"";`):
           // initialized the first time its declaration is reached, then a guard says so.
@@ -7031,7 +7063,10 @@ export function shaveCUnit(
         const d = indexed.byId.get(n.id);
         // (libstdc++'s inline namespaces, `std::__cxx11`, as the name leaves them out.)
         const plain = (x: string): string => x.replace(/::__\w+/g, "");
-        return d === undefined || plain(namespacesOf(indexed, d)) === plain(space);
+        if (d === undefined) return true;
+        const full = namespacesOf(indexed, d);
+        // (Or written as far as it is qualified, `__detail::__unique_ptr_t` in std.)
+        return plain(full) === plain(space) || full === space || full.endsWith(`::${space}`);
       };
       for (const n of dumpOf(bareAlias)) {
         if (n.kind !== "TypeAliasTemplateDecl" || n.name !== bareAlias || !inSpace(n)) continue;
