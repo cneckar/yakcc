@@ -1416,6 +1416,11 @@ export interface CxxUnit {
    * variable's id, in the closure's field order, by reference or by copy).
    */
   readonly lambdaOf: (methodId: string) => Lambda | undefined;
+  /**
+   * A captureless lambda's static invoker (`__invoke`, what its conversion to a function pointer
+   * gives; clang leaves its body empty): its closure's call operator's id.
+   */
+  readonly invokedBy: (methodId: string) => string | undefined;
   /** A virtual member function's slot in its class's vtable; a destructor's, `deleting`. */
   readonly slotOf: (methodId: string, objectClass?: string) => number | undefined;
   /** Whether a class has a pure virtual function, of its own or not overridden. */
@@ -2703,6 +2708,15 @@ function raiseBody(
           externals.add(d.name ?? "");
           return `__ykFnAddr(${ident(d.name ?? "")})`;
         }
+        // A static member function as a value (`umtx_initOnce(initOnce, CollationRoot::load, ..)`):
+        // as `&CollationRoot::load`, its address.
+        if (d.kind === "CXXMethodDecl") {
+          const key =
+            resolve({ name: d.name ?? "", kind: "CXXMethodDecl", type: "", id: d.id }) ??
+            outside(d.id);
+          if (key === undefined) throw new RaiseCError(`the method ${d.name} is not in the unit`);
+          return `__ykFnAddr(${key})`;
+        }
         if (d.kind === "EnumConstantDecl") {
           const v = unitEnumValue(d.name ?? "", d.id);
           if (v === undefined)
@@ -3296,6 +3310,16 @@ function raiseBody(
                 ? argOf(x)
                 : expr(x),
           );
+        // Through a function pointer, as a direct call: an lvalue argument binds a reference
+        // parameter (`(*fp)(context, errCode)` with `void (*)(T, UErrorCode &)`), its address.
+        const viaPointer = (): string[] =>
+          kids.slice(1).map((x, i) => {
+            const cat = (x as { valueCategory?: string }).valueCategory;
+            const t = typeOf(x).k;
+            return (cat === "lvalue" || cat === "xvalue") && t !== "rec" && t !== "arr"
+              ? argOf(x)
+              : (args[i] as string);
+          });
         if (name === "bit_cast") {
           const to = typeOf(e);
           const from = typeOf(kids[1] as ClangNode);
@@ -3365,7 +3389,7 @@ function raiseBody(
           // (Variadic through the pointer, `(ERR_new(), .., ERR_set_error)(lib, r, fmt, ..)`: as a
           // direct call packs them.)
           const fixedThere = variadicParams(k0.type?.desugaredQualType ?? k0.type?.qualType ?? "");
-          if (fixedThere === undefined) return `${at}(${args.join(", ")})`;
+          if (fixedThere === undefined) return `${at}(${viaPointer().join(", ")})`;
           const v = packVariadic(fixedThere);
           const r = temp(typeOf(e).k === "void" ? { k: "i32" } : typeOf(e));
           return `(${v.pack.join(", ")}, (${r} = ${at}(${v.callArgs.join(", ")})), __ykFree(${v.area}), ${r})`;
@@ -3399,7 +3423,7 @@ function raiseBody(
           return `((${exact} = ${big(kids[1] as ClangNode)} ${checked} ${big(kids[2] as ClangNode)}), (${out} = ${narrowed}), ${storeAt(expr(kids[3] as ClangNode), R, out)}, ${back} !== ${exact})`;
         }
         if (callee.kind === "UnaryOperator" && callee.opcode === "*")
-          return `__ykFnAt(${expr((callee.inner as ClangNode[])[0] as ClangNode)})(${args.join(", ")})`;
+          return `__ykFnAt(${expr((callee.inner as ClangNode[])[0] as ClangNode)})(${viaPointer().join(", ")})`;
         if (d === undefined || d.kind === "VarDecl" || d.kind === "ParmVarDecl")
           throw new RaiseCError(`a call of ${callee.kind}`);
         const leaf = Object.hasOwn(LEAF_CALLS, name) ? LEAF_CALLS[name] : undefined;
@@ -5250,7 +5274,15 @@ function raiseBody(
       entry.push(`${construct("__this", value as ClangNode)};`);
     } else throw new RaiseCError("a constructor's initializer of another kind");
   }
-  stmt(b0);
+  // A lambda's static invoker: its call operator, on no object (the lambda captures nothing).
+  const invoked = fn.name === "__invoke" && !method ? unitCxx?.invokedBy(fn.id ?? "") : undefined;
+  if (invoked !== undefined) {
+    const call = resolve({ name: "operator()", kind: "CXXMethodDecl", type: "", id: invoked });
+    if (call === undefined) throw new RaiseCError("a lambda's call operator is not in the unit");
+    lines.push(
+      `return ${call}(${[...(sret ? ["__ret"] : []), "0", ...params.map(declName)].join(", ")});`,
+    );
+  } else stmt(b0);
   if (frame.length > 0 && result.k === "void") returnLine(undefined);
   const consts = [...globals.values()];
   return `export function f(${sig}): ${tsType(result)} {\n${consts.join("\n")}\n${top.join("\n")}\n${entry.join("\n")}\n${lines.join("\n")}\n}`;
@@ -6049,6 +6081,15 @@ export function shaveCUnit(
               body: definitionIn(indexed, dtor.id ?? "") !== undefined,
               provided: d.isImplicit !== true && d.explicitlyDefaulted === undefined,
             };
+          },
+          invokedBy: (methodId) => {
+            const m = indexed.byId.get(methodId);
+            const cls = m?.parent === undefined ? undefined : indexed.byId.get(m.parent);
+            if (m?.name !== "__invoke" || cls === undefined || cls.name !== "") return undefined;
+            const call = (readDecl(indexed, cls).inner ?? []).find(
+              (c) => c.kind === "CXXMethodDecl" && c.name === "operator()",
+            );
+            return call?.id;
           },
           lambdaOf: (methodId) => {
             const m = indexed.byId.get(methodId);
