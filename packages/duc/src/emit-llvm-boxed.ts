@@ -1464,6 +1464,31 @@ function lowerFunction(
         if (n.kind === "sel") {
           const out = n.outputs[0] as ValueId | undefined;
           if (out === undefined || bigWidth.has(out)) continue;
+          // A selection between two ranged numbers (or integer literals): the ranges joined.
+          if (!numRange.has(resolve(out)) && n.label !== "heap" && n.inputs.length === 3) {
+            const rOf = (v: ValueId): NumRange | "both" | undefined => {
+              const r = numRange.get(resolve(v));
+              if (r !== undefined) return r;
+              const x = smallIntLiteral(v);
+              if (x === undefined) return undefined;
+              return x >= 0 && x < 2 ** 31
+                ? "both"
+                : x >= 0 && x < 2 ** 32
+                  ? "u32"
+                  : x >= -(2 ** 31) && x < 0
+                    ? "i32"
+                    : undefined;
+            };
+            const a = rOf(n.inputs[1] as ValueId);
+            const b = rOf(n.inputs[2] as ValueId);
+            if (a !== undefined && b !== undefined) {
+              const r: NumRange =
+                a === "both" ? (b === "both" ? "i32" : b) : b === "both" || a === b ? a : "int";
+              numRange.set(resolve(out), r);
+              changed = true;
+              continue;
+            }
+          }
           const width = bigRule(n, widthOf);
           if (width !== undefined && width <= 127) {
             bigWidth.set(out, width);
@@ -1591,6 +1616,13 @@ function lowerFunction(
         if (n.kind !== "loop" || rec === undefined) continue;
         rec.carry.forEach((c, j) => {
           const v = resolve(c);
+          // The loop's output for a ranged carry: the carry's last value, in its range.
+          const lout = n.outputs[j] as ValueId | undefined;
+          const cr = numRange.get(v);
+          if (lout !== undefined && cr !== undefined && !numRange.has(resolve(lout))) {
+            numRange.set(resolve(lout), cr);
+            changed = true;
+          }
           if (numRange.has(v)) return;
           // A BigInt carry: as wide as its initial value, when its next value is no wider given that
           // (so, by induction, every iteration's is); else as wide as the next one is then, again
@@ -1611,7 +1643,22 @@ function lowerFunction(
           }
           if (bigWidth.has(v)) return;
           const a = litRange(n.inputs[j] as ValueId);
-          const b = litRange(rec.next[j] as ValueId);
+          // Its next value's range, the carry assumed in its initial value's (a break's select
+          // keeping the carry as it is: `sel(!go, carry, inner result)`).
+          const join = (x: NumRange | "both", y: NumRange | "both"): NumRange | "both" =>
+            x === "both" ? y : y === "both" || x === y ? x : "int";
+          const under = (x0: ValueId, depth: number): NumRange | "both" | undefined => {
+            const x = resolve(x0);
+            if (x === v) return a;
+            const known = litRange(x);
+            if (known !== undefined || depth > 6) return known;
+            const p = producer.get(x);
+            if (p?.kind !== "sel" || p.label === "heap" || p.inputs.length !== 3) return undefined;
+            const ra = under(p.inputs[1] as ValueId, depth + 1);
+            const rb = under(p.inputs[2] as ValueId, depth + 1);
+            return ra === undefined || rb === undefined ? undefined : join(ra, rb);
+          };
+          const b = a === undefined ? undefined : under(rec.next[j] as ValueId, 0);
           if (a === undefined || b === undefined) return;
           const r: NumRange =
             a === "both" ? (b === "both" ? "i32" : b) : b === "both" || a === b ? a : "int";
@@ -2599,8 +2646,20 @@ function lowerFunction(
     const a = constantInt(q.inputs[0] as ValueId, depth + 1);
     const b = constantInt(q.inputs[1] as ValueId, depth + 1);
     if (a === undefined || b === undefined) return undefined;
+    const i32 = (x: number): boolean => x >= -(2 ** 31) && x < 2 ** 31;
     const r =
-      q.label === "+" ? a + b : q.label === "-" ? a - b : q.label === "*" ? a * b : undefined;
+      q.label === "+"
+        ? a + b
+        : q.label === "-"
+          ? a - b
+          : q.label === "*"
+            ? a * b
+            : // raise-c's int arithmetic: `(k + 1) | 0` of an int32 is itself.
+              q.label === "|" && b === 0 && i32(a)
+              ? a
+              : q.label === "|" && a === 0 && i32(b)
+                ? b
+                : undefined;
     return r !== undefined && Number.isSafeInteger(r) ? r : undefined;
   };
   /**
@@ -2890,6 +2949,173 @@ function lowerFunction(
         lazyFrames.set(v, { size, align });
     }
   }
+  // Access groups (#1369): loads of one region (a straight run of the graph's scopes) at constant
+  // offsets from one base (`p + k`) are checked together. The first emitted checks the whole run
+  // [p + min k, p + max k + size) against the runtime's cached region; each after it, while
+  // nothing can free memory or run other code, loads directly when that check held.
+  const accessGroups = new Map<
+    DucNode,
+    { key: string; base: ValueId; off: number; lo: number; hi: number }
+  >();
+  {
+    const byKey = new Map<string, { n: DucNode; base: ValueId; off: number; size: number }[]>();
+    for (const n of g.nodes) {
+      const leaf = leafOf(n);
+      const mem =
+        leaf === "__ykLoad64" && isTypedBig(n.outputs[0] as ValueId)
+          ? { size: 8, store: false }
+          : leaf === undefined
+            ? undefined
+            : MEM_INLINE[leaf];
+      if (mem === undefined || mem.store || n.inputs.length !== 2) continue;
+      // The base and offset through a chain of `+ k` (`buf + 1`, then that `+ 1`, …).
+      let base = resolve(n.inputs[1] as ValueId);
+      let off = 0;
+      for (let step = 0; step < 32; step++) {
+        const pa = producer.get(base);
+        if (pa?.kind !== "op" || pa.label !== "+" || pa.inputs.length !== 2) break;
+        let next: ValueId | undefined;
+        for (const [x, y] of [
+          [pa.inputs[0], pa.inputs[1]],
+          [pa.inputs[1], pa.inputs[0]],
+        ] as [ValueId, ValueId][]) {
+          const k = constantInt(y);
+          if (
+            next === undefined &&
+            k !== undefined &&
+            Number.isInteger(k) &&
+            Math.abs(off + k) < 2 ** 31
+          ) {
+            next = resolve(x);
+            off += k;
+          }
+        }
+        if (next === undefined) break;
+        base = next;
+      }
+      const key = `${n.region ?? ""}|${base}`;
+      byKey.set(key, [...(byKey.get(key) ?? []), { n, base, off, size: mem.size }]);
+    }
+    for (const [key, members] of byKey) {
+      if (members.length < 2) continue;
+      const lo = Math.min(...members.map((x) => x.off));
+      const hi = Math.max(...members.map((x) => x.off + x.size));
+      for (const x of members) accessGroups.set(x.n, { key, base: x.base, off: x.off, lo, hi });
+    }
+  }
+  /** Each group's check where it was made: whether it held, and the run's bytes. */
+  const activeSpans = new Map<string, { ok: string; bytes: string; lo: number }>();
+  const PURE_LEAVES = new Set([
+    "__ykU64",
+    "__ykI64",
+    "__ykNumToBig",
+    "__ykBigToI32",
+    "__ykBigToU32",
+    "__ykBigToF64",
+    "__ykF64Bits",
+    "__ykF64FromBits",
+    "__ykI32Mul",
+    "__ykF32",
+  ]);
+  const PURE_OPS = new Set([
+    "+",
+    "-",
+    "*",
+    "/",
+    "%",
+    "&",
+    "|",
+    "^",
+    "<<",
+    ">>",
+    ">>>",
+    "<",
+    ">",
+    "<=",
+    ">=",
+    "~",
+    "!",
+  ]);
+  /** A node that frees no memory and runs no code of the program's (a group's check still holds). */
+  const spanSafe = (n: DucNode): boolean => {
+    if (n.kind === "sel" || n.kind === "literal-source" || n.kind === "param-source") return true;
+    if (n.kind === "carry-source" || n.kind === "diamond-source") return true;
+    if (n.kind !== "op") return false;
+    const vals = (n.inputs as readonly ValueId[]).filter((v) => {
+      const p = producer.get(resolve(v));
+      return !(p?.kind === "sel" && p.label === "heap") && !(p?.label ?? "").endsWith(":heap");
+    });
+    const plain = (vs: readonly ValueId[]): boolean =>
+      vs.every((v) => allNumbers([v]) || isTypedBig(v) || literalBig(v) !== undefined);
+    const leaf = leafOf(n);
+    if (leaf !== undefined) {
+      if (MEM_INLINE[leaf] !== undefined || leaf === "__ykLoad64" || leaf === "__ykStore64")
+        return true;
+      return PURE_LEAVES.has(leaf) && plain(vals.slice(1));
+    }
+    const lbl = n.label ?? "";
+    if (lbl === "===" || lbl === "!==") return true;
+    if (
+      lbl === "ElementAccess" &&
+      (rowReadOf.has(resolve(n.inputs[0] as ValueId)) ||
+        constTables.has(resolve(n.inputs[0] as ValueId)))
+    )
+      return plain([n.inputs[1] as ValueId]);
+    return PURE_OPS.has(lbl) && plain(vals);
+  };
+  /** A group's check: its base a non-negative integer address, the run inside the cached region. */
+  const spanCheck = (grp: { base: ValueId; lo: number; hi: number }): {
+    ok: string;
+    bytes: string;
+    lo: number;
+  } => {
+    for (const d0 of MEM_CACHE_DECLS) m.intrinsics.add(d0);
+    const b = operand(grp.base);
+    const isNum = fresh();
+    emit(`${isNum} = icmp ult i64 ${b}, ${NUMBER_LIMIT}`);
+    const d = fresh();
+    emit(`${d} = bitcast i64 ${b} to double`);
+    const nonneg = fresh();
+    emit(`${nonneg} = fcmp oge double ${d}, 0.0`);
+    const below = fresh();
+    emit(`${below} = fcmp olt double ${d}, 9.0e15`);
+    const a1 = fresh();
+    emit(`${a1} = and i1 ${isNum}, ${nonneg}`);
+    const a2 = fresh();
+    emit(`${a2} = and i1 ${a1}, ${below}`);
+    // In range, fptoui is defined: each later test is taken only where the earlier ones hold.
+    const u = fresh();
+    emit(`${u} = fptoui double ${d} to i64`);
+    const back = fresh();
+    emit(`${back} = uitofp i64 ${u} to double`);
+    const integral = fresh();
+    emit(`${integral} = fcmp oeq double ${back}, ${d}`);
+    const a3 = fresh();
+    emit(`${a3} = select i1 ${a2}, i1 ${integral}, i1 false`);
+    const start = fresh();
+    emit(`${start} = add i64 ${u}, ${grp.lo}`);
+    const cBase = fresh();
+    emit(`${cBase} = load i64, ptr @yk_mcache_base`);
+    const cLen = fresh();
+    emit(`${cLen} = load i64, ptr @yk_mcache_len`);
+    const off = fresh();
+    emit(`${off} = sub i64 ${start}, ${cBase}`);
+    const end = fresh();
+    emit(`${end} = add i64 ${off}, ${grp.hi - grp.lo}`);
+    const fits = fresh();
+    emit(`${fits} = icmp ule i64 ${end}, ${cLen}`);
+    const after = fresh();
+    emit(`${after} = icmp ule i64 ${cBase}, ${start}`);
+    const inside = fresh();
+    emit(`${inside} = and i1 ${fits}, ${after}`);
+    const ok = fresh();
+    emit(`${ok} = select i1 ${a3}, i1 ${inside}, i1 false`);
+    const cBytes = fresh();
+    emit(`${cBytes} = load ptr, ptr @yk_mcache_bytes`);
+    const bytes = fresh();
+    emit(`${bytes} = getelementptr i8, ptr ${cBytes}, i64 ${off}`);
+    return { ok, bytes, lo: grp.lo };
+  };
   /** The int64 of the integer load memoryAccess made last (#1369), or undefined. */
   let loadInt: string | undefined;
   const memoryAccess = (
@@ -3656,8 +3882,30 @@ function lowerFunction(
       }
       if (leaf === "__ykLoad64") {
         // Through this site's cache of the region, as the narrower loads are; its bits, unsigned.
+        // In an access group whose check held, the bytes directly.
+        const grp = accessGroups.get(n);
+        let direct: { value: string; end: string; join: string } | undefined;
+        if (grp !== undefined) {
+          let sp = activeSpans.get(grp.key);
+          if (sp === undefined) {
+            sp = spanCheck(grp);
+            activeSpans.set(grp.key, sp);
+          }
+          const directL = freshLabel("gdirect");
+          const normalL = freshLabel("gnormal");
+          const joinL = freshLabel("gjoin");
+          emit(`br i1 ${sp.ok}, label %${directL}, label %${normalL}`);
+          block(directL);
+          const q = fresh();
+          emit(`${q} = getelementptr i8, ptr ${sp.bytes}, i64 ${grp.off - sp.lo}`);
+          const v = fresh();
+          emit(`${v} = load i64, ptr ${q}, align 1`);
+          direct = { value: v, end: currentLabel(), join: joinL };
+          emit(`br label %${joinL}`);
+          block(normalL);
+        }
         const addr = operand(ins[1] as ValueId);
-        const bits = memoryAccess(
+        const bits0 = memoryAccess(
           { size: 8, ty: "i64", kind: "u64", store: false },
           [addr],
           () => call(fn, `i64 ${addr}`),
@@ -3670,6 +3918,16 @@ function lowerFunction(
             ? intOperand(ins[1] as ValueId)
             : undefined,
         );
+        let bits = bits0;
+        if (direct !== undefined) {
+          const normalEnd = currentLabel();
+          emit(`br label %${direct.join}`);
+          block(direct.join);
+          bits = fresh();
+          emit(
+            `${bits} = phi i64 [ ${direct.value}, %${direct.end} ], [ ${bits0}, %${normalEnd} ]`,
+          );
+        }
         emit(`${r} = zext i64 ${bits} to i128`);
         return r;
       }
@@ -4680,6 +4938,69 @@ function lowerFunction(
         }
         return;
       }
+      const grp = mem !== undefined && !mem.store ? accessGroups.get(n) : undefined;
+      if (mem !== undefined && grp !== undefined) {
+        let sp = activeSpans.get(grp.key);
+        if (sp === undefined) {
+          sp = spanCheck(grp);
+          activeSpans.set(grp.key, sp);
+        }
+        const directL = freshLabel("gdirect");
+        const normalL = freshLabel("gnormal");
+        const joinL = freshLabel("gjoin");
+        emit(`br i1 ${sp.ok}, label %${directL}, label %${normalL}`);
+        block(directL);
+        const q = fresh();
+        emit(`${q} = getelementptr i8, ptr ${sp.bytes}, i64 ${grp.off - sp.lo}`);
+        const v = fresh();
+        emit(`${v} = load ${mem.ty}, ptr ${q}, align 1`);
+        let r1: string;
+        let i1: string | undefined;
+        if (mem.kind === "u") {
+          const z = fresh();
+          emit(`${z} = zext ${mem.ty} ${v} to i64`);
+          i1 = z;
+          const f = fresh();
+          emit(`${f} = uitofp i64 ${z} to double`);
+          r1 = fresh();
+          emit(`${r1} = bitcast double ${f} to i64`);
+        } else if (mem.kind === "f64")
+          r1 = rawNumbers.has(resolve(out)) ? rawBits(v) : boxDouble(v);
+        else {
+          const f = fresh();
+          emit(`${f} = fpext float ${v} to double`);
+          r1 = rawNumbers.has(resolve(out)) ? rawBits(f) : boxDouble(f);
+        }
+        const directEnd = currentLabel();
+        emit(`br label %${joinL}`);
+        block(normalL);
+        const r2 = memoryAccess(
+          mem,
+          args,
+          () => call(fn, args.map((a) => `i64 ${a}`).join(", ")),
+          ins.slice(1).map((x) => allNumbers([x as ValueId])),
+          undefined,
+          rawNumbers.has(resolve(out as ValueId)),
+          false,
+          naturalInt(ins[1] as ValueId),
+          naturalInt(ins[1] as ValueId) && intKnown(ins[1] as ValueId)
+            ? intOperand(ins[1] as ValueId)
+            : undefined,
+        );
+        const i2 = loadInt;
+        const normalEnd = currentLabel();
+        emit(`br label %${joinL}`);
+        block(joinL);
+        const r = fresh();
+        emit(`${r} = phi i64 [ ${r1}, %${directEnd} ], [ ${r2}, %${normalEnd} ]`);
+        const intToo =
+          i1 !== undefined && i2 !== undefined && numRange.has(resolve(out as ValueId));
+        const ri = fresh();
+        if (intToo) emit(`${ri} = phi i64 [ ${i1}, %${directEnd} ], [ ${i2}, %${normalEnd} ]`);
+        set(out, r);
+        if (intToo) setInt(out as ValueId, ri);
+        return;
+      }
       if (mem !== undefined) {
         // A raw double stored (rawNumbers): the runtime's call takes it canonical.
         const rawValue = mem.store && rawNumbers.has(resolve(ins[2] as ValueId));
@@ -5640,9 +5961,16 @@ function lowerFunction(
 
   const emitItems = (items: readonly ScopeItem[]): void => {
     for (const it of items) {
-      if (it.kind === "node") emitNode(it.node);
-      else if (it.kind === "branch") emitBranch(it.branch);
-      else emitLoop(it.node);
+      if (it.kind === "node") {
+        emitNode(it.node);
+        // A node that could free memory or run the program's code: the groups' checks are stale.
+        if (!spanSafe(it.node)) activeSpans.clear();
+      } else {
+        activeSpans.clear();
+        if (it.kind === "branch") emitBranch(it.branch);
+        else emitLoop(it.node);
+        activeSpans.clear();
+      }
     }
   };
   const emitScope = (scope: string | undefined): void =>
