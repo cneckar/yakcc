@@ -1338,11 +1338,16 @@ static void yk_writable_segments(void (*f)(uint8_t *lo, uint8_t *hi)) {
 /* ---------------------------------------------------------------- the entry */
 
 int main(int argc, char **argv);
+/* The program's constructors (.init_array: the lowered modules' keys, made once), as libc's start
+   runs them; the linker defines the bounds, absent when there are none. */
+extern void (*const __init_array_start[])(void) __attribute__((weak));
+extern void (*const __init_array_end[])(void) __attribute__((weak));
 YK_NOLIBC_API _Noreturn void yk_nolibc_start(uintptr_t *sp) {
   int argc = (int)sp[0];
   char **argv = (char **)(sp + 1);
   environ = argv + argc + 1;
   yk_nolibc_stack_top = (uintptr_t)sp;
+  for (void (*const *f)(void) = __init_array_start; f != NULL && f < __init_array_end; f++) (*f)();
   exit(main(argc, argv));
 }
 /* _start: the initial stack (argc, argv, envp) to yk_nolibc_start, the stack aligned, no frame. */
