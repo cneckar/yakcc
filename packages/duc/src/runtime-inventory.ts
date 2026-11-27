@@ -387,7 +387,14 @@ export function inventoryMarkdown(sections: readonly RuntimeSectionLines[]): str
     .map(([k, n]) => `| ${k} | ${n} |`);
   const rows = sections.map(
     (x) =>
-      `| \`${x.file}:${x.line}\` | ${x.marker === "" ? "(the file's opening)" : x.marker.replace(/^\/\* -+ ?/, "").replace(/[\s:-]+$/, "").replace(/\|/g, "\\|")} | ${x.lines} | ${x.kind} | ${x.source.replace(/\|/g, "\\|")} |`,
+      `| \`${x.file}:${x.line}\` | ${
+        x.marker === ""
+          ? "(the file's opening)"
+          : x.marker
+              .replace(/^\/\* -+ ?/, "")
+              .replace(/[\s:-]+$/, "")
+              .replace(/\|/g, "\\|")
+      } | ${x.lines} | ${x.kind} | ${x.source.replace(/\|/g, "\\|")} |`,
   );
   return [
     "# The native runtime, inventoried (#1516)",
