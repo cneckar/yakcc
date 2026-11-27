@@ -148,3 +148,16 @@ describe("an iterating loop whose leading break reads its own variable (#1368)",
     expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
   });
 });
+
+describe("a type's own name is no read (#1292)", () => {
+  it("a generic arrow's type parameter, a local type alias and interface", () => {
+    for (const source of [
+      "export function f() { const memo = <T>(c: Map<string, T>, make: () => T): T => make(); return memo; }",
+      "export function f(xs: unknown[]) { type E = { d: string }; return xs.map((e) => (e as E).d); }",
+      "export function f(xs: unknown[]) { interface I { d: string } return xs.map((e) => (e as I).d); }",
+    ]) {
+      expect([...graphFreeNames(liftAtom(source))]).toEqual([]);
+      expect(holds(source).holds).toBe(true);
+    }
+  });
+});

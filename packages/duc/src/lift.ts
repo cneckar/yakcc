@@ -5315,7 +5315,12 @@ function isValueRead(id: import("ts-morph").Identifier): boolean {
       Node.isPropertySignature(parent) ||
       Node.isMethodSignature(parent) ||
       Node.isGetAccessorDeclaration(parent) ||
-      Node.isSetAccessorDeclaration(parent)) &&
+      Node.isSetAccessorDeclaration(parent) ||
+      // A type parameter's, a type alias's or an interface's own name is a type's (#1292: a
+      // generic arrow, `<T>(c: Map<string, T>) => ..`, read its `T` as a value).
+      Node.isTypeParameterDeclaration(parent) ||
+      Node.isTypeAliasDeclaration(parent) ||
+      Node.isInterfaceDeclaration(parent)) &&
     (parent as { getNameNode?: () => Node | undefined }).getNameNode?.() === id
   ) {
     return false;
