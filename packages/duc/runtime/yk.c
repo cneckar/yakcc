@@ -3830,9 +3830,7 @@ static yk object_is_extensible(void *c, yk s, uint64_t argc, const yk *argv) {
   uint32_t *w = integrity_word(arg_or_undefined(argc, argv, 0));
   return yk_bool(w != NULL && !(*w & INTEGRITY_NOEXT));
 }
-static yk object_false(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s, (void)argc, (void)argv; return YK_FALSE; }
 static yk object_true(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s, (void)argc, (void)argv; return YK_TRUE; }
-static yk object_first(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return arg_or_undefined(argc, argv, 0); }
 static yk reflect_apply(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
   yk args = arg_or_undefined(argc, argv, 2);
@@ -5755,7 +5753,6 @@ yk yk_cjs_namespace_once(yk *slot, yk exports) {
   if (*slot == 0) *slot = yk_cjs_namespace_of(exports);
   return *slot;
 }
-static yk builtin_identity(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return argc > 0 ? argv[0] : YK_UNDEFINED; }
 static yk builtin_object(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
   if (argc > 0 && is_reference(argv[0])) return argv[0];
@@ -7952,6 +7949,7 @@ _Static_assert(offsetof(yk_buffer, data) == offsetof(struct yk_buffer_mirror, da
                "yk_buffer's layout is the lowering's");
 _Static_assert(offsetof(yk_string, len) == 0 && offsetof(yk_string, units) == 8,
                "a string's length, its hash, then its units");
+_Static_assert(offsetof(yk_bigint, len) == 4, "a BigInt's limb count, as a .big clone's entry reads it");
 
 enum { TA_I8, TA_U8, TA_U8C, TA_I16, TA_U16, TA_I32, TA_U32, TA_F32, TA_F64, TA_BI64, TA_BU64, TA_COUNT };
 static const char *const ta_names[TA_COUNT] = {"Int8Array",   "Uint8Array",    "Uint8ClampedArray",
