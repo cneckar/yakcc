@@ -4493,22 +4493,39 @@ static uint32_t to_uint32(yk v) {
 }
 static int32_t to_int32(yk v) { return (int32_t)to_uint32(v); }
 
-yk yk_bitor(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '|') : yk_number(to_int32(a) | to_int32(b)); }
-yk yk_bitand(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '&') : yk_number(to_int32(a) & to_int32(b)); }
-yk yk_bitxor(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '^') : yk_number(to_int32(a) ^ to_int32(b)); }
+/* Two numbers below 2^63 in magnitude (the lowered code's calls in library code, most often): their
+   ToInt32, with no ToPrimitive asked. */
+#define INT32_PAIR(a, b) (is_number(a) && is_number(b) && fabs(num(a)) < 9.2e18 && fabs(num(b)) < 9.2e18)
+yk yk_bitor(yk a, yk b) {
+  if (INT32_PAIR(a, b)) return yk_number((int32_t)(int64_t)num(a) | (int32_t)(int64_t)num(b));
+  return numeric_pair(&a, &b) ? big_binary(a, b, '|') : yk_number(to_int32(a) | to_int32(b));
+}
+yk yk_bitand(yk a, yk b) {
+  if (INT32_PAIR(a, b)) return yk_number((int32_t)(int64_t)num(a) & (int32_t)(int64_t)num(b));
+  return numeric_pair(&a, &b) ? big_binary(a, b, '&') : yk_number(to_int32(a) & to_int32(b));
+}
+yk yk_bitxor(yk a, yk b) {
+  if (INT32_PAIR(a, b)) return yk_number((int32_t)(int64_t)num(a) ^ (int32_t)(int64_t)num(b));
+  return numeric_pair(&a, &b) ? big_binary(a, b, '^') : yk_number(to_int32(a) ^ to_int32(b));
+}
 yk yk_shl(yk a, yk b) {
+  if (INT32_PAIR(a, b))
+    return yk_number((int32_t)((uint32_t)(int64_t)num(a) << ((uint32_t)(int64_t)num(b) & 31)));
   if (numeric_pair(&a, &b)) return big_binary(a, b, '<');
   return yk_number((int32_t)((uint32_t)to_int32(a) << (to_uint32(b) & 31)));
 }
 yk yk_shr(yk a, yk b) {
+  if (INT32_PAIR(a, b)) return yk_number((int32_t)(int64_t)num(a) >> ((uint32_t)(int64_t)num(b) & 31));
   if (numeric_pair(&a, &b)) return big_binary(a, b, '>');
   return yk_number(to_int32(a) >> (to_uint32(b) & 31));
 }
 yk yk_ushr(yk a, yk b) {
+  if (INT32_PAIR(a, b)) return yk_number((uint32_t)(int64_t)num(a) >> ((uint32_t)(int64_t)num(b) & 31));
   if (numeric_pair(&a, &b)) type_error("BigInts have no unsigned right shift, use >> instead");
   return yk_number(to_uint32(a) >> (to_uint32(b) & 31));
 }
 yk yk_bitnot(yk a) {
+  if (is_number(a) && fabs(num(a)) < 9.2e18) return yk_number(~(int32_t)(int64_t)num(a));
   a = to_primitive_hint(a, 2);
   return is_bigint(a) ? big_add_small(big_negate(a), -1) : yk_number(~to_int32(a));
 }
