@@ -650,6 +650,9 @@ const COMPUTED_REQUIRES: Readonly<Record<string, readonly string[]>> = {
   cluster: ["internal/cluster/primary", "internal/cluster/child"],
   // Enabling a hook (updatePromiseHookMode) loads it: domain's createHook().enable() at its load.
   "internal/async_hooks": ["internal/promise_hooks"],
+  // Every error with a larger stack trace asks whether a snapshot is being built
+  // (isErrorStackTraceLimitWritable).
+  "internal/errors": ["internal/v8/startup_snapshot"],
 };
 
 /** Globals Node's bootstrap/node.js defines lazily: each its name, its module, and the export. */
@@ -689,27 +692,29 @@ const privateSymbols = {
   promise_trace_id: Symbol("node:promise_trace_id"),
   source_map_data_private_symbol: Symbol("node:source_map_data_private_symbol"),
 };
+// env_properties.h's per-isolate symbols, each keyed by its description, as the symbols binding has them.
 const perIsolateSymbols = {
-  fs_use_promises_symbol: Symbol("fs_use_promises_symbol"),
   async_id_symbol: Symbol("async_id_symbol"),
-  handle_onclose_symbol: Symbol("handle_onclose"),
-  no_message_symbol: Symbol("no_message_symbol"),
-  messaging_deserialize_symbol: Symbol("messaging_deserialize_symbol"),
-  messaging_transfer_symbol: Symbol("messaging_transfer_symbol"),
+  constructor_key_symbol: Symbol("constructor_key_symbol"),
+  fs_use_promises_symbol: Symbol("fs_use_promises_symbol"),
+  handle_onclose: Symbol("handle_onclose"),
+  imported_cjs_symbol: Symbol("imported_cjs_symbol"),
   messaging_clone_symbol: Symbol("messaging_clone_symbol"),
+  messaging_deserialize_symbol: Symbol("messaging_deserialize_symbol"),
   messaging_transfer_list_symbol: Symbol("messaging_transfer_list_symbol"),
-  oninit_symbol: Symbol("oninit"),
+  messaging_transfer_symbol: Symbol("messaging_transfer_symbol"),
+  no_message_symbol: Symbol("no_message_symbol"),
+  oninit: Symbol("oninit"),
+  onpskexchange: Symbol("onpskexchange"),
   owner_symbol: Symbol("owner_symbol"),
-  onpskexchange_symbol: Symbol("onpskexchange"),
   resource_symbol: Symbol("resource_symbol"),
+  source_text_module_default_hdo: Symbol("source_text_module_default_hdo"),
   trigger_async_id_symbol: Symbol("trigger_async_id_symbol"),
+  vm_context_no_contextify: Symbol("vm_context_no_contextify"),
   vm_dynamic_import_default_internal: Symbol("vm_dynamic_import_default_internal"),
   vm_dynamic_import_main_context_default: Symbol("vm_dynamic_import_main_context_default"),
   vm_dynamic_import_missing_flag: Symbol("vm_dynamic_import_missing_flag"),
   vm_dynamic_import_no_callback: Symbol("vm_dynamic_import_no_callback"),
-  vm_context_no_contextify: Symbol("vm_context_no_contextify"),
-  entry_point_module_private_symbol: Symbol("entry_point_module"),
-  entry_point_promise_private_symbol: Symbol("entry_point_promise"),
 };
 const exportsOfContext = {};
 for (const id of ["internal/per_context/primordials", "internal/per_context/domexception", "internal/per_context/messageport"])
@@ -752,11 +757,6 @@ const runtime = {
     setTraceCategoryStateUpdateHandler: () => {},
     getEnabledCategories: () => "",
   },
-  // Ports between threads (#1361 later); DOMException is per_context/domexception's.
-  messaging: {
-    setDeserializerCreateObjectFunction: () => {},
-    DOMException: exportsOfContext.DOMException,
-  },
   // ES module linking: not yet (#1361 P2).
   module_wrap: { ModuleWrap: class ModuleWrap {}, kInstantiated: 2, kEvaluated: 4, kErrored: 5 },
   // Stack traces: the runtime keeps none yet; the callbacks are kept.
@@ -788,6 +788,234 @@ runtime.task_queue = {
   },
   // V8's promise reject callback: the runtime calls it as V8 does (type, promise, reason).
   setPromiseRejectCallback: (f) => __yakccSetPromiseRejectHook(f),
+};
+// Ports (src/node_messaging.cc's MessagePort, MessageChannel and BroadcastChannel; #1361 P2) in this
+// program's one thread, run as Node's loop runs them (#1367's loop is libuv's; this is its order):
+// - a port is entangled with one other, or is one of a broadcast group's; a message posted is cloned
+//   by the binding's structuredClone (node_messaging.cc's serializer: logic, node/src's, given) and
+//   queued at each port it goes to;
+// - each turn (the tick hook runs one when the runtime's jobs and ticks are done) is a poll, then
+//   closes: each port in the order made, started and with messages, is given them (MessagePort::
+//   OnMessage: at most what was queued, or 1000), each emitted (per_context/messageport's
+//   emitMessage) with the ticks and microtasks it makes run after it, as Node's callback scope does;
+// - a close asked for is done in its turn's closes, the last asked first (libuv's closing handles):
+//   the port's 'close' callback, and its partner given a close, after what was posted before it,
+//   which closes the partner when the partner reaches it;
+// - a turn is run while a port is closing, or one is open and referenced and a port has messages.
+//   Node waits as long as a referenced port is open; with nothing queued, this one thread is the
+//   only one that could post to it, so the program ends instead.
+let portTurn;
+{
+  const CLOSE = Symbol("close");
+  const portState = new WeakMap();
+  const groups = new Map();
+  let ports = [];
+  let closing = [];
+  const stateOf = (port) => {
+    const st = portState.get(port);
+    if (st === undefined) {
+      const e = new TypeError("Illegal invocation");
+      e.code = "ERR_INVALID_THIS";
+      throw e;
+    }
+    return st;
+  };
+  const afterCallback = () => {
+    const tickInfo = runtime.task_queue.tickInfo;
+    if ((tickInfo[0] === 1 || tickInfo[1] === 1) && tickCallback !== undefined) tickCallback();
+    else __yakccRunMicrotasks();
+  };
+  const hasWork = (st) => !st.dead && st.queue.length > 0 && (st.started || st.queue[0] === CLOSE);
+  const requestClose = (port, st) => {
+    if (st.closed) return;
+    st.closed = true;
+    closing.push(port);
+  };
+  // MessagePort::OnMessage (force: drainMessagePort's, started or not).
+  const deliver = (port, st, force) => {
+    let limit = Math.max(st.queue.length, 1000);
+    while (!st.dead && st.queue.length > 0 && limit-- > 0) {
+      if (st.queue[0] === CLOSE) {
+        st.queue.shift();
+        requestClose(port, st);
+        continue;
+      }
+      if (!st.started && !force) break;
+      exportsOfContext.emitMessage.call(port, st.queue.shift(), [], "message");
+      afterCallback();
+    }
+  };
+  // MessagePort::OnClose: the port's callback; its partner told.
+  const finishClose = (port) => {
+    const st = portState.get(port);
+    st.dead = true;
+    st.queue.length = 0;
+    ports = ports.filter((p) => p !== port);
+    if (st.group !== undefined) groups.get(st.group).delete(port);
+    const other = st.other;
+    if (other !== undefined) {
+      st.other = undefined;
+      const os = portState.get(other);
+      os.other = undefined;
+      if (!os.dead) os.queue.push(CLOSE);
+    }
+    const onclose = port[perIsolateSymbols.handle_onclose];
+    if (typeof onclose === "function") {
+      onclose.call(port);
+      afterCallback();
+    }
+  };
+  portTurn = () => {
+    const work = ports.some((p) => hasWork(portState.get(p)));
+    const refed = ports.some((p) => {
+      const st = portState.get(p);
+      return st.refed && !st.closed;
+    });
+    if (closing.length === 0 && !(work && refed)) return false;
+    for (let i = 0; i < ports.length; i++) {
+      const st = portState.get(ports[i]);
+      if (hasWork(st)) deliver(ports[i], st, false);
+    }
+    const closes = closing;
+    closing = [];
+    for (let i = closes.length - 1; i >= 0; i--) finishClose(closes[i]);
+    return true;
+  };
+  const makePort = (group) => {
+    const port = Object.create(MessagePort.prototype);
+    portState.set(port, {
+      other: undefined,
+      group,
+      queue: [],
+      started: false,
+      closed: false,
+      dead: false,
+      refed: true,
+    });
+    ports.push(port);
+    const init = port[perIsolateSymbols.oninit];
+    if (typeof init === "function") init.call(port);
+    return port;
+  };
+  // HandleWrap's members, which MessagePort inherits.
+  class HandleWrap {
+    close() {
+      requestClose(this, stateOf(this));
+    }
+    ref() {
+      const st = stateOf(this);
+      if (!st.dead) st.refed = true;
+    }
+    unref() {
+      const st = stateOf(this);
+      if (!st.dead) st.refed = false;
+    }
+    hasRef() {
+      const st = stateOf(this);
+      return st.refed && !st.dead;
+    }
+  }
+  class MessagePort extends HandleWrap {
+    constructor() {
+      super();
+      const e = new TypeError("Constructor cannot be called");
+      e.code = "ERR_CONSTRUCT_CALL_INVALID";
+      throw e;
+    }
+    postMessage(value, transfer) {
+      const st = stateOf(this);
+      const list = Array.isArray(transfer)
+        ? transfer
+        : transfer !== undefined && transfer !== null && transfer.transfer !== undefined
+          ? transfer.transfer
+          : [];
+      if (list.some((t) => portState.has(t))) {
+        const e = new Error("postMessage: a port in the transfer list is not in the native runtime yet");
+        e.code = "ERR_NOT_SUPPORTED";
+        throw e;
+      }
+      const clone = getInternalBinding("messaging").structuredClone;
+      if (typeof clone !== "function") {
+        const e = new Error("postMessage: no structuredClone (node_messaging.cc's serializer) is given");
+        e.code = "ERR_NOT_SUPPORTED";
+        throw e;
+      }
+      if (st.closed) return;
+      const targets =
+        st.group !== undefined
+          ? [...groups.get(st.group)].filter((p) => p !== this)
+          : st.other !== undefined
+            ? [st.other]
+            : [];
+      for (const target of targets) {
+        const ts = portState.get(target);
+        if (!ts.dead) ts.queue.push(clone(value, list.length > 0 ? { transfer: list } : undefined));
+      }
+    }
+    start() {
+      stateOf(this).started = true;
+    }
+  }
+  class MessageChannel {
+    constructor() {
+      this.port1 = makePort(undefined);
+      this.port2 = makePort(undefined);
+      portState.get(this.port1).other = this.port2;
+      portState.get(this.port2).other = this.port1;
+    }
+  }
+  const noMessage = perIsolateSymbols.no_message_symbol;
+  runtime.messaging = {
+    MessagePort,
+    MessageChannel,
+    DOMException: exportsOfContext.DOMException,
+    broadcastChannel: (name) => {
+      const key = String(name);
+      if (!groups.has(key)) groups.set(key, new Set());
+      const port = makePort(key);
+      groups.get(key).add(port);
+      return port;
+    },
+    // receiveMessageOnPort: the next message, taken now, or that there is none.
+    receiveMessageOnPort: (port) => {
+      const st = stateOf(port);
+      return st.queue.length > 0 && st.queue[0] !== CLOSE ? st.queue.shift() : noMessage;
+    },
+    // drainMessagePort: what is queued, emitted now.
+    drainMessagePort: (port) => deliver(port, stateOf(port), true),
+    stopMessagePort: (port) => {
+      stateOf(port).started = false;
+    },
+    moveMessagePortToContext: () => {
+      const e = new Error("moveMessagePortToContext: contexts (vm) are not in the native runtime");
+      e.code = "ERR_NOT_SUPPORTED";
+      throw e;
+    },
+    setDeserializerCreateObjectFunction: () => {},
+  };
+}
+// Threads (src/node_worker.cc): this program is its process's main thread and only one; starting a
+// Worker is not in the native runtime yet, so its constructor throws.
+runtime.worker = {
+  isMainThread: true,
+  ownsProcessState: true,
+  isInternalThread: false,
+  threadId: 0,
+  threadName: "main",
+  resourceLimits: new Float64Array(4),
+  kMaxYoungGenerationSizeMb: 0,
+  kMaxOldGenerationSizeMb: 1,
+  kCodeRangeSizeMb: 2,
+  kStackSizeMb: 3,
+  kTotalResourceLimitCount: 4,
+  getEnvMessagePort: () => undefined,
+  Worker: class Worker {
+    constructor() {
+      const e = new Error("new Worker: threads are not in the native runtime yet");
+      e.code = "ERR_NOT_SUPPORTED";
+      throw e;
+    }
+  },
 };
 // Async hooks' state (src/async_wrap.cc, Environment::AsyncHooks): the fields and the stack of
 // [execution id, trigger id] pairs, as Node keeps them; the main script runs as id 1, triggered by 0.
@@ -971,8 +1199,10 @@ table.get("internal/bootstrap/realm")(process, getLinkedBinding, getInternalBind
   process.nextTick = nextTick;
   process._tickCallback = runNextTicks;
   const tickInfo = runtime.task_queue.tickInfo;
+  // A turn of the ports, when the ticks are done (true: one ran, so the runtime asks again).
   __yakccSetTickHook(() => {
     if ((tickInfo[0] === 1 || tickInfo[1] === 1) && tickCallback !== undefined) tickCallback();
+    return portTurn();
   });
 }
 // process.emitWarning, as bootstrap/node.js sets it: internal/process/warning's, loaded when first used.

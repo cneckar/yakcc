@@ -8879,8 +8879,9 @@ void yk_main_begin(int argc, char **argv) {
   program_argv = argv;
 }
 /* The tick hook (#1361 P2): a boot program over Node's library sets it to run process.nextTick's
-   queue when the runtime's jobs are done, as Node runs it after a callback; the jobs it makes are
-   run, and it again, until neither has more. __yakccRunMicrotasks is V8's microtask drain. */
+   queue when the runtime's jobs are done, as Node runs it after a callback, and then a task (a
+   port's messages); the jobs it makes are run, and it again, until neither has more and it ran no
+   task. __yakccRunMicrotasks is V8's microtask drain. */
 static yk tick_hook = 0;
 static yk builtin_set_tick_hook(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
@@ -8925,8 +8926,9 @@ static void report_unhandled_rejections(void) {
 static void run_jobs_and_ticks(void) {
   if (is_closure(tick_hook))
     for (;;) {
-      call_value(tick_hook, YK_UNDEFINED, 0, NULL);
-      if (jobs_head >= jobs_tail) break;
+      /* true: it ran a task (a port's message), so there may be more. */
+      yk more = call_value(tick_hook, YK_UNDEFINED, 0, NULL);
+      if (jobs_head >= jobs_tail && more != YK_TRUE) break;
       yk_drain();
     }
   yk_drain();
