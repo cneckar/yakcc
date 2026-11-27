@@ -1439,7 +1439,14 @@ export interface CxxUnit {
    * address point). Its destructor entries are made from `destroy` (complete, and deleting: then
    * freed).
    */
-  readonly vtableOf: (record: string, destroy: (addr: string, t: CType) => string[]) => string;
+  readonly vtableOf: (
+    record: string,
+    destroy: (addr: string, t: CType) => string[],
+    /** The class's declaration (a constructor's), which a local class's vtable is of alone. */
+    classId?: string,
+  ) => string;
+  /** A member function's class's declaration id. */
+  readonly classIdOf: (fnId: string) => string | undefined;
 }
 
 /**
@@ -5400,7 +5407,7 @@ function raiseBody(
     // derived class's object exists and its constructor sets its own.)
     let key: string | undefined;
     try {
-      key = unitCxx?.vtableOf(thisRecord as string, destroy);
+      key = unitCxx?.vtableOf(thisRecord as string, destroy, unitCxx.classIdOf(fn.id ?? ""));
     } catch (e) {
       if (
         e instanceof RaiseCError &&
@@ -6618,9 +6625,21 @@ export function shaveCUnit(
             const simple = simpleClass(record);
             return vtables().indices.get(simple)?.get(`~${simple}()[deleting]`);
           },
-          vtableOf: (record, destroy) => {
+          classIdOf: (fnId) => {
+            const parent = indexed.byId.get(fnId)?.parent;
+            return parent !== undefined && RECORD_KINDS.has(indexed.byId.get(parent)?.kind ?? "")
+              ? parent
+              : undefined;
+          },
+          vtableOf: (record, destroy, classId) => {
             const simple = simpleClass(record);
-            const key = `vtable:${unit}:${simple}`;
+            // (A local class, of a function, as each instance of a function template has its
+            // own: its vtable is its declaration's alone, its overriders its own methods.)
+            const local =
+              classId !== undefined && indexed.byId.get(classId)?.owner !== undefined
+                ? classId
+                : undefined;
+            const key = `vtable:${unit}:${simple}${local === undefined ? "" : `@${local}`}`;
             if (statics.has(key)) return key;
             const entries = vtables().tables.get(simple);
             if (entries === undefined) throw new RaiseCError(`the vtable of ${record}`);
@@ -6705,16 +6724,29 @@ export function shaveCUnit(
                 // (Of the classes of that name, the instance's, defined here or by its symbol: not
                 // a class template's pattern, whose method is dependent.)
                 const ids: string[] = [];
-                for (const d of indexed.byName.get(owner) ?? []) {
+                const own = local !== undefined && owner === simple.replace(/<.*$/, "");
+                for (const d of own
+                  ? [indexed.byId.get(local) as IndexedDecl]
+                  : (indexed.byName.get(owner) ?? [])) {
                   if (!RECORD_KINDS.has(d.kind)) continue;
                   const node = readDecl(indexed, d);
-                  const m = (node.inner ?? []).find(
-                    (c) =>
-                      c.kind === "CXXMethodDecl" &&
-                      memberKey(c.name ?? "", c.type?.qualType ?? "") === want,
-                  );
+                  const methods = (node.inner ?? []).filter((c) => c.kind === "CXXMethodDecl");
+                  // (The local class's own: its one method of the name, the dump's text being
+                  // another instance's, `LookupImpl(Options *)` for `LookupImpl(EnvironmentOptions
+                  // *)`.)
+                  const named = methods.filter((c) => c.name === name);
+                  const m =
+                    methods.find((c) => memberKey(c.name ?? "", c.type?.qualType ?? "") === want) ??
+                    (own && named.length === 1 ? named[0] : undefined);
                   if (m?.id !== undefined) ids.unshift(m.id);
                 }
+                // (An instance's method first, which has a symbol: a local class of a function
+                // template is a class of each instance and of the pattern.)
+                ids.sort(
+                  (a, b) =>
+                    Number(indexed.byId.get(b)?.mangled !== undefined) -
+                    Number(indexed.byId.get(a)?.mangled !== undefined),
+                );
                 let fnKey: string | undefined;
                 for (const id of ids) {
                   fnKey =
@@ -7188,6 +7220,8 @@ export function shaveCUnit(
     return same[0];
   };
   let layouts: Map<string, RecordLayout> | undefined;
+  // (Layouts by their names without template-qualified scopes: each with its full name.)
+  let looseLayouts: Map<string, [string, RecordLayout][]> | undefined;
   const layout: LayoutResolver = (name) => {
     if (layouts === undefined) {
       const run = (more: readonly string[]): string =>
@@ -7315,9 +7349,42 @@ export function shaveCUnit(
       }
     }
     // (A class template's instance spelled with its default arguments, which the dump omits.)
+    // (And, last, an argument named in its class's scope, `__shared_ptr<BaseOptionField>`, the
+    // dump's `__shared_ptr<OptionsParser<DebugOptions>::BaseOptionField>`: by the names without
+    // template-qualified scopes, when one layout has them.)
+    const loose = (k: string): string => {
+      let x = k;
+      for (let prev = "", g = 0; prev !== x && g < 8; g++) {
+        prev = x;
+        x = x.replace(/\b[A-Za-z_]\w*<[^<>]*(?:<[^<>]*(?:<[^<>]*>[^<>]*)*>[^<>]*)*>::/g, "");
+      }
+      return x;
+    };
+    if (looseLayouts === undefined) {
+      looseLayouts = new Map();
+      for (const [k, l] of layouts) {
+        if (k.startsWith("::")) continue;
+        const lk = loose(k);
+        if (lk === k) continue;
+        looseLayouts.set(lk, [...(looseLayouts.get(lk) ?? []), [k, l]]);
+      }
+    }
+    // (Of several, `OptionsParser<X>::BaseOptionField` of each X: the one whose scope the class
+    // being raised names, `__shared_ptr_access<OptionsParser<DebugOptions>::BaseOptionField>`.)
+    const here = localScopes.map((x) => recordKey(x).replace(/\s+/g, "")).join(" ");
+    const byLoose = (k: string): RecordLayout | undefined => {
+      const hits = looseLayouts?.get(loose(k)) ?? [];
+      if (hits.length <= 1) return hits[0]?.[1];
+      const scoped = hits.filter(([full]) =>
+        [...full.matchAll(/\b[A-Za-z_]\w*<[^<>]*(?:<[^<>]*>[^<>]*)*>::\w+/g)].every((m) =>
+          here.includes(m[0].replace(/\s+/g, "")),
+        ),
+      );
+      return scoped.length === 1 ? scoped[0]?.[1] : undefined;
+    };
     let key = recordKey(name);
     for (let tries = 0; tries < 8; tries++) {
-      const l = layouts.get(key);
+      const l = layouts.get(key) ?? byLoose(key);
       if (l !== undefined) return l;
       // (Its first argument list, and what follows it: `basic_string<..>::_Alloc_hider`.)
       const lt = key.indexOf("<");
