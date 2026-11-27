@@ -702,8 +702,11 @@ function parseType(spelled: string, depth = 0): CType {
   // libstdc++'s <cmath> promotion of arithmetic arguments (`std::pow(double, int)`'s
   // `__gnu_cxx::__promote_2<..>::__type`): double, for the integers and doubles it promotes.
   if (/^(?:typename )?__gnu_cxx::__promote(?:_\d)?<.*>::__type$/.test(raw)) return F64;
-  // std::enable_if<C, T>::type, and enable_if_t (an instance exists only where C holds): T.
-  const enable = /^(?:typename )?(?:std::)?enable_if(?:_t)?<(.*)>(?:::type)?$/.exec(raw);
+  // std::enable_if<C, T>::type, and enable_if_t (an instance exists only where C holds): T. (So
+  // libstdc++'s own, `__gnu_cxx::__enable_if<C, T>::__type`.)
+  const enable =
+    /^(?:typename )?(?:std::)?enable_if(?:_t)?<(.*)>(?:::type)?$/.exec(raw) ??
+    /^(?:typename )?__gnu_cxx::__enable_if<(.*)>::__type$/.exec(raw);
   if (enable !== null) {
     const args = splitTemplateArgs(enable[1] as string);
     return parseType(args.length > 1 ? (args[args.length - 1] as string) : "void", depth + 1);
@@ -3272,6 +3275,12 @@ function raiseBody(
       case "ConditionalOperator":
         return `(${cond(k0)} ? ${expr(kids[1] as ClangNode)} : ${expr(kids[2] as ClangNode)})`;
       case "CallExpr": {
+        // A pseudo-destructor's call (`p->~T()` of a scalar T, std::destroy_at<char>): nothing,
+        // its object evaluated.
+        if (stripParens(k0).kind === "CXXPseudoDestructorExpr") {
+          const obj = (stripParens(k0).inner ?? [])[0];
+          return obj === undefined ? "undefined" : `(${expr(obj)}, undefined)`;
+        }
         const ret = claimRet(e);
         const callee = stripCasts(k0);
         // (The C library's builtins are its functions: `__builtin_memcpy` is memcpy.)

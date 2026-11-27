@@ -63,7 +63,7 @@ describe.skipIf(!hasClang)("Node's string_decoder binding, shaved from node/src"
     // libstdc++'s compiled locale, not vendored; a try statement; std::shared_ptr's control
     // block. None of it runs unless a CHECK fails.)
     const fatal =
-      /^_ZNK?(?:4node28NativeSymbolDebuggingContext|St7__cxx1119basic_ostringstream|St7__cxx1115basic_stringbuf|St15__uniq_ptr_implIN4node28Native|St12__shared_ptrIN2v812BackingStore|St14__shared_count|St27__uninitialized_default_n_1|St10destroy_atIc|St9__fill_a1Ic)/;
+      /^_ZNK?(?:4node28NativeSymbolDebuggingContext|St7__cxx1119basic_ostringstream|St7__cxx1115basic_stringbuf|St15__uniq_ptr_implIN4node28Native|St12__shared_ptrIN2v812BackingStore|St14__shared_count|St27__uninitialized_default_n_1)/;
     expect(shaved.files.refused.filter((r) => !fatal.test(r))).toEqual([]);
     expect(shaved.musl.refused).toEqual([]);
     expect([...shaved.musl.missing].sort()).toEqual([
