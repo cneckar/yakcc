@@ -3024,7 +3024,9 @@ function raiseBody(
         ) {
           const t = typeOf(e);
           if (t.k !== "ptr") throw new RaiseCError("a new of a non-pointer");
-          const hasInit = placement.initStyle !== undefined;
+          // (Its initializer first, when it has one: an explicit one, or the default constructor
+          // `new (storage) std::mutex` calls, which has no initStyle; the placement after it.)
+          const hasInit = placement.initStyle !== undefined || kids.length > 1;
           const where = kids[hasInit ? 1 : 0] as ClangNode;
           const a = temp({ k: "f64" });
           const init = hasInit ? kids[0] : undefined;
