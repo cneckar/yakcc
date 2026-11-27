@@ -553,6 +553,30 @@ function keyConstructor(m: ModuleBuilder): string[] {
   ];
 }
 
+/**
+ * A debugging aid (YK_TRACE=1, temporary): each function, on entry, writes its name to a ring of
+ * the last 64 entered (yk_trace, yk_trace_i), for a debugger to read where the program stopped.
+ */
+function traceEntry(m: ModuleBuilder, name: string): string[] {
+  if (process.env.YK_TRACE !== "1") return [];
+  if (!m.globals.includes("@yk_trace = global [64 x ptr] zeroinitializer")) {
+    m.globals.push("@yk_trace = global [64 x ptr] zeroinitializer");
+    m.globals.push("@yk_trace_i = global i64 0");
+  }
+  const text = name.replace(/[^\w.$]/g, "_");
+  const g = `@"yk.tn.${text}"`;
+  if (!m.globals.some((x) => x.startsWith(`${g} =`)))
+    m.globals.push(`${g} = private unnamed_addr constant [${text.length + 1} x i8] c"${text}\\00"`);
+  return [
+    "  %tr.i = load i64, ptr @yk_trace_i",
+    "  %tr.j = and i64 %tr.i, 63",
+    "  %tr.p = getelementptr [64 x ptr], ptr @yk_trace, i64 0, i64 %tr.j",
+    `  store ptr ${g}, ptr %tr.p`,
+    "  %tr.n = add i64 %tr.i, 1",
+    "  store i64 %tr.n, ptr @yk_trace_i",
+  ];
+}
+
 /** The module being built: its constants, the runtime functions it calls, its functions. */
 class ModuleBuilder {
   readonly globals: string[] = [];
@@ -6942,6 +6966,7 @@ function lowerFunction(
         ...[...bigSlots.values()].map((s) => `  ${s} = alloca i128`),
         ...[...intSlots.values()].map((s) => `  ${s} = alloca i64`),
         ...entryAllocas,
+        ...traceEntry(m, name),
         ...body,
         "}",
         "",
