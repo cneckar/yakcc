@@ -2469,7 +2469,16 @@ function raiseBody(
             t,
           };
         const arrow = (e as { isArrow?: boolean }).isArrow === true;
-        const baseT = arrow ? (typeOf(k0) as CType & { k: "ptr" }).to : typeOf(k0);
+        let baseT = arrow ? (typeOf(k0) as CType & { k: "ptr" }).to : typeOf(k0);
+        // (A base whose type clang leaves as a member typedef of a template's instance,
+        // shared_ptr<PerProcessOptions>::operator->'s `element_type *`: the field's own class.)
+        if (baseT.k !== "rec") {
+          const owner = unitCxx?.classOf(
+            (e as { referencedMemberDecl?: string }).referencedMemberDecl ?? "",
+          );
+          if (owner !== undefined && unitLayout(owner) !== undefined)
+            baseT = { k: "rec", name: owner };
+        }
         if (baseT.k !== "rec")
           throw new RaiseCError(
             `the member ${e.name} of a ${baseT.k} (${JSON.stringify(k0.type)})`,
@@ -3380,7 +3389,7 @@ function raiseBody(
           const id = (callee as { referencedMemberDecl?: string }).referencedMemberDecl;
           const base = stripCasts((callee.inner ?? [])[0] as ClangNode);
           const key =
-            id === undefined || base.kind !== "CXXThisExpr"
+            id === undefined
               ? undefined
               : resolve({
                   name: callee.name ?? "",
@@ -3390,7 +3399,10 @@ function raiseBody(
                 });
           if (key === undefined)
             throw new RaiseCError(`a call of the method "${callee.name}" on an object`);
-          return `${key}(${withDefaults(kids.slice(1), id).map(argOf).join(", ")})`;
+          const call = `${key}(${withDefaults(kids.slice(1), id).map(argOf).join(", ")})`;
+          // (Through another object, libstdc++'s `_M_tail(*this)._M_head(*this)`: the object
+          // evaluated, then the call.)
+          return base.kind === "CXXThisExpr" ? call : `(${argOf(base)}, ${call})`;
         }
         const d = callee.referencedDecl as ClangNode | undefined;
         // A call through a function pointer (a variable, a field, any expression): the function at
@@ -5856,16 +5868,19 @@ export function shaveCUnit(
         .replace(/^false$/, "0")
         // (A declaration's, `&ures_close_78`: by its name.)
         .replace(/^&/, "");
-    const argsOf = (node: ClangNode): string[] =>
+    // (A pack's arguments, a variadic template's, `tuple<void *&, unsigned long &>`: each.)
+    const templateArgs = (node: ClangNode): ClangNode[] =>
       (node.inner ?? [])
         .filter((a) => a.kind === "TemplateArgument")
-        .map((a) => {
-          const named = (a as { decl?: { name?: string } }).decl?.name;
-          const v = canon(
-            a.type?.qualType ?? named ?? String((a as { value?: unknown }).value ?? ""),
-          );
-          return v === "-1" && a.type === undefined ? "1" : v;
-        });
+        .flatMap((a) => ((a as { isPack?: boolean }).isPack === true ? (a.inner ?? []) : [a]));
+    const argsOf = (node: ClangNode): string[] =>
+      templateArgs(node).map((a) => {
+        const named = (a as { decl?: { name?: string } }).decl?.name;
+        const v = canon(
+          a.type?.qualType ?? named ?? String((a as { value?: unknown }).value ?? ""),
+        );
+        return v === "-1" && a.type === undefined ? "1" : v;
+      });
     // The candidate whose arguments these are (a type spelled without its default arguments,
     // `basic_string_view<char>`: the ones it spells).
     // (An argument with its namespaces, as far as it is spelled with them: `fallback::ondemand::
@@ -5876,9 +5891,7 @@ export function shaveCUnit(
         .replace(/\s+/g, "")
         .replace(/^::/, "");
     const qualArgsOf = (node: ClangNode): string[] =>
-      (node.inner ?? [])
-        .filter((a) => a.kind === "TemplateArgument")
-        .map((a) => qualified(a.type?.qualType ?? ""));
+      templateArgs(node).map((a) => qualified(a.type?.qualType ?? ""));
     const pick = (candidates: Iterable<ClangNode>, name: string): ClangNode | undefined => {
       const lt = name.indexOf("<");
       const spelled = lt < 0 ? [] : splitTemplateArgs(name.slice(lt + 1, name.lastIndexOf(">")));
@@ -6026,6 +6039,10 @@ export function shaveCUnit(
                 c.kind === "ClassTemplateSpecializationDecl"
                   ? (readDecl(indexed, c).inner ?? [])
                       .filter((a) => a.kind === "TemplateArgument")
+                      // (A pack's arguments, a variadic template's: each.)
+                      .flatMap((a) =>
+                        (a as { isPack?: boolean }).isPack === true ? (a.inner ?? []) : [a],
+                      )
                       .map((a) => {
                         if (a.type?.qualType !== undefined) return a.type.qualType;
                         // (A declaration's, `&ures_close_78`, as the layout dump spells it.)
@@ -7567,6 +7584,14 @@ function staticDefinition(
   // unit's code generation has its value.)
   {
     const code = initializerRuns(decl);
+    // (A static of a class of V8's API made by V8's code, node/src's `static const v8::CFunction
+    // fast_copy(v8::CFunction::Make(..))`: V8's state, for its fast calls, which the runtime's
+    // leaves take no part of: zero.)
+    if (
+      code !== undefined &&
+      /^(?:const )?v8::(?!base::|internal::|bigint::)\w/.test(decl.type?.qualType ?? "")
+    )
+      return { size: Math.max(1, sizeOf(t)), align: Math.max(1, alignOf(t)), init: [] };
     if (code !== undefined) throw new RaiseCError(`the initializer ${code.kind}`);
   }
   /** A constant scalar: a number or bigint, or an address (a static, a function, a string). */
