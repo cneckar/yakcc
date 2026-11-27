@@ -3834,6 +3834,11 @@ function lowerFunction(
         emit(`${r} = ${leaf === "__ykU64" ? "zext" : "sext"} i64 ${t} to i128`);
         return r;
       }
+      if (leaf === "__ykNumToBig" && rangeOf(a) !== undefined && intKnown(a)) {
+        // An integer the proof ranges (a load, a counter, `| 0`): its int64, widened.
+        emit(`${r} = sext i64 ${intOperand(a)} to i128`);
+        return r;
+      }
       if (leaf === "__ykNumToBig" || leaf === "__ykF64Bits") {
         // A number: its bits (__ykF64Bits), or (__ykNumToBig, the number proved an int32 or uint32)
         // its integer; anything else, the runtime's conversion (or its error).
