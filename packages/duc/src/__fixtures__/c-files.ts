@@ -63,6 +63,8 @@ export function shaveCFiles(
   args: readonly string[],
   /** The compiler: clang (C), clang++ (C++, whose functions link by their mangled names). */
   clang = "clang",
+  /** Statics the caller's own units use, for these files to define (by their keys). */
+  statics: readonly string[] = [],
 ): ShavedFiles {
   const defs = definitions(files, args, clang);
   const cxx = /\+\+$/.test(clang);
@@ -93,6 +95,12 @@ export function shaveCFiles(
     }
   };
   const pendingStatics = new Map<string, string[]>();
+  for (const key of statics) {
+    if (key.includes(":") || definedStatics.has(key)) continue;
+    definedStatics.add(key);
+    const f = defs.get(key);
+    if (f !== undefined) pendingStatics.set(f, [...(pendingStatics.get(f) ?? []), key]);
+  }
   // In waves: each file shaved once a wave, for every function of it the closure has reached (a
   // file's parse is most of a unit's cost).
   while (todo.length > 0 || pendingStatics.size > 0) {

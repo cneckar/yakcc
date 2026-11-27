@@ -93,13 +93,18 @@ export function shaveBinding(
   ].filter((x) => !own.has(x));
   const files = shaveCFiles(
     [
-      ...others.map((f) => `${NODE}${f}`),
+      // (The binding's own file too: its functions other files call, Buffer::Length.)
+      `${NODE}${file}`,
+      ...others.filter((f) => f !== file).map((f) => `${NODE}${f}`),
       `${FIXTURES}libstdcxx-inst.cpp`,
       `${FIXTURES}cxx-runtime.cpp`,
     ],
     wanted,
     NODE_ARGS,
     "clang++",
+    // (The statics the binding's unit and node-env.cc use that another file defines: env.cc's
+    // context tag.)
+    [env, root].flatMap((u) => [...u.staticRefs].filter((k) => !u.statics.has(k))),
   );
   const outside = [...new Set([...files.externals, ...wanted])].filter(
     (x) => !own.has(x) && !files.atoms.has(x),
