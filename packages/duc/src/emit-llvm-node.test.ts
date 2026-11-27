@@ -84,7 +84,7 @@ describe.skipIf(!canRun("x86_64-linux"))("Node's library, natively (#1331)", () 
       { id: "main", source: BOOT_PROGRAM },
       {
         bindings,
-        include: ["internal/util/comparisons", "internal/v8/startup_snapshot"],
+        include: ["internal/util/comparisons"],
         // Repeated local runs may reuse lifted modules (unset in CI).
         ...(process.env.YAKCC_LIFT_CACHE !== undefined
           ? { liftCache: process.env.YAKCC_LIFT_CACHE }
@@ -142,7 +142,7 @@ describe.skipIf(!canRun("x86_64-linux"))("a user program over Node's library (#1
       {
         bindings,
         user,
-        include: ["internal/util/comparisons", "internal/v8/startup_snapshot"],
+        include: ["internal/util/comparisons"],
         ...(process.env.YAKCC_LIFT_CACHE !== undefined
           ? { liftCache: process.env.YAKCC_LIFT_CACHE }
           : {}),
@@ -169,7 +169,7 @@ describe.skipIf(!canRun("x86_64-linux"))("a user program over Node's library (#1
       {
         bindings,
         user,
-        include: ["internal/util/comparisons", "internal/v8/startup_snapshot"],
+        include: ["internal/util/comparisons"],
         ...(process.env.YAKCC_LIFT_CACHE !== undefined
           ? { liftCache: process.env.YAKCC_LIFT_CACHE }
           : {}),
@@ -220,12 +220,7 @@ describe.skipIf(!canRun("x86_64-linux"))(
         { id: "main", source: TICK_PROGRAM },
         {
           bindings,
-          include: [
-            "internal/util/comparisons",
-            "internal/v8/startup_snapshot",
-            "async_hooks",
-            "sys",
-          ],
+          include: ["internal/util/comparisons", "async_hooks", "sys"],
           ...(process.env.YAKCC_LIFT_CACHE !== undefined
             ? { liftCache: process.env.YAKCC_LIFT_CACHE }
             : {}),
@@ -266,13 +261,7 @@ describe.skipIf(!canRun("x86_64-linux"))("more of Node's modules, natively (#136
       { id: "main", source: MODULES_PROGRAM },
       {
         bindings,
-        include: [
-          "internal/util/comparisons",
-          "internal/v8/startup_snapshot",
-          "punycode",
-          "domain",
-          "vm",
-        ],
+        include: ["internal/util/comparisons", "punycode", "domain", "vm"],
         ...(process.env.YAKCC_LIFT_CACHE !== undefined
           ? { liftCache: process.env.YAKCC_LIFT_CACHE }
           : {}),
@@ -311,7 +300,7 @@ describe.skipIf(!canRun("x86_64-linux"))("unhandled rejections, as Node's (#1361
       { id: "main", source: REJECT_PROGRAM },
       {
         bindings,
-        include: ["internal/util/comparisons", "internal/v8/startup_snapshot"],
+        include: ["internal/util/comparisons"],
         ...(process.env.YAKCC_LIFT_CACHE !== undefined
           ? { liftCache: process.env.YAKCC_LIFT_CACHE }
           : {}),
@@ -323,6 +312,32 @@ describe.skipIf(!canRun("x86_64-linux"))("unhandled rejections, as Node's (#1361
     const want = spawnSync(process.execPath, ["-e", REJECT_PROGRAM], { encoding: "utf8" });
     expect(r.stderr).toBe(want.stderr);
     expect(r.stdout).toBe(want.stdout);
+    expect(r.status).toBe(want.status);
+  }, 1_200_000);
+});
+
+const PORTS_PROGRAM = readFileSync(join(here, "__fixtures__/node/ports.js"), "utf8");
+
+describe.skipIf(!canRun("x86_64-linux"))("ports in one thread, as Node's (#1361 P2)", () => {
+  it("MessageChannel and broadcast ports: messages, their ticks and microtasks, receiving, stopping, closing", () => {
+    const record = nodeBootProgram(
+      lib,
+      { id: "main", source: PORTS_PROGRAM },
+      {
+        bindings,
+        ...(process.env.YAKCC_LIFT_CACHE !== undefined
+          ? { liftCache: process.env.YAKCC_LIFT_CACHE }
+          : {}),
+      },
+    );
+    const exe = join(work, "ports");
+    buildRecord(record, exe);
+    const r = spawnSync(exe, [], { encoding: "utf8" });
+    const want = spawnSync(process.execPath, ["--expose-internals", "-e", PORTS_PROGRAM], {
+      encoding: "utf8",
+    });
+    expect(r.stdout).toBe(want.stdout);
+    expect(r.stderr).toBe("");
     expect(r.status).toBe(want.status);
   }, 1_200_000);
 });

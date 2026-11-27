@@ -245,6 +245,43 @@ module.exports = {
     kUsePromises: Symbol("fs_use_promises_symbol"),
     kFsStatsFieldsNumber: 18,
   },
+  // node_messaging.cc's structuredClone (V8's serializer): plain data's, for the ports' tests.
+  messaging: {
+    structuredClone: function clone(v) {
+      if (typeof v !== "object" || v === null) return v;
+      if (Array.isArray(v)) return v.map(clone);
+      if (v instanceof Map) return new Map([...v].map(([k, x]) => [clone(k), clone(x)]));
+      if (v instanceof Set) return new Set([...v].map(clone));
+      if (v instanceof Date) return new Date(v.getTime());
+      const o = {};
+      for (const k of Object.keys(v)) o[k] = clone(v[k]);
+      return o;
+    },
+  },
+  // performance (node_perf.cc's clock): what perf/utils reads at load, its milestones unset.
+  performance: {
+    constants: {
+      NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN_TIMESTAMP: 0,
+      NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN: 1,
+      NODE_PERFORMANCE_MILESTONE_ENVIRONMENT: 2,
+      NODE_PERFORMANCE_MILESTONE_NODE_START: 3,
+      NODE_PERFORMANCE_MILESTONE_V8_START: 4,
+      NODE_PERFORMANCE_MILESTONE_LOOP_START: 5,
+      NODE_PERFORMANCE_MILESTONE_LOOP_EXIT: 6,
+      NODE_PERFORMANCE_MILESTONE_BOOTSTRAP_COMPLETE: 7,
+    },
+    milestones: new Float64Array(8),
+    now: () => 0,
+  },
+  // timers (libuv's loop): what timers and internal/timers read at load; scheduling is lane:c's.
+  timers: {
+    immediateInfo: new Uint32Array(3),
+    timeoutInfo: new Int32Array(1),
+    toggleTimerRef: () => {},
+    toggleImmediateRef: () => {},
+    getLibuvNow: () => 0,
+    scheduleTimer: () => {},
+  },
   // url (ada): only read when a URL is parsed.
   url: {},
   string_decoder: {
