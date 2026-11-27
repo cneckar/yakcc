@@ -153,6 +153,14 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
   const bool = (b: boolean): number => (b ? 1 : 0);
   const view = (h: number): ArrayBufferView => value(h) as ArrayBufferView;
 
+  /** A leaf whose record result is made in the slot given first: it returns the slot, as the
+   * raised code's callees do. */
+  const R =
+    (f: Fn): Fn =>
+    (...a) => {
+      f(...a);
+      return a[0];
+    };
   /** By the demangled name (template arguments kept): its implementation. */
   const impl = (d: string, mangled: string): Fn | undefined => {
     // Handles: Local, MaybeLocal (an 8-byte handle record).
@@ -167,7 +175,7 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
         return self;
       };
     if (/^v8::Local<.*> v8::Local<.*>::As<.*>\(\) const$/.test(d))
-      return (ret, self) => st64(ret as number, ld64(self as number));
+      return R((ret, self) => st64(ret as number, ld64(self as number)));
     if (
       /^v8::(?:MaybeLocal<.*>|api_internal::IndirectHandleBase)::IsEmpty\(\) const$/.test(d) ||
       /^v8::Local<.*>::IsEmpty\(\) const$/.test(d)
@@ -180,16 +188,16 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
         return bool(h !== 0);
       };
     if (/^v8::MaybeLocal<.*>::ToLocalChecked\(\)$/.test(d))
-      return (ret, self) => {
+      return R((ret, self) => {
         const h = ld64(self as number);
         if (h === 0) throw new Error("V8: ToLocalChecked of an empty MaybeLocal");
         st64(ret as number, h);
-      };
+      });
     if (/^v8::Local<.*> v8::MaybeLocal<.*>::FromMaybe<.*>\(v8::Local<.*>\) const$/.test(d))
-      return (ret, self, dflt) => {
+      return R((ret, self, dflt) => {
         const h = ld64(self as number);
         st64(ret as number, h !== 0 ? h : ld64(dflt as number));
-      };
+      });
     if (d === "v8::api_internal::FromJustIsNothing()")
       return () => {
         throw new Error("V8: FromJust of Nothing");
@@ -214,28 +222,28 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
         return 1;
       };
     if (/^_ZN2v84JustIm/.test(mangled))
-      return (ret, ref) => {
+      return R((ret, ref) => {
         st8(ret as number, 1);
         st64((ret as number) + 8, L.__ykLoad64?.(ref as number) as bigint);
-      };
+      });
     if (d === "v8::Maybe<unsigned long> v8::Nothing<unsigned long>()")
-      return (ret) => st8(ret as number, 0);
+      return R((ret) => st8(ret as number, 0));
     const just = (ret: number): void => {
       st8(ret, 1);
       st8(ret + 1, 1);
     };
     // The isolate and the context.
     if (d === "v8::Isolate::GetCurrentContext()")
-      return (ret) => st64(ret as number, contextHandle);
+      return R((ret) => st64(ret as number, contextHandle));
     if (d === "v8::Isolate::TryGetCurrent()" || d === "v8::Isolate::GetCurrent()")
       return () => isolate;
     if (d === "v8::Isolate::InContext()") return () => 1;
     if (d === "v8::Isolate::LowMemoryNotification()") return () => undefined;
     if (d === "v8::Isolate::ThrowException(v8::Local<v8::Value>)")
-      return (ret, _self, v) => {
+      return R((ret, _self, v) => {
         pending = { error: at(v as number) };
         st64(ret as number, handle(undefined));
-      };
+      });
     if (d === "v8::Context::GetIsolate()") return () => isolate;
     if (d === "v8::Context::GetNumberOfEmbedderDataFields()")
       return (self) => (value(self as number) as HostContext).embedder.length;
@@ -256,35 +264,35 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
     )
       return () => undefined;
     if (/^v8::Local<.*> v8::EscapableHandleScope::Escape<.*>\(v8::Local<.*>\)$/.test(d))
-      return (ret, _self, v) => st64(ret as number, ld64(v as number));
+      return R((ret, _self, v) => st64(ret as number, ld64(v as number)));
     if (
       /^v8::MaybeLocal<.*> v8::EscapableHandleScope::EscapeMaybe<.*>\(v8::MaybeLocal<.*>\)$/.test(d)
     )
-      return (ret, _self, v) => st64(ret as number, ld64(v as number));
+      return R((ret, _self, v) => st64(ret as number, ld64(v as number)));
     if (d === "v8::Isolate::AdjustAmountOfExternalAllocatedMemory(long)") return () => 0n;
     // Values.
     if (d === "v8::Integer::New(v8::Isolate*, int)")
-      return (ret, _i, n) => put(ret as number, n as number);
+      return R((ret, _i, n) => put(ret as number, n as number));
     if (d === "v8::Integer::NewFromUnsigned(v8::Isolate*, unsigned int)")
-      return (ret, _i, n) => put(ret as number, (n as number) >>> 0);
+      return R((ret, _i, n) => put(ret as number, (n as number) >>> 0));
     if (d === "v8::Number::New(v8::Isolate*, double)")
-      return (ret, _i, n) => put(ret as number, n as number);
+      return R((ret, _i, n) => put(ret as number, n as number));
     if (d === "v8::Boolean::New(v8::Isolate*, bool)")
-      return (ret, _i, b) => put(ret as number, b !== 0 && b !== false);
+      return R((ret, _i, b) => put(ret as number, b !== 0 && b !== false));
     if (d === "v8::Array::New(v8::Isolate*, int)")
-      return (ret, _i, n) => put(ret as number, (n as number) > 0 ? new Array(n as number) : []);
-    if (d === "v8::Object::New(v8::Isolate*)") return (ret) => put(ret as number, {});
+      return R((ret, _i, n) => put(ret as number, (n as number) > 0 ? new Array(n as number) : []));
+    if (d === "v8::Object::New(v8::Isolate*)") return R((ret) => put(ret as number, {}));
     if (d === "v8::Object::Set(v8::Local<v8::Context>, v8::Local<v8::Value>, v8::Local<v8::Value>)")
-      return (ret, self, _c, k, v) => {
+      return R((ret, self, _c, k, v) => {
         (value(self as number) as Record<PropertyKey, unknown>)[at(k as number) as PropertyKey] =
           at(v as number);
         just(ret as number);
-      };
+      });
     if (d === "v8::Object::Set(v8::Local<v8::Context>, unsigned int, v8::Local<v8::Value>)")
-      return (ret, self, _c, i, v) => {
+      return R((ret, self, _c, i, v) => {
         (value(self as number) as unknown[])[(i as number) >>> 0] = at(v as number);
         just(ret as number);
-      };
+      });
     if (d === "v8::Value::IsArrayBufferView() const")
       return (self) => bool(ArrayBuffer.isView(value(self as number)));
     if (d === "v8::Value::IsString() const")
@@ -292,38 +300,40 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
     if (d === "v8::Value::IsUint8Array() const")
       return (self) => bool(value(self as number) instanceof Uint8Array);
     if (d === "v8::Value::ToObject(v8::Local<v8::Context>) const")
-      return (ret, self) => put(ret as number, Object(value(self as number)));
+      return R((ret, self) => put(ret as number, Object(value(self as number))));
     if (d === "v8::Value::ToString(v8::Local<v8::Context>) const")
-      return (ret, self) => put(ret as number, String(value(self as number)));
+      return R((ret, self) => put(ret as number, String(value(self as number))));
     if (d === "v8::Exception::Error(v8::Local<v8::String>, v8::Local<v8::Value>)")
-      return (ret, msg) => put(ret as number, new Error(at(msg as number) as string));
+      return R((ret, msg) => put(ret as number, new Error(at(msg as number) as string)));
     // Strings.
-    if (d === "v8::String::Empty(v8::Isolate*)") return (ret) => put(ret as number, "");
+    if (d === "v8::String::Empty(v8::Isolate*)") return R((ret) => put(ret as number, ""));
     if (d === "v8::String::Length() const")
       return (self) => (value(self as number) as string).length;
     if (d === "v8::String::Concat(v8::Isolate*, v8::Local<v8::String>, v8::Local<v8::String>)")
-      return (ret, _i, a, b) =>
-        put(ret as number, (at(a as number) as string) + (at(b as number) as string));
+      return R((ret, _i, a, b) =>
+        put(ret as number, (at(a as number) as string) + (at(b as number) as string)),
+      );
     if (d === "v8::String::NewFromUtf8(v8::Isolate*, char const*, v8::NewStringType, int)")
-      return (ret, _i, p, _t, n) =>
+      return R((ret, _i, p, _t, n) =>
         put(
           ret as number,
           utf8.decode((n as number) < 0 ? cString(p as number) : bytes(p as number, n as number)),
-        );
+        ),
+      );
     if (
       d === "v8::String::NewFromOneByte(v8::Isolate*, unsigned char const*, v8::NewStringType, int)"
     )
-      return (ret, _i, p, _t, n) => {
+      return R((ret, _i, p, _t, n) => {
         const b = (n as number) < 0 ? cString(p as number) : bytes(p as number, n as number);
         let s = "";
         for (const x of b) s += String.fromCharCode(x);
         put(ret as number, s);
-      };
+      });
     if (
       d ===
       "v8::String::NewFromTwoByte(v8::Isolate*, unsigned short const*, v8::NewStringType, int)"
     )
-      return (ret, _i, p, _t, n) => {
+      return R((ret, _i, p, _t, n) => {
         let len = n as number;
         if (len < 0)
           for (len = 0; (Number(L.__ykLoad16?.((p as number) + 2 * len)) & 0xffff) !== 0; len++);
@@ -332,7 +342,7 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
         for (let i = 0; i < len; i++)
           s += String.fromCharCode((b[2 * i] as number) | ((b[2 * i + 1] as number) << 8));
         put(ret as number, s);
-      };
+      });
     if (d === "v8::String::WriteUtf8(v8::Isolate*, char*, int, int*, int) const")
       // (V8's: whole characters only, as many as fit; a terminating NUL unless the options say
       // NO_NULL_TERMINATION (2) or it does not fit; the bytes written, the NUL counted.)
@@ -361,7 +371,7 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
     if (d === "v8::ArrayBuffer::ByteLength() const")
       return (self) => BigInt((value(self as number) as ArrayBufferLike).byteLength);
     if (d === "v8::ArrayBufferView::Buffer()")
-      return (ret, self) => put(ret as number, view(self as number).buffer);
+      return R((ret, self) => put(ret as number, view(self as number).buffer));
     if (d === "v8::ArrayBufferView::ByteLength()")
       return (self) => BigInt(view(self as number).byteLength);
     if (d === "v8::ArrayBufferView::ByteOffset()")
@@ -378,20 +388,20 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
     // Backing stores (Node's Buffer::New): a store is an address naming a fresh ArrayBuffer, its
     // Data() the buffer's bytes; a std::unique_ptr or std::shared_ptr of one holds it first.
     if (d === "v8::ArrayBuffer::NewBackingStore(v8::Isolate*, unsigned long)")
-      return (ret, _i, n) => {
+      return R((ret, _i, n) => {
         const bs = alloc(16);
         stores.set(bs, new ArrayBuffer(Number(n as bigint)));
         st64(ret as number, bs);
-      };
+      });
     if (d === "v8::BackingStore::Data() const")
       return (self) => dataOf(stores.get(self as number) as ArrayBuffer);
     if (d === "v8::BackingStore::ByteLength() const")
       return (self) => BigInt((stores.get(self as number) as ArrayBuffer).byteLength);
     if (d === "v8::BackingStore::~BackingStore()") return () => undefined;
     if (d === "v8::ArrayBuffer::New(v8::Isolate*, std::shared_ptr<v8::BackingStore>)")
-      return (ret, _i, sp) => put(ret as number, stores.get(ld64(sp as number)));
+      return R((ret, _i, sp) => put(ret as number, stores.get(ld64(sp as number))));
     if (d === "v8::Uint8Array::New(v8::Local<v8::ArrayBuffer>, unsigned long, unsigned long)")
-      return (ret, ab, off, n) =>
+      return R((ret, ab, off, n) =>
         put(
           ret as number,
           new Uint8Array(
@@ -399,26 +409,27 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
             Number(off as bigint),
             Number(n as bigint),
           ),
-        );
+        ),
+      );
     if (d === "v8::Object::SetPrototype(v8::Local<v8::Context>, v8::Local<v8::Value>)")
-      return (ret, self, _c, proto) => {
+      return R((ret, self, _c, proto) => {
         Object.setPrototypeOf(value(self as number) as object, at(proto as number) as object);
         just(ret as number);
-      };
+      });
     // Functions: a template's function calls its callback with a FunctionCallbackInfo.
     if (d.startsWith("v8::FunctionTemplate::New(v8::Isolate*, void (*)(v8::FunctionCallbackInfo"))
-      return (ret, _i, cb, data) => {
+      return R((ret, _i, cb, data) => {
         const h = ld64(data as number);
         put(ret as number, { callback: cb as number, data: h === 0 ? undefined : value(h) });
-      };
+      });
     if (d === "v8::FunctionTemplate::GetFunction(v8::Local<v8::Context>)")
-      return (ret, self) => {
+      return R((ret, self) => {
         const tpl = value(self as number) as Template;
         tpl.fn ??= function (this: unknown, ...args: unknown[]) {
           return call(tpl, this, args);
         };
         put(ret as number, tpl.fn);
-      };
+      });
     if (d === "v8::Function::SetName(v8::Local<v8::String>)")
       return (self, n) => {
         Object.defineProperty(value(self as number) as object, "name", {
@@ -430,11 +441,11 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
     if (d === "v8::FunctionCallbackInfo<v8::Value>::Length() const")
       return (self) => infoOf(self as number).args.length;
     if (d === "v8::FunctionCallbackInfo<v8::Value>::operator[](int) const")
-      return (ret, self, i) => put(ret as number, infoOf(self as number).args[i as number]);
+      return R((ret, self, i) => put(ret as number, infoOf(self as number).args[i as number]));
     if (d === "v8::FunctionCallbackInfo<v8::Value>::This() const")
-      return (ret, self) => put(ret as number, infoOf(self as number).receiver);
+      return R((ret, self) => put(ret as number, infoOf(self as number).receiver));
     if (d === "v8::FunctionCallbackInfo<v8::Value>::GetReturnValue() const")
-      return (ret, self) => st64(ret as number, ld64(self as number));
+      return R((ret, self) => st64(ret as number, ld64(self as number)));
     if (/^void v8::ReturnValue<v8::Value>::Set<.*>\(v8::Local<.*>\)$/.test(d))
       return (self, v) => {
         const i = infos.get(ld64(self as number));
