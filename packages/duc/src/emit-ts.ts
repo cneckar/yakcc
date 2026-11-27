@@ -704,15 +704,27 @@ function emitFunction(
   const indent = (lines: string[]): string[] => lines.map((l) => `  ${l}`);
   const nodeIndex = new Map(g.nodes.map((n, i) => [n.id, i] as const));
 
+  // Each set once per node, its first occurrences in order: inline nodes share inputs, and an
+  // operator ordered among the heap operations (#1370) reaches the one before it, so walking every
+  // path again is exponential in a chain of them.
+  const once = (vs: ValueId[]): ValueId[] => [...new Set(vs)];
+  const needsMemo = new Map<string, ValueId[]>();
   /** The values a node needs, through the inline nodes it writes. */
-  const needs = (node: DucNode): ValueId[] =>
-    [...node.inputs, ...(after.get(node.id) ?? [])].flatMap((v) => {
-      const p = producer.get(v);
-      // A class needs what its members capture. A heap-ordered inline value (a spread) is still
-      // needed itself: the statement that writes it is where it is made.
-      if (p === undefined || !(inline.has(p.id) || classMembers.has(p.id))) return [v];
-      return heapOrdered(p) ? [v, ...needs(p)] : needs(p);
-    });
+  const needs = (node: DucNode): ValueId[] => {
+    const hit = needsMemo.get(node.id);
+    if (hit !== undefined) return hit;
+    const out = once(
+      [...node.inputs, ...(after.get(node.id) ?? [])].flatMap((v) => {
+        const p = producer.get(v);
+        // A class needs what its members capture. A heap-ordered inline value (a spread) is still
+        // needed itself: the statement that writes it is where it is made.
+        if (p === undefined || !(inline.has(p.id) || classMembers.has(p.id))) return [v];
+        return heapOrdered(p) ? [v, ...needs(p)] : needs(p);
+      }),
+    );
+    needsMemo.set(node.id, out);
+    return out;
+  };
   /** A node ordered among the heap operations: its place is structure (#1285). */
   const heapOrdered = (n: DucNode): boolean =>
     isHeapLabel(n.label ?? "") || (after.get(n.id)?.length ?? 0) > 0;
@@ -720,12 +732,20 @@ function emitFunction(
    * The values of the heap-ordered inline nodes a node writes (a spread), through the inline nodes
    * it writes: a statement ordered after one of them comes after the statement that writes it.
    */
-  const writtenInline = (node: DucNode): ValueId[] =>
-    node.inputs.flatMap((v) => {
-      const p = producer.get(v);
-      if (p === undefined || !inline.has(p.id)) return [];
-      return [...(heapOrdered(p) ? p.outputs : []), ...writtenInline(p)];
-    });
+  const writtenMemo = new Map<string, ValueId[]>();
+  const writtenInline = (node: DucNode): ValueId[] => {
+    const hit = writtenMemo.get(node.id);
+    if (hit !== undefined) return hit;
+    const out = once(
+      node.inputs.flatMap((v) => {
+        const p = producer.get(v);
+        if (p === undefined || !inline.has(p.id)) return [];
+        return [...(heapOrdered(p) ? p.outputs : []), ...writtenInline(p)];
+      }),
+    );
+    writtenMemo.set(node.id, out);
+    return out;
+  };
   /** The values made inside a region (a branch side or a loop body), nested regions included. */
   const madeWithin = (path: string): ValueId[] =>
     g.nodes.filter((n) => isPrefix(path, n.region)).flatMap((n) => n.outputs);
@@ -887,7 +907,7 @@ function emitFunction(
         // What it writes inline is made where it is: a heap token of an inline spread orders what
         // follows after this statement.
         produces: [...node.outputs, ...writtenInline(node)],
-        requires: needs(node).filter((v) => !writtenInline(node).includes(v)),
+        requires: needs(node).filter((v) => !new Set(writtenInline(node)).has(v)),
         lines: () => statementsOf(node),
       });
     }
