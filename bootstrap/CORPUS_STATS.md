@@ -35,14 +35,15 @@ Source: `examples/v2-self-shave-poc/corpus.manifest.json` (`_meta.generatedFrom`
 ## Getting the bootstrap registry
 
 The full registry (`bootstrap/yakcc.registry.sqlite`: every atom's block, and its DUC graph at the locked
-format) is about 144 MB, over GitHub's per-file limit. It is kept as the release asset
-`bootstrap-registry`, which is replaced only on request: a manual run of the `bootstrap-accumulate`
-workflow (Actions → bootstrap-accumulate → Run workflow), never a merge
-(DEC-BOOTSTRAP-REGISTRY-RELEASE-001, `.github/workflows/bootstrap-accumulate.yml`):
+format) is about 144 MB, over GitHub's per-file limit. It is saved only on request, by a manual run of
+the `bootstrap-accumulate` workflow (Actions → bootstrap-accumulate → Run workflow), never by a merge
+(DEC-BOOTSTRAP-REGISTRY-RELEASE-001, `.github/workflows/bootstrap-accumulate.yml`). The run keeps it,
+xz-compressed with its sha256:
 
-```
-gh release download bootstrap-registry -p 'yakcc.registry.sqlite.xz' -D bootstrap --clobber
-xz -d -f bootstrap/yakcc.registry.sqlite.xz
-```
+- as the workflow artifact `bootstrap-registry`, for 90 days:
+  `gh run download <run id> -n bootstrap-registry -D bootstrap`
+- and as the release asset `bootstrap-registry`, when the workflow token may write releases:
+  `gh release download bootstrap-registry -p 'yakcc.registry.sqlite.xz' -D bootstrap --clobber`
 
-Or build it from the sources (about 20 minutes): `YAKCC_AIRGAP=1 node packages/cli/dist/bin.js bootstrap`.
+Then `xz -d -f bootstrap/yakcc.registry.sqlite.xz`. Or build it from the sources (about 20 minutes):
+`YAKCC_AIRGAP=1 node packages/cli/dist/bin.js bootstrap`.
