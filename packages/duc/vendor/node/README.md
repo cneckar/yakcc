@@ -62,3 +62,13 @@ the C/C++ front end to shave (#1367):
 - `deps/uvwasi/` (uvwasi 0.0.23, MIT, `deps/uvwasi/LICENSE`): Node's WASI implementation, over
   libuv. The fixture `src/__fixtures__/c/node-uvwasi.c` runs its computing parts: path
   normalization, error names and mapping, and its structures as a guest reads them.
+- `src/` (Node's own C++, MIT, `LICENSE`), `node.gyp`, `node.gypi`, `common.gypi`: the bindings
+  below Node's JavaScript (`internalBinding`), to shave as atoms over V8's API (#1367), in place of
+  the hand-written stand-ins (`src/__fixtures__/node/bindings.js`, the native runtime's
+  `internalBinding` layer; `docs/duc/runtime-inventory-1516.md`).
+- `deps/v8/include/` (V8 12.4.254, BSD-3, `deps/v8/LICENSE`): V8's
+  public API, the boundary `src/` is written against.
+- `deps/zstd/` (zstd 1.5.7, BSD/GPLv2 dual, `deps/zstd/LICENSE`), `deps/ncrypto/` (Node's OpenSSL
+  wrapper, MIT, as Node's), `deps/ada/` (ada 2.9.2, MIT/Apache-2.0, `deps/ada/LICENSE-MIT`): the
+  dependencies `src/` includes that were not here (`node_zlib.cc`'s zstd, `src/crypto/`'s ncrypto,
+  `node_url.cc`'s ada).
