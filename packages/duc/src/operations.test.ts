@@ -172,8 +172,8 @@ describe("links: an operation reference is linked to its atom's root", () => {
 });
 
 describe("the atom library: every atom lifts whole and is closed over leaves and atoms", () => {
-  it("49 atoms: V8's 21 functions, their kernels and header code, and musl's scalbn, floor, ceil, trunc and fabs", () => {
-    expect(atomNames()).toHaveLength(49);
+  it("54 atoms: V8's 21 functions, their kernels and header code, and musl's scalbn, floor, ceil, trunc, fabs and sqrt", () => {
+    expect(atomNames()).toHaveLength(54);
     for (const ref of OPERATION_REFERENCES.values()) expect(atomNames()).toContain(ref.atom);
   });
 
