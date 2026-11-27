@@ -655,8 +655,13 @@ interface ModuleScope {
  * those (the callee's free name, the argument's position), which the module's fixpoint resolves.
  * Such a block needs no region, and the callee no span lookup.
  */
-function rawArgUses(source: DucGraph): Map<number, { deps: [string, number][] }> {
-  const out = new Map<number, { deps: [string, number][] }>();
+/**
+ * A raw argument passed on: the callee, the position, and each argument position's parameter of
+ * this function at that call (-1: not one), so a callee's other raw positions there are checked too.
+ */
+type RawDep = [string, number, readonly number[]];
+function rawArgUses(source: DucGraph): Map<number, { deps: RawDep[] }> {
+  const out = new Map<number, { deps: RawDep[] }>();
   if (source.mode !== undefined) return out;
   const { graph: g } = loweringView(ecmaScriptView(source));
   const alias = new Map<ValueId, ValueId>();
@@ -715,7 +720,7 @@ function rawArgUses(source: DucGraph): Map<number, { deps: [string, number][] }>
     (u.order === 1 && i === u.inputs.length - 1) ||
     (u.kind === "sel" && u.label === "heap") ||
     (u.label ?? "").endsWith(":heap");
-  const usesOk = (v: ValueId, off: number, depth: number, deps: [string, number][]): boolean => {
+  const usesOk = (v: ValueId, off: number, depth: number, deps: RawDep[]): boolean => {
     if (held.has(v)) return false;
     return (usersOf.get(v) ?? []).every((u) =>
       u.inputs.every((x, i) => {
@@ -743,7 +748,14 @@ function rawArgUses(source: DucGraph): Map<number, { deps: [string, number][] }>
           leaf === undefined &&
           diamond(u.inputs[0] as ValueId)?.diamond?.reason === "free-identifier"
         ) {
-          deps.push([diamond(u.inputs[0] as ValueId)?.diamond?.symbol as string, i - 1]);
+          const end = u.order === 1 ? u.inputs.length - 1 : u.inputs.length;
+          const site = u.inputs.slice(1, end).map((x) => {
+            const q = producer.get(resolve(x as ValueId));
+            return q?.kind === "param-source" && !(q.label ?? "").endsWith("...")
+              ? paramIndex(q.label)
+              : -1;
+          });
+          deps.push([diamond(u.inputs[0] as ValueId)?.diamond?.symbol as string, i - 1, site]);
           used++;
           return true;
         }
@@ -754,7 +766,7 @@ function rawArgUses(source: DucGraph): Map<number, { deps: [string, number][] }>
   let used = 0;
   for (const p of g.nodes) {
     if (p.kind !== "param-source" || (p.label ?? "").endsWith("...")) continue;
-    const deps: [string, number][] = [];
+    const deps: RawDep[] = [];
     used = 0;
     if (usesOk(p.outputs[0] as ValueId, 0, 0, deps) && used > 0)
       out.set(paramIndex(p.label), { deps });
@@ -5108,6 +5120,38 @@ function lowerFunction(
           );
           return;
         }
+        if (callee.name === "clz32") {
+          // The leading zeros of ToUint32(x): on a number, its ToInt32's bits; else ToUint32's.
+          m.intrinsics.add("declare i32 @llvm.ctlz.i32(i32, i1)");
+          const x = args[0] ?? UNDEFINED;
+          const count = (i: string): string => {
+            const c = fresh();
+            emit(`${c} = call i32 @llvm.ctlz.i32(i32 ${i}, i1 false)`);
+            const d = fresh();
+            emit(`${d} = sitofp i32 ${c} to double`);
+            const b = fresh();
+            emit(`${b} = bitcast double ${d} to i64`);
+            return b;
+          };
+          set(
+            out,
+            numberFast(
+              [x],
+              ([d]) => count(toInt32(d as string)),
+              () => {
+                const u = call("yk_ushr", `i64 ${x}, i64 ${boxedNumber(0)}`);
+                const d = fresh();
+                emit(`${d} = bitcast i64 ${u} to double`);
+                const w = fresh();
+                emit(`${w} = fptoui double ${d} to i32`);
+                return count(w);
+              },
+              ([d]) => smallDouble(d as string),
+              allNumbers([ins[1] as ValueId]),
+            ),
+          );
+          return;
+        }
         if (callee.name === "imul") {
           set(
             out,
@@ -7197,7 +7241,7 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
   };
   // Raw block arguments (#1369): each direct function's, the greatest fixpoint of rawArgUses (an
   // argument passed on must be one its callee takes raw).
-  const rawUses = new Map<string, { i: number; uses: Map<number, { deps: [string, number][] }> }>();
+  const rawUses = new Map<string, { i: number; uses: Map<number, { deps: RawDep[] }> }>();
   modules.forEach((mod, i) =>
     mod.statements.forEach((st, k) => {
       const fn = `m${i}_s${k}`;
@@ -7270,9 +7314,15 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     for (const [fn, r] of rawUses) {
       const set = rawSets.get(fn) as Set<number>;
       for (const j of [...set]) {
-        const ok = (r.uses.get(j)?.deps ?? []).every(([callee, pos]) => {
+        const ok = (r.uses.get(j)?.deps ?? []).every(([callee, pos, site]) => {
           const t = directOf(r.i, callee);
-          return t !== undefined && rawSets.get(t)?.has(pos) === true;
+          const ts = t === undefined ? undefined : rawSets.get(t);
+          // Each position the callee takes raw is, at this call, a parameter of this function's
+          // taken raw too (the `.raw` variant takes all its raw arguments as blocks).
+          return (
+            ts?.has(pos) === true &&
+            [...ts].every((q) => (site[q] ?? -1) >= 0 && set.has(site[q] as number))
+          );
         });
         if (!ok) {
           set.delete(j);
