@@ -14,6 +14,7 @@ import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { LlvmModule } from "./emit-llvm.js";
+import { systemModuleIr } from "./native-system.js";
 
 export class NativeToolError extends Error {
   constructor(message: string) {
@@ -173,25 +174,43 @@ export function compileRuntime(
   } = {},
 ): Uint8Array {
   const triple = NATIVE_TARGETS[options.target ?? "x86_64-linux"] ?? (options.target as string);
-  const args = [
-    `--target=${triple}`,
-    ...(CLANG_TARGET[triple] ?? []),
-    ...(options.cflags ?? []),
-    "-std=c11",
-    "-O2",
-    // Position-independent code is an ELF and Mach-O notion; a COFF target has no -fPIC (#1296).
-    ...(triple.includes("windows") ? [] : ["-fPIC"]),
-    "-c",
-    RUNTIME_SOURCE,
-    "-o",
-    "-",
-  ];
-  const run = spawnSync(options.clang ?? "clang", args, { maxBuffer: 1 << 26 });
-  if (run.error !== undefined)
-    throw new NativeToolError(
-      `clang could not be run (${run.error.message}): the runtime needs it`,
+  const target = [`--target=${triple}`, ...(CLANG_TARGET[triple] ?? [])];
+  const clang = options.clang ?? "clang";
+  const dir = mkdtempSync(join(tmpdir(), "yakcc-rt-"));
+  try {
+    // The C, as bitcode; the system module (in LLVM: the system-call leaf, the entry) linked to it;
+    // the one module compiled to the object.
+    const tool = (cmd: string, args: readonly string[], what: string): void => {
+      const run = spawnSync(cmd, args, { cwd: dir, maxBuffer: 1 << 26 });
+      if (run.error !== undefined)
+        throw new NativeToolError(`${cmd} could not be run (${run.error.message}): ${what}`);
+      if (run.status !== 0)
+        throw new NativeToolError(`${cmd} failed for ${triple}: ${run.stderr.toString().trim()}`);
+    };
+    const pic = triple.includes("windows") ? [] : ["-fPIC"];
+    tool(
+      clang,
+      [
+        ...target,
+        ...(options.cflags ?? []),
+        "-std=c11",
+        "-O2",
+        // Position-independent code is an ELF and Mach-O notion; a COFF target has no -fPIC (#1296).
+        ...pic,
+        "-emit-llvm",
+        "-c",
+        RUNTIME_SOURCE,
+        "-o",
+        "yk.bc",
+      ],
+      "the runtime needs clang",
     );
-  if (run.status !== 0)
-    throw new NativeToolError(`clang failed for ${triple}: ${run.stderr.toString().trim()}`);
-  return new Uint8Array(run.stdout);
+    const noLibc = (options.cflags ?? []).includes("-DYK_NOLIBC");
+    writeFileSync(join(dir, "system.ll"), systemModuleIr(triple, { noLibc }));
+    tool("llvm-link", ["yk.bc", "system.ll", "-o", "rt.bc"], "the runtime needs LLVM's llvm-link");
+    tool(clang, [...target, "-O2", ...pic, "-c", "rt.bc", "-o", "rt.o"], "the runtime needs clang");
+    return new Uint8Array(readFileSync(join(dir, "rt.o")));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
