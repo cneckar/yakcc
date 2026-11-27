@@ -271,9 +271,25 @@ function emitFunction(
       if (p?.closure !== undefined && (consumers.get(v) ?? []).length === 1) classMembers.add(p.id);
     }
   }
+  // A branch's condition that is a literal is written as a const of its own (#1368): inline, a short
+  // circuit on it (`false && x`) is one its left decides, which the lifter reads as that literal
+  // alone, and the branch is gone. The const is the same literal lifted again.
+  const branchConds = new Set((g.branches ?? []).map((b) => b.cond));
+  // So is a literal on the left of a short circuit that only produces a value (`js.and`).
+  for (const node of g.nodes)
+    if (
+      ["js.and", "js.or", "js.nullish", "&&", "||", "??"].includes(node.label ?? "") &&
+      node.inputs[0] !== undefined
+    )
+      branchConds.add(node.inputs[0]);
   for (const node of g.nodes) {
     // A literal is a constant, written where it is used.
-    if (node.kind === "literal-source" && node.label !== "Uninitialized") inline.add(node.id);
+    if (
+      node.kind === "literal-source" &&
+      node.label !== "Uninitialized" &&
+      !node.outputs.some((v) => branchConds.has(v))
+    )
+      inline.add(node.id);
     if (node.kind !== "op") continue;
     const label = node.label ?? "";
     if (label === "..." || label.startsWith("OmittedExpression#")) inline.add(node.id);
