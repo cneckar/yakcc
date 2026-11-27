@@ -22,6 +22,7 @@ import { ADA_CASES } from "./__fixtures__/ada-cases.js";
 import { shaveCFiles } from "./__fixtures__/c-files.js";
 import { shaveMusl, withMuslInit } from "./__fixtures__/c-musl.js";
 import { canRun, decode, encode, same } from "./__fixtures__/native-harness.js";
+import { V8_BIGINT_METHODS, shaveV8BigInt } from "./atoms/shave-v8.js";
 import { emitNativeModules } from "./emit-llvm-boxed.js";
 import { liftAtom } from "./lift.js";
 import { withStatics } from "./native-statics.js";
@@ -507,6 +508,98 @@ int main(void) { static char line[1 << 16], in[1 << 14], base[1 << 14], out[1 <<
     );
     expect(bad.slice(0, 10)).toEqual([]);
     expect(kept.length).toBeGreaterThan(2500);
+  }, 900_000);
+
+  it("V8's BigInt arithmetic, shaved from src/bigint, natively equals Node's BigInt (#1516)", () => {
+    const unit = shaveV8BigInt();
+    expect([...unit.refused]).toEqual([]);
+    // What it calls of the C library (a struct's copy, an abort): musl's, shaved.
+    const libc = shaveMusl(["memcpy", "memset", "memmove", "abort"]);
+    expect(libc.refused).toEqual([]);
+    const atoms = new Map([...libc.atoms, ...unit.atoms]);
+    const statics = new Map([...libc.units.flatMap((u) => [...u.statics]), ...unit.statics]);
+    const M = V8_BIGINT_METHODS;
+    const DRIVERS: [string, string][] = [
+      // A BigInt's magnitude as V8's Digits ({ digits, len }, 64-bit digits), and back. Each driver
+      // calls the library as V8's src/objects/bigint.cc does (zero's string is "0" before it).
+      [
+        "mk",
+        "export function f(x: bigint): number { let m = x < 0n ? -x : x; let n = 0; let t = m; while (t > 0n) { n++; t = t >> 64n; } const d = __ykAlloc((n > 0 ? n : 1) * 8, 8); for (let i = 0; i < n; i++) { __ykStore64(d + 8 * i, m & 18446744073709551615n); m = m >> 64n; } const s = __ykAlloc(16, 8); __ykStore64(s, __ykNumToBig(d)); __ykStore32(s + 8, n); return s; }",
+      ],
+      [
+        "mkz",
+        "export function f(n: number): number { const d = __ykAlloc((n > 0 ? n : 1) * 8, 8); const s = __ykAlloc(16, 8); __ykStore64(s, __ykNumToBig(d)); __ykStore32(s + 8, n); return s; }",
+      ],
+      [
+        "val",
+        "export function f(s: number): bigint { const d = __ykBigToF64(__ykLoad64(s)); const n = __ykLoad32(s + 8) | 0; let r = 0n; for (let i = n - 1; i >= 0; i--) r = (r << 64n) | __ykLoad64(d + 8 * i); return r; }",
+      ],
+      [
+        "tMul",
+        `export function f(a: bigint, b: bigint): bigint { const p = yk_v8_bigint_processor(); const X = mk(a); const Y = mk(b); const Z = mkz(MultiplyResultLength(X, Y)); ${M.multiply}(p, Z, X, Y); const m = val(Z); return (a < 0n) !== (b < 0n) ? -m : m; }`,
+      ],
+      [
+        "tDiv",
+        `export function f(a: bigint, b: bigint): unknown { const p = yk_v8_bigint_processor(); const A = mk(a); const B = mk(b); if (Compare(A, B) < 0) return [0n, a]; const Q = mkz(DivideResultLength(A, B)); ${M.divide}(p, Q, A, B); const R = mkz(ModuloResultLength(B)); ${M.modulo}(p, R, A, B); const q = val(Q); const r = val(R); return [(a < 0n) !== (b < 0n) ? -q : q, a < 0n ? -r : r]; }`,
+      ],
+      [
+        "tAdd",
+        "export function f(a: bigint, b: bigint): bigint { const X = mk(a); const Y = mk(b); const Z = mkz(AddSignedResultLength(__ykLoad32(X + 8), __ykLoad32(Y + 8), (a < 0n) === (b < 0n))); const neg = AddSigned(Z, X, a < 0n, Y, b < 0n); const m = val(Z); return neg ? -m : m; }",
+      ],
+      [
+        "tStr",
+        `export function f(a: bigint, radix: number): string { if (a === 0n) return "0"; const p = yk_v8_bigint_processor(); const X = mk(a); const n = ToStringResultLength(X, radix, a < 0n); const out = __ykAlloc(n > 0 ? n : 1, 1); const len = __ykAlloc(4, 4); __ykStore32(len, n); ${M.toString}(p, out, len, X, radix, a < 0n); let s = ""; for (let i = 0; i < (__ykLoad32(len) | 0); i++) s += String.fromCharCode(__ykLoad8(out + i)); return s; }`,
+      ],
+      [
+        // (Its sign: V8's Compare gives the digits' difference when the lengths differ.)
+        "tCmp",
+        "export function f(a: bigint, b: bigint): number { const c = Compare(mk(a), mk(b)); return c > 0 ? 1 : c < 0 ? -1 : 0; }",
+      ],
+    ];
+    const run = nativeUnitWith("v8bigint", atoms, DRIVERS, statics);
+    const big = (seed: number, n: number) =>
+      fc.sample(
+        fc.oneof(
+          fc.bigInt({ min: -(2n ** 70n), max: 2n ** 70n }),
+          fc.bigInt({ min: -(2n ** 4000n), max: 2n ** 4000n }),
+          // (The harness reads a BigInt of at most 4095 characters: Karatsuba, Toom-Cook and
+          // Burnikel-Ziegler, not FFT or Barrett.)
+          fc.bigInt({ min: -(2n ** 12000n), max: 2n ** 12000n }),
+        ),
+        { numRuns: n, seed },
+      );
+    const xs = [0n, 1n, -1n, 2n ** 64n - 1n, 2n ** 64n, -(2n ** 128n), ...big(1516, 40)];
+    const ys = [1n, -1n, 3n, 2n ** 64n + 1n, -(2n ** 63n), ...big(1517, 40)].map((y) =>
+      y === 0n ? 7n : y,
+    );
+    const calls: [string, unknown[]][] = [];
+    const want: unknown[] = [];
+    xs.forEach((x, i) => {
+      const y = ys[i % ys.length] as bigint;
+      calls.push(["tMul", [x, y]]);
+      want.push(x * y);
+      calls.push(["tDiv", [x, y]]);
+      want.push([x / y, x % y]);
+      calls.push(["tAdd", [x, y]]);
+      want.push(x + y);
+      calls.push(["tCmp", [x, y]]);
+      const ax = x < 0n ? -x : x;
+      const ay = y < 0n ? -y : y;
+      want.push(ax < ay ? -1 : ax > ay ? 1 : 0);
+      for (const radix of [10, 16, 7]) {
+        calls.push(["tStr", [x, radix]]);
+        want.push(x.toString(radix));
+      }
+    });
+    const got = run(calls);
+    const bad = calls.flatMap(([f, a], i) =>
+      same(got[i], want[i])
+        ? []
+        : [
+            `${f}(${a.map(String).join(", ").slice(0, 80)}): ${String(got[i]).slice(0, 80)} vs ${String(want[i]).slice(0, 80)}`,
+          ],
+    );
+    expect(bad.slice(0, 8)).toEqual([]);
   }, 900_000);
 
   it("musl's memcpy, memset, strlen, strcmp and qsort, shaved, natively over the memory leaves equal their raised source", () => {

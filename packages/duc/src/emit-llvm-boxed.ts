@@ -2884,7 +2884,7 @@ function lowerFunction(
       depth = 0,
       rawCalls: DucNode[] = [],
     ): boolean => {
-      if (depth > 1) return false;
+      if (depth > 1 || givenOut.has(v)) return false;
       return (usersOf.get(v) ?? []).every((u) =>
         u.inputs.every((x, i) => {
           if (resolve(x as ValueId) !== v || heapOnly(u, i)) return true;
@@ -2911,8 +2911,20 @@ function lowerFunction(
         }),
       );
     };
+    // A value the function gives out or tests (its result, a branch's or loop's condition, a loop's
+    // next carry) escapes, whatever its uses.
+    const givenOut = new Set<ValueId>([
+      ...g.obs.map((v) => resolve(v)),
+      ...(g.branches ?? []).map((b) => resolve(b.cond as ValueId)),
+    ]);
+    for (const n of g.nodes) {
+      if (n.loop === undefined) continue;
+      for (const v of n.loop.next) givenOut.add(resolve(v));
+      if (n.loop.cond !== undefined) givenOut.add(resolve(n.loop.cond));
+    }
     for (const n of g.nodes) {
       if (leafOfCall(n) !== "__ykAlloc") continue;
+      if (givenOut.has(resolve(n.outputs[0] as ValueId))) continue;
       const size = literalNumber(n.inputs[1] as ValueId);
       const align = literalNumber(n.inputs[2] as ValueId);
       if (
