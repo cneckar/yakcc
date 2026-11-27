@@ -495,7 +495,9 @@ static __attribute__((noinline)) void gc_mark_roots(void) {
   jmp_buf regs; /* the callee-saved registers, on this frame */
   setjmp(regs);
   gc_scan(&regs, (uint8_t *)&regs + sizeof regs);
-  uintptr_t sp = (uintptr_t)__builtin_frame_address(0);
+  /* The stack from this jmp_buf up: the registers this function's prologue saved (a caller's value
+     held in one) are below its frame's address, above its locals. */
+  uintptr_t sp = (uintptr_t)&regs;
   uintptr_t from = gc_in_coroutine() ? gc_main_sp : sp;
   if (from != 0 && from < gc_stack_top) gc_scan((void *)from, (void *)gc_stack_top);
   gc_drain();
@@ -7199,9 +7201,16 @@ static void coro_resume(coro *co, yk value, int mode) {
   } else
     handlers = co->handlers;
   co->state = 2;
-  /* Leaving the main stack: the collector scans it from here up while the coroutine runs. */
+  /* Leaving the main stack: the collector scans it from here up while the coroutine runs. "Here"
+     is this jmp_buf, below the registers this function's prologue saved (a caller's value held in a
+     callee-saved register is there, or still in a register setjmp writes here), not this frame's
+     address, above them. */
   uintptr_t main_sp = gc_main_sp;
-  if (prev == NULL) gc_main_sp = (uintptr_t)__builtin_frame_address(0);
+  jmp_buf main_regs;
+  if (prev == NULL) {
+    setjmp(main_regs);
+    gc_main_sp = (uintptr_t)&main_regs;
+  }
   swapcontext(&co->back, &co->ctx);
   gc_main_sp = main_sp;
   current_coro = prev;
