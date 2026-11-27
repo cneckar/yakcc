@@ -4821,6 +4821,51 @@ function lowerFunction(
         );
         return;
       }
+      if (lbl === "!") {
+        // Undefined, null, a boolean, an array, object or function: known here; anything else
+        // (a number, a string, a symbol, a BigInt) the runtime's.
+        const isU = fresh();
+        emit(`${isU} = icmp eq i64 ${x}, ${UNDEFINED}`);
+        const isN = fresh();
+        emit(`${isN} = icmp eq i64 ${x}, ${NULL}`);
+        const isF = fresh();
+        emit(`${isF} = icmp eq i64 ${x}, ${FALSE}`);
+        const isT = fresh();
+        emit(`${isT} = icmp eq i64 ${x}, ${TRUE}`);
+        const tag = fresh();
+        emit(`${tag} = lshr i64 ${x}, 48`);
+        const lo = fresh();
+        emit(`${lo} = icmp uge i64 ${tag}, 65531`);
+        const hi = fresh();
+        emit(`${hi} = icmp ule i64 ${tag}, 65533`);
+        const isRef = fresh();
+        emit(`${isRef} = and i1 ${lo}, ${hi}`);
+        const f0 = fresh();
+        emit(`${f0} = or i1 ${isU}, ${isN}`);
+        const falsy = fresh();
+        emit(`${falsy} = or i1 ${f0}, ${isF}`);
+        const t0 = fresh();
+        emit(`${t0} = or i1 ${isT}, ${isRef}`);
+        const known = fresh();
+        emit(`${known} = or i1 ${falsy}, ${t0}`);
+        const kL = freshLabel("notknown");
+        const sL = freshLabel("notslow");
+        const jL = freshLabel("notjoin");
+        emit(`br i1 ${known}, label %${kL}, label %${sL}`);
+        block(kL);
+        const r1 = fresh();
+        emit(`${r1} = select i1 ${falsy}, i64 ${TRUE}, i64 ${FALSE}`);
+        emit(`br label %${jL}`);
+        block(sL);
+        const r2 = slow();
+        const sEnd = currentLabel();
+        emit(`br label %${jL}`);
+        block(jL);
+        const r = fresh();
+        emit(`${r} = phi i64 [ ${r1}, %${kL} ], [ ${r2}, %${sEnd} ]`);
+        set(out, r);
+        return;
+      }
       set(out, slow());
       return;
     }
