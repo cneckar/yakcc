@@ -1068,6 +1068,15 @@ class Lifter {
       if (k === undefined) return;
       writes.set(k, [...(writes.get(k) ?? []), value]);
     };
+    // A name a closure in the loop assigns is a cell, made when the closure is (the carry holds the
+    // cell, an object), whether or not it is one yet.
+    const closureWrites = new Set(
+      within.flatMap((p) =>
+        [p, ...p.getDescendants()]
+          .filter((n) => isFunctionLikeNode(n))
+          .flatMap((fn) => assignmentTargets(fn).flatMap((t) => assignedNames(t))),
+      ),
+    );
     const assumed = new Set<Key>();
     carried.forEach((name, i) => {
       const init = inits[i];
@@ -1075,6 +1084,8 @@ class Lifter {
         !name.startsWith("%") &&
         name !== HEAP &&
         !this.cells.has(name) &&
+        // A carried name is the source's, renamed per binding (`i$1`).
+        !closureWrites.has(name.replace(/\$\d+$/, "")) &&
         init !== undefined &&
         this.isPrimitive(init, 4)
       )

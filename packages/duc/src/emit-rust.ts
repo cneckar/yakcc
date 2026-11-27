@@ -13,7 +13,7 @@
 import { bodyPathOf, isPrefix, joinOwners, printLineForm, sidePath } from "./line-form.js";
 import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
-import { isRestParam, paramIndex } from "./params.js";
+import { isPrimitiveParam, isRestParam, paramIndex, readsOwnReceiver } from "./params.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
 export { RUST_PRELUDE } from "./rust-prelude.js";
@@ -485,7 +485,7 @@ function rustFunction(
         throw new RustEmitError(
           `a closure that is ${label.replace(/ closure$/, "")} has no form here`,
         );
-      if (label === "function")
+      if (label === "function" && readsOwnReceiver(node.closure))
         throw new RustEmitError("a function with its own receiver (this) has no Rust form here");
       // The closure owns copies of what it captures: each a clone, so the names outside stay.
       const captured = node.inputs.map((_, i) => `${prefix}${node.id}_c${i}`);
@@ -700,7 +700,7 @@ function rustFunction(
   // A rest parameter is the arguments from its place on, as an array.
   const bindings = own.map(
     (n, i) =>
-      `let mut ${nameOf(n.outputs[0] as ValueId)}: V = ${isRestParam(n.label) ? "rest_args" : "arg"}(&args, ${i});`,
+      `let mut ${nameOf(n.outputs[0] as ValueId)}: V = ${isRestParam(n.label) ? "rest_args" : isPrimitiveParam(n.label) ? "prim_arg" : "arg"}(&args, ${i});`,
   );
   // A free or ambient name that nothing uses is still part of the atom: it is read on its own.
   const used = new Set<ValueId>([...g.obs, ...branches.map((b) => b.cond)]);

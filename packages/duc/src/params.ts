@@ -50,3 +50,14 @@ export function expectedArgumentCount(
   const first = own.findIndex((p) => isRestParam(p.label) || isDefaultedParam(p.label));
   return first < 0 ? own.length : first;
 }
+
+/**
+ * Whether a `function` closure's graph reads its own receiver (`this`): a lowering with no receiver
+ * lowers any other function as a closure. A function declaration is `function` whether or not it
+ * reads `this` (#1370), for its `prototype`; called as a function, it is the closure it lifts as.
+ */
+export function readsOwnReceiver(g: {
+  readonly nodes: readonly { readonly label?: string }[];
+}): boolean {
+  return g.nodes.some((n) => n.label === "this");
+}

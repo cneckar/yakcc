@@ -30,7 +30,10 @@ import {
   type NodeId,
   type ValueId,
   ecmaScriptView,
+  TO_PRIMITIVE_OPERATIONS,
+  jsOperation,
   liftAtom,
+  paramIndex,
 } from "@yakcc/duc";
 import {
   ARRAY_METHODS,
@@ -274,6 +277,8 @@ export class Encoder {
       [...env.gc.throwing].some((t) => region === t || region.startsWith(`${t}/`));
     for (const n of env.gc.g.nodes) {
       if (n.kind !== "op" && n.kind !== "sel" && n.kind !== "loop") continue;
+      // The heap token's join orders effects and holds no data, as its carry does (#1285).
+      if (n.kind === "sel" && n.label === "heap") continue;
       const region = n.region ?? "";
       if (inThrowing(region)) continue;
       const innermost = region
@@ -461,7 +466,8 @@ export class Encoder {
   private node(n: DucNode, v: ValueId, env: Env): Value {
     switch (n.kind) {
       case "param-source": {
-        const index = Number(n.label);
+        // `0`, or `0:prim` for one declared a primitive (#1370).
+        const index = paramIndex(n.label);
         const p = Number.isInteger(index) ? env.gc.params[index] : undefined;
         if (p === undefined) throw new Unsupported("parameter", `parameter ${n.label ?? "?"}`);
         return p;
@@ -641,7 +647,13 @@ export class Encoder {
     if (label === "ArrayLiteral") {
       return arrayLiteral(operands.map((a) => this.term(this.value(a, env), "an array element")));
     }
-    if (n.order === 1) throw new Unsupported(label, `${label}: an effect`);
+    // An operator ordered because it converts an operand that may be an object (#1370) is pure here:
+    // every operand is a contract sort (`term` refuses records and functions), whose conversion runs
+    // no code.
+    const converts =
+      label.startsWith("template:") ||
+      TO_PRIMITIVE_OPERATIONS.has(jsOperation(label, operands.length));
+    if (n.order === 1 && !converts) throw new Unsupported(label, `${label}: an effect`);
     if (label.startsWith("template:")) {
       return template(
         label,

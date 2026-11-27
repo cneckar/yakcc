@@ -14,7 +14,7 @@ import { loweringView } from "./ordering.js";
  * Anything else is refused with a reason (`PyEmitError`), never guessed: an unknown method, a
  * construct the line form does not express, an opaque node.
  */
-import { isRestParam, paramIndex } from "./params.js";
+import { isPrimitiveParam, isRestParam, paramIndex, readsOwnReceiver } from "./params.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
 export class PyEmitError extends Error {
@@ -1494,7 +1494,7 @@ function pyFunction(
         throw new PyEmitError(
           `a closure that is ${label.replace(/ closure$/, "")} has no form here`,
         );
-      if (label === "function")
+      if (label === "function" && readsOwnReceiver(node.closure))
         throw new PyEmitError("a function with its own receiver (this) has no Python form here");
       const inner = pyFunction(
         node.closure,
@@ -1714,7 +1714,11 @@ function pyFunction(
     ? ["*_args"]
     : // A JavaScript function ignores arguments past its parameters.
       [
-        ...plain.map((n) => `${nameOf(n.outputs[0] as ValueId)}=UNDEFINED`),
+        // A parameter declared a primitive is annotated so (#1370): the annotation keeps the mark.
+        ...plain.map(
+          (n) =>
+            `${nameOf(n.outputs[0] as ValueId)}${isPrimitiveParam(n.label) ? ': "primitive"' : ""}=UNDEFINED`,
+        ),
         restName !== undefined ? `*${restName}` : "*_rest",
       ];
   const bindings = usesArguments
