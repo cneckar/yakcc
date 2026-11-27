@@ -23,8 +23,15 @@ import { shaveMusl, withMuslInit } from "./__fixtures__/c-musl.js";
 import { canRun, decode, encode, same } from "./__fixtures__/native-harness.js";
 import { emitNativeModules } from "./emit-llvm-boxed.js";
 import { liftAtom } from "./lift.js";
+import { withStatics } from "./native-statics.js";
 import { compileObject, compileRuntime } from "./native.js";
-import { C_LEAVES_JS, type ShavedUnit, createCMemory, shaveCUnit } from "./raise-c.js";
+import {
+  C_LEAVES_JS,
+  type ShavedUnit,
+  type StaticDef,
+  createCMemory,
+  shaveCUnit,
+} from "./raise-c.js";
 
 const here = (p: string): string => fileURLToPath(new URL(p, import.meta.url));
 const V8 = here("../vendor/v8/");
@@ -77,6 +84,7 @@ function nativeUnitWith(
   name: string,
   atoms: ReadonlyMap<string, { readonly source: string }>,
   extra: readonly [string, string][],
+  statics: ReadonlyMap<string, StaticDef> = new Map(),
 ): (calls: readonly [string, unknown[]][]) => unknown[] {
   const names = [...atoms.keys(), ...extra.map(([n]) => n)];
   const sources = new Map([...[...atoms].map(([n, a]) => [n, a.source] as const), ...extra]);
@@ -92,7 +100,9 @@ function nativeUnitWith(
       graph: liftAtom(`module.exports = { ${names.join(", ")} };`),
     },
   ];
-  const { ir, symbols } = emitNativeModules([{ id: `${name}.js`, statements }]);
+  const { ir, symbols } = emitNativeModules(
+    withStatics([{ id: `${name}.js`, statements }], statics),
+  );
   const dir = join(work, name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "m.ll"), ir);
@@ -234,6 +244,52 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
     });
     expect(bad).toEqual([]);
   }, 900_000);
+
+  it("C's statics natively: globals, a static local, function pointers, strings, a static's address in another", () => {
+    const unit = shaveCUnit(
+      here("./__fixtures__/c/statics.c"),
+      ["statics_sum"],
+      ["-std=c11"],
+      "clang",
+    );
+    expect([...unit.refused]).toEqual([]);
+    const run = nativeUnitWith(
+      "statics",
+      unit.atoms,
+      [
+        [
+          "tS",
+          "export function f(i: number, k: number): number { return Number(statics_sum(i, k)); }",
+        ],
+      ],
+      unit.statics,
+    );
+    const calls: [string, unknown[]][] = Array.from({ length: 12 }, (_, j) => [
+      "tS",
+      [j * 7 + 1, j % 3],
+    ]);
+    const got = run(calls);
+    // The same calls, in order, of the C compiled natively.
+    const dir = join(work, "statics-c");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "main.c"),
+      `#include <stdio.h>\nlong long statics_sum(int i, int k);\nint main(void) { for (int j = 0; j < 12; j++) printf("%lld\\n", statics_sum(j * 7 + 1, j % 3)); return 0; }\n`,
+    );
+    execFileSync("clang", [
+      "-std=c11",
+      "-O0",
+      join(dir, "main.c"),
+      here("./__fixtures__/c/statics.c"),
+      "-o",
+      join(dir, "run"),
+    ]);
+    const want = execFileSync(join(dir, "run"), { encoding: "utf8" })
+      .trim()
+      .split("\n")
+      .map(Number);
+    expect(got).toEqual(want);
+  }, 600_000);
 
   it("V8's Math, shaved from ieee754.cc, natively equals Node's Math bit for bit", () => {
     const v8: ShavedUnit = shaveCUnit(

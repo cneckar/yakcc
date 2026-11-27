@@ -232,6 +232,8 @@ const LEAVES: Readonly<Record<string, [string, number]>> = nameTable({
   __ykF32: ["yk_leaf_f32", 1],
   __ykFnAddr: ["yk_leaf_fn_addr", 1],
   __ykFnAt: ["yk_leaf_fn_at", 1],
+  // A static's block (raised C's globals): its getter's call, the module's (native-statics.ts).
+  __ykStatic: ["yk_leaf_static", 1],
 });
 /**
  * The memory leaves with an inline fast path (#1369): an access to the region the runtime's cache
@@ -637,6 +639,8 @@ interface ModuleScope {
   readonly rawArgs?: (name: string) => ReadonlySet<number> | undefined;
   /** For a direct callee: how many parameters it has. */
   readonly arity?: (name: string) => number | undefined;
+  /** The binding of the getter of a static, by its key (native-statics.ts). */
+  readonly staticGetter?: (key: string) => string | undefined;
   /** For a direct callee with a `.rec` variant: its record result's keys (#1369). */
   readonly record?: (name: string) => readonly string[] | undefined;
   /** For a direct callee: its result's integer range, and its record result's keys' (#1369). */
@@ -3783,6 +3787,7 @@ function lowerFunction(
               ...(scope.arity !== undefined ? { arity: scope.arity } : {}),
               ...(scope.ranges !== undefined ? { ranges: scope.ranges } : {}),
               ...(scope.record !== undefined ? { record: scope.record } : {}),
+              ...(scope.staticGetter !== undefined ? { staticGetter: scope.staticGetter } : {}),
             }
           : {
               // The module's require (a global of the module's own) for an import() in it.
@@ -4752,6 +4757,20 @@ function lowerFunction(
     if (lbl === "CallExpression" && leafValue.has(resolve(ins[0] as ValueId))) {
       // A leaf: the runtime's function for it, called directly.
       const leafName = leafValue.get(resolve(ins[0] as ValueId)) as string;
+      if (leafName === "__ykStatic") {
+        // __ykStatic("key"): its getter's result (the static's block, made at its first use).
+        const kp = producer.get(resolve(ins[1] as ValueId));
+        const text = kp?.kind === "literal-source" ? (kp.label ?? "") : "";
+        const key = text.startsWith('"') ? (JSON.parse(text) as string) : undefined;
+        const getter = key === undefined ? undefined : scope?.staticGetter?.(key);
+        const fnv = getter === undefined ? undefined : scope?.read(getter, emit, fresh);
+        if (fnv === undefined)
+          throw new LlvmEmitError(
+            `the static ${key ?? "(not a literal key)"} has no definition here (${scope?.staticGetter === undefined ? "no statics in scope" : getter === undefined ? "no getter" : `${getter} unread`})`,
+          );
+        set(out, call("yk_call", `i64 ${fnv}, i64 ${UNDEFINED}, i64 0, ptr null`));
+        return;
+      }
       const [fn, arity] = LEAVES[leafName] as [string, number];
       if (ins.length - 1 !== arity)
         throw new LlvmEmitError(`the leaf ${fn} takes ${arity} arguments`);
@@ -7010,6 +7029,8 @@ export interface NativeModule {
   readonly requires?: Readonly<Record<string, string>>;
   /** An ECMAScript module's linking (#1333): its imports, exports and dependencies. */
   readonly esm?: NativeEsm;
+  /** Each static's getter binding, by its key (native-statics.ts's withStatics). */
+  readonly statics?: Readonly<Record<string, string>>;
 }
 
 /** Where a name an ECMAScript module imports or re-exports comes from: a module, and its export. */
@@ -7340,6 +7361,8 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     globals.push(`${g(i, "state")} = internal global i32 0`);
     if (asyncModules.has(i)) globals.push(`${g(i, "promise")} = internal global i64 0`);
     const scope = (outs?: readonly string[]): ModuleScope => ({
+      staticGetter: (key) =>
+        mod.statics !== undefined && Object.hasOwn(mod.statics, key) ? mod.statics[key] : undefined,
       read: (name, emit, fresh) => {
         const slot =
           name === "module" || name === "exports" || name === "require"
