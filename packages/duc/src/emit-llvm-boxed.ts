@@ -956,6 +956,8 @@ function lowerFunction(
         readonly captures: number;
         /** Each capture that is a binding of the module: its name (read and written as the module's). */
         readonly moduleCaptures?: readonly (string | undefined)[] | undefined;
+        /** Each capture that is a leaf (`__ykU64`, …) where the closure is made: its name. */
+        readonly leafCaptures?: readonly (string | undefined)[] | undefined;
       }
     | undefined,
   scope?: ModuleScope,
@@ -1041,6 +1043,13 @@ function lowerFunction(
   const argumentsValues: ValueId[] = [];
   // A function's own new.target (ECMA-262 13.3.12): taken on entry, as yk_new or super() left it.
   const newTargetValues: ValueId[] = [];
+  // A capture of a leaf (a closure inside a function that names `__ykU64`): the leaf, as there.
+  for (const n of g.nodes)
+    if (n.kind === "param-source" && closure?.leafCaptures !== undefined) {
+      const k = paramIndex(n.label);
+      const leaf = k < closure.captures ? closure.leafCaptures[k] : undefined;
+      if (leaf !== undefined) leafValue.set(n.outputs[0] as ValueId, leaf);
+    }
   for (const n of g.nodes) {
     if (n.kind !== "diamond-source") continue;
     const sym = n.diamond?.symbol ?? "";
@@ -1380,6 +1389,62 @@ function lowerFunction(
     }
     return undefined;
   };
+  /**
+   * A BigInt carry's width by induction (#1369): assumed as wide as its initial value, its next
+   * value's width computed under that (and under the assumptions of the loops it is inside); no
+   * wider, the assumption holds for every iteration; wider, assumed that wide and checked again,
+   * up to 127 bits. An inner loop's carries and results are proved the same way, nested.
+   */
+  const loopOfValue = new Map<ValueId, { loop: DucNode; j: number }>();
+  for (const n of g.nodes)
+    if (n.kind === "loop" && n.loop !== undefined) {
+      n.loop.carry.forEach((c, j) => loopOfValue.set(resolve(c), { loop: n, j }));
+      n.outputs.forEach((o, j) => loopOfValue.set(resolve(o), { loop: n, j }));
+    }
+  const widthUnder = (
+    x0: ValueId,
+    assume: ReadonlyMap<ValueId, number>,
+    memo: Map<ValueId, number | undefined>,
+    depth: number,
+  ): number | undefined => {
+    const x = resolve(x0);
+    const a = assume.get(x);
+    if (a !== undefined) return a;
+    const known = widthOf(x);
+    if (known !== undefined) return known;
+    if (memo.has(x) || depth > 48) return memo.get(x);
+    memo.set(x, undefined);
+    const p = producer.get(x);
+    let r: number | undefined;
+    const lv = loopOfValue.get(x);
+    if (lv !== undefined && lv.j < (lv.loop.loop?.carry.length ?? 0))
+      r = inductCarry(lv.loop, lv.j, assume, depth + 1);
+    else if (p?.kind === "op" || p?.kind === "sel")
+      r = bigRule(p, (y) => widthUnder(y, assume, memo, depth + 1));
+    memo.set(x, r);
+    return r;
+  };
+  const inductCarry = (
+    loop: DucNode,
+    j: number,
+    assume: ReadonlyMap<ValueId, number>,
+    depth: number,
+  ): number | undefined => {
+    const rec = loop.loop;
+    if (rec === undefined || depth > 12) return undefined;
+    const v = resolve(rec.carry[j] as ValueId);
+    const known = bigWidth.get(v);
+    if (known !== undefined) return known;
+    let assumed = widthUnder(loop.inputs[j] as ValueId, assume, new Map(), depth + 1);
+    for (let tries = 0; assumed !== undefined && assumed <= 127 && tries < 8; tries++) {
+      const inner = new Map(assume).set(v, assumed);
+      const wn = widthUnder(rec.next[j] as ValueId, inner, new Map(), depth + 1);
+      if (wn === undefined) return undefined;
+      if (wn <= assumed) return assumed;
+      assumed = wn;
+    }
+    return undefined;
+  };
   /** The widths' and ranges' fixpoint; run again when the constant tables add ranges (#1369). */
   const widthFixpoint = (): void => {
     for (let changed = true; changed; ) {
@@ -1520,37 +1585,10 @@ function lowerFunction(
           // (so, by induction, every iteration's is); else as wide as the next one is then, again
           // checked, up to 127 bits. The next value's width is computed under the assumption alone.
           if (!bigWidth.has(v)) {
-            const wi = widthOf(n.inputs[j] as ValueId);
-            let assumed = wi;
-            for (let tries = 0; assumed !== undefined && assumed <= 127 && tries < 8; tries++) {
-              const memo = new Map<ValueId, number | undefined>();
-              const under = (x0: ValueId, depth: number): number | undefined => {
-                const x = resolve(x0);
-                if (x === v) return assumed;
-                const known = widthOf(x);
-                if (known !== undefined) return known;
-                if (memo.has(x)) return memo.get(x);
-                memo.set(x, undefined);
-                const p = producer.get(x);
-                const r =
-                  p?.kind === "op" && depth < 64
-                    ? bigRule(p, (y) => under(y, depth + 1))
-                    : undefined;
-                memo.set(x, r);
-                return r;
-              };
-              const wn = under(rec.next[j] as ValueId, 0);
-              if (wn === undefined) break;
-              if (wn <= assumed) {
-                // Proved: the carry's width, and each value's the proof computed under it (so the
-                // next value, and what it is made of, are i128s as the carry is).
-                bigWidth.set(v, assumed);
-                for (const [x, wx] of memo)
-                  if (wx !== undefined && wx <= 127 && !bigWidth.has(x)) bigWidth.set(x, wx);
-                changed = true;
-                break;
-              }
-              assumed = wn;
+            const w = inductCarry(n, j, new Map(), 0);
+            if (w !== undefined) {
+              bigWidth.set(v, w);
+              changed = true;
             }
           }
           // The loop's output for it: the carry's last value.
@@ -2357,6 +2395,8 @@ function lowerFunction(
     const v = resolve(v0);
     const lit = literalBig(v);
     if (lit !== undefined) return lit.toString();
+    // A value the induction proved narrow whose own width the rules do not give: its boxed BigInt.
+    if (!bigWidth.has(v)) return unboxBig(operand(v));
     const r = fresh();
     emit(`${r} = load i128, ptr ${bigSlotOf(v)}`);
     return r;
@@ -3500,7 +3540,18 @@ function lowerFunction(
               read: (nm, e, f) => (nm === "require" ? scope.read(nm, e, f) : undefined),
               write: () => false,
             };
-    lowerFunction(m, graph, fn, { captures: n.inputs.length, moduleCaptures }, inner);
+    const leafCaptures = n.inputs.map((v) => leafValue.get(resolve(v as ValueId)));
+    lowerFunction(
+      m,
+      graph,
+      fn,
+      {
+        captures: n.inputs.length,
+        moduleCaptures,
+        ...(leafCaptures.some((x) => x !== undefined) ? { leafCaptures } : {}),
+      },
+      inner,
+    );
     const caps = n.inputs.map(operand);
     m.used.add("yk_closure_new");
     const r = fresh();
