@@ -107,9 +107,22 @@ describe.skipIf(!canRun("x86_64-linux"))("the self-rebuild acceptance, interim (
       const got: string[] = [];
       // Each graph one argument, in batches the kernel's argument limit takes.
       for (let i = 0; i < graphs.length; i += 20) {
+        // A graph in parts one argument may hold (128 KiB on Linux), ended by `--`.
+        const parts = (text: string): string[] => {
+          const out: string[] = [];
+          for (let k = 0; k < text.length; ) {
+            // Never between the halves of a surrogate pair, which no argument can hold apart.
+            let end = Math.min(k + 64 * 1024, text.length);
+            const c = text.charCodeAt(end - 1);
+            if (end < text.length && c >= 0xd800 && c <= 0xdbff) end--;
+            out.push(text.slice(k, end));
+            k = end;
+          }
+          return [...out, "--"];
+        };
         const run = spawnSync(
           binary,
-          graphs.slice(i, i + 20).map((g) => JSON.stringify(encodeGraph(g))),
+          graphs.slice(i, i + 20).flatMap((g) => parts(JSON.stringify(encodeGraph(g)))),
           { maxBuffer: 1 << 24 },
         );
         expect([run.status, run.stderr.toString()]).toEqual([0, ""]);

@@ -197,3 +197,12 @@ export {
   operationReference,
   operationRoot,
 } from "./operations.js";
+export {
+  PRIMITIVE_PARAM,
+  expectedArgumentCount,
+  isDefaultedParam,
+  isPrimitiveParam,
+  isRestParam,
+  paramIndex,
+} from "./params.js";
+export { TO_PRIMITIVE_OPERATIONS, mayCallUserCode } from "./heap-labels.js";

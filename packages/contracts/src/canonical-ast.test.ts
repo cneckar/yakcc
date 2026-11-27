@@ -570,6 +570,15 @@ describe("canonicalAstHash – grammar a fragment takes from its context (#1368)
     expect(rejects("const C = class extends Base {};")).toBe(false);
   });
 
+  it("accepts a module's top-level await, as a module's top level awaits", () => {
+    // assemblyscript's asc.js, an ES module, awaits outside any function.
+    expect(rejects('import { f } from "m";\nconst x = await f();')).toBe(false);
+    expect(rejects("const x = await f();\nexport { x };")).toBe(false);
+    expect(rejects("for await (const x of xs) g(x);\nexport {};")).toBe(false);
+    // Inside a function of the module, the function still has to be async.
+    expect(rejects("function g() { return await f(); }\nexport { g };")).toBe(true);
+  });
+
   it("does not add the checker's grammar errors to a source that did not parse", () => {
     // The checker reports grammar errors only where the parse had none (2809 here is a parse
     // error outside 1xxx): the `await` below is not one more error.

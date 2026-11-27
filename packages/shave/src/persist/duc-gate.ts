@@ -91,7 +91,7 @@ import {
   SyntaxKind,
   VariableDeclarationKind,
 } from "ts-morph";
-import { moduleBindingsOf } from "./module-bindings.js";
+import { moduleBindingsOf, mutableOuterOf } from "./module-bindings.js";
 
 /** Gate enforcement mode. */
 export type DucGateMode = "warn" | "reject";
@@ -236,7 +236,7 @@ export function runDucConservationGate(
   let influence: DucInfluenceAttestation;
   let fidelity: LiftFidelity;
   try {
-    const graph = liftAtom(source);
+    const graph = liftAtom(source, { mutableOuter: mutableOuterOf(moduleBindings) });
     wellFormed = isWellFormed(graph).wellFormed;
     fidelity = liftFidelity(source, graph);
     influence = influenceAttestation(graph);

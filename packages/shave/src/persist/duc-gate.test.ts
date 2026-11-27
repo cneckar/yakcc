@@ -601,6 +601,22 @@ describe("feature detection and lift fidelity (#1173)", () => {
       "function f () { if (typeof define === 'undefined') return define.amd; return 1 }";
     expect(runDucConservationGate(wrong).unexplained.map((u) => u.symbol)).toEqual(["define"]);
   });
+  it("a read after a test for the name's absence that leaves is a probe (#1368)", () => {
+    // @xenova/transformers' read_audio, and its cache lookup.
+    const exit =
+      "async function read(url) { if (typeof AudioContext === 'undefined') { throw Error('no AudioContext'); } return new AudioContext({ url }); }";
+    expect(runDucConservationGate(exit).unexplained).toEqual([]);
+    const orElse =
+      "function open() { if (typeof caches === 'undefined') return null; else return caches.open('c'); }";
+    expect(runDucConservationGate(orElse).unexplained).toEqual([]);
+  });
+  it("a test for the name's absence that does not leave explains the reads after it nothing", () => {
+    const stays =
+      "function f() { if (typeof AudioContext === 'undefined') { console.log('no'); } return new AudioContext(); }";
+    expect(runDucConservationGate(stays).unexplained.map((u) => u.symbol)).toEqual([
+      "AudioContext",
+    ]);
+  });
   it("a read inside a try is not a probe: the catch would hide a real hole", () => {
     const hidden = "function f (x) { try { return helper(x) } catch (e) { return null } }";
     expect(runDucConservationGate(hidden).unexplained.map((u) => u.symbol)).toEqual(["helper"]);
@@ -685,5 +701,44 @@ describe("TypeScript's types are not reads (#1297)", () => {
       expect([src, result.unexplained]).toEqual([src, []]);
       expect([src, result.fidelity?.holds]).toEqual([src, true]);
     }
+  });
+});
+
+describe("names a module writes on the global object (#1368)", () => {
+  // AssemblyScript's bundle installs its portable runtime this way, then reads the names bare.
+  const MODULE = `var Z = typeof window < "u" && window || typeof global < "u" && global || self;
+if (typeof Z.ASC_TARGET > "u") {
+  Z.i32 = function (v) { return v | 0; };
+  globalThis.i64_low = function (v) { return v.low; };
+}
+function f(x) { return i32(x) + i64_low(x); }`;
+
+  it("are the module's state, mutable as a variable some write sets", () => {
+    const b = moduleBindingsOf(MODULE);
+    expect(b.get("i32")?.binding).toBe("mutable");
+    expect(b.get("i64_low")?.binding).toBe("mutable");
+    expect(b.get("ASC_TARGET")).toBeUndefined();
+  });
+
+  it("explain an atom's bare reads of them", () => {
+    const gate = runDucConservationGate(
+      "function f(x) { return i32(x) + i64_low(x); }",
+      new Set(),
+      moduleBindingsOf(MODULE),
+    );
+    expect(gate.unexplained.map((u) => u.symbol)).toEqual([]);
+  });
+
+  it("are not written through a parameter that only shares the alias's name", () => {
+    const b = moduleBindingsOf(`var Z = globalThis;
+function g(Z) { Z.foo = 1; }
+function h(global) { global.bar = 1; }`);
+    expect(b.get("foo")).toBeUndefined();
+    expect(b.get("bar")).toBeUndefined();
+  });
+
+  it("are not written through an alias the module rebinds, or a global name it declares", () => {
+    expect(moduleBindingsOf("var Z = self;\nZ = {};\nZ.foo = 1;").get("foo")).toBeUndefined();
+    expect(moduleBindingsOf("var window = {};\nwindow.foo = 1;").get("foo")).toBeUndefined();
   });
 });

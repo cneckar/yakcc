@@ -22,6 +22,8 @@
 // path does not execute module code, so this does not arise there.
 
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { type DiamondReason, liftAtom } from "@yakcc/duc";
 import { Node, Project, ScriptKind, type SourceFile, SyntaxKind } from "ts-morph";
 
@@ -32,6 +34,11 @@ export type ModuleBinding = "pure" | "mutable";
 export interface ModuleBindingInfo {
   readonly binding: ModuleBinding;
   readonly declHash: string;
+  /**
+   * Whether something in the module reassigns the binding (#1375): a write, an update, a loop that
+   * assigns it, a write on the global object. A read of it is ordered with the calls around it.
+   */
+  readonly reassigned?: true;
 }
 
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
@@ -513,7 +520,270 @@ export function moduleBindingsOf(moduleSource: string): Map<string, ModuleBindin
   for (const [name, f] of fns) {
     bindings.set(name, { binding: pure.has(name) ? "pure" : "mutable", declHash: f.declHash });
   }
+  // A name the module writes on the global object is the module's state too (#1368): the
+  // portable runtime of a bundle writes `G.i32 = ..` for each name it then reads bare, through
+  // `var G = typeof window < "u" && window || typeof global < "u" && global || self`. Read where
+  // it is, a name only some write sets is mutable, as a module variable a write sets is.
+  for (const [name, declHash] of globalWrites(sf, bindings)) {
+    if (!bindings.has(name)) bindings.set(name, { binding: "mutable", declHash, reassigned: true });
+  }
+  // A name the module assigns anywhere is reassigned. A nested scope's own binding of the same name
+  // counts too: ordering a read that needs no order is only less canonical, never wrong.
+  for (const name of reassignedNames(sf)) {
+    const b = bindings.get(name);
+    if (b !== undefined && b.reassigned !== true) bindings.set(name, { ...b, reassigned: true });
+  }
   return bindings;
+}
+
+/** The names a module assigns, updates, or has a loop assign, anywhere in it. */
+function reassignedNames(sf: SourceFile): Set<string> {
+  const names = new Set<string>();
+  const target = (t: Node): void => {
+    if (Node.isIdentifier(t)) names.add(t.getText());
+    else if (Node.isParenthesizedExpression(t)) target(t.getExpression());
+    else if (Node.isArrayLiteralExpression(t))
+      for (const el of t.getElements()) target(Node.isSpreadElement(el) ? el.getExpression() : el);
+    else if (Node.isObjectLiteralExpression(t))
+      for (const p of t.getProperties()) {
+        if (Node.isShorthandPropertyAssignment(p)) names.add(p.getName());
+        else if (Node.isPropertyAssignment(p)) target(p.getInitializerOrThrow());
+        else if (Node.isSpreadAssignment(p)) target(p.getExpression());
+      }
+    else if (
+      Node.isBinaryExpression(t) &&
+      t.getOperatorToken().getKind() === SyntaxKind.EqualsToken
+    )
+      target(t.getLeft());
+  };
+  for (const n of sf.getDescendants()) {
+    if (Node.isBinaryExpression(n) && ASSIGN_OPS.has(n.getOperatorToken().getKind()))
+      target(n.getLeft());
+    else if (
+      (Node.isPrefixUnaryExpression(n) || Node.isPostfixUnaryExpression(n)) &&
+      (n.getOperatorToken() === SyntaxKind.PlusPlusToken ||
+        n.getOperatorToken() === SyntaxKind.MinusMinusToken)
+    )
+      target(n.getOperand());
+    else if (Node.isForOfStatement(n) || Node.isForInStatement(n)) {
+      const init = n.getInitializer();
+      if (!Node.isVariableDeclarationList(init)) target(init);
+    }
+  }
+  return names;
+}
+
+/**
+ * The module's bindings something reassigns (#1375): a read of one in an atom is ordered with the
+ * atom's calls and writes, so the lifter is told them.
+ */
+export function mutableOuterOf(
+  bindings: ReadonlyMap<string, ModuleBindingInfo> | undefined,
+): string[] {
+  return bindings === undefined
+    ? []
+    : [...bindings].filter(([, b]) => b.reassigned === true).map(([name]) => name);
+}
+
+/**
+ * The module's bindings, with each import whose exporting module reassigns the binding marked
+ * `reassigned` (#1375): an import is a live binding, so a read of it is ordered with the calls
+ * around it, as a read of the module's own reassigned binding is. Only relative imports of a module
+ * the file system has are resolved; a binding re-exported from elsewhere is left as it is.
+ */
+export function withImportedReassigned(
+  bindings: Map<string, ModuleBindingInfo>,
+  moduleSource: string,
+  filePath: string | undefined,
+  read: (file: string) => string | undefined = readIfThere,
+): Map<string, ModuleBindingInfo> {
+  if (filePath === undefined || !/\bimport\b/.test(moduleSource)) return bindings;
+  const project = new Project({
+    useInMemoryFileSystem: true,
+    skipAddingFilesFromTsConfig: true,
+    compilerOptions: { allowJs: false, noEmit: true },
+  });
+  const sf = project.createSourceFile("__module__.ts", moduleSource, { scriptKind: ScriptKind.TS });
+  const marked = new Map(bindings);
+  for (const decl of sf.getImportDeclarations()) {
+    if (decl.isTypeOnly()) continue;
+    const specifier = decl.getModuleSpecifierValue();
+    if (!specifier.startsWith(".")) continue;
+    const exporter = resolveRelative(filePath, specifier, read);
+    if (exporter === undefined) continue;
+    const reassigned = exportedReassigned(exporter);
+    for (const named of decl.getNamedImports()) {
+      if (named.isTypeOnly() || !reassigned.has(named.getName())) continue;
+      const local = (named.getAliasNode() ?? named.getNameNode()).getText();
+      const b = marked.get(local);
+      if (b !== undefined) marked.set(local, { ...b, reassigned: true });
+    }
+  }
+  return marked;
+}
+
+function readIfThere(file: string): string | undefined {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/** The source of the module a relative specifier names, trying TypeScript's own mappings. */
+function resolveRelative(
+  from: string,
+  specifier: string,
+  read: (file: string) => string | undefined,
+): string | undefined {
+  const base = resolve(dirname(from), specifier);
+  const tries = [
+    base,
+    base.replace(/\.js$/, ".ts"),
+    base.replace(/\.js$/, ".tsx"),
+    base.replace(/\.mjs$/, ".mts"),
+    `${base}.ts`,
+    `${base}.js`,
+    `${base}/index.ts`,
+    `${base}/index.js`,
+  ];
+  for (const file of tries) {
+    const text = read(file);
+    if (text !== undefined) return text;
+  }
+  return undefined;
+}
+
+/** The names a module exports whose binding it reassigns: `export let x`, `export { x as y }`. */
+function exportedReassigned(source: string): Set<string> {
+  const bindings = moduleBindingsOf(source);
+  const project = new Project({
+    useInMemoryFileSystem: true,
+    skipAddingFilesFromTsConfig: true,
+    compilerOptions: { allowJs: false, noEmit: true },
+  });
+  const sf = project.createSourceFile("__exporter__.ts", source, { scriptKind: ScriptKind.TS });
+  const out = new Set<string>();
+  const reassigned = (local: string): boolean => bindings.get(local)?.reassigned === true;
+  for (const stmt of sf.getVariableStatements()) {
+    if (!stmt.isExported()) continue;
+    for (const decl of stmt.getDeclarations()) {
+      const name = decl.getNameNode();
+      if (Node.isIdentifier(name) && reassigned(name.getText())) out.add(name.getText());
+    }
+  }
+  for (const decl of sf.getExportDeclarations()) {
+    if (decl.getModuleSpecifier() !== undefined || decl.isTypeOnly()) continue;
+    for (const spec of decl.getNamedExports()) {
+      const local = spec.getNameNode().getText();
+      if (reassigned(local)) out.add(spec.getAliasNode()?.getText() ?? local);
+    }
+  }
+  return out;
+}
+
+/** The names of the global object. */
+const GLOBAL_OBJECTS = new Set(["globalThis", "global", "window", "self"]);
+
+/**
+ * The names a module writes on the global object (`globalThis.x = ..`, or through a module
+ * variable whose value is only ever the global object), each with the hash of its first write.
+ * A global object's name the module binds itself is not the global object.
+ */
+function globalWrites(
+  sf: SourceFile,
+  bindings: ReadonlyMap<string, ModuleBindingInfo>,
+): Map<string, string> {
+  const named = (n: Node): boolean =>
+    Node.isIdentifier(n) && GLOBAL_OBJECTS.has(n.getText()) && !bindings.has(n.getText());
+  // An expression whose value is a global object, whichever way its tests go: the global names,
+  // joined by && || ?: , with typeof tests of them in the conditions.
+  const globalNames: Node[] = [];
+  const isGlobalObject = (e: Node | undefined): boolean => {
+    if (e === undefined) return false;
+    if (Node.isParenthesizedExpression(e)) return isGlobalObject(e.getExpression());
+    if (named(e)) {
+      globalNames.push(e);
+      return true;
+    }
+    if (Node.isConditionalExpression(e))
+      return (
+        isTest(e.getCondition()) &&
+        isGlobalObject(e.getWhenTrue()) &&
+        isGlobalObject(e.getWhenFalse())
+      );
+    if (Node.isBinaryExpression(e)) {
+      const op = e.getOperatorToken().getKind();
+      if (op === SyntaxKind.BarBarToken)
+        return (isTest(e.getLeft()) || isGlobalObject(e.getLeft())) && isGlobalObject(e.getRight());
+      if (op === SyntaxKind.AmpersandAmpersandToken)
+        return isTest(e.getLeft()) && isGlobalObject(e.getRight());
+    }
+    return false;
+  };
+  // `typeof window < "u"`, `typeof global !== "undefined"`: a test with no effect.
+  const isTest = (e: Node): boolean => {
+    if (Node.isParenthesizedExpression(e)) return isTest(e.getExpression());
+    if (!Node.isBinaryExpression(e)) return false;
+    const [l, r] = [e.getLeft(), e.getRight()];
+    const of = (t: Node, other: Node): boolean =>
+      Node.isTypeOfExpression(t) && named(t.getExpression()) && Node.isStringLiteral(other);
+    if (!(of(l, r) || of(r, l))) return false;
+    globalNames.push(Node.isTypeOfExpression(l) ? l.getExpression() : (r as Node));
+    return true;
+  };
+
+  const aliases = new Map<string, Node>();
+  for (const stmt of sf.getVariableStatements())
+    for (const decl of stmt.getDeclarations()) {
+      const nameNode = decl.getNameNode();
+      if (Node.isIdentifier(nameNode) && isGlobalObject(decl.getInitializer()))
+        aliases.set(nameNode.getText(), decl);
+    }
+  const candidates: { bin: Node; object: Node; name: string }[] = [];
+  for (const bin of sf.getDescendantsOfKind(SyntaxKind.BinaryExpression)) {
+    if (bin.getOperatorToken().getKind() !== SyntaxKind.EqualsToken) continue;
+    const left = bin.getLeft();
+    if (!Node.isPropertyAccessExpression(left)) continue;
+    const object = left.getExpression();
+    if (named(object) || (Node.isIdentifier(object) && aliases.has(object.getText())))
+      candidates.push({ bin, object, name: left.getName() });
+  }
+  if (candidates.length === 0) return new Map();
+
+  // Each name is the one it looks like only where no scope of the module binds it again: minified
+  // code names a parameter `Z` as readily as its global alias. The checker tells, once there is a
+  // write to ask about.
+  const declaredHere = (id: Node): boolean =>
+    id
+      .getSymbol()
+      ?.getDeclarations()
+      .some((d) => d.getSourceFile() === sf) ?? false;
+  const isAlias = (id: Node): boolean => {
+    const decl = aliases.get(id.getText());
+    return (
+      decl !== undefined &&
+      (id.getSymbol()?.getDeclarations() ?? []).every((d) => d.compilerNode === decl.compilerNode)
+    );
+  };
+  if (globalNames.some(declaredHere)) return new Map();
+  // An alias is the global object only while nothing rebinds it.
+  for (const bin of sf.getDescendantsOfKind(SyntaxKind.BinaryExpression)) {
+    const left = bin.getLeft();
+    if (
+      ASSIGN_OPS.has(bin.getOperatorToken().getKind()) &&
+      Node.isIdentifier(left) &&
+      aliases.has(left.getText()) &&
+      isAlias(left)
+    )
+      aliases.delete(left.getText());
+  }
+  const writes = new Map<string, string>();
+  for (const { bin, object, name } of candidates) {
+    const global = named(object) ? !declaredHere(object) : isAlias(object);
+    if (global && !writes.has(name)) writes.set(name, sha(bin.getText()));
+  }
+  return writes;
 }
 
 /**

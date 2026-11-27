@@ -36,7 +36,7 @@ describe("links in the line form", () => {
       () => "k1",
     );
     const text = [
-      "param x",
+      "param x prim",
       "free foo -> g link k1",
       "op CallExpression g x -> c",
       'lit "1" -> one',

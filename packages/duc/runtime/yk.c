@@ -51,6 +51,7 @@ typedef uint64_t yk;
 
 typedef struct {
   uint32_t len;
+  uint32_t hash; /* its key_hash, once computed (0: not yet) */
   uint16_t units[];
 } yk_string;
 
@@ -60,7 +61,12 @@ typedef struct {
   yk props; /* its non-index properties (an object: an exec result's index, input, groups), or 0 */
   uint8_t *holes;    /* a bit per index it does not have ([, a], new Array(n), delete), or NULL */
   uint32_t holes_n;  /* bytes in holes */
+  uint32_t integrity; /* Object.preventExtensions / seal / freeze: INTEGRITY_* bits */
 } yk_array;
+/* An object's (or array's) integrity, as bits of its accessors (integrity) word. */
+#define INTEGRITY_NOEXT 4u
+#define INTEGRITY_SEALED 8u
+#define INTEGRITY_FROZEN 16u
 
 typedef struct {
   uint32_t len, cap;
@@ -82,6 +88,8 @@ typedef struct {
   yk_array *hidden;       /* its non-enumerable own keys (Object.defineProperty's), or NULL */
   uint32_t *cindex;       /* a Map's or Set's: each entry's position + 1, by its key's hash; NULL to rebuild */
   uint32_t cindex_cap;
+  uint32_t accessors; /* bit 0: an accessor (or another internal slot) was set on it; bit 1: it is
+                         an ECMAScript module's namespace; INTEGRITY_* bits (freeze, seal, …) */
 } yk_object;
 
 /* A BigInt: a sign and a magnitude, 32-bit limbs least significant first, no zero limb on top. */
@@ -205,6 +213,7 @@ typedef struct {
   uint8_t cls;
   uint32_t n;   /* small: its blocks; large, first: its pages; large, other: back to the first */
   uint64_t used[64], mark[64];
+  uint64_t noscan[64]; /* blocks that hold no values (a string's units, a buffer's bytes): marked, not scanned */
 } gc_page;
 typedef struct {
   size_t start, len;
@@ -218,9 +227,13 @@ static void *gc_free[GC_NCLASS];
 /* A block's index in its page: the offset times its class's reciprocal (exact below GC_PAGE), not a
    division. */
 static uint64_t gc_recip[GC_NCLASS];
+static int gc_stress = 0; /* YK_GC_STRESS: a collection every 64 KiB, however much is live */
 static size_t gc_since = 0, gc_threshold = (size_t)32 << 20, gc_floor = (size_t)32 << 20;
 static int gc_state = 0; /* 0 not yet set up, 1 collecting, 2 allocating only, 3 never (no heap) */
 static uintptr_t gc_stack_top = 0;
+/* The lowest frame address a call may make on the main stack (#1361 P2): below it, a call throws
+   V8's RangeError, as deep recursion does in Node (its library probes for that error's message). */
+static uintptr_t yk_stack_low = 0;
 /* While a coroutine runs, where the main stack was left (its frames above are live). */
 static uintptr_t gc_main_sp = 0;
 static int gc_in_coroutine(void);
@@ -256,13 +269,15 @@ static void gc_setup(void) {
   for (uint32_t c = 0; c < GC_NCLASS; c++) gc_recip[c] = ((uint64_t)1 << 32) / gc_sizes[c] + 1;
   /* YK_GC_STRESS: collect every 64 KiB, so a value the roots miss is found by the tests. */
   const char *stress = getenv("YK_GC_STRESS");
-  if (stress != NULL && stress[0] == '1') gc_threshold = gc_floor = (size_t)1 << 16;
+  if (stress != NULL && stress[0] == '1') gc_threshold = gc_floor = (size_t)1 << 16, gc_stress = 1;
   if (getenv("YK_GC_STATS") != NULL) atexit(gc_report);
 #ifdef YK_NOLIBC
   /* The stack _start was entered with: every frame is below it. */
   if (gc_state == 2 && yk_nolibc_stack_top != 0) {
     gc_stack_top = yk_nolibc_stack_top;
     gc_state = 1;
+    /* Linux's default main stack, 8 MiB, less a margin to throw in. */
+    yk_stack_low = yk_nolibc_stack_top - ((size_t)8 << 20) + ((size_t)256 << 10);
   }
 #else
   pthread_attr_t at;
@@ -272,6 +287,7 @@ static void gc_setup(void) {
     if (pthread_attr_getstack(&at, &addr, &size) == 0) {
       gc_stack_top = (uintptr_t)addr + size;
       gc_state = 1;
+      yk_stack_low = (uintptr_t)addr + ((size_t)256 << 10);
     }
     pthread_attr_destroy(&at);
   }
@@ -389,8 +405,8 @@ static struct {
   size_t n;
 } *gc_work = NULL;
 static size_t gc_nwork = 0, gc_capwork = 0;
-static void gc_consider(uintptr_t x) {
-  if (x < (uintptr_t)gc_heap || x >= (uintptr_t)gc_heap + (gc_top << GC_PAGE_SHIFT)) return;
+/* A word known to be an address in the heap's span: its block marked, and queued to be scanned. */
+static inline __attribute__((always_inline)) void gc_consider_in(uintptr_t x) {
   size_t off = x - (uintptr_t)gc_heap;
   size_t pi = off >> GC_PAGE_SHIFT;
   gc_page *g = &gc_pages[pi];
@@ -403,15 +419,17 @@ static void gc_consider(uintptr_t x) {
   if (g->kind == 2) {
     if (g->mark[0] & 1) return;
     g->mark[0] |= 1;
+    if (g->noscan[0] & 1) return;
     p = gc_heap + (pi << GC_PAGE_SHIFT);
     n = (size_t)g->n << GC_PAGE_SHIFT;
   } else if (g->kind == 1) {
     uint32_t size = gc_sizes[g->cls];
-    uint32_t b = (uint32_t)((off & (GC_PAGE - 1)) / size);
+    uint32_t b = (uint32_t)(((off & (GC_PAGE - 1)) * gc_recip[g->cls]) >> 32);
     if (b >= g->n) return;
     uint64_t bit = (uint64_t)1 << (b & 63);
     if (!(g->used[b >> 6] & bit) || (g->mark[b >> 6] & bit)) return;
     g->mark[b >> 6] |= bit;
+    if (g->noscan[b >> 6] & bit) return;
     p = gc_heap + (pi << GC_PAGE_SHIFT) + (size_t)b * size;
     n = size;
   } else
@@ -424,16 +442,28 @@ static void gc_consider(uintptr_t x) {
   gc_work[gc_nwork].p = p;
   gc_work[gc_nwork++].n = n;
 }
+static void gc_consider(uintptr_t x) {
+  if (x < (uintptr_t)gc_heap || x >= (uintptr_t)gc_heap + (gc_top << GC_PAGE_SHIFT)) return;
+  gc_consider_in(x);
+}
 static void gc_scan(const void *lo, const void *hi) {
   uintptr_t a = ((uintptr_t)lo + sizeof(uintptr_t) - 1) & ~(uintptr_t)(sizeof(uintptr_t) - 1);
-  for (const uintptr_t *w = (const uintptr_t *)a; (const void *)(w + 1) <= hi; w++) {
+  /* The heap's span, the same while marking: a word outside it is not considered at all. */
+  uintptr_t base = (uintptr_t)gc_heap, span = (uintptr_t)gc_top << GC_PAGE_SHIFT;
+  const uintptr_t *end = (const uintptr_t *)((uintptr_t)hi & ~(uintptr_t)(sizeof(uintptr_t) - 1));
+  for (const uintptr_t *w = (const uintptr_t *)a; w < end; w++) {
     uintptr_t x = *w;
 #if UINTPTR_MAX > 0xFFFFFFFFu
+    /* Its payload in the heap's span first (most words are not), then whether it is an address or
+       a boxed value at all (a number's bits may fall in the span). */
+    uintptr_t y = x & 0x0000FFFFFFFFFFFFull;
+    if (y - base >= span) continue;
     uint64_t top = (uint64_t)x >> 48;
-    if (top >= 0xFFFA) x &= 0x0000FFFFFFFFFFFFull;
-    else if (top != 0) continue;
+    if (top != 0 && top < 0xFFFA) continue;
+    gc_consider_in(y);
+#else
+    if (x - base < span) gc_consider_in(x);
 #endif
-    gc_consider(x);
   }
 }
 static void gc_drain(void) {
@@ -466,7 +496,9 @@ static __attribute__((noinline)) void gc_mark_roots(void) {
   jmp_buf regs; /* the callee-saved registers, on this frame */
   setjmp(regs);
   gc_scan(&regs, (uint8_t *)&regs + sizeof regs);
-  uintptr_t sp = (uintptr_t)__builtin_frame_address(0);
+  /* The stack from this jmp_buf up: the registers this function's prologue saved (a caller's value
+     held in one) are below its frame's address, above its locals. */
+  uintptr_t sp = (uintptr_t)&regs;
   uintptr_t from = gc_in_coroutine() ? gc_main_sp : sp;
   if (from != 0 && from < gc_stack_top) gc_scan((void *)from, (void *)gc_stack_top);
   gc_drain();
@@ -503,6 +535,7 @@ static void gc_collect(void) {
         live += k << GC_PAGE_SHIFT;
       } else {
         g->used[0] = 0;
+        g->noscan[0] = 0;
         gc_put_pages(pi, k);
       }
       pi += k - 1;
@@ -511,6 +544,7 @@ static void gc_collect(void) {
       int any = 0;
       for (int w = 0; w < 64; w++) {
         g->used[w] &= g->mark[w];
+        g->noscan[w] &= g->used[w];
         g->mark[w] = 0;
         if (g->used[w]) any = 1;
       }
@@ -533,10 +567,24 @@ static void gc_collect(void) {
   gc_live_last = live;
   /* The next collection after twice what is live is allocated again: the heap is at most three times
      what is live, and each byte live is traced once per twice its size allocated. */
-  gc_threshold = 2 * live > gc_floor ? 2 * live : gc_floor;
+  gc_threshold = gc_stress || 2 * live <= gc_floor ? gc_floor : 2 * live;
+}
+/* A block that will hold no values (#1370): marked when reached, never scanned for pointers. */
+static void *alloc_noscan(size_t n) {
+  uint8_t *p = alloc(n);
+  if (p < gc_heap || p >= gc_heap + (gc_top << GC_PAGE_SHIFT)) return p;
+  size_t off = (size_t)(p - gc_heap);
+  gc_page *g = &gc_pages[off >> GC_PAGE_SHIFT];
+  if (g->kind == 2) g->noscan[0] |= 1;
+  else if (g->kind == 1) {
+    uint32_t b = (uint32_t)(((off & (GC_PAGE - 1)) * gc_recip[g->cls]) >> 32);
+    g->noscan[b >> 6] |= (uint64_t)1 << (b & 63);
+  }
+  return p;
 }
 #else
 static void *alloc(size_t n) { return bump(n); }
+static void *alloc_noscan(size_t n) { return bump(n); }
 static uintptr_t gc_main_sp = 0;
 #endif
 /* Memory that is freed and holds no values (scratch buffers): the C library's. */
@@ -553,8 +601,9 @@ static void *grow(void *p, size_t old, size_t n) {
 }
 
 static yk_string *new_string(uint32_t len) {
-  yk_string *s = alloc(sizeof(yk_string) + (size_t)len * 2);
+  yk_string *s = alloc_noscan(sizeof(yk_string) + (size_t)len * 2);
   s->len = len;
+  s->hash = 0;
   return s;
 }
 
@@ -746,6 +795,23 @@ static yk_array *iterable_items(yk v);
 static yk method_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
 static yk object_thunk_code(void *c, yk self, uint64_t argc, const yk *argv);
 static yk builtin_iter_new(yk src, int mode, int type);
+static _Noreturn void integrity_refused(const char *a, yk k, const char *b);
+/* A primitive's wrapper object (new Number(1), Object('s'); kind 15): its primitive in ext. */
+static int is_wrapper(yk v);
+static yk wrapper_value(yk v);
+static yk make_wrapper(yk prim);
+/* Proxies (below): their internal methods. */
+static int is_proxy(yk v);
+static int is_obj_proxy(yk v);
+static yk proxy_get(yk proxy, yk key, yk receiver);
+static void proxy_set(yk proxy, yk key, yk value, yk receiver);
+static yk proxy_has(yk proxy, yk key);
+static yk proxy_delete(yk proxy, yk key);
+static yk_array *proxy_own_keys(yk proxy);
+static yk proxy_own_descriptor(yk proxy, yk key);
+static yk proxy_prototype(yk proxy);
+static yk builtin_proxy(void *c, yk s, uint64_t argc, const yk *argv);
+static yk proxy_revocable(void *c, yk s, uint64_t argc, const yk *argv);
 static int is_builtin_iter(yk v);
 static int builtin_iter_step(yk v, yk *out);
 static yk iter_result(yk value, int done);
@@ -755,11 +821,13 @@ static int is_thunk(yk f) {
   return code == method_thunk_code || code == object_thunk_code;
 }
 static yk big_to_string_v(yk v);
+static yk big_to_radix_v(yk v, uint32_t radix);
 static double big_to_double_v(yk v);
 static int big_cmp_v(yk a, yk b);
 static int big_cmp_double_v(yk a, double y);
 static yk big_binary(yk a, yk b, char op);
 static int numeric_pair(yk *a, yk *b);
+static uint32_t clamp_relative(yk v, uint32_t len, uint32_t dflt);
 static yk big_from_string_v(yk s);
 static yk big_negate(yk a);
 static yk big_add_small(yk a, int64_t k);
@@ -963,6 +1031,9 @@ static yk array_join(yk_array *a, yk_string *sep) {
 }
 
 static yk to_primitive(yk v);
+static yk to_primitive_string(yk v);
+static yk to_primitive_hint(yk v, int hint);
+yk yk_get(yk obj, yk key);
 
 /* --- symbols (ECMA-262 20.4): an internal value (kind 4) with its description; equal only to itself.
    The well-known ones are made once. A symbol is a property key as it is; ToString of one throws. */
@@ -1011,13 +1082,20 @@ static yk case_convert(yk v, int upper);
 static int date_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
 static yk date_string(double t, int what);
 /* Property keys equal: the same symbol, or strings of the same units. */
-static int key_equal(yk a, yk b) {
+static inline int key_equal(yk a, yk b) {
   if (a == b) return 1;
-  return is_string(a) && is_string(b) && string_equal(str(a), str(b));
+  if (!is_string(a) || !is_string(b)) return 0;
+  yk_string *x = (yk_string *)PTR(a), *y = (yk_string *)PTR(b);
+  /* Two flat strings whose lengths or kept hashes differ: not equal, no units compared (a rope's
+     words are its own: it is made flat and compared). */
+  if (((x->len | y->len) & ROPE_BIT) == 0 &&
+      (x->len != y->len || (x->hash != 0 && y->hash != 0 && x->hash != y->hash)))
+    return 0;
+  return string_equal(str(a), str(b));
 }
 /* ToPropertyKey: a symbol as it is; anything else its string. */
 static yk to_property_key(yk v) {
-  if (is_object(v) || is_closure(v)) v = to_primitive(v);
+  if (is_object(v) || is_closure(v)) v = to_primitive_string(v);
   return is_symbol(v) ? v : to_string(v);
 }
 /* SymbolDescriptiveString: Symbol(description). */
@@ -1027,7 +1105,7 @@ static yk symbol_descriptive(yk v) {
 }
 
 static yk to_string(yk v) {
-  if (is_object(v) || is_closure(v)) return to_string(to_primitive(v));
+  if (is_object(v) || is_closure(v)) return to_string(to_primitive_string(v));
   if (is_string(v)) return v;
   if (is_symbol(v)) type_error("Cannot convert a Symbol value to a string");
   if (is_number(v)) return number_to_string(num(v));
@@ -1044,42 +1122,73 @@ static yk to_string(yk v) {
  * toString, as Object.prototype's would be overridden, else "[object Object]"; a function has no
  * source text here, so it is a fixed string.
  */
-static yk to_primitive(yk v) {
+static yk to_primitive_hint(yk v, int hint);
+static yk to_primitive(yk v) { return to_primitive_hint(v, 0); }
+/* OrdinaryToPrimitive with hint string (ToString, ToPropertyKey, a template's substitutions):
+   toString before valueOf. Hints: 0 default, 1 string, 2 number (valueOf first, as default). */
+static yk to_primitive_string(yk v) { return to_primitive_hint(v, 1); }
+/* Function.prototype.toString: the runtime keeps no source text, so a function is V8's form for one
+   it has none of, with its name. */
+static yk function_source(yk f) {
+  yk n = yk_get(f, ascii("name"));
+  yk name = is_string(n) ? n : ascii("");
+  return concat(str(concat(str(ascii("function ")), str(name))), str(ascii("() { [native code] }")));
+}
+static yk to_primitive_hint(yk v, int hint) {
+  int string_hint = hint == 1;
   if (is_array(v)) return to_string(v);
-  if (is_closure(v)) return ascii("function () { [native code] }");
+  if (is_closure(v)) return function_source(v);
   if (!is_object(v)) return v;
   yk_object *self = (yk_object *)PTR(v);
+  {
+    /* Its own @@toPrimitive (one the program defines), called with the hint. */
+    yk f;
+    if (chain_get(v, well_known_symbol(10), &f) && is_closure(f = resolve_slot(f, v)) && !is_thunk(f)) {
+      yk h = ascii(hint == 1 ? "string" : hint == 2 ? "number" : "default");
+      yk r = call_value(f, v, 1, &h);
+      if (is_reference(r)) type_error("Cannot convert object to primitive value");
+      return r;
+    }
+  }
   if (self->kind != 0 && is_object(self->proto)) {
     /* A subclass's (or the program's) own valueOf / toString first (a Buffer's toString). */
-    static const char *own_names[2] = {"valueOf", "toString"};
+    static const char *own_names[2][2] = {{"valueOf", "toString"}, {"toString", "valueOf"}};
     for (int i = 0; i < 2; i++) {
       yk f;
-      if (chain_get(v, ascii(own_names[i]), &f) && is_closure(f = resolve_slot(f, v)) && !is_thunk(f)) {
+      if (chain_get(v, ascii(own_names[string_hint][i]), &f) && is_closure(f = resolve_slot(f, v)) && !is_thunk(f)) {
         yk r = call_value(f, v, 0, NULL);
         if (!is_reference(r)) return r;
       }
     }
   }
+  if (self->kind == 15) return wrapper_value(v); /* a wrapper's primitive, its own valueOf's */
   /* A typed array's toString is its join; a buffer's and a view's, their tag. */
   if (self->kind == 7) return buffer_primitive(v);
   if (self->kind == 6) return ascii("[object ArrayBuffer]");
-  if (self->kind == 10) return date_string(*(double *)self->ext, 0); /* a Date's default hint is string */
+  /* A Date's default hint is string; hint number its time value. */
+  if (self->kind == 10) return hint == 2 ? yk_number(*(double *)self->ext) : date_string(*(double *)self->ext, 0);
   if (self->kind == 8) return ascii("[object DataView]");
   if (self->kind == 3)
     return concat(str(concat(str(concat(str(ascii("/")), str(self->regex[0]))), str(ascii("/")))), str(self->regex[1]));
-  static const char *names[2] = {"valueOf", "toString"};
+  static const char *names[2][2] = {{"valueOf", "toString"}, {"toString", "valueOf"}};
   for (int i = 0; i < 2; i++) {
     yk f;
-    if (chain_get(v, ascii(names[i]), &f) && is_closure(f = resolve_slot(f, v))) {
+    /* A built-in's thunk (an intrinsic prototype's, along an explicit chain) is the runtime's own
+       conversion, below; found first for hint string (Object.prototype.toString), it is the one. */
+    int found = chain_get(v, ascii(names[string_hint][i]), &f);
+    if (found && is_closure(f = resolve_slot(f, v)) && !is_thunk(f)) {
       yk r = call_value(f, v, 0, NULL);
       if (!is_reference(r)) return r;
-    }
+    } else if (string_hint && i == 0 && (found ? is_thunk(f) : tail_proto(v) != 0))
+      break; /* the built-in toString (its chain's intrinsic one): the runtime's below */
   }
   if (self->error) {
     /* Error.prototype.toString: name, ": ", message (either alone when the other is empty). */
     yk name, message;
-    yk n = own_get(self, ascii("name"), &name) ? to_string(name) : ascii("Error");
-    yk msg = own_get(self, ascii("message"), &message) ? to_string(message) : ascii("");
+    name = yk_get(v, ascii("name"));
+    message = yk_get(v, ascii("message"));
+    yk n = name != YK_UNDEFINED ? to_string(name) : ascii("Error");
+    yk msg = message != YK_UNDEFINED ? to_string(message) : ascii("");
     if (str(msg)->len == 0) return n;
     if (str(n)->len == 0) return msg;
     return concat(str(concat(str(n), str(ascii(": ")))), str(msg));
@@ -1153,7 +1262,7 @@ static double to_number(yk v) {
   if (v == YK_TRUE) return 1;
   if (is_string(v)) return string_to_number(str(v));
   if (is_bigint(v)) type_error("Cannot convert a BigInt value to a number");
-  v = to_primitive(v);
+  v = to_primitive_hint(v, 2); /* ToNumber: hint number */
   if (is_bigint(v)) type_error("Cannot convert a BigInt value to a number");
   return to_number(v);
 }
@@ -1168,6 +1277,7 @@ int yk_truthy(yk v) {
   if (is_string(v)) return str_len(v) > 0;
   if (is_reference(v)) return 1;
   if (is_bigint(v)) return ((yk_bigint *)PTR(v))->len != 0;
+  if (is_symbol(v)) return 1; /* a symbol is truthy */
   return v == YK_TRUE;
 }
 
@@ -1194,25 +1304,26 @@ yk yk_div(yk a, yk b) {
 }
 yk yk_mod(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '%') : yk_number(fmod(to_number(a), to_number(b))); }
 yk yk_neg(yk a) {
-  a = to_primitive(a);
+  a = to_primitive_hint(a, 2);
   return is_bigint(a) ? big_negate(a) : yk_number(-to_number(a));
 }
 yk yk_pos(yk a) { return yk_number(to_number(a)); }
 yk yk_not(yk a) { return yk_bool(!yk_truthy(a)); }
 yk yk_inc(yk a) {
   if (is_number(a)) return yk_number(num(a) + 1);
-  a = to_primitive(a);
+  a = to_primitive_hint(a, 2);
   return is_bigint(a) ? big_add_small(a, 1) : yk_number(to_number(a) + 1);
 }
 yk yk_dec(yk a) {
   if (is_number(a)) return yk_number(num(a) - 1);
-  a = to_primitive(a);
+  a = to_primitive_hint(a, 2);
   return is_bigint(a) ? big_add_small(a, -1) : yk_number(to_number(a) - 1);
 }
 int yk_is_nullish(yk a) { return is_nullish(a); }
 
 static int string_equal(yk_string *a, yk_string *b) {
-  return a->len == b->len && memcmp(a->units, b->units, (size_t)a->len * 2) == 0;
+  if (a->len != b->len || (a->hash != 0 && b->hash != 0 && a->hash != b->hash)) return 0;
+  return memcmp(a->units, b->units, (size_t)a->len * 2) == 0;
 }
 
 static int strict_equal(yk a, yk b) {
@@ -1252,8 +1363,8 @@ static int less_than(yk a, yk b) {
     double x = num(a), y = num(b);
     return x != x || y != y ? -1 : x < y;
   }
-  a = to_primitive(a);
-  b = to_primitive(b);
+  a = to_primitive_hint(a, 2);
+  b = to_primitive_hint(b, 2);
   if (is_string(a) && is_string(b)) {
     yk_string *x = str(a), *y = str(b);
     uint32_t n = x->len < y->len ? x->len : y->len;
@@ -1337,6 +1448,7 @@ yk yk_sb_finish(yk h) {
 }
 
 /* typeof's result: one string per type, made once. */
+static yk function_prototype_made = 0; /* Function.prototype, once made (intrinsic_proto) */
 yk yk_typeof(yk v) {
   static yk made[8]; /* each made once (the collector sees this table) */
 #define YK_TYPE(k, s) (made[k] != 0 ? made[k] : (made[k] = interned(s, sizeof s - 1)))
@@ -1347,6 +1459,7 @@ yk yk_typeof(yk v) {
   if (is_closure(v)) return YK_TYPE(4, "function");
   if (is_bigint(v)) return YK_TYPE(5, "bigint");
   if (is_symbol(v)) return YK_TYPE(6, "symbol");
+  if (v != 0 && v == function_prototype_made) return YK_TYPE(4, "function"); /* Function.prototype is callable */
   return YK_TYPE(7, "object");
 #undef YK_TYPE
 }
@@ -1544,6 +1657,14 @@ yk yk_get_ic(yk obj, yk key, uint32_t *site) {
   return yk_get(obj, key);
 }
 static __attribute__((noinline)) yk yk_get_slow(yk obj, yk key) {
+  if (is_proxy(obj)) return proxy_get(obj, to_property_key(key), obj);
+  if (is_wrapper(obj) && is_string(wrapper_value(obj))) {
+    /* A String object's length and indexes, its string's. */
+    yk sv = wrapper_value(obj);
+    if (!is_symbol(key) && key_is(to_string(key), "length")) return yk_number(str_len(sv));
+    int64_t i = is_symbol(key) ? -1 : index_of_key(key);
+    if (i >= 0 && i < str_len(sv)) return unit_string(str_unit(sv, (uint32_t)i));
+  }
   /* An element by an integer index: an array's (not a hole), a typed array's, in range. */
   if (is_number(key)) {
     double d = num(key);
@@ -1745,6 +1866,27 @@ static int html_method(yk_string *s0, yk key, yk arg0, yk *out) {
 }
 /* A method call by a key the lowered code keeps (its string, made once). */
 yk yk_call_method_k(yk recv, yk key, uint64_t argc, const yk *argv) { return call_method_key(recv, key, argc, argv); }
+/* A method call by name with its site's cache (#1370): a plain object's own method, at the index
+   its key was last found at (objects made alike have it at the same place), called at once; any
+   other call is call_method_key's. */
+yk yk_call_method_ic(yk recv, yk key, uint32_t *site, uint64_t argc, const yk *argv) {
+  if (is_object(recv)) {
+    yk_object *o = (yk_object *)PTR(recv);
+    if (o->kind == 0) {
+      uint32_t i = *site;
+      if (!(i < o->len && o->keys[i] == key)) {
+        uint32_t n = o->len < 32 ? o->len : 32;
+        for (i = 0; i < n; i++)
+          if (o->keys[i] == key) break;
+        if (i == n) return call_method_key(recv, key, argc, argv);
+        *site = i;
+      }
+      yk f = o->values[i];
+      if (is_closure(f) && !is_thunk(f)) return call_value(f, recv, argc, argv);
+    }
+  }
+  return call_method_key(recv, key, argc, argv);
+}
 /* s.charCodeAt(i) (#1369): a string's unit at a number index, at once; else the method call. */
 yk yk_char_code_at(yk recv, yk key, yk i) {
   if (is_string(recv) && is_number(i)) {
@@ -1767,6 +1909,14 @@ static int inherits_thunk(yk recv, yk key) {
   return is_thunk(proto_lookup(recv, key));
 }
 static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
+  if (is_wrapper(recv)) {
+    /* A method the program set on it (or along its chain), with it as the receiver; any other
+       its primitive's. */
+    yk f;
+    if (chain_get(recv, key, &f) && is_closure(f = resolve_slot(f, recv)) && !is_thunk(f)) return call_value(f, recv, argc, argv);
+    if (key_is(key, "valueOf")) return wrapper_value(recv);
+    recv = wrapper_value(recv);
+  }
   /* The member read the call makes first: of undefined or null, its TypeError. */
   if (is_nullish(recv)) yk_get(recv, key);
   yk arg0 = argc > 0 ? argv[0] : YK_UNDEFINED;
@@ -1829,6 +1979,7 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
       return call_value(recv, arg0, list->len, list->items);
     }
     if (key_is(key, "bind")) return bound_new(recv, arg0, argc > 0 ? argc - 1 : 0, argv + (argc > 0 ? 1 : 0));
+    if (key_is(key, "toString")) return function_source(recv);
   }
   if (is_array(recv)) {
     yk out;
@@ -1919,6 +2070,13 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
       if (a > b) { double t = a; a = b; b = t; }
       return substring(s0, (uint32_t)a, (uint32_t)b);
     }
+    if (key_is(key, "at")) {
+      /* String.prototype.at: a relative index, negative from the end; undefined outside. */
+      double d = arg0 == YK_UNDEFINED ? 0 : to_number(arg0);
+      d = d != d ? 0 : trunc(d);
+      if (d < 0) d += s0->len;
+      return d < 0 || d >= s0->len ? YK_UNDEFINED : substring(s0, (uint32_t)d, (uint32_t)d + 1);
+    }
     if (key_is(key, "charAt")) {
       double d = arg0 == YK_UNDEFINED ? 0 : to_number(arg0);
       d = d != d ? 0 : trunc(d);
@@ -1962,13 +2120,16 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
     }
     if (key_is(key, "split")) {
       yk_array *r = new_array(4);
+      /* Its limit: ToUint32 (undefined: 2^32 - 1); 0 gives no parts. */
+      uint32_t limit = arg1 == YK_UNDEFINED ? 0xFFFFFFFFu : to_uint32(arg1);
+      if (limit == 0) return BOX(T_ARRAY, r);
       if (arg0 == YK_UNDEFINED) {
         push(r, recv);
         return BOX(T_ARRAY, r);
       }
       yk_string *sep = str(to_string(arg0));
       if (sep->len == 0) {
-        for (uint32_t i = 0; i < s0->len; i++) {
+        for (uint32_t i = 0; i < s0->len && r->len < limit; i++) {
           yk_string *c = new_string(1);
           c->units[0] = s0->units[i];
           push(r, string_of(c));
@@ -1981,6 +2142,7 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
           yk_string *part = new_string(i - start);
           memcpy(part->units, s0->units + start, (size_t)(i - start) * 2);
           push(r, string_of(part));
+          if (r->len == limit) return BOX(T_ARRAY, r);
           i += sep->len;
           start = i;
         } else
@@ -2086,10 +2248,10 @@ static yk call_method_key(yk recv, yk key, uint64_t argc, const yk *argv) {
     if (html_method(str(recv), key, arg0, &out)) return out;
   }
   if ((is_number(recv) || is_bool(recv) || is_bigint(recv)) && key_is(key, "toString")) {
-    if (is_number(recv) && arg0 != YK_UNDEFINED) {
+    if ((is_number(recv) || is_bigint(recv)) && arg0 != YK_UNDEFINED) {
       double r = trunc(to_number(arg0));
       if (!(r >= 2 && r <= 36)) range_error("toString() radix must be between 2 and 36");
-      if (r != 10) return number_to_radix(num(recv), (int)r);
+      if (r != 10) return is_bigint(recv) ? big_to_radix_v(recv, (uint32_t)r) : number_to_radix(num(recv), (int)r);
     }
     return to_string(recv);
   }
@@ -2155,8 +2317,13 @@ static yk bound_new(yk target, yk self, uint64_t argc, const yk *argv) {
 static uint32_t key_hash(yk key) {
   uint64_t h = 1469598103934665603ull;
   if (is_string(key)) {
+    /* A string's is computed once and kept (a string's units never change once made). */
     yk_string *s = str(key);
+    if (s->hash != 0) return s->hash;
     for (uint32_t i = 0; i < s->len; i++) h = (h ^ s->units[i]) * 1099511628211ull;
+    uint32_t r = (uint32_t)(h ^ (h >> 32));
+    s->hash = r != 0 ? r : 1;
+    return s->hash;
   } else
     h = (key ^ (key >> 29)) * 0x9E3779B97F4A7C15ull;
   return (uint32_t)(h ^ (h >> 32));
@@ -2187,6 +2354,10 @@ static struct {
 } own_found[512];
 static int64_t own_find(yk_object *o, yk key) {
   if (o->len < 8) {
+    /* Names are made once: the key itself, by pointer, first; else one equal to it. */
+    for (uint32_t i = 0; i < o->len; i++)
+      if (o->keys[i] == key) return i;
+    if (!is_string(key)) return -1;
     for (uint32_t i = 0; i < o->len; i++)
       if (key_equal(o->keys[i], key)) return i;
     return -1;
@@ -2242,6 +2413,7 @@ static int own_get(yk_object *o, yk key, yk *out) {
 }
 
 static void own_set(yk_object *o, yk key, yk value) {
+  if (TAG(value) == T_INTERNAL) o->accessors |= 1;
   int64_t found = own_find(o, key);
   if (found >= 0) {
     o->values[found] = value;
@@ -2293,6 +2465,7 @@ static yk_object *own_props(yk v) {
 
 /* A property along the prototype chain: its slot (perhaps an accessor). */
 static int chain_get(yk obj, yk key, yk *out) {
+  if (is_proxy(obj)) return *out = proxy_get(obj, key, obj), 1;
   if (is_closure(obj)) {
     yk_closure *c = (yk_closure *)PTR(obj);
     /* A function's prototype exists from its first use, as `F.prototype.m = …` needs. */
@@ -2304,8 +2477,10 @@ static int chain_get(yk obj, yk key, yk *out) {
     /* A derived class inherits its parent's statics. */
     return c->parent != 0 && is_closure(c->parent) && chain_get(c->parent, key, out);
   }
-  for (yk v = obj; v != 0 && is_object(v); v = ((yk_object *)PTR(v))->proto)
+  for (yk v = obj; v != 0 && is_object(v); v = ((yk_object *)PTR(v))->proto) {
+    if (is_obj_proxy(v)) return *out = proxy_get(v, key, obj), 1; /* a proxy along the chain */
     if (own_get((yk_object *)PTR(v), key, out)) return 1;
+  }
   return 0;
 }
 
@@ -2324,6 +2499,7 @@ static yk ensure_prototype(yk f) {
   }
   yk key = ascii("constructor");
   p = yk_object_of(1, &key, &f);
+  set_hidden((yk_object *)PTR(p), key, 1); /* a prototype's constructor is not enumerable */
   own_set(own_props(f), ascii("prototype"), p);
   return p;
 }
@@ -2380,6 +2556,7 @@ static yk builtin_aggregate_error(void *, yk, uint64_t, const yk *);
 static int is_adoptable_builtin(yk f);
 static yk builtin_map(void *c, yk s, uint64_t argc, const yk *argv);
 static yk builtin_set(void *c, yk s, uint64_t argc, const yk *argv);
+static yk builtin_object(void *c, yk s, uint64_t argc, const yk *argv);
 yk yk_new(yk f, uint64_t argc, const yk *argv);
 static int is_error_constructor(yk f) {
   if (!is_closure(f)) return 0;
@@ -2488,16 +2665,34 @@ static void init_fields(yk cls, yk self) {
   }
 }
 /* super(args) in a derived constructor: the parent's constructor run on this receiver (#1294). */
+/* new.target (ECMA-262 13.3.12): yk_new (or super(), or Reflect.construct) leaves the constructor
+   it is about to run and the value; that constructor takes it on entry, before any other call can
+   leave another; every other function finds nothing left for it (undefined). */
+static void *pending_new = NULL;
+static yk pending_target = YK_UNDEFINED, constructing = YK_UNDEFINED;
+yk yk_take_new_target(void *closure) {
+  if (closure == NULL || pending_new != closure) return YK_UNDEFINED;
+  pending_new = NULL;
+  return pending_target;
+}
 yk yk_super_construct(void *closure, yk self, uint64_t argc, const yk *argv) {
   yk cls = ((yk_closure *)closure)->class_self;
   yk parent = cls == 0 ? 0 : ((yk_closure *)PTR(cls))->parent;
   if (parent == 0) type_error("'super' keyword unexpected here");
+  if (((yk_closure *)PTR(parent))->code == builtin_object) {
+    /* Object as the parent (class X extends Object): the receiver is the ordinary object new made. */
+    init_fields(cls, self);
+    return self;
+  }
   if (is_error_constructor(parent)) {
     /* An Error subclass: the receiver is made an error, with the parent's name and message. */
     yk made = ((yk_closure *)PTR(parent))->code(NULL, YK_UNDEFINED, argc, argv);
     yk_object *o = (yk_object *)PTR(self), *e = (yk_object *)PTR(made);
-    o->error = 1;
-    for (uint32_t i = 0; i < e->len; i++) own_set(o, e->keys[i], e->values[i]);
+    o->error = e->error;
+    for (uint32_t i = 0; i < e->len; i++) {
+      own_set(o, e->keys[i], e->values[i]);
+      if (is_hidden(e, e->keys[i])) set_hidden(o, e->keys[i], 1);
+    }
     init_fields(cls, self);
     return self;
   }
@@ -2530,6 +2725,7 @@ yk yk_super_construct(void *closure, yk self, uint64_t argc, const yk *argv) {
   yk_closure *p = (yk_closure *)PTR(parent);
   /* A base parent's fields are defined before its body runs; a derived parent's by its super(). */
   if (p->is_class && p->parent == 0) init_fields(parent, self);
+  pending_new = p, pending_target = constructing; /* its new.target the derived one's */
   yk r = p->code(p, self, argc, argv);
   if (is_reference(r)) return r;
   init_fields(cls, self);
@@ -2549,7 +2745,7 @@ yk yk_super_get_key(void *closure, yk self, yk key) {
   key = to_property_key(key);
   yk slot;
   yk_closure *p = (yk_closure *)PTR(parent);
-  yk base = c->home_static ? parent : (p->is_class || p->has_this || is_adoptable_builtin(parent)) ? ensure_prototype(parent) : 0;
+  yk base = c->home_static ? parent : (p->is_class || p->has_this || is_adoptable_builtin(parent) || is_error_constructor(parent)) ? ensure_prototype(parent) : 0;
   if (base == 0 || !chain_get(base, key, &slot)) return YK_UNDEFINED;
   return resolve_slot(slot, self);
 }
@@ -2562,7 +2758,7 @@ yk yk_super_get(void *closure, yk self, const char *name, uint64_t n) {
   if (parent == 0 || !is_closure(parent)) return YK_UNDEFINED;
   yk key = yk_string_utf8(name, n), slot;
   yk_closure *p = (yk_closure *)PTR(parent);
-  yk base = c->home_static ? parent : (p->is_class || p->has_this || is_adoptable_builtin(parent)) ? ensure_prototype(parent) : 0;
+  yk base = c->home_static ? parent : (p->is_class || p->has_this || is_adoptable_builtin(parent) || is_error_constructor(parent)) ? ensure_prototype(parent) : 0;
   if (base == 0 || !chain_get(base, key, &slot)) return YK_UNDEFINED;
   return resolve_slot(slot, self);
 }
@@ -2595,7 +2791,7 @@ yk yk_class_new(void *creator, yk parent, uint64_t n, const yk *kinds, const yk 
     type_error("Class extends value is not a constructor or null");
   if (parent != 0 && !is_error_constructor(parent)) {
     yk_closure *p = (yk_closure *)PTR(parent);
-    if (!p->is_class && !p->has_this && !is_adoptable_builtin(parent))
+    if (!p->is_class && !p->has_this && !is_adoptable_builtin(parent) && p->code != builtin_object)
       type_error("extending this constructor is not in the runtime yet");
   }
   yk cls = 0;
@@ -2613,8 +2809,7 @@ yk yk_class_new(void *creator, yk parent, uint64_t n, const yk *kinds, const yk 
   for (uint64_t i = 0; i < n; i++)
     if (num(kinds[i]) >= 8) private_key_of(c, cls, names[i]);
   yk proto = ensure_prototype(cls);
-  if (parent != 0 && !is_error_constructor(parent))
-    ((yk_object *)PTR(proto))->proto = ensure_prototype(parent);
+  if (parent != 0) ((yk_object *)PTR(proto))->proto = ensure_prototype(parent);
   for (uint64_t i = 0; i < n; i++) {
     int kind = (int)num(kinds[i]) & 7;
     ((yk_closure *)PTR(members[i]))->class_self = cls;
@@ -2641,6 +2836,7 @@ yk yk_class_new(void *creator, yk parent, uint64_t n, const yk *kinds, const yk 
     name_method(members[i], name, kind == 2 ? "get " : kind == 3 ? "set " : NULL);
     if (kind == 1) own_set(target, name, members[i]);
     else define_accessor(target, name, kind == 2 ? members[i] : 0, kind == 3 ? members[i] : 0);
+    set_hidden(target, name, 1); /* a class's methods and accessors are not enumerable */
   }
   c->class_self = cls;
   /* The static fields and blocks run now, in order, with the class as their receiver. */
@@ -2668,6 +2864,11 @@ yk yk_closure_inherit(yk child, void *parent) {
 /* delete obj[key]: an own property removed; an array element becomes undefined. */
 yk yk_delete(yk obj, yk key) {
   if (is_nullish(obj)) type_error("Cannot convert undefined or null to object");
+  if (is_proxy(obj)) return proxy_delete(obj, to_property_key(key));
+  if (((is_object(obj) && (((yk_object *)PTR(obj))->accessors & INTEGRITY_SEALED)) ||
+       (is_array(obj) && (arr(obj)->integrity & INTEGRITY_SEALED))) &&
+      has_own(obj, to_property_key(key)))
+    integrity_refused("Cannot delete property '", to_property_key(key), "' of #<Object>");
   if (is_object(obj) || is_closure(obj)) {
     if (is_closure(obj) && ((yk_closure *)PTR(obj))->props == 0) return YK_TRUE;
     yk_object *o = own_props(obj);
@@ -2724,13 +2925,32 @@ yk yk_object_of(uint64_t n, const yk *keys, const yk *values) {
   return BOX(T_OBJECT, o);
 }
 
-static yk make_error(const char *name, yk message) {
-  yk keys[2] = {ascii("name"), ascii("message")};
-  yk values[2] = {ascii(name), message};
-  yk e = yk_object_of(2, keys, values);
-  ((yk_object *)PTR(e))->error = 1;
+/* An error's type: 1 Error, then TypeError … AggregateError (its intrinsic prototype I_ERROR + type - 1). */
+static int32_t error_type(const char *name) {
+  static const char *const names[] = {"Error", "TypeError", "RangeError", "SyntaxError", "EvalError",
+                                      "ReferenceError", "URIError", "AggregateError"};
+  for (int32_t i = 0; i < 8; i++)
+    if (strcmp(names[i], name) == 0) return i + 1;
+  return 1;
+}
+/* A native error (ECMA-262 20.5): its prototype its type's, and its message an own property, not
+   enumerable (none when the message is undefined); name is the prototype's. */
+static yk make_error_of(const char *name, yk message, int has_message) {
+  yk e = yk_object_of(0, NULL, NULL);
+  yk_object *o = (yk_object *)PTR(e);
+  o->error = error_type(name);
+  /* Its stack: the header V8's has (no frames: the runtime keeps none), as captureStackTrace's. */
+  yk n = ascii(name), m = has_message ? message : ascii("");
+  yk header = str(m)->len == 0 ? n : concat(str(concat(str(n), str(ascii(": ")))), str(m));
+  own_set(o, ascii("stack"), header);
+  set_hidden(o, ascii("stack"), 1);
+  if (has_message) {
+    own_set(o, ascii("message"), message);
+    set_hidden(o, ascii("message"), 1);
+  }
   return e;
 }
+static yk make_error(const char *name, yk message) { return make_error_of(name, message, 1); }
 
 /* --- exceptions: a stack of handlers, unwound by longjmp --- */
 
@@ -2774,13 +2994,39 @@ static int protected_call(yk f, uint64_t argc, const yk *argv, yk *result) {
 }
 
 /* obj[key] = value. The graph's write yields the object, as written. */
+/* A write the integrity of an object refuses (strict code's TypeError, V8's message): to a frozen
+   object's property, or a new one on an object that is not extensible. */
+static _Noreturn void integrity_refused(const char *a, yk k, const char *b) {
+  yk m = concat(str(concat(str(ascii(a)), str(to_string(is_symbol(k) ? symbol_descriptive(k) : k)))), str(ascii(b)));
+  yk_throw(make_error("TypeError", m));
+}
+static void integrity_check_write(yk obj, yk_object *o, yk k) {
+  (void)obj;
+  yk slot;
+  int own = own_get(o, k, &slot);
+  if (own && (o->accessors & INTEGRITY_FROZEN) && !is_accessor(slot))
+    integrity_refused("Cannot assign to read only property '", k, "' of object '#<Object>'");
+  if (!own && (o->accessors & INTEGRITY_NOEXT)) integrity_refused("Cannot add property ", k, ", object is not extensible");
+}
+static void array_integrity_check(yk_array *a, yk key) {
+  int64_t i = is_symbol(key) ? -1 : index_of_key(key);
+  int own = i >= 0 && i < a->len && !array_hole(a, (uint32_t)i);
+  if (own && (a->integrity & INTEGRITY_FROZEN))
+    integrity_refused("Cannot assign to read only property '", to_string(key), "' of object '[object Array]'");
+  if (i >= 0 && !own && (a->integrity & INTEGRITY_NOEXT))
+    integrity_refused("Cannot add property ", to_string(key), ", object is not extensible");
+}
 yk yk_set(yk obj, yk key, yk value) {
+  if (is_proxy(obj)) {
+    proxy_set(obj, to_property_key(key), value, obj);
+    return obj;
+  }
   if (is_object(obj) && ((yk_object *)PTR(obj))->kind == 7 && buffer_set(obj, key, value)) return obj;
   if (is_object(obj) && is_string(key)) {
     /* An own data property of a plain object: written at once (a setter is the chain's only when
        the object has no own property of the name). */
     yk_object *o = (yk_object *)PTR(obj);
-    if (o->kind == 0) {
+    if (o->kind == 0 && !(o->accessors & INTEGRITY_FROZEN)) {
       uint32_t n = o->len < 32 ? o->len : 32;
       for (uint32_t i = 0; i < n; i++)
         if (o->keys[i] == key) {
@@ -2792,6 +3038,18 @@ yk yk_set(yk obj, yk key, yk value) {
   }
   if (is_object(obj) || is_closure(obj)) {
     yk k = to_property_key(key), slot;
+    /* No object along the chain has an accessor: the property is the object's own, with no
+       lookup along it. */
+    if (is_object(obj) && (((yk_object *)PTR(obj))->accessors & (INTEGRITY_NOEXT | INTEGRITY_FROZEN)))
+      integrity_check_write(obj, own_props(obj), k);
+    if (is_object(obj)) {
+      yk v = obj;
+      while (v != 0 && is_object(v) && !(((yk_object *)PTR(v))->accessors & 1)) v = ((yk_object *)PTR(v))->proto;
+      if (v == 0 || !is_object(v)) {
+        own_set((yk_object *)PTR(obj), k, value);
+        return obj;
+      }
+    }
     /* A setter along the chain is called; otherwise the property is the object's own. */
     if (chain_get(obj, k, &slot) && is_accessor(slot)) {
       yk setter = ((yk_accessor *)PTR(slot))->set;
@@ -2804,6 +3062,7 @@ yk yk_set(yk obj, yk key, yk value) {
   }
   if (is_array(obj)) {
     yk_array *a = arr(obj);
+    if (a->integrity & (INTEGRITY_NOEXT | INTEGRITY_FROZEN)) array_integrity_check(a, key);
     int64_t i = is_symbol(key) ? -1 : index_of_key(key);
     if (i < 0) {
       if (!is_symbol(key) && key_is(to_string(key), "length")) {
@@ -2826,7 +3085,18 @@ yk yk_set(yk obj, yk key, yk value) {
     a->items[i] = value;
     return obj;
   }
-  type_error("Cannot create a property on a primitive");
+  /* V8's messages: of undefined or null, "Cannot set properties of undefined (setting 'k')"; of
+     another primitive (strict code), "Cannot create property 'k' on string 'v'". */
+#define CAT(a, b) concat(str(a), str(b))
+  yk k = to_string(is_symbol(key) ? symbol_descriptive(key) : key), msg;
+  if (is_nullish(obj))
+    msg = CAT(CAT(ascii(obj == YK_NULL ? "Cannot set properties of null (setting '" : "Cannot set properties of undefined (setting '"), k), ascii("')"));
+  else {
+    yk v = CAT(CAT(ascii("'"), is_symbol(obj) ? symbol_descriptive(obj) : to_string(obj)), ascii("'"));
+    msg = CAT(CAT(CAT(CAT(CAT(ascii("Cannot create property '"), k), ascii("' on ")), yk_typeof(obj)), ascii(" ")), v);
+  }
+#undef CAT
+  yk_throw(make_error("TypeError", msg));
   return obj;
 }
 
@@ -2836,7 +3106,7 @@ yk yk_set(yk obj, yk key, yk value) {
 yk yk_set_ic(yk obj, yk key, yk value, uint32_t *site) {
   if (is_object(obj)) {
     yk_object *o = (yk_object *)PTR(obj);
-    if (o->kind == 0) {
+    if (o->kind == 0 && !(o->accessors & INTEGRITY_FROZEN)) {
       uint32_t i = *site;
       if (!(i < o->len && o->keys[i] == key)) {
         uint32_t n = o->len < 32 ? o->len : 32;
@@ -2868,7 +3138,8 @@ yk yk_set_named(yk obj, const char *name, uint64_t n, yk value) {
  * intrinsic prototype but Object.prototype inherits from it; Object.prototype's prototype is null.
  */
 enum { I_OBJECT, I_FUNCTION, I_ARRAY, I_STRING, I_NUMBER, I_BOOLEAN, I_SYMBOL, I_BIGINT, I_MAP, I_SET,
-       I_PROMISE, I_REGEXP, I_ERROR, I_WEAKMAP, I_WEAKSET, I_WEAKREF, I_FINREG, I_DATE, I_ITERATOR,
+       I_PROMISE, I_REGEXP, I_ERROR, I_TYPE_ERROR, I_RANGE_ERROR, I_SYNTAX_ERROR, I_EVAL_ERROR,
+       I_REFERENCE_ERROR, I_URI_ERROR, I_AGGREGATE_ERROR, I_WEAKMAP, I_WEAKSET, I_WEAKREF, I_FINREG, I_DATE, I_ITERATOR,
        I_ARRAY_ITERATOR, I_STRING_ITERATOR, I_MAP_ITERATOR, I_SET_ITERATOR, I_GENERATOR, I_ASYNC_ITERATOR,
        I_ASYNC_GENERATOR, I_ASYNC_FUNCTION, I_GENERATOR_FUNCTION, I_ASYNC_GENERATOR_FUNCTION,
        I_TYPED_ARRAY, I_ARRAY_BUFFER, I_DATA_VIEW, I_TA_BASE, N_INTRINSIC = I_TA_BASE + 11 };
@@ -2890,6 +3161,13 @@ static const struct {
   {"Promise", (const char *const[]){"then", "catch", "finally", NULL}, (const char *const[]){NULL}},
   {"RegExp", (const char *const[]){"exec", "compile", "toString", "test", NULL}, (const char *const[]){"dotAll", "flags", "global", "hasIndices", "ignoreCase", "multiline", "source", "sticky", "unicode", "unicodeSets", NULL}},
   {"Error", (const char *const[]){"toString", NULL}, (const char *const[]){NULL}},
+  {"TypeError", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"RangeError", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"SyntaxError", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"EvalError", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"ReferenceError", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"URIError", (const char *const[]){NULL}, (const char *const[]){NULL}},
+  {"AggregateError", (const char *const[]){NULL}, (const char *const[]){NULL}},
   {"WeakMap", (const char *const[]){"delete", "get", "set", "has", NULL}, (const char *const[]){NULL}},
   {"WeakSet", (const char *const[]){"delete", "has", "add", NULL}, (const char *const[]){NULL}},
   {"WeakRef", (const char *const[]){"deref", NULL}, (const char *const[]){NULL}},
@@ -3059,8 +3337,10 @@ static yk intrinsic_proto(int which) {
   if (intrinsic_protos[which] != 0) return intrinsic_protos[which];
   yk p = yk_object_of(0, NULL, NULL);
   intrinsic_protos[which] = p;
+  if (which == I_FUNCTION) function_prototype_made = p;
   yk_object *o = (yk_object *)PTR(p);
   o->proto = which == I_OBJECT                ? YK_NULL
+             : which > I_ERROR && which <= I_AGGREGATE_ERROR ? intrinsic_proto(I_ERROR)
              : which >= I_TA_BASE             ? intrinsic_proto(I_TYPED_ARRAY)
              : which >= I_TYPED_ARRAY         ? intrinsic_proto(I_OBJECT)
              : which == I_ASYNC_GENERATOR     ? intrinsic_proto(I_ASYNC_ITERATOR)
@@ -3078,6 +3358,15 @@ static yk intrinsic_proto(int which) {
   for (const char *const *g = intrinsic_table[which].getters; *g != NULL; g++) {
     yk key = ascii(*g);
     define_accessor(o, key, yk_closure_new(getter_thunk_code, 1, 1, &key), 0);
+  }
+  /* Error.prototype and each NativeError's: its name and an empty message, not enumerable; its
+     constructor the global's (made now: an error the runtime throws has it, read or not). */
+  if (which >= I_ERROR && which <= I_AGGREGATE_ERROR) {
+    own_set(o, ascii("name"), ascii(intrinsic_table[which].name));
+    own_set(o, ascii("message"), ascii(""));
+    set_hidden(o, ascii("name"), 1);
+    set_hidden(o, ascii("message"), 1);
+    yk_global(intrinsic_table[which].name, strlen(intrinsic_table[which].name));
   }
   /* The iterator method each iterable type has. */
   if (which == I_ARRAY || which == I_SET) own_set(o, symbol_iterator(), yk_get(p, ascii("values")));
@@ -3153,7 +3442,7 @@ static yk tail_proto(yk v) {
     case 7: return intrinsic_proto(I_TA_BASE + view_type(x));
     case 8: return intrinsic_proto(I_DATA_VIEW);
     case 13: return intrinsic_proto(I_ARRAY_ITERATOR + ((builtin_iter *)o->ext)->type);
-    default: return intrinsic_proto(o->error ? I_ERROR : I_OBJECT);
+    default: return intrinsic_proto(o->error ? I_ERROR + o->error - 1 : I_OBJECT);
     }
   }
   if (is_closure(v)) return closure_proto((yk_closure *)PTR(v));
@@ -3221,8 +3510,23 @@ static int has_own(yk v, yk key) {
   return 0;
 }
 /* Object.prototype.toString: "[object " + the tag + "]" (Symbol.toStringTag when it is a string). */
+static int is_wrapper(yk v) { return is_object(v) && ((yk_object *)PTR(v))->kind == 15; }
+static yk wrapper_value(yk v) { return *(yk *)((yk_object *)PTR(v))->ext; }
+static yk intrinsic_proto(int which);
+static yk make_wrapper(yk prim) {
+  yk o = yk_object_of(0, NULL, NULL);
+  yk_object *w = (yk_object *)PTR(o);
+  w->kind = 15;
+  yk *box = alloc(sizeof(yk));
+  *box = prim;
+  w->ext = box;
+  w->proto = intrinsic_proto(is_string(prim) ? I_STRING : is_number(prim) ? I_NUMBER : is_bool(prim) ? I_BOOLEAN
+                             : is_symbol(prim) ? I_SYMBOL : I_BIGINT);
+  return o;
+}
 static yk object_to_string(yk v) {
   const char *tag = "Object";
+  if (is_wrapper(v)) v = wrapper_value(v); /* a wrapper's tag is its primitive's */
   if (v == YK_UNDEFINED) tag = "Undefined";
   else if (v == YK_NULL) tag = "Null";
   else if (is_array(v)) tag = "Array";
@@ -3256,6 +3560,7 @@ static yk with_methods(yk_code code, int n, const char *const *names, const yk_c
 static yk arg_or_undefined(uint64_t argc, const yk *argv, uint64_t i) { return i < argc ? argv[i] : YK_UNDEFINED; }
 /* [[GetPrototypeOf]]: an object's prototype (its intrinsic one when it has none of its own). */
 static yk prototype_of(yk v) {
+  if (is_proxy(v)) return proxy_prototype(v);
   if (is_object(v)) {
     yk p = ((yk_object *)PTR(v))->proto;
     if (is_object(p)) return p;
@@ -3286,6 +3591,7 @@ static yk reflect_set_prototype_of(void *c, yk s, uint64_t argc, const yk *argv)
 }
 /* OwnPropertyKeys: its own string keys (integer indexes first), then its symbols. */
 static yk_array *own_keys_of(yk v) {
+  if (is_proxy(v)) return proxy_own_keys(v);
   yk_array *r = new_array(4);
   if (is_array(v)) {
     for (uint32_t i = 0; i < arr(v)->len; i++)
@@ -3368,7 +3674,9 @@ static yk descriptor_of(yk v, yk key) {
 }
 static yk reflect_get_own_property_descriptor(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
-  return descriptor_of(arg_or_undefined(argc, argv, 0), arg_or_undefined(argc, argv, 1));
+  yk v = arg_or_undefined(argc, argv, 0);
+  if (is_proxy(v)) return proxy_own_descriptor(v, to_property_key(arg_or_undefined(argc, argv, 1)));
+  return descriptor_of(v, arg_or_undefined(argc, argv, 1));
 }
 static yk object_get_own_property_descriptors(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
@@ -3406,9 +3714,23 @@ static void define_from(yk v, yk key, yk desc) {
   } else if (!has_own(v, key) && (is_object(v) || is_closure(v)))
     own_set(own_props(v), key, YK_UNDEFINED);
 }
+static yk proxy_trap(yk proxy, const char *name);
+static yk proxy_target(yk proxy);
+static yk proxy_handler(yk proxy);
 static yk object_define_property(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
   yk v = arg_or_undefined(argc, argv, 0);
+  if (is_proxy(v)) {
+    /* [[DefineOwnProperty]] of a proxy: its defineProperty trap, else the target's. */
+    yk t = proxy_trap(v, "defineProperty");
+    yk key = to_property_key(arg_or_undefined(argc, argv, 1)), desc = arg_or_undefined(argc, argv, 2);
+    if (t == 0) define_from(proxy_target(v), key, desc);
+    else {
+      yk args[3] = {proxy_target(v), key, desc};
+      if (!yk_truthy(call_value(t, proxy_handler(v), 3, args))) type_error("'defineProperty' on proxy: trap returned falsish");
+    }
+    return v;
+  }
   if (!is_object(v) && !is_closure(v) && !is_array(v)) type_error("Object.defineProperty called on non-object");
   define_from(v, arg_or_undefined(argc, argv, 1), arg_or_undefined(argc, argv, 2));
   return v;
@@ -3443,18 +3765,87 @@ static yk object_from_entries(void *c, yk s, uint64_t argc, const yk *argv) {
     own_set((yk_object *)PTR(o), to_property_key(yk_get(items->items[i], yk_number(0))), yk_get(items->items[i], yk_number(1)));
   return o;
 }
-static yk object_false(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s, (void)argc, (void)argv; return YK_FALSE; }
+/* Object.groupBy / Map.groupBy (ECMA-262 7.3.35 GroupBy): each item under its callback's key, in
+   order; an object's keys property keys (a null-prototype object), a Map's the values as they are. */
+static void collection_put(yk_object *o, yk key, yk value);
+static int64_t collection_find(yk_object *o, yk key);
+static yk new_collection(int32_t kind);
+static yk group_by(uint64_t argc, const yk *argv, int map) {
+  yk items = arg_or_undefined(argc, argv, 0), cb = arg_or_undefined(argc, argv, 1);
+  if (!is_closure(cb)) type_error("callback is not a function");
+  yk_array *list = iterable_items(items);
+  yk out = map ? new_collection(1) : yk_object_of(0, NULL, NULL);
+  if (!map) ((yk_object *)PTR(out))->proto = YK_NULL;
+  for (uint32_t i = 0; i < list->len; i++) {
+    yk args[2] = {list->items[i], yk_number(i)};
+    yk k = call_value(cb, YK_UNDEFINED, 2, args);
+    yk group;
+    if (map) {
+      if (k == yk_number(-0.0)) k = yk_number(0);
+      int64_t at = collection_find((yk_object *)PTR(out), k);
+      if (at >= 0) group = arr(((yk_object *)PTR(out))->entries->items[at])->items[1];
+      else collection_put((yk_object *)PTR(out), k, group = yk_array_of(0, NULL));
+    } else {
+      k = to_property_key(k);
+      if (!own_get((yk_object *)PTR(out), k, &group)) own_set((yk_object *)PTR(out), k, group = yk_array_of(0, NULL));
+    }
+    push(arr(group), list->items[i]);
+  }
+  return out;
+}
+static yk object_group_by(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return group_by(argc, argv, 0); }
+static yk map_group_by(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return group_by(argc, argv, 1); }
+/* Object.preventExtensions / seal / freeze, and their predicates: bits of the object's integrity. */
+static uint32_t *integrity_word(yk v) {
+  if (is_array(v)) return &arr(v)->integrity;
+  if (is_object(v)) return &((yk_object *)PTR(v))->accessors;
+  if (is_closure(v)) return &own_props(v)->accessors;
+  return NULL;
+}
+static yk set_integrity(uint64_t argc, const yk *argv, uint32_t bits) {
+  yk v = arg_or_undefined(argc, argv, 0);
+  uint32_t *w = integrity_word(v);
+  if (w != NULL) *w |= bits;
+  return v;
+}
+static yk object_freeze(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return set_integrity(argc, argv, INTEGRITY_NOEXT | INTEGRITY_SEALED | INTEGRITY_FROZEN); }
+static yk object_seal(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return set_integrity(argc, argv, INTEGRITY_NOEXT | INTEGRITY_SEALED); }
+static yk object_prevent_extensions(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return set_integrity(argc, argv, INTEGRITY_NOEXT); }
+static int has_own_keys(yk v) {
+  if (is_array(v)) return arr(v)->len > 0;
+  if (is_object(v)) return ((yk_object *)PTR(v))->len > 0;
+  return 1;
+}
+static yk test_integrity(uint64_t argc, const yk *argv, uint32_t bit) {
+  yk v = arg_or_undefined(argc, argv, 0);
+  uint32_t *w = integrity_word(v);
+  if (w == NULL) return YK_TRUE; /* a primitive is frozen, sealed, and not extensible */
+  /* Not extensible with no own properties: sealed and frozen too. */
+  return yk_bool((*w & bit) || ((*w & INTEGRITY_NOEXT) && !has_own_keys(v)));
+}
+static yk object_is_frozen(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return test_integrity(argc, argv, INTEGRITY_FROZEN); }
+static yk object_is_sealed(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return test_integrity(argc, argv, INTEGRITY_SEALED); }
+static yk object_is_extensible(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  uint32_t *w = integrity_word(arg_or_undefined(argc, argv, 0));
+  return yk_bool(w != NULL && !(*w & INTEGRITY_NOEXT));
+}
 static yk object_true(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s, (void)argc, (void)argv; return YK_TRUE; }
-static yk object_first(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return arg_or_undefined(argc, argv, 0); }
 static yk reflect_apply(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
   yk args = arg_or_undefined(argc, argv, 2);
   return call_method_key(arg_or_undefined(argc, argv, 0), ascii("apply"), 2, (yk[]){arg_or_undefined(argc, argv, 1), args});
 }
+static yk construct_with_target(yk f, yk target, uint64_t argc, const yk *argv);
 static yk reflect_construct(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
+  yk f = arg_or_undefined(argc, argv, 0);
   yk_array *args = iterable_items(arg_or_undefined(argc, argv, 1));
-  return yk_new(arg_or_undefined(argc, argv, 0), args->len, args->items);
+  /* With a newTarget: a class's or `function`'s instance of the target's prototype. */
+  if (argc > 2 && argv[2] != f && is_closure(f) && is_closure(argv[2]) &&
+      (((yk_closure *)PTR(f))->is_class || ((yk_closure *)PTR(f))->has_this) && ((yk_closure *)PTR(f))->mode == 0)
+    return construct_with_target(f, argv[2], args->len, args->items);
+  return yk_new(f, args->len, args->items);
 }
 static yk reflect_get(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
@@ -3517,7 +3908,7 @@ static yk global_this(void) {
                                       "ReferenceError", "URIError", "AggregateError", "WeakMap", "WeakSet",
                                       "WeakRef", "FinalizationRegistry", "Date", "RegExp", "encodeURIComponent",
                                       "encodeURI", "decodeURIComponent", "decodeURI", "escape", "unescape",
-                                      "eval", NULL};
+                                      "eval", "Proxy", NULL};
   for (int i = 0; names[i] != NULL; i++) {
     yk v = yk_global(names[i], strlen(names[i]));
     if (v != YK_UNDEFINED) own_set((yk_object *)PTR(g), ascii(names[i]), v);
@@ -3778,6 +4169,15 @@ yk yk_closure_once(yk *slot, yk_code code) {
   if (*slot == 0) *slot = yk_closure_new(code, 0, 0, NULL);
   return *slot;
 }
+/* A built-in function value (Math.floor read as a value): its closure, made once, with its name and
+   length as the built-in's. */
+yk yk_builtin_once(yk *slot, yk_code code, const char *name, uint64_t n, uint32_t length) {
+  if (*slot == 0) {
+    *slot = named(yk_closure_new(code, 0, 0, NULL), yk_string_utf8(name, n));
+    ((yk_closure *)PTR(*slot))->flen = length;
+  }
+  return *slot;
+}
 yk yk_capture(void *closure, uint64_t i) { return ((yk_closure *)closure)->captures[i]; }
 yk yk_arg(uint64_t argc, const yk *argv, uint64_t i) { return i < argc ? argv[i] : YK_UNDEFINED; }
 /* A rest parameter (...xs): the arguments from i on, as an array. */
@@ -3799,7 +4199,16 @@ static __attribute__((noinline)) yk call_special(yk_closure *c, yk self, uint64_
   if (c->mode == 2) return generator_new(c, self, argc, argv);
   return agen_new(c, self, argc, argv);
 }
+static __attribute__((noinline, noreturn)) void stack_overflow(void) {
+  yk_throw(make_error("RangeError", ascii("Maximum call stack size exceeded")));
+}
+static uintptr_t coro_stack_low(void);
 static yk call_value(yk f, yk self, uint64_t argc, const yk *argv) {
+  {
+    uintptr_t sp = (uintptr_t)__builtin_frame_address(0);
+    uintptr_t low = coro_stack_low();
+    if (__builtin_expect(sp < (low != 0 ? low : yk_stack_low), 0)) stack_overflow();
+  }
   if (__builtin_expect(!is_closure(f), 0)) not_callable(f);
   yk_closure *c = (yk_closure *)PTR(f);
   if (__builtin_expect(c->is_class || c->mode != 0, 0)) return call_special(c, self, argc, argv);
@@ -4010,8 +4419,9 @@ static int array_callback_method(yk recv, yk key, uint64_t argc, const yk *argv,
   yk_array *a = arr(recv);
   yk f = argc > 0 ? argv[0] : YK_UNDEFINED;
   if (key_is(key, "includes")) {
-    for (uint32_t i = 0; i < a->len; i++)
-      if (same_value_zero(a->items[i], f)) return *out = YK_TRUE, 1;
+    /* From fromIndex (relative, negative from the end); a hole is undefined. */
+    for (uint32_t i = clamp_relative(argc > 1 ? argv[1] : YK_UNDEFINED, a->len, 0); i < a->len; i++)
+      if (same_value_zero(array_hole(a, i) ? YK_UNDEFINED : a->items[i], f)) return *out = YK_TRUE, 1;
     return *out = YK_FALSE, 1;
   }
   if (key_is(key, "sort")) {
@@ -4081,23 +4491,40 @@ static uint32_t to_uint32(yk v) {
 }
 static int32_t to_int32(yk v) { return (int32_t)to_uint32(v); }
 
-yk yk_bitor(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '|') : yk_number(to_int32(a) | to_int32(b)); }
-yk yk_bitand(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '&') : yk_number(to_int32(a) & to_int32(b)); }
-yk yk_bitxor(yk a, yk b) { return numeric_pair(&a, &b) ? big_binary(a, b, '^') : yk_number(to_int32(a) ^ to_int32(b)); }
+/* Two numbers below 2^63 in magnitude (the lowered code's calls in library code, most often): their
+   ToInt32, with no ToPrimitive asked. */
+#define INT32_PAIR(a, b) (is_number(a) && is_number(b) && fabs(num(a)) < 9.2e18 && fabs(num(b)) < 9.2e18)
+yk yk_bitor(yk a, yk b) {
+  if (INT32_PAIR(a, b)) return yk_number((int32_t)(int64_t)num(a) | (int32_t)(int64_t)num(b));
+  return numeric_pair(&a, &b) ? big_binary(a, b, '|') : yk_number(to_int32(a) | to_int32(b));
+}
+yk yk_bitand(yk a, yk b) {
+  if (INT32_PAIR(a, b)) return yk_number((int32_t)(int64_t)num(a) & (int32_t)(int64_t)num(b));
+  return numeric_pair(&a, &b) ? big_binary(a, b, '&') : yk_number(to_int32(a) & to_int32(b));
+}
+yk yk_bitxor(yk a, yk b) {
+  if (INT32_PAIR(a, b)) return yk_number((int32_t)(int64_t)num(a) ^ (int32_t)(int64_t)num(b));
+  return numeric_pair(&a, &b) ? big_binary(a, b, '^') : yk_number(to_int32(a) ^ to_int32(b));
+}
 yk yk_shl(yk a, yk b) {
+  if (INT32_PAIR(a, b))
+    return yk_number((int32_t)((uint32_t)(int64_t)num(a) << ((uint32_t)(int64_t)num(b) & 31)));
   if (numeric_pair(&a, &b)) return big_binary(a, b, '<');
   return yk_number((int32_t)((uint32_t)to_int32(a) << (to_uint32(b) & 31)));
 }
 yk yk_shr(yk a, yk b) {
+  if (INT32_PAIR(a, b)) return yk_number((int32_t)(int64_t)num(a) >> ((uint32_t)(int64_t)num(b) & 31));
   if (numeric_pair(&a, &b)) return big_binary(a, b, '>');
   return yk_number(to_int32(a) >> (to_uint32(b) & 31));
 }
 yk yk_ushr(yk a, yk b) {
+  if (INT32_PAIR(a, b)) return yk_number((uint32_t)(int64_t)num(a) >> ((uint32_t)(int64_t)num(b) & 31));
   if (numeric_pair(&a, &b)) type_error("BigInts have no unsigned right shift, use >> instead");
   return yk_number(to_uint32(a) >> (to_uint32(b) & 31));
 }
 yk yk_bitnot(yk a) {
-  a = to_primitive(a);
+  if (is_number(a) && fabs(num(a)) < 9.2e18) return yk_number(~(int32_t)(int64_t)num(a));
+  a = to_primitive_hint(a, 2);
   return is_bigint(a) ? big_add_small(big_negate(a), -1) : yk_number(~to_int32(a));
 }
 
@@ -4374,6 +4801,31 @@ static yk big_from_double(double x) {
 }
 
 /* The BigInt's decimal digits. */
+/* A BigInt's digits in a radix 2…36 (BigInt.prototype.toString(radix)). */
+static yk big_to_radix(const yk_bigint *a, uint32_t radix) {
+  if (a->len == 0) return ascii("0");
+  uint32_t n = a->len;
+  uint32_t *w = alloc((size_t)n * 4);
+  memcpy(w, a->d, (size_t)n * 4);
+  size_t cap = (size_t)n * 33 + 2, k = 0;
+  char *digits = alloc(cap);
+  while (n > 0) {
+    uint64_t rem = 0;
+    for (uint32_t i = n; i-- > 0;) {
+      uint64_t cur = (rem << 32) | w[i];
+      w[i] = (uint32_t)(cur / radix);
+      rem = cur % radix;
+    }
+    while (n > 0 && w[n - 1] == 0) n--;
+    digits[k++] = "0123456789abcdefghijklmnopqrstuvwxyz"[rem];
+  }
+  char *out = alloc(k + 2);
+  size_t o = 0;
+  if (a->neg) out[o++] = '-';
+  while (k > 0) out[o++] = digits[--k];
+  out[o] = 0;
+  return ascii(out);
+}
 static yk big_to_string(const yk_bigint *a) {
   if (a->len == 0) return ascii("0");
   uint32_t n = a->len;
@@ -4553,8 +5005,8 @@ static yk big_binary(yk a, yk b, char op) {
 }
 /* The operands as numbers or BigInts: 1 when both are BigInts, 0 when neither, else a TypeError. */
 static int numeric_pair(yk *a, yk *b) {
-  *a = to_primitive(*a);
-  *b = to_primitive(*b);
+  *a = to_primitive_hint(*a, 2); /* ToNumeric: hint number */
+  *b = to_primitive_hint(*b, 2);
   int x = is_bigint(*a), y = is_bigint(*b);
   if (x && y) return 1;
   if (x || y) mix_error();
@@ -4658,6 +5110,7 @@ yk yk_leaf_f64_make(yk hi, yk lo) {
 }
 
 static yk big_to_string_v(yk v) { return big_to_string(big(v)); }
+static yk big_to_radix_v(yk v, uint32_t radix) { return big_to_radix(big(v), radix); }
 static double big_to_double_v(yk v) { return big_to_double(big(v)); }
 static int big_cmp_v(yk a, yk b) { return big_cmp(big(a), big(b)); }
 static int big_cmp_double_v(yk a, double y) { return big_cmp_double(big(a), y); }
@@ -4963,7 +5416,7 @@ static yk_array *iterable_items(yk v) {
   return r;
 }
 
-/* --- JSON.stringify (no replacer, no indent) --- */
+/* --- JSON.stringify --- */
 
 static void json_quote(yk_array *parts, yk_string *s) {
   yk_string *q = new_string(s->len * 6 + 2);
@@ -4988,49 +5441,157 @@ static void json_quote(yk_array *parts, yk_string *s) {
   push(parts, string_of(q));
 }
 
-/* 0: nothing written (undefined, a function); 1: written. */
-static int json_write(yk_array *parts, yk v) {
-  if (v == YK_UNDEFINED || is_closure(v)) return 0;
-  if (v == YK_NULL) return push(parts, ascii("null")), 1;
-  if (is_bool(v)) return push(parts, ascii(v == YK_TRUE ? "true" : "false")), 1;
-  if (is_number(v)) {
-    double d = num(v);
-    return push(parts, d != d || isinf(d) ? ascii("null") : to_string(v)), 1;
+/* JSON.stringify (ECMA-262 25.5.2): SerializeJSONProperty over a state of the replacer function or
+   property list, the gap and the indent, and the stack of the values being serialized (a circular
+   structure's TypeError has V8's message). */
+static yk object_parts(yk v, int which);
+typedef struct {
+  yk replacer;        /* a function, or 0 */
+  yk_array *props;    /* the property list (a replacer array's), or NULL */
+  yk_string *gap;     /* "" when none */
+  yk_array *stack;    /* the objects being serialized */
+  yk_array *keys;     /* the key each was reached by */
+} json_state;
+static int json_property(json_state *st, yk_array *parts, yk holder, yk key, yk value, yk_string *indent);
+static yk json_ctor_name(yk v) {
+  if (is_array(v)) return ascii("Array");
+  yk c = yk_get(v, ascii("constructor"));
+  if (is_closure(c)) {
+    yk n = yk_get(c, ascii("name"));
+    if (is_string(n) && str(n)->len > 0) return n;
   }
-  if (is_string(v)) return json_quote(parts, str(v)), 1;
-  if (is_array(v)) {
-    push(parts, ascii("["));
-    for (uint32_t i = 0; i < arr(v)->len; i++) {
-      if (i > 0) push(parts, ascii(","));
-      if (!json_write(parts, arr(v)->items[i])) push(parts, ascii("null"));
-    }
-    return push(parts, ascii("]")), 1;
-  }
-  yk_object *o = (yk_object *)PTR(v);
-  push(parts, ascii("{"));
-  if (o->kind == 0) {
-    yk_array *keys = enumerable_keys(o);
-    int first = 1;
-    for (uint32_t i = 0; i < keys->len; i++) {
-      yk value;
-      own_get(o, keys->items[i], &value);
-      value = resolve_slot(value, v);
-      if (value == YK_UNDEFINED || is_closure(value)) continue;
-      if (!first) push(parts, ascii(","));
-      first = 0;
-      json_quote(parts, str(keys->items[i]));
-      push(parts, ascii(":"));
-      json_write(parts, value);
-    }
-  }
-  return push(parts, ascii("}")), 1;
+  return ascii("Object");
 }
-
+static yk json_key_text(yk holder, yk key) {
+  if (is_array(holder)) return concat(str(ascii("index ")), str(to_string(key)));
+  return concat(str(concat(str(ascii("property '")), str(to_string(key)))), str(ascii("'")));
+}
+static _Noreturn void json_circular(json_state *st, yk value, yk key, yk holder) {
+  /* V8's: where the circle starts, the properties along it (2 first, 1 last, "..." between), and
+     the one that closes it. */
+  uint32_t at = 0;
+  while (at < st->stack->len && st->stack->items[at] != value) at++;
+  yk m = ascii("Converting circular structure to JSON\n    --> starting at object with constructor '");
+  m = concat(str(concat(str(m), str(json_ctor_name(value)))), str(ascii("'")));
+  uint32_t n = st->stack->len - at - 1; /* the objects after the start along the circle */
+  for (uint32_t j = 0; j < n; j++) {
+    if (n > 3 && j == 2) {
+      m = concat(str(m), str(ascii("\n    |     ...")));
+      j = n - 2;
+      continue;
+    }
+    yk obj = st->stack->items[at + 1 + j];
+    yk via = json_key_text(st->stack->items[at + j], st->keys->items[at + 1 + j]);
+    m = concat(str(m), str(ascii("\n    |     ")));
+    m = concat(str(concat(str(m), str(via))), str(ascii(" -> object with constructor '")));
+    m = concat(str(concat(str(m), str(json_ctor_name(obj)))), str(ascii("'")));
+  }
+  m = concat(str(concat(str(m), str(ascii("\n    --- ")))), str(json_key_text(holder, key)));
+  m = concat(str(m), str(ascii(" closes the circle")));
+  yk_throw(make_error("TypeError", m));
+}
+static int json_object(json_state *st, yk_array *parts, yk v, yk key, yk holder, yk_string *indent) {
+  for (uint32_t i = 0; i < st->stack->len; i++)
+    if (st->stack->items[i] == v) json_circular(st, v, key, holder);
+  push(st->stack, v);
+  push(st->keys, key);
+  yk_string *inner = str(concat(indent, st->gap));
+  yk seen = v;
+  while (is_proxy(seen)) seen = proxy_target(seen); /* IsArray sees through a proxy */
+  int list = is_array(seen);
+  yk_array *members = new_array(8);
+  if (list) {
+    double len = to_number(yk_get(v, ascii("length")));
+    for (double i = 0; i < len; i++) {
+      yk_array *one = new_array(4);
+      yk k = to_string(yk_number(i));
+      if (!json_property(st, one, v, k, yk_get(v, yk_number(i)), inner)) push(one, ascii("null"));
+      push(members, array_join(one, str(ascii(""))));
+    }
+  } else {
+    yk_array *keys = st->props != NULL ? st->props : arr(object_parts(v, 0));
+    for (uint32_t i = 0; i < keys->len; i++) {
+      yk k = keys->items[i];
+      yk_array *one = new_array(4);
+      json_quote(one, str(k));
+      push(one, ascii(st->gap->len > 0 ? ": " : ":"));
+      if (json_property(st, one, v, k, yk_get(v, k), inner)) push(members, array_join(one, str(ascii(""))));
+    }
+  }
+  st->stack->len--;
+  st->keys->len--;
+  if (members->len == 0) return push(parts, ascii(list ? "[]" : "{}")), 1;
+  push(parts, ascii(list ? "[" : "{"));
+  if (st->gap->len == 0) push(parts, array_join(members, str(ascii(","))));
+  else {
+    yk sep = concat(str(ascii(",\n")), inner);
+    push(parts, concat(str(ascii("\n")), inner));
+    push(parts, array_join(members, str(sep)));
+    push(parts, concat(str(ascii("\n")), indent));
+  }
+  return push(parts, ascii(list ? "]" : "}")), 1;
+}
+/* 0: nothing written (undefined, a function, a symbol); 1: written. */
+static int json_property(json_state *st, yk_array *parts, yk holder, yk key, yk value, yk_string *indent) {
+  if (is_object(value) || is_closure(value) || is_array(value) || is_bigint(value)) {
+    yk tj = yk_get(value, ascii("toJSON"));
+    if (is_closure(tj)) value = call_value(tj, value, 1, &key);
+  }
+  if (st->replacer != 0) {
+    yk args[2] = {key, value};
+    value = call_value(st->replacer, holder, 2, args);
+  }
+  /* A wrapper as its primitive (a Number's ToNumber, a String's ToString). */
+  if (is_wrapper(value)) {
+    yk p = wrapper_value(value);
+    value = is_number(p) ? yk_number(to_number(value)) : is_string(p) ? to_string(value) : p;
+  }
+  if (value == YK_NULL) return push(parts, ascii("null")), 1;
+  if (is_bool(value)) return push(parts, ascii(value == YK_TRUE ? "true" : "false")), 1;
+  if (is_string(value)) return json_quote(parts, str(value)), 1;
+  if (is_number(value)) {
+    double d = num(value);
+    return push(parts, d != d || isinf(d) ? ascii("null") : to_string(value)), 1;
+  }
+  if (is_bigint(value)) type_error("Do not know how to serialize a BigInt");
+  if ((is_object(value) && !is_symbol(value)) || is_array(value)) return json_object(st, parts, value, key, holder, indent);
+  return 0;
+}
 static yk builtin_json_stringify(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
+  json_state st = {0, NULL, str(ascii("")), new_array(8), new_array(8)};
+  yk replacer = argc > 1 ? argv[1] : YK_UNDEFINED, space = argc > 2 ? argv[2] : YK_UNDEFINED;
+  if (is_closure(replacer)) st.replacer = replacer;
+  else if (is_array(replacer)) {
+    /* The property list: each string or number, once, in order. */
+    st.props = new_array(arr(replacer)->len);
+    for (uint32_t i = 0; i < arr(replacer)->len; i++) {
+      yk e = arr(replacer)->items[i];
+      if (!is_string(e) && !is_number(e)) continue;
+      e = to_string(e);
+      int seen = 0;
+      for (uint32_t j = 0; j < st.props->len; j++) seen |= key_equal(st.props->items[j], e);
+      if (!seen) push(st.props, e);
+    }
+  }
+  if (is_number(space)) {
+    double n = num(space);
+    int k = n != n ? 0 : n > 10 ? 10 : n < 1 ? 0 : (int)n;
+    yk_string *g = new_string((uint32_t)k);
+    for (int i = 0; i < k; i++) g->units[i] = ' ';
+    g->len = (uint32_t)k;
+    st.gap = g;
+  } else if (is_string(space)) {
+    yk_string *sp = str(space);
+    st.gap = sp->len <= 10 ? sp : str(substring(sp, 0, 10));
+  }
   yk_array *parts = new_array(16);
-  if (!json_write(parts, argc > 0 ? argv[0] : YK_UNDEFINED)) return YK_UNDEFINED;
-  return array_join(parts, str(ascii("")));
+  yk wrapper = yk_object_of(0, NULL, NULL);
+  yk empty = ascii("");
+  yk v = argc > 0 ? argv[0] : YK_UNDEFINED;
+  yk_set(wrapper, empty, v);
+  if (!json_property(&st, parts, wrapper, empty, v, str(empty))) return YK_UNDEFINED;
+  return array_join(parts, str(empty));
 }
 
 /* --- Array.from, Array.isArray, Object.keys / values / entries / assign / freeze, Map, Set --- */
@@ -5062,22 +5623,51 @@ static yk builtin_array_from(void *c, yk self, uint64_t argc, const yk *argv) {
 }
 static yk builtin_array_is_array(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
-  return yk_bool(argc > 0 && is_array(argv[0]));
+  yk v = argc > 0 ? argv[0] : YK_UNDEFINED;
+  while (is_proxy(v)) v = proxy_target(v); /* IsArray sees through a proxy */
+  return yk_bool(is_array(v));
 }
 
 static yk object_parts(yk v, int which) {
   yk_array *r = new_array(4);
+  if (is_proxy(v)) {
+    /* EnumerableOwnProperties of a proxy: its ownKeys' strings whose descriptors say enumerable. */
+    yk_array *keys = proxy_own_keys(v);
+    for (uint32_t i = 0; i < keys->len; i++) {
+      yk k = keys->items[i];
+      if (!is_string(k)) continue;
+      yk d = proxy_own_descriptor(v, k);
+      if (!is_reference(d) || !yk_truthy(yk_get(d, ascii("enumerable")))) continue;
+      if (which == 0) {
+        push(r, k);
+        continue;
+      }
+      yk value = proxy_get(v, k, v);
+      yk pair[2] = {k, value};
+      push(r, which == 1 ? value : yk_array_of(2, pair));
+    }
+    return BOX(T_ARRAY, r);
+  }
   /* An object's own enumerable keys: a plain one's, or a Map's, Set's or Date's set on it (not a
      buffer's or typed array's, whose elements are keys of their own). */
-  if (is_object(v) && !(((yk_object *)PTR(v))->kind >= 6 && ((yk_object *)PTR(v))->kind <= 8)) {
-    yk_object *o = (yk_object *)PTR(v);
+  /* A function's own enumerable properties are its props object's (its name and length are not
+     enumerable), read with the function as the receiver. */
+  if (is_closure(v) && ((yk_closure *)PTR(v))->props == 0) return BOX(T_ARRAY, r);
+  if ((is_object(v) && !(((yk_object *)PTR(v))->kind >= 6 && ((yk_object *)PTR(v))->kind <= 8)) || is_closure(v)) {
+    yk_object *o = is_closure(v) ? (yk_object *)PTR(((yk_closure *)PTR(v))->props) : (yk_object *)PTR(v);
     yk_array *keys = enumerable_keys(o);
     for (uint32_t i = 0; i < keys->len; i++) {
+      /* A function's prototype is never enumerable (an assignment to it keeps that). */
+      if (is_closure(v) && key_is(keys->items[i], "prototype")) continue;
+      if (which == 0) {
+        push(r, keys->items[i]); /* Object.keys reads no value: a getter is not run */
+        continue;
+      }
       yk value;
       own_get(o, keys->items[i], &value);
       value = resolve_slot(value, v);
       yk pair[2] = {keys->items[i], value};
-      push(r, which == 0 ? keys->items[i] : which == 1 ? value : yk_array_of(2, pair));
+      push(r, which == 1 ? value : yk_array_of(2, pair));
     }
   } else if (is_array(v) || is_string(v)) {
     uint32_t n = is_array(v) ? arr(v)->len : str(v)->len;
@@ -5105,10 +5695,70 @@ static yk builtin_object_assign(void *c, yk s, uint64_t argc, const yk *argv) {
   }
   return target;
 }
-static yk builtin_identity(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return argc > 0 ? argv[0] : YK_UNDEFINED; }
+/* An ECMAScript import of a CommonJS module as a namespace (Node's interop): `default` is its
+   module.exports, and each of its own enumerable properties a name, in code-unit order as a module
+   namespace's keys are (ECMA-262 10.4.6), on no prototype. */
+int yk_string_is(yk v, const char *p, uint64_t n);
+static yk cjs_namespace_get(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)self, (void)argc, (void)argv;
+  yk_closure *k = (yk_closure *)c;
+  return yk_get(k->captures[0], k->captures[1]);
+}
+yk yk_cjs_namespace(yk exports) {
+  yk ns = yk_object_of(0, NULL, NULL);
+  ((yk_object *)PTR(ns))->proto = YK_NULL;
+  yk keys = is_reference(exports) ? object_parts(exports, 0) : yk_array_of(0, NULL);
+  yk_array *k = arr(keys);
+  int has_default = 0;
+  for (uint32_t i = 0; i < k->len; i++)
+    if (yk_string_is(k->items[i], "default", 7)) has_default = 1;
+  uint32_t n = k->len + (has_default ? 0 : 1);
+  yk *items = alloc((n ? n : 1) * sizeof(yk)), *tmp = alloc((n ? n : 1) * sizeof(yk));
+  for (uint32_t i = 0; i < k->len; i++) items[i] = k->items[i];
+  if (!has_default) items[k->len] = ascii("default");
+  merge_sort(items, tmp, n, YK_UNDEFINED);
+  for (uint32_t i = 0; i < n; i++) {
+    if (yk_string_is(items[i], "default", 7)) {
+      yk_set(ns, items[i], exports);
+      continue;
+    }
+    /* Each other name reads module.exports' property where it is read (a library's lazy getter
+       loads its module when the program reads it). */
+    yk caps[2] = {exports, items[i]};
+    define_accessor((yk_object *)PTR(ns), items[i], yk_closure_new(cjs_namespace_get, 0, 2, caps), 0);
+  }
+  return ns;
+}
+/* An ECMAScript module's namespace object, marked (import() gives it as it is). */
+yk yk_mark_namespace(yk ns) {
+  ((yk_object *)PTR(ns))->accessors |= 2;
+  return ns;
+}
+/* A CommonJS (or Node's) module's namespace, one per module.exports value: every import of it, static
+   or import(), gets the same object. */
+static yk cjs_namespaces;
+static int64_t collection_find(yk_object *o, yk key);
+static void collection_put(yk_object *o, yk key, yk value);
+static yk new_collection(int32_t kind);
+yk yk_cjs_namespace_of(yk exports) {
+  if (cjs_namespaces == 0) cjs_namespaces = new_collection(1);
+  yk_object *m = (yk_object *)PTR(cjs_namespaces);
+  int64_t i = collection_find(m, exports);
+  if (i >= 0) return arr(m->entries->items[i])->items[1];
+  yk ns = yk_cjs_namespace(exports);
+  collection_put(m, exports, ns);
+  return ns;
+}
+yk yk_cjs_namespace_once(yk *slot, yk exports) {
+  if (*slot == 0) *slot = yk_cjs_namespace_of(exports);
+  return *slot;
+}
 static yk builtin_object(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
-  return argc > 0 && is_reference(argv[0]) ? argv[0] : yk_object_of(0, NULL, NULL);
+  if (argc > 0 && is_reference(argv[0])) return argv[0];
+  /* ToObject: a primitive's wrapper; undefined and null an empty object. */
+  if (argc > 0 && !is_nullish(argv[0])) return make_wrapper(argv[0]);
+  return yk_object_of(0, NULL, NULL);
 }
 static yk builtin_map(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
@@ -5139,6 +5789,12 @@ static yk named(yk f, yk name) {
   return f;
 }
 /* A function's name and length as its code gives them (the lowering's, at each closure made). */
+yk yk_closure_meta_key(yk f, yk name, int64_t length) {
+  yk_closure *c = (yk_closure *)PTR(f);
+  c->fname = name;
+  c->flen = (int32_t)length;
+  return f;
+}
 yk yk_closure_meta(yk f, const char *name, uint64_t n, int64_t length) {
   yk_closure *c = (yk_closure *)PTR(f);
   if (name != NULL) c->fname = yk_string_utf8(name, n);
@@ -5181,6 +5837,7 @@ static int is_regexp(yk v) { return is_object(v) && ((yk_object *)PTR(v))->kind 
 yk yk_regexp_new(yk source, yk flags, yk matcher, yk names) {
   yk key = ascii("lastIndex"), zero = yk_number(0);
   yk v = yk_object_of(1, &key, &zero);
+  set_hidden((yk_object *)PTR(v), key, 1); /* lastIndex: own, writable, not enumerable */
   yk_object *o = (yk_object *)PTR(v);
   o->kind = 3;
   o->regex = alloc(4 * sizeof(yk));
@@ -5476,7 +6133,14 @@ static yk builtin_try(void *c, yk self, uint64_t argc, const yk *argv) {
 }
 
 static yk builtin_error_named(const char *name, uint64_t argc, const yk *argv) {
-  return make_error(name, argc > 0 && argv[0] != YK_UNDEFINED ? to_string(argv[0]) : ascii(""));
+  int has = argc > 0 && argv[0] != YK_UNDEFINED;
+  yk e = make_error_of(name, has ? to_string(argv[0]) : YK_UNDEFINED, has);
+  /* InstallErrorCause: options' own or inherited cause, not enumerable. */
+  if (argc > 1 && is_object(argv[1]) && yk_in(ascii("cause"), argv[1]) == YK_TRUE) {
+    own_set((yk_object *)PTR(e), ascii("cause"), yk_get(argv[1], ascii("cause")));
+    set_hidden((yk_object *)PTR(e), ascii("cause"), 1);
+  }
+  return e;
 }
 static yk builtin_error(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return builtin_error_named("Error", argc, argv); }
 static yk builtin_type_error(void *c, yk s, uint64_t argc, const yk *argv) { (void)c, (void)s; return builtin_error_named("TypeError", argc, argv); }
@@ -5488,9 +6152,10 @@ static yk builtin_uri_error(void *c, yk s, uint64_t argc, const yk *argv) { (voi
 /* AggregateError(errors, message): an Error whose errors are the iterable's values. */
 static yk builtin_aggregate_error(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
-  yk e = builtin_error_named("AggregateError", argc > 1 ? 1 : 0, argv + 1);
+  yk e = builtin_error_named("AggregateError", argc > 1 ? argc - 1 : 0, argv + 1);
   yk_array *items = iterable_items(argc > 0 ? argv[0] : YK_UNDEFINED);
   own_set((yk_object *)PTR(e), ascii("errors"), BOX(T_ARRAY, items));
+  set_hidden((yk_object *)PTR(e), ascii("errors"), 1);
   return e;
 }
 
@@ -6294,6 +6959,7 @@ typedef struct {
   yk value;
   reaction **on_fulfil, **on_reject;
   uint32_t n, cap;
+  int handled; /* [[PromiseIsHandled]]: a reaction was ever added */
 } promise_state;
 
 typedef struct coro {
@@ -6311,6 +6977,7 @@ typedef struct coro {
   yk result;           /* when done: what it returned, or threw */
   int threw;
   yk returning;        /* a generator's return(v): the v */
+  int returned;        /* done by a return() it was going through (not by its body's end) */
   void *stack;
   int awaiting;           /* an async generator's: suspended at an await (a job resumes it) */
   yk_array *requests;     /* an async generator's queue: [mode, value, promise] for each request */
@@ -6318,6 +6985,10 @@ typedef struct coro {
 
 #define CORO_STACK (256 * 1024)
 static coro *current_coro, *starting_coro;
+/* The lowest frame address a call may make on the running coroutine's stack, or 0 on the main one. */
+static uintptr_t coro_stack_low(void) {
+  return current_coro != NULL && current_coro->stack != NULL ? (uintptr_t)current_coro->stack + (64 * 1024) : 0;
+}
 #if YK_GC
 static int gc_in_coroutine(void) { return current_coro != NULL; }
 #endif
@@ -6359,11 +7030,29 @@ static void enqueue(job j) {
   jobs[jobs_tail++] = j;
 }
 
+/* HostPromiseRejectionTracker (#1361 P2): a boot program over Node's library sets the hook (V8's
+   promise reject callback: type 0 rejected with no handler, 1 a handler added after); without one,
+   the runtime keeps the promises rejected with no handler and, once the jobs are done, an unhandled
+   one ends the program as Node's default does. */
+static yk reject_hook = 0;
+static yk_array *unhandled_rejections = NULL;
+static void push(yk_array *a, yk v);
+static yk_array *new_array(uint32_t cap);
+static void track_rejection(yk p, int type, yk reason) {
+  if (is_closure(reject_hook)) {
+    yk args[3] = {yk_number(type), p, reason};
+    call_value(reject_hook, YK_UNDEFINED, 3, args);
+  } else if (type == 0) {
+    if (unhandled_rejections == NULL) unhandled_rejections = new_array(4);
+    push(unhandled_rejections, p);
+  }
+}
 static void settle(yk p, int state, yk value) {
   promise_state *s = pstate(p);
   if (s->state != 0) return;
   s->state = state;
   s->value = value;
+  if (state == 2 && !s->handled) track_rejection(p, 0, value);
   /* TriggerPromiseReactions: each of the settled side, in order, as a job. */
   for (uint32_t i = 0; i < s->n; i++)
     enqueue((job){0, state == 1 ? s->on_fulfil[i] : s->on_reject[i], value, 0, 0, 0});
@@ -6434,6 +7123,8 @@ static void perform_then(yk p, yk on_fulfil, yk on_reject, yk derived, coro *res
   *f = (reaction){0, is_closure(on_fulfil) ? on_fulfil : 0, derived, resume};
   *r = (reaction){1, is_closure(on_reject) ? on_reject : 0, derived, resume};
   promise_state *s = pstate(p);
+  if (s->state == 2 && !s->handled) track_rejection(p, 1, YK_UNDEFINED);
+  s->handled = 1;
   if (s->state == 0) {
     if (s->n == s->cap) {
       uint32_t old = s->cap;
@@ -6514,6 +7205,7 @@ static void coro_main(void) {
   } else if (is_generator_return(thrown)) {
     co->result = co->returning;
     co->threw = 0;
+    co->returned = 1;
   } else {
     co->result = thrown;
     co->threw = 1;
@@ -6542,9 +7234,16 @@ static void coro_resume(coro *co, yk value, int mode) {
   } else
     handlers = co->handlers;
   co->state = 2;
-  /* Leaving the main stack: the collector scans it from here up while the coroutine runs. */
+  /* Leaving the main stack: the collector scans it from here up while the coroutine runs. "Here"
+     is this jmp_buf, below the registers this function's prologue saved (a caller's value held in a
+     callee-saved register is there, or still in a register setjmp writes here), not this frame's
+     address, above them. */
   uintptr_t main_sp = gc_main_sp;
-  if (prev == NULL) gc_main_sp = (uintptr_t)__builtin_frame_address(0);
+  jmp_buf main_regs;
+  if (prev == NULL) {
+    setjmp(main_regs);
+    gc_main_sp = (uintptr_t)&main_regs;
+  }
   swapcontext(&co->back, &co->ctx);
   gc_main_sp = main_sp;
   current_coro = prev;
@@ -6756,6 +7455,7 @@ yk yk_yield(yk v) {
 /* yield* v: each value v's iteration gives, yielded in turn; its return value is the result. What
    the consumer sends, throws or returns is passed on to a generator delegated to, so its catch and
    finally blocks see it, as ECMAScript's yield* does (#1330). */
+static yk try_gen_code(void *c, yk self, uint64_t argc, const yk *argv);
 yk yk_yield_star(yk v) {
   if (current_coro != NULL && current_coro->kind == 2 && is_object(v) && ((yk_object *)PTR(v))->kind == 9) {
     /* yield* in an async generator, to another: each request passed on and its result awaited; its
@@ -6781,8 +7481,11 @@ yk yk_yield_star(yk v) {
     int mode = 0;
     for (;;) {
       if (!generator_resume(v, sent, mode, &out)) {
-        /* Done: by return(), this generator returns too, with what the delegate returned. */
-        if (mode == 2) generator_return_through(out);
+        /* Done: by return(), this generator returns too, with what the delegate returned; so too
+           when the delegate is a try statement's (the runtime's __yakccTryGen) that finished a
+           return it was going through, its finally having yielded since. */
+        coro *dc = (coro *)((yk_object *)PTR(v))->ext;
+        if (mode == 2 || (dc->returned && dc->fn != NULL && dc->fn->code == try_gen_code)) generator_return_through(out);
         return out;
       }
       sent = coro_suspend_mode(out, &mode);
@@ -6967,10 +7670,36 @@ static yk promise_static_resolve(void *c, yk self, uint64_t argc, const yk *argv
 
 /* import(spec) (#1370): a promise of the module's namespace (an ECMAScript module's) or exports (a
    CommonJS module's), the module loaded by its require in a job (a throw rejects the promise). */
+yk yk_cjs_namespace_of(yk exports);
+/* An asynchronously evaluated module (one with a top-level await, or importing one): its
+   namespace's evaluation promise, which import() waits for. */
+static yk evaluating_modules;
+void yk_module_evaluating(yk ns, yk promise) {
+  if (evaluating_modules == 0) evaluating_modules = new_collection(1);
+  collection_put((yk_object *)PTR(evaluating_modules), ns, promise);
+}
+static yk import_value(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)self, (void)argc, (void)argv;
+  return ((yk_closure *)c)->captures[0];
+}
 static yk import_job(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)self, (void)argc, (void)argv;
   yk_closure *k = (yk_closure *)c;
-  return call_value(k->captures[0], YK_UNDEFINED, 1, &k->captures[1]);
+  yk got = call_value(k->captures[0], YK_UNDEFINED, 1, &k->captures[1]);
+  /* An ECMAScript module's namespace as it is, once it has been evaluated; a CommonJS or Node's
+     module's exports as a namespace. */
+  if (is_object(got) && (((yk_object *)PTR(got))->accessors & 2)) {
+    if (evaluating_modules != 0) {
+      yk_object *m = (yk_object *)PTR(evaluating_modules);
+      int64_t i = collection_find(m, got);
+      if (i >= 0) {
+        yk then = yk_closure_new(import_value, 0, 1, &got);
+        return call_method_key(arr(m->entries->items[i])->items[1], ascii("then"), 1, &then);
+      }
+    }
+    return got;
+  }
+  return yk_cjs_namespace_of(got);
 }
 yk yk_import(yk require, yk spec) {
   yk done = promise_static_resolve(NULL, YK_UNDEFINED, 0, NULL);
@@ -7038,6 +7767,42 @@ static yk promise_static_all_settled(void *c, yk self, uint64_t argc, const yk *
   (void)c, (void)self;
   return promise_combine(argc, argv, 1);
 }
+/* Promise.any: the first to fulfil; when all reject, an AggregateError of their reasons in order. */
+static yk any_rejected(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)self;
+  yk_closure *k = (yk_closure *)c; /* result, errors, index, remaining, called */
+  yk_array *called = arr(k->captures[4]);
+  if (called->items[0] == YK_TRUE) return YK_UNDEFINED;
+  called->items[0] = YK_TRUE;
+  arr(k->captures[1])->items[(uint32_t)num(k->captures[2])] = argc > 0 ? argv[0] : YK_UNDEFINED;
+  yk_array *remaining = arr(k->captures[3]);
+  remaining->items[0] = yk_number(num(remaining->items[0]) - 1);
+  if (num(remaining->items[0]) == 0) {
+    yk args[2] = {k->captures[1], ascii("All promises were rejected")};
+    reject_promise(k->captures[0], builtin_aggregate_error(NULL, YK_UNDEFINED, 2, args));
+  }
+  return YK_UNDEFINED;
+}
+static yk promise_static_any(void *c, yk self, uint64_t argc, const yk *argv) {
+  (void)c, (void)self;
+  yk result = promise_new(), resolve, reject;
+  resolving_functions(result, &resolve, &reject);
+  yk_array *items = iterable_items(argc > 0 ? argv[0] : YK_UNDEFINED);
+  yk errors = BOX(T_ARRAY, new_array(items->len > 0 ? items->len : 1));
+  arr(errors)->len = items->len;
+  for (uint32_t i = 0; i < items->len; i++) arr(errors)->items[i] = YK_UNDEFINED;
+  yk remaining = yk_array_of(1, (yk[]){yk_number(items->len)});
+  if (items->len == 0) {
+    yk args[2] = {errors, ascii("All promises were rejected")};
+    reject_promise(result, builtin_aggregate_error(NULL, YK_UNDEFINED, 2, args));
+    return result;
+  }
+  for (uint32_t i = 0; i < items->len; i++) {
+    yk caps[5] = {result, errors, yk_number(i), remaining, yk_array_of(1, (yk[]){YK_FALSE})};
+    promise_then(NULL, promise_resolve(items->items[i]), 2, (yk[]){resolve, yk_closure_new(any_rejected, 0, 5, caps)});
+  }
+  return result;
+}
 static yk promise_static_race(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
   yk result = promise_new(), resolve, reject;
@@ -7051,6 +7816,17 @@ static yk promise_static_race(void *c, yk self, uint64_t argc, const yk *argv) {
 /* __yakccTryAsync(body, handler, finalizer): the async try primitive, as the TypeScript lowering's
    runtime defines it: try { try { return await body() } catch (t) { …; return await handler(t) } }
    finally { const done = await finalizer(); if (done is [1, …]) return done }. */
+/* A block of the async try (an async closure), run as the try's own statements are: in the
+   current async function's coroutine, its awaits suspending that function, so it takes no more
+   jobs than the source's try does; its result as `await block()` would give it. */
+static yk try_async_block(yk f, uint64_t argc, const yk *argv) {
+  yk_closure *k = is_closure(f) ? (yk_closure *)PTR(f) : NULL;
+  if (k != NULL && k->mode == 1 && !k->is_class && current_coro != NULL && current_coro->kind == 0) {
+    yk r = k->code(k, YK_UNDEFINED, argc, argv);
+    return is_promise(r) ? yk_await(r) : r;
+  }
+  return yk_await(call_value(f, YK_UNDEFINED, argc, argv));
+}
 static yk try_async_body(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
   yk body = argv[0], handler_fn = argc > 1 ? argv[1] : YK_UNDEFINED, fin = argc > 2 ? argv[2] : YK_UNDEFINED;
@@ -7061,7 +7837,7 @@ static yk try_async_body(void *c, yk self, uint64_t argc, const yk *argv) {
     h.prev = handlers;
     handlers = &h;
     if (setjmp(h.env) == 0) {
-      r = yk_await(call_value(body, YK_UNDEFINED, 0, NULL));
+      r = try_async_block(body, 0, NULL);
       threw = 0;
     } else {
       r = thrown;
@@ -7075,7 +7851,7 @@ static yk try_async_body(void *c, yk self, uint64_t argc, const yk *argv) {
     h.prev = handlers;
     handlers = &h;
     if (setjmp(h.env) == 0) {
-      r = yk_await(call_value(handler_fn, YK_UNDEFINED, 1, &exc));
+      r = try_async_block(handler_fn, 1, &exc);
       threw = 0;
     } else {
       r = thrown;
@@ -7084,13 +7860,20 @@ static yk try_async_body(void *c, yk self, uint64_t argc, const yk *argv) {
     handlers = h.prev;
   }
   if (is_closure(fin)) {
-    yk done = yk_await(call_value(fin, YK_UNDEFINED, 0, NULL));
+    yk done = try_async_block(fin, 0, NULL);
     if (is_array(done) && arr(done)->len > 0 && strict_equal(arr(done)->items[0], yk_number(1))) return done;
   }
   if (threw) yk_throw(r);
   return r;
 }
 
+/* await __yakccTryAsync(…) in an async function: the try run in its coroutine, its completion the
+   await's value (the emitter's, #1276). */
+yk yk_try_async_now(uint64_t argc, const yk *argv) {
+  if (current_coro == NULL || current_coro->kind != 0)
+    return yk_await(call_value(yk_global("__yakccTryAsync", 15), YK_UNDEFINED, argc, argv));
+  return try_async_body(NULL, YK_UNDEFINED, argc, argv);
+}
 static yk builtin_queue_microtask(void *c, yk self, uint64_t argc, const yk *argv) {
   (void)c, (void)self;
   yk f = argc > 0 ? argv[0] : YK_UNDEFINED;
@@ -7164,8 +7947,9 @@ _Static_assert(offsetof(yk_view, buffer) == offsetof(struct yk_view_mirror, buff
                "yk_view's layout is the lowering's");
 _Static_assert(offsetof(yk_buffer, data) == offsetof(struct yk_buffer_mirror, data),
                "yk_buffer's layout is the lowering's");
-_Static_assert(offsetof(yk_string, len) == 0 && offsetof(yk_string, units) == 4,
-               "a string's length, then its units");
+_Static_assert(offsetof(yk_string, len) == 0 && offsetof(yk_string, units) == 8,
+               "a string's length, its hash, then its units");
+_Static_assert(offsetof(yk_bigint, len) == 4, "a BigInt's limb count, as a .big clone's entry reads it");
 
 enum { TA_I8, TA_U8, TA_U8C, TA_I16, TA_U16, TA_I32, TA_U32, TA_F32, TA_F64, TA_BI64, TA_BU64, TA_COUNT };
 static const char *const ta_names[TA_COUNT] = {"Int8Array",   "Uint8Array",    "Uint8ClampedArray",
@@ -7205,7 +7989,7 @@ static yk new_kind(int32_t kind, void *ext) {
 static yk new_buffer(uint32_t len) {
   yk_buffer *b = alloc(sizeof(yk_buffer));
   b->len = len;
-  b->data = alloc(len + 1);
+  b->data = alloc_noscan(len + 1);
   memset(b->data, 0, len + 1);
   return new_kind(K_BUFFER, b);
 }
@@ -7884,13 +8668,33 @@ static yk process_global(void) {
   }
   own_set(o, ascii("env"), env);
   own_set(o, ascii("platform"), ascii("linux"));
-  own_set(o, ascii("arch"), ascii(sizeof(void *) == 8 ? (
+  /* os.arch()'s names (Node's for the target the program is built for). */
+  own_set(o, ascii("arch"), ascii(
 #if defined(__aarch64__)
-                                       "arm64"
+                                "arm64"
+#elif defined(__x86_64__)
+                                "x64"
+#elif defined(__riscv) && __riscv_xlen == 64
+                                "riscv64"
+#elif defined(__arm__)
+                                "arm"
 #else
-                                       "x64"
+                                "ia32"
 #endif
-                                       ) : "ia32"));
+                                ));
+  /* The process's own ids, and the name it was run by (#1361 P2). */
+  own_set(o, ascii("pid"), yk_number((double)getpid()));
+  own_set(o, ascii("ppid"), yk_number((double)getppid()));
+  own_set(o, ascii("argv0"), ascii(self));
+  /* release: Node's, as the library this program is built from names it. */
+  {
+    yk r = yk_object_of(0, NULL, NULL);
+    own_set((yk_object *)PTR(r), ascii("name"), ascii("node"));
+    own_set((yk_object *)PTR(r), ascii("lts"), ascii("Jod"));
+    own_set((yk_object *)PTR(r), ascii("sourceUrl"), ascii("https://nodejs.org/download/release/v22.23.5/node-v22.23.5.tar.gz"));
+    own_set((yk_object *)PTR(r), ascii("headersUrl"), ascii("https://nodejs.org/download/release/v22.23.5/node-v22.23.5-headers.tar.gz"));
+    own_set(o, ascii("release"), r);
+  }
   /* versions: the Node library the program is built from; no OpenSSL (no crypto binding yet). */
   {
     yk v = yk_object_of(0, NULL, NULL);
@@ -8108,8 +8912,68 @@ void yk_main_begin(int argc, char **argv) {
   program_argc = argc;
   program_argv = argv;
 }
-int yk_main_end(void) {
+/* The tick hook (#1361 P2): a boot program over Node's library sets it to run process.nextTick's
+   queue when the runtime's jobs are done, as Node runs it after a callback, and then a task (a
+   port's messages); the jobs it makes are run, and it again, until neither has more and it ran no
+   task. __yakccRunMicrotasks is V8's microtask drain. */
+static yk tick_hook = 0;
+static yk builtin_set_tick_hook(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  tick_hook = arg_or_undefined(argc, argv, 0);
+  return YK_UNDEFINED;
+}
+static yk builtin_run_microtasks(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s, (void)argc, (void)argv;
   yk_drain();
+  return YK_UNDEFINED;
+}
+/* The exit hook (#1361 P2): a boot program sets it to emit process's 'exit' when nothing is left
+   to run, before the exit code is read. */
+static yk exit_hook = 0;
+static yk builtin_on_exit(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  exit_hook = arg_or_undefined(argc, argv, 0);
+  return YK_UNDEFINED;
+}
+static yk builtin_set_reject_hook(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  reject_hook = arg_or_undefined(argc, argv, 0);
+  return YK_UNDEFINED;
+}
+/* With no hook: a promise still rejected with no handler once the jobs are done ends the program,
+   its reason thrown uncaught (a reason that is not an Error as Node's ERR_UNHANDLED_REJECTION). */
+static void report_unhandled_rejections(void) {
+  if (unhandled_rejections == NULL || !program_mode) return;
+  for (uint32_t i = 0; i < unhandled_rejections->len; i++) {
+    yk p = unhandled_rejections->items[i];
+    promise_state *s = pstate(p);
+    if (s->handled) continue;
+    yk reason = s->value;
+    if (is_object(reason) && ((yk_object *)PTR(reason))->error) yk_throw(reason);
+    yk e = make_error("Error", concat(str(concat(str(ascii("This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \"")), str(to_string(is_symbol(reason) ? symbol_descriptive(reason) : reason)))), str(ascii("\"."))));
+    yk_set(e, ascii("code"), ascii("ERR_UNHANDLED_REJECTION"));
+    yk_set(e, ascii("name"), ascii("UnhandledPromiseRejection"));
+    yk_throw(e);
+  }
+  unhandled_rejections->len = 0;
+}
+static void run_jobs_and_ticks(void) {
+  if (is_closure(tick_hook))
+    for (;;) {
+      /* true: it ran a task (a port's message), so there may be more. */
+      yk more = call_value(tick_hook, YK_UNDEFINED, 0, NULL);
+      if (jobs_head >= jobs_tail && more != YK_TRUE) break;
+      yk_drain();
+    }
+  yk_drain();
+  report_unhandled_rejections();
+}
+int yk_main_end(void) {
+  run_jobs_and_ticks();
+  if (is_closure(exit_hook)) {
+    call_value(exit_hook, YK_UNDEFINED, 0, NULL);
+    run_jobs_and_ticks();
+  }
   fflush(stdout);
   fflush(stderr);
   return exit_code_of();
@@ -8805,7 +9669,7 @@ static yk leaf_value(const char *name, uint64_t n) {
   return 0;
 }
 
-#define N_GLOBALS 41
+#define N_GLOBALS 42
 static yk global_raw(const char *name, uint64_t n);
 static yk global_this(void);
 static yk reflect_global(void);
@@ -9070,6 +9934,9 @@ static yk builtin_array_of(void *c, yk s, uint64_t argc, const yk *argv) {
 }
 static yk global_uncached(const char *name, uint64_t n);
 static yk builtin_set_builtin_require(void *c, yk s, uint64_t argc, const yk *argv);
+static yk builtin_set_tick_hook(void *c, yk s, uint64_t argc, const yk *argv);
+static yk builtin_on_exit(void *c, yk s, uint64_t argc, const yk *argv);
+static yk builtin_run_microtasks(void *c, yk s, uint64_t argc, const yk *argv);
 /* A global's value: a defined global's (__yakccDefineGlobal) as it is now; anything else (the
    runtime's own, fixed once made) from a cache by name, so a read in a loop makes nothing again. */
 static yk global_cache = 0;
@@ -9094,6 +9961,22 @@ static yk global_uncached(const char *name, uint64_t n) {
     static yk f;
     return f != 0 ? f : (f = yk_closure_new(builtin_define_global, 0, 0, NULL));
   }
+  if (n == 13 && memcmp(name, "__yakccOnExit", 13) == 0) {
+    static yk f;
+    return f != 0 ? f : (f = yk_closure_new(builtin_on_exit, 0, 0, NULL));
+  }
+  if (n == 18 && memcmp(name, "__yakccSetTickHook", 18) == 0) {
+    static yk f;
+    return f != 0 ? f : (f = yk_closure_new(builtin_set_tick_hook, 0, 0, NULL));
+  }
+  if (n == 27 && memcmp(name, "__yakccSetPromiseRejectHook", 27) == 0) {
+    static yk f;
+    return f != 0 ? f : (f = yk_closure_new(builtin_set_reject_hook, 0, 0, NULL));
+  }
+  if (n == 20 && memcmp(name, "__yakccRunMicrotasks", 20) == 0) {
+    static yk f;
+    return f != 0 ? f : (f = yk_closure_new(builtin_run_microtasks, 0, 0, NULL));
+  }
   if (n == 24 && memcmp(name, "__yakccSetBuiltinRequire", 24) == 0) {
     static yk f;
     return f != 0 ? f : (f = yk_closure_new(builtin_set_builtin_require, 0, 0, NULL));
@@ -9114,20 +9997,26 @@ static yk global_uncached(const char *name, uint64_t n) {
       own_set(own_props(v), ascii("captureStackTrace"), named(yk_closure_new(error_capture_stack_trace, 0, 0, NULL), ascii("captureStackTrace")));
       own_set(own_props(v), ascii("stackTraceLimit"), yk_number(10));
     }
+    /* A built-in constructor's own functions (Array.from, Object.keys, …) are not enumerable. */
+    if (((yk_closure *)PTR(v))->props != 0) {
+      yk_object *props = (yk_object *)PTR(((yk_closure *)PTR(v))->props);
+      for (uint32_t i = 0; i < props->len; i++) set_hidden(props, props->keys[i], 1);
+    }
   }
   static const char *const ctors[] = {"Object", "Array", "String", "Number", "Boolean", "Symbol", "BigInt",
                                       "Map", "Set", "Promise", "Error", "TypeError", "RangeError", "SyntaxError",
                                       "EvalError", "ReferenceError", "URIError", "AggregateError", "WeakMap",
                                       "WeakSet", "WeakRef", "FinalizationRegistry", "Date", "RegExp"};
   static const int which[] = {I_OBJECT, I_ARRAY, I_STRING, I_NUMBER, I_BOOLEAN, I_SYMBOL, I_BIGINT,
-                              I_MAP, I_SET, I_PROMISE, I_ERROR, I_ERROR, I_ERROR, I_ERROR,
-                              I_ERROR, I_ERROR, I_ERROR, I_ERROR, I_WEAKMAP,
+                              I_MAP, I_SET, I_PROMISE, I_ERROR, I_TYPE_ERROR, I_RANGE_ERROR, I_SYNTAX_ERROR,
+                              I_EVAL_ERROR, I_REFERENCE_ERROR, I_URI_ERROR, I_AGGREGATE_ERROR, I_WEAKMAP,
                               I_WEAKSET, I_WEAKREF, I_FINREG, I_DATE, I_REGEXP};
   for (int i = 0; i < 24; i++)
     if (strlen(ctors[i]) == n && memcmp(ctors[i], name, n) == 0 && !has_own(v, ascii("prototype"))) {
       yk p = intrinsic_proto(which[i]);
       own_set(own_props(v), ascii("prototype"), p);
-      if (which[i] != I_ERROR || i == 10) own_set((yk_object *)PTR(p), ascii("constructor"), v);
+      own_set((yk_object *)PTR(p), ascii("constructor"), v);
+      set_hidden((yk_object *)PTR(p), ascii("constructor"), 1);
       if (which[i] == I_WEAKMAP || which[i] == I_WEAKSET) /* not Map's nor Set's */
         ((yk_object *)PTR(p))->proto = intrinsic_proto(I_OBJECT);
     }
@@ -9160,7 +10049,7 @@ static yk global_raw(const char *name, uint64_t n) {
                                          "decodeURIComponent", "decodeURI", "escape", "unescape", "eval",
                                          "EvalError", "ReferenceError", "URIError", "AggregateError",
                                          "WeakMap", "WeakSet", "WeakRef", "FinalizationRegistry", "Date",
-                                         "RegExp"};
+                                         "RegExp", "Proxy"};
   static yk_code codes[N_GLOBALS] = {builtin_string, builtin_number, builtin_boolean,
                                      builtin_parse_float, builtin_parse_int, builtin_is_nan,
                                      builtin_is_finite, builtin_array, NULL, builtin_try,
@@ -9173,7 +10062,8 @@ static yk global_raw(const char *name, uint64_t n) {
                                      builtin_unescape, builtin_eval, builtin_eval_error,
                                      builtin_reference_error, builtin_uri_error, builtin_aggregate_error,
                                      builtin_weak_map, builtin_weak_set, builtin_weak_ref,
-                                     builtin_finalization_registry, builtin_date, builtin_regexp};
+                                     builtin_finalization_registry, builtin_date, builtin_regexp,
+                                     builtin_proxy};
   for (int i = 0; i < N_GLOBALS; i++)
     if (strlen(names[i]) == n && memcmp(names[i], name, n) == 0) {
       if (fns[i] != 0) return fns[i];
@@ -9185,15 +10075,25 @@ static yk global_raw(const char *name, uint64_t n) {
       if (strcmp(names[i], "Symbol") == 0) return fns[i] = symbol_global();
       if (codes[i] == NULL) return YK_UNDEFINED;
       if (codes[i] == builtin_promise) {
-        static const char *const m[5] = {"resolve", "reject", "all", "allSettled", "race"};
-        static const yk_code k[5] = {promise_static_resolve, promise_static_reject, promise_static_all,
-                                     promise_static_all_settled, promise_static_race};
-        return fns[i] = with_methods(builtin_promise, 5, m, k);
+        static const char *const m[6] = {"resolve", "reject", "all", "allSettled", "race", "any"};
+        static const yk_code k[6] = {promise_static_resolve, promise_static_reject, promise_static_all,
+                                     promise_static_all_settled, promise_static_race, promise_static_any};
+        return fns[i] = with_methods(builtin_promise, 6, m, k);
       }
       if (codes[i] == try_async_body) return fns[i] = yk_closure_mode(yk_closure_new(try_async_body, 0, 0, NULL), 1);
       if (codes[i] == try_gen_code) return fns[i] = yk_closure_mode(yk_closure_new(try_gen_code, 0, 0, NULL), 2);
       if (codes[i] == try_async_gen_code)
         return fns[i] = yk_closure_mode(yk_closure_new(try_async_gen_code, 0, 0, NULL), 3);
+      if (codes[i] == builtin_proxy) {
+        static const char *const m[1] = {"revocable"};
+        static const yk_code k[1] = {proxy_revocable};
+        return fns[i] = with_methods(builtin_proxy, 1, m, k);
+      }
+      if (codes[i] == builtin_map) {
+        static const char *const m[1] = {"groupBy"};
+        static const yk_code k[1] = {map_group_by};
+        return fns[i] = with_methods(builtin_map, 1, m, k);
+      }
       if (codes[i] == builtin_date) {
         static const char *const m[3] = {"now", "parse", "UTC"};
         static const yk_code k[3] = {date_static_now, date_static_parse, date_static_utc};
@@ -9225,13 +10125,13 @@ static yk global_raw(const char *name, uint64_t n) {
                                           "create", "hasOwn", "fromEntries", "isFrozen", "isSealed",
                                           "isExtensible", "preventExtensions", "seal", "groupBy"};
         static const yk_code k[23] = {builtin_object_keys, builtin_object_values, builtin_object_entries,
-                                      builtin_object_assign, builtin_identity, builtin_object_is,
+                                      builtin_object_assign, object_freeze, builtin_object_is,
                                       reflect_get_prototype_of, reflect_set_prototype_of,
                                       object_get_own_property_names, object_get_own_property_symbols,
                                       reflect_get_own_property_descriptor, object_get_own_property_descriptors,
                                       object_define_property, object_define_properties, object_create,
-                                      object_has_own, object_from_entries, object_false, object_false,
-                                      object_true, object_first, object_first, object_false};
+                                      object_has_own, object_from_entries, object_is_frozen, object_is_sealed,
+                                      object_is_extensible, object_prevent_extensions, object_seal, object_group_by};
         return fns[i] = with_methods(builtin_object, 23, m, k);
       }
       return fns[i] = yk_closure_new(codes[i], 0, 0, NULL);
@@ -9240,9 +10140,174 @@ static yk global_raw(const char *name, uint64_t n) {
 }
 
 /* new F(…): the constructors the runtime has (Array). */
+/* --- Proxy (ECMA-262 10.5, 28.2) ---
+   A proxy of an object is an object of kind 14 over its target and handler; of a function, a closure
+   whose code is proxy_fn_code, its one capture that object. Each internal method a property
+   operation reaches asks the handler's trap, else does it on the target. Revoking one clears its
+   handler. */
+typedef struct {
+  yk target;
+  yk handler; /* YK_NULL once revoked */
+} proxy_data;
+static yk proxy_fn_code(void *c, yk self, uint64_t argc, const yk *argv);
+static int is_obj_proxy(yk v) { return is_object(v) && ((yk_object *)PTR(v))->kind == 14; }
+static int is_fn_proxy(yk v) { return is_closure(v) && ((yk_closure *)PTR(v))->code == proxy_fn_code; }
+static int is_proxy(yk v) { return is_obj_proxy(v) || is_fn_proxy(v); }
+static proxy_data *proxy_of(yk v) {
+  if (is_fn_proxy(v)) v = ((yk_closure *)PTR(v))->captures[0];
+  return (proxy_data *)((yk_object *)PTR(v))->ext;
+}
+/* The handler's trap of the name, or 0 when it has none (a revoked proxy's TypeError). */
+static yk proxy_trap(yk proxy, const char *name) {
+  proxy_data *p = proxy_of(proxy);
+  if (p->handler == YK_NULL) {
+    char msg[96];
+    snprintf(msg, sizeof msg, "Cannot perform '%s' on a proxy that has been revoked", name);
+    type_error(msg);
+  }
+  yk t = yk_get(p->handler, ascii(name));
+  if (is_nullish(t)) return 0;
+  if (!is_closure(t)) type_error("a proxy's trap is not a function");
+  return t;
+}
+static yk proxy_target(yk proxy) { return proxy_of(proxy)->target; }
+static yk proxy_handler(yk proxy) { return proxy_of(proxy)->handler; }
+static yk proxy_get(yk proxy, yk key, yk receiver) {
+  yk t = proxy_trap(proxy, "get");
+  proxy_data *p = proxy_of(proxy);
+  if (t == 0) return yk_get(p->target, key);
+  yk args[3] = {p->target, key, receiver};
+  return call_value(t, p->handler, 3, args);
+}
+static void proxy_set(yk proxy, yk key, yk value, yk receiver) {
+  yk t = proxy_trap(proxy, "set");
+  proxy_data *p = proxy_of(proxy);
+  if (t == 0) {
+    yk_set(p->target, key, value);
+    return;
+  }
+  yk args[4] = {p->target, key, value, receiver};
+  if (!yk_truthy(call_value(t, p->handler, 4, args))) {
+    yk m = concat(str(concat(str(ascii("'set' on proxy: trap returned falsish for property '")), str(to_string(is_symbol(key) ? symbol_descriptive(key) : key)))), str(ascii("'")));
+    yk_throw(make_error("TypeError", m));
+  }
+}
+yk yk_in(yk key, yk obj);
+yk yk_delete(yk obj, yk key);
+static yk proxy_has(yk proxy, yk key) {
+  yk t = proxy_trap(proxy, "has");
+  proxy_data *p = proxy_of(proxy);
+  if (t == 0) return yk_in(key, p->target);
+  yk args[2] = {p->target, key};
+  return yk_bool(yk_truthy(call_value(t, p->handler, 2, args)));
+}
+static yk proxy_delete(yk proxy, yk key) {
+  yk t = proxy_trap(proxy, "deleteProperty");
+  proxy_data *p = proxy_of(proxy);
+  if (t == 0) return yk_delete(p->target, key);
+  yk args[2] = {p->target, key};
+  return yk_bool(yk_truthy(call_value(t, p->handler, 2, args)));
+}
+static yk_array *own_keys_of(yk v);
+static yk_array *proxy_own_keys(yk proxy) {
+  yk t = proxy_trap(proxy, "ownKeys");
+  proxy_data *p = proxy_of(proxy);
+  if (t == 0) return own_keys_of(p->target);
+  yk got = call_value(t, p->handler, 1, &p->target);
+  yk_array *items = iterable_items(got), *out = new_array(items->len);
+  for (uint32_t i = 0; i < items->len; i++) {
+    yk k = items->items[i];
+    if (!is_string(k) && !is_symbol(k)) type_error("a proxy's ownKeys trap gave a value that is not a property key");
+    push(out, k);
+  }
+  return out;
+}
+static yk reflect_get_own_property_descriptor(void *c, yk s, uint64_t argc, const yk *argv);
+static yk proxy_own_descriptor(yk proxy, yk key) {
+  yk t = proxy_trap(proxy, "getOwnPropertyDescriptor");
+  proxy_data *p = proxy_of(proxy);
+  yk args[2] = {p->target, key};
+  if (t == 0) return reflect_get_own_property_descriptor(NULL, YK_UNDEFINED, 2, args);
+  return call_value(t, p->handler, 2, args);
+}
+static yk prototype_of(yk v);
+static yk proxy_prototype(yk proxy) {
+  yk t = proxy_trap(proxy, "getPrototypeOf");
+  proxy_data *p = proxy_of(proxy);
+  if (t == 0) return prototype_of(p->target);
+  return call_value(t, p->handler, 1, &p->target);
+}
+static yk proxy_fn_code(void *c, yk self, uint64_t argc, const yk *argv) {
+  yk proxy = BOX(T_CLOSURE, c);
+  yk t = proxy_trap(proxy, "apply");
+  proxy_data *p = proxy_of(proxy);
+  if (t == 0) return call_value(p->target, self, argc, argv);
+  yk args[3] = {p->target, self, yk_array_of(argc, argv)};
+  return call_value(t, p->handler, 3, args);
+}
+static yk proxy_construct(yk proxy, uint64_t argc, const yk *argv) {
+  yk t = proxy_trap(proxy, "construct");
+  proxy_data *p = proxy_of(proxy);
+  if (t == 0) return yk_new(p->target, argc, argv);
+  yk args[3] = {p->target, yk_array_of(argc, argv), proxy};
+  yk r = call_value(t, p->handler, 3, args);
+  if (!is_reference(r)) type_error("proxy [[Construct]] must return an object");
+  return r;
+}
+static yk proxy_new(yk target, yk handler) {
+  if (!is_reference(target) || !is_reference(handler))
+    type_error("Cannot create proxy with a non-object as target or handler");
+  yk o = yk_object_of(0, NULL, NULL);
+  yk_object *po = (yk_object *)PTR(o);
+  po->kind = 14;
+  proxy_data *d = alloc(sizeof(proxy_data));
+  d->target = target;
+  d->handler = handler;
+  po->ext = d;
+  if (!is_closure(target)) return o;
+  yk f = yk_closure_new(proxy_fn_code, 1, 1, &o);
+  return f;
+}
+static yk builtin_proxy(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s, (void)argc, (void)argv;
+  type_error("Constructor Proxy requires 'new'");
+  return YK_UNDEFINED;
+}
+static yk proxy_revoke(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)s, (void)argc, (void)argv;
+  yk proxy = ((yk_closure *)c)->captures[0];
+  if (proxy != YK_NULL) proxy_of(proxy)->handler = YK_NULL;
+  return YK_UNDEFINED;
+}
+static yk proxy_revocable(void *c, yk s, uint64_t argc, const yk *argv) {
+  (void)c, (void)s;
+  yk proxy = proxy_new(arg_or_undefined(argc, argv, 0), arg_or_undefined(argc, argv, 1));
+  yk keys[2] = {ascii("proxy"), ascii("revoke")};
+  yk vals[2] = {proxy, yk_closure_new(proxy_revoke, 0, 1, &proxy)};
+  return yk_object_of(2, keys, vals);
+}
+/* [[Construct]] of a class or `function` with a new.target: an object inheriting the target's
+   prototype, given to the constructor as `this`. */
+static yk construct_with_target(yk f, yk target, uint64_t argc, const yk *argv) {
+  yk_closure *c = (yk_closure *)PTR(f);
+  yk o = yk_object_of(0, NULL, NULL);
+  ((yk_object *)PTR(o))->proto = ensure_prototype(target);
+  /* A base class's fields are the instance's before its constructor's body runs (#1330). */
+  if (c->is_class && c->parent == 0) init_fields(f, o);
+  yk saved = constructing;
+  constructing = target;
+  pending_new = c, pending_target = target;
+  yk r = c->code(c, o, argc, argv);
+  constructing = saved;
+  return is_reference(r) ? r : o;
+}
 yk yk_new(yk f, uint64_t argc, const yk *argv) {
   if (is_closure(f)) {
     yk_code code = ((yk_closure *)PTR(f))->code;
+    if (code == builtin_proxy) return proxy_new(arg_or_undefined(argc, argv, 0), arg_or_undefined(argc, argv, 1));
+    if (code == builtin_number || code == builtin_string || code == builtin_boolean)
+      return make_wrapper(code(NULL, YK_UNDEFINED, argc, argv)); /* new Number(x): its wrapper */
+    if (code == proxy_fn_code) return proxy_construct(f, argc, argv);
     if (code == builtin_promise) return promise_construct(argc, argv);
     if (((yk_closure *)PTR(f))->mode != 0) type_error("this function is not a constructor");
     if (is_buffer_code(code)) return code(NULL, YK_UNDEFINED, argc, argv);
@@ -9256,14 +10321,7 @@ yk yk_new(yk f, uint64_t argc, const yk *argv) {
     if (code == builtin_date) return date_construct(argc, argv);
     /* A class, or a `function`: an object inheriting its prototype, given to it as `this`. */
     yk_closure *c = (yk_closure *)PTR(f);
-    if (c->is_class || c->has_this) {
-      yk o = yk_object_of(0, NULL, NULL);
-      ((yk_object *)PTR(o))->proto = ensure_prototype(f);
-      /* A base class's fields are the instance's before its constructor's body runs (#1330). */
-      if (c->is_class && c->parent == 0) init_fields(f, o);
-      yk r = c->code(c, o, argc, argv);
-      return is_reference(r) ? r : o;
-    }
+    if (c->is_class || c->has_this) return construct_with_target(f, f, argc, argv);
   }
   type_error("this constructor is not in the runtime yet");
   return YK_UNDEFINED;
@@ -9280,24 +10338,47 @@ static int is_adoptable_builtin(yk f) {
 }
 /* a instanceof F, for the constructors the runtime has: Array, and the Error family. */
 yk yk_instanceof(yk v, yk f) {
+  /* InstanceofOperator: a value's own @@hasInstance first (one defined on the function). */
+  if (is_closure(f) && ((yk_closure *)PTR(f))->props != 0) {
+    yk h;
+    if (own_get((yk_object *)PTR(((yk_closure *)PTR(f))->props), well_known_symbol(1), &h) &&
+        is_closure(h = resolve_slot(h, f)))
+      return yk_bool(yk_truthy(call_value(h, f, 1, &v)));
+  }
   if (!is_closure(f)) type_error("Right-hand side of 'instanceof' is not callable");
   yk_code code = ((yk_closure *)PTR(f))->code;
-  if (code == builtin_array) return yk_bool(is_array(v));
+  if (code == builtin_array) {
+    if (is_array(v)) return YK_TRUE;
+    /* Array.prototype along another value's chain (a proxy's getPrototypeOf, Object.create). */
+    if (!is_object(v) && !is_closure(v)) return YK_FALSE;
+    yk ap = intrinsic_proto(I_ARRAY);
+    for (yk o = prototype_of(v); is_object(o); o = prototype_of(o))
+      if (o == ap) return YK_TRUE;
+    return YK_FALSE;
+  }
+  if (code == builtin_number || code == builtin_string || code == builtin_boolean || code == builtin_symbol || code == builtin_bigint) {
+    /* The type's prototype along an object's chain (a wrapper's, or one made from it). */
+    if (!is_object(v)) return YK_FALSE;
+    yk tp = intrinsic_proto(code == builtin_number ? I_NUMBER : code == builtin_string ? I_STRING
+                            : code == builtin_boolean ? I_BOOLEAN : code == builtin_symbol ? I_SYMBOL : I_BIGINT);
+    for (yk o = prototype_of(v); is_object(o); o = prototype_of(o))
+      if (o == tp) return YK_TRUE;
+    return YK_FALSE;
+  }
+  if (code == builtin_object) {
+    /* Object.prototype along the value's chain: any object but one made with a null prototype. */
+    if (!is_object(v) && !is_closure(v) && !is_array(v)) return YK_FALSE;
+    yk op = intrinsic_proto(I_OBJECT);
+    for (yk o = prototype_of(v); is_object(o); o = prototype_of(o))
+      if (o == op) return YK_TRUE;
+    return YK_FALSE;
+  }
   if (type_of_code(code) >= 0) return yk_bool(typed_of(v) != NULL && typed_of(v)->type == type_of_code(code));
   if (code == builtin_array_buffer) return yk_bool(buffer_of(v) != NULL);
   if (code == builtin_data_view) return yk_bool(dataview_of(v) != NULL);
   if (code == builtin_promise) return yk_bool(is_promise(v));
-  if (code == builtin_error || code == builtin_type_error || code == builtin_range_error ||
-      code == builtin_syntax_error) {
-    if (!is_object(v) || !((yk_object *)PTR(v))->error) return YK_FALSE;
-    if (code == builtin_error) return YK_TRUE;
-    yk name;
-    own_get((yk_object *)PTR(v), ascii("name"), &name);
-    const char *want = code == builtin_type_error ? "TypeError" : code == builtin_range_error ? "RangeError" : "SyntaxError";
-    return yk_bool(strict_equal(name, ascii(want)));
-  }
   yk_closure *c = (yk_closure *)PTR(f);
-  if (c->is_class || c->has_this || is_adoptable_builtin(f)) {
+  if (c->is_class || c->has_this || is_adoptable_builtin(f) || is_error_constructor(f)) {
     yk proto = ensure_prototype(f);
     if (!is_object(v) && !is_closure(v)) return YK_FALSE;
     for (yk o = prototype_of(v); is_object(o); o = prototype_of(o))
@@ -9388,6 +10469,7 @@ yk yk_object_rest(yk src, uint64_t n, const yk *taken) {
 
 /* key in obj: an object's own property, an array's index or length. */
 yk yk_in(yk key, yk obj) {
+  if (is_proxy(obj)) return proxy_has(obj, to_property_key(key));
   if (is_object(obj)) {
     /* Its own properties, then its prototype's (HasProperty follows the chain). */
     yk v, k = to_property_key(key);

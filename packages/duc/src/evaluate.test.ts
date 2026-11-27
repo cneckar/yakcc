@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { liftAtom } from "./lift.js";
 import { ecmaScriptView } from "./ops.js";
+import { paramIndex } from "./params.js";
 import type { DucGraph, DucNode, ValueId } from "./types.js";
 
 // biome-ignore lint/suspicious/noExplicitAny: the evaluator applies JavaScript's operators to untyped values
@@ -131,7 +132,7 @@ function evaluate(input: DucGraph, args: readonly unknown[]): unknown[] {
   const values = new Map<ValueId, unknown>();
   for (const node of g.nodes) {
     if (node.kind === "param-source")
-      values.set(node.outputs[0] as ValueId, args[Number(node.label)]);
+      values.set(node.outputs[0] as ValueId, args[paramIndex(node.label)]);
   }
   evalScope(g, undefined, values);
   return g.obs.map((v) => values.get(v));

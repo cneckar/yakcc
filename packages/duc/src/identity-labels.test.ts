@@ -50,7 +50,7 @@ describe("identity tells apart programs that differ in a token (D6)", () => {
   });
 
   it("a hand-written member read matches the lifted one", () => {
-    const text = ["param s", "op .length s -> n", "out n"].join("\n");
+    const text = ["param s prim", "op .length s -> n", "out n"].join("\n");
     expect(graphIdentity(parseLineForm(text))).toBe(
       graphIdentity(liftAtom("export function f(s: string): number { return s.length; }")),
     );

@@ -9,12 +9,7 @@ import {
   specHash as computeSpecHash,
   validateProofManifestL0,
 } from "@yakcc/contracts";
-import type {
-  BlockMerkleRoot,
-  CanonicalAstHash,
-  SpecHash,
-  SpecYak,
-} from "@yakcc/contracts";
+import type { BlockMerkleRoot, CanonicalAstHash, SpecHash, SpecYak } from "@yakcc/contracts";
 import type { BlockTripletRow } from "@yakcc/registry";
 import { describe, expect, it } from "vitest";
 import { createCommonsSubmitter } from "./submit.js";

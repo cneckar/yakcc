@@ -6,7 +6,7 @@
  * into the same shapes, with Go's runtime names translated to the Rust lowering's, and written by
  * the same writer. It reads the lowering's own dialect, not Go in general.
  */
-import { type Expr, RaiseError, type Stmt, writeFunction } from "./raise-rust.js";
+import { type Expr, RaiseError, type Stmt, paramText, writeFunction } from "./raise-rust.js";
 
 /** A table's own entry for a key: never one of Object.prototype's (`hasOwnProperty`, `constructor`). */
 function entry<T>(table: Readonly<Record<string, T>> | undefined, key: string): T | undefined {
@@ -196,20 +196,28 @@ class Parser {
     return true;
   }
 
-  fn(): { params: { name: string; rest: boolean }[]; body: Stmt[] } {
+  fn(): { params: { name: string; rest: boolean; prim?: boolean }[]; body: Stmt[] } {
     while (!this.is("{")) this.next();
     return this.body();
   }
 
-  body(): { params: { name: string; rest: boolean }[]; body: Stmt[] } {
+  body(): { params: { name: string; rest: boolean; prim?: boolean }[]; body: Stmt[] } {
     const stmts = this.block();
-    const params: { name: string; rest: boolean }[] = [];
+    const params: { name: string; rest: boolean; prim?: boolean }[] = [];
     const body: Stmt[] = [];
     for (const st of stmts) {
-      if (st.t === "let" && st.e.t === "call" && (st.e.fn === "arg" || st.e.fn === "restArgs")) {
+      if (
+        st.t === "let" &&
+        st.e.t === "call" &&
+        (st.e.fn === "arg" || st.e.fn === "primArg" || st.e.fn === "restArgs")
+      ) {
         const at = st.e.args[1];
         if (at?.t !== "num") throw new RaiseError("a parameter without its index");
-        params[Number(at.v)] = { name: st.name, rest: st.e.fn === "restArgs" };
+        params[Number(at.v)] = {
+          name: st.name,
+          rest: st.e.fn === "restArgs",
+          prim: st.e.fn === "primArg",
+        };
         continue;
       }
       body.push(st);
@@ -251,7 +259,7 @@ class Parser {
               e: {
                 t: "call",
                 fn: "__params",
-                args: params.map((p) => ({ t: "str", v: `${p.rest ? "..." : ""}${p.name}` })),
+                args: params.map((p) => ({ t: "str", v: paramText(p) })),
               },
             },
             ...body,

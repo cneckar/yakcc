@@ -1,7 +1,7 @@
 # DEC-DUC-FORMAT-001: the DUC graph format, as locked
 
-**Status:** Proposed. It locks at format version 3 when the last criterion-3 prototype (#1311, the JVM) reports what the format lacks. Any lack it finds that must enter identity is fixed first, and this DEC is updated.
-**Date:** 2026-11-24
+**Status:** Accepted. Locked at format version 3 on 2026-11-27. It can be reopened if a serious lack is found; reopening is a new format version with a migration, as below.
+**Date:** 2026-11-24 (proposed), 2026-11-27 (locked)
 **Issue:** https://github.com/cneckar/yakcc/issues/1292 (the lock); unblocks #1291
 **Parent:** #1275
 
@@ -34,7 +34,7 @@ A graph (`packages/duc/src/types.ts`) has:
 
 | Kind | What it is |
 |---|---|
-| `param-source` | A parameter. Its label is its index, with `...` for a rest parameter. |
+| `param-source` | A parameter. Its label is its index, with `...` for a rest parameter and `=` for one with a default (which sets a function's `length`, #1370). A TypeScript `this:` parameter is erased and is no parameter. |
 | `literal-source` | A literal, labelled by its normal form (#1303): numbers and strings as canonical JSON, cooked template parts, sorted regex flags. |
 | `diamond-source` | A reference the atom does not own. It carries a reason, a symbol and a module (DUC §2). The reasons are `platform-primitive`, `free-identifier`, `unlinked-reference` and `unresolved-module`. |
 | `op` | An operation, named by its label (below). |
@@ -46,6 +46,8 @@ A graph (`packages/duc/src/types.ts`) has:
 - **Regions.** A node inside an `if` or a loop carries its region path (`b0.t/L3.b`). A value leaves a branch only through a join.
 - **Closures.** A closure node holds its own graph. Its first parameters are the captured values, which are the node's inputs.
 - **The heap token (#1285).** Every heap operation (a call, `new`, a member read or write, `in`, a spread, an opaque summary, a throw) takes the previous heap operation's token as its last input and is marked `order: 1`. Their order is structure.
+- **Conversions are ordered (#1370).** An operator that converts an operand (ToPrimitive, ToNumeric, ToString: arithmetic, comparison, `==`, bitwise, unary `+ - ~`, a template substitution) may run user code (`valueOf`, `toString`, `Symbol.toPrimitive`). It is a heap operation unless every operand is certainly a primitive: a literal, a primitive constant, another operator's result, a join of those, a loop invariant or closure capture whose outer value is one. `x == null` and `x != null` convert nothing. Such an operator, and `in` and `instanceof`, also run only on the paths that reach them.
+- **Array destructuring is the iterator protocol (#1370).** It is lifted through the existing operations as ECMA-262 does it: GetIterator through `Symbol.iterator`, IteratorStepValue with the result-is-an-object check, and IteratorClose when the pattern ends before the iterator does. It adds no node kind and no label. It reads the platform's `Symbol`; under a binding of the program's own named `Symbol` it is refused.
 
 ## Labels
 
@@ -59,7 +61,7 @@ A label is part of identity. The families are:
 - reads `.name` and `?.name`, writes `.name=`;
 - `ElementAccess` (and `ElementAccess?.`), `[]=`;
 - `delete.name`, `delete[]`;
-- `super.name`.
+- `super.name`, resolved through the home object: a class's prototype, or an object literal's (#1370).
 
 **Calls:** `CallExpression`, `CallExpression?.`, `NewExpression`, `super`.
 
@@ -67,7 +69,7 @@ A label is part of identity. The families are:
 - `ArrayLiteral`, `...` (spread);
 - `object:[keys]`, `template:[parts]`, `tagged:[[cooked, raw]…]`;
 - `class:…`;
-- the closure kinds: `closure`, `async closure`, `function`, `function*`, …;
+- the closure kinds: `closure`, `async closure`, `function`, `function*`, …. A function declaration or expression is `function` (it has a `prototype` and constructs) whether or not it reads `this`; an arrow and a method are not;
 - `function-self`, `class-self`, `this`.
 
 **Control and effect:**
@@ -133,11 +135,11 @@ These are in DEC-DUC-GRAPH-ROOT-001. **Links** say which contract each reference
 3. **Lowering prototypes:**
    - Python, Go, Rust (#1299);
    - wasm and WasmGC beyond numbers (#1300, #1315);
-   - JVM: #1311, open.
+   - JVM: #1311. It found no gap of its own in the format, and the gaps it filed (#1349, #1352, #1360) are fixed. Its remaining work (regex wiring, stack-map frames) is lowering work, not format work.
 4. **Native objects:** eight (architecture, object format) pairs. Programs run identically to Node on x86-64, AArch64, ARMv7 and RISC-V (#1294–#1296).
 
 ## Consequences
 
-- **At the lock,** `GRAPH_FORMAT_VERSION` becomes 3. It was 2, before the BLAKE3 identity, the root, the literal normal form, the completion record and operations by meaning.
+- **At the lock,** `GRAPH_FORMAT_VERSION` became 3. It was 2, before the BLAKE3 identity, the root, the literal normal form, the completion record, operations by meaning and the semantics of #1370. Graphs stored at versions 1 and 2 have the same encoding and are still read, under their stored roots, until #1291 migrates them.
 - **#1291 then migrates** the registry's DUC implementations and the bootstrap manifest to these identities and roots, which DEC-DUC-GRAPH-ROOT-001 deferred. No stored database is rewritten before then.
 - **After the lock,** a change to a node kind, a label family, the operations vocabulary or its choice rule, the canonical order, or the identity or root hashing is a new format version with a migration.

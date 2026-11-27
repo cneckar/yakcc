@@ -26,6 +26,7 @@ import {
   maybePersistNovelGlueAtom,
   persistNovelGlueAtom,
 } from "./atom-persist.js";
+import { moduleBindingsOf, mutableOuterOf, withImportedReassigned } from "./module-bindings.js";
 import { buildTriplet } from "./triplet.js";
 
 // ---------------------------------------------------------------------------
@@ -704,6 +705,49 @@ describe("#1279: the graph is stored beside the block", () => {
       ducImplementationOf("export function f(x: number) { return x + 1; }", "spec", null)
         ?.graphIdentity,
     ).toBe(graphIdentity(liftAtom("export function f(x: number) { return x + 1; }")));
+  });
+});
+
+describe("a module binding the module reassigns, read in the stored graph (#1375)", () => {
+  const MODULE = `export let count = 0;
+export function bump(k: number) { count = count + k; }
+export function probe(k: number) { const before = count; bump(k); return [before, count]; }`;
+  const probe =
+    "export function probe(k: number) { const before = count; bump(k); return [before, count]; }";
+
+  it("is a mutable binding of the module, and the stored graph reads it in order", () => {
+    const outer = mutableOuterOf(moduleBindingsOf(MODULE));
+    // `bump` writes `count` and so is not pure, but nothing reassigns it.
+    expect(outer).toEqual(["count"]);
+    const stored = ducImplementationOf(probe, "spec", null, undefined, undefined, outer);
+    expect(stored?.graphIdentity).toBe(graphIdentity(liftAtom(probe, { mutableOuter: ["count"] })));
+    expect(stored?.graphIdentity).not.toBe(graphIdentity(liftAtom(probe)));
+  });
+});
+
+describe("an import whose exporting module reassigns it (#1375)", () => {
+  const files = new Map([
+    [
+      "/m/counter.ts",
+      "export let count = 0;\nexport const LIMIT = 3;\nlet total = 0;\nexport { total as sum };\nexport function bump(k: number) { count = count + k; total += k; }",
+    ],
+  ]);
+  const read = (f: string) => files.get(f);
+  const entry =
+    'import { bump, count, LIMIT, sum as s } from "./counter.js";\nexport function probe(k: number) { const before = count; bump(k); return [before, count, LIMIT, s]; }';
+
+  it("is a reassigned binding of the importer, under its local name; the rest are not", () => {
+    const b = withImportedReassigned(moduleBindingsOf(entry), entry, "/m/entry.ts", read);
+    expect(mutableOuterOf(b).sort()).toEqual(["count", "s"]);
+  });
+
+  it("is left as it is when the exporter is not found or the import is not relative", () => {
+    const missing = withImportedReassigned(moduleBindingsOf(entry), entry, "/elsewhere/e.ts", read);
+    expect(mutableOuterOf(missing)).toEqual([]);
+    const pkg = 'import { count } from "counter";\nexport const x = count;';
+    expect(
+      mutableOuterOf(withImportedReassigned(moduleBindingsOf(pkg), pkg, "/m/e.ts", read)),
+    ).toEqual([]);
   });
 });
 

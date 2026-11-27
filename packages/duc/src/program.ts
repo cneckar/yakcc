@@ -18,9 +18,10 @@
  */
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { Node, Project, type SourceFile, type Statement, SyntaxKind, ts } from "ts-morph";
 import type {
   NativeEsm,
@@ -41,8 +42,82 @@ export interface ProgramRecord {
   readonly modules: readonly NativeModule[];
 }
 
-/** Where a module specifier, imported by a file, resolves to. */
-function resolveSpecifier(spec: string, from: string): string {
+/** The conditions an ECMAScript import resolves a package's exports with, Node 22's. */
+const IMPORT_CONDITIONS = ["node", "import", "module-sync", "default"];
+
+/** A package's exports target for a subpath (PACKAGE_EXPORTS_RESOLVE), or undefined. */
+function exportsTarget(
+  exports: unknown,
+  subpath: string,
+  conditions: readonly string[],
+): string | undefined {
+  const target = (t: unknown, star: string | undefined): string | undefined => {
+    if (typeof t === "string") return star === undefined ? t : t.replaceAll("*", star);
+    if (Array.isArray(t)) {
+      for (const x of t) {
+        const r = target(x, star);
+        if (r !== undefined) return r;
+      }
+      return undefined;
+    }
+    if (t !== null && typeof t === "object") {
+      for (const [k, v] of Object.entries(t))
+        if (k === "default" || conditions.includes(k)) {
+          const r = target(v, star);
+          if (r !== undefined) return r;
+        }
+    }
+    return undefined;
+  };
+  const map =
+    typeof exports === "string" ||
+    Array.isArray(exports) ||
+    (exports !== null &&
+      typeof exports === "object" &&
+      !Object.keys(exports).some((k) => k.startsWith(".")))
+      ? { ".": exports }
+      : (exports as Record<string, unknown>);
+  if (Object.hasOwn(map, subpath)) return target(map[subpath], undefined);
+  // A pattern key ("./*", "./lib/*.js"): the one with the longest prefix before its "*" that
+  // matches (PATTERN_KEY_COMPARE).
+  let best: { key: string; star: string; pre: number } | undefined;
+  for (const key of Object.keys(map)) {
+    const at = key.indexOf("*");
+    if (at < 0) continue;
+    const pre = key.slice(0, at);
+    const post = key.slice(at + 1);
+    if (!subpath.startsWith(pre) || !subpath.endsWith(post) || subpath.length < key.length - 1)
+      continue;
+    if (best === undefined || pre.length > best.pre)
+      best = {
+        key,
+        star: subpath.slice(pre.length, subpath.length - post.length),
+        pre: pre.length,
+      };
+  }
+  return best === undefined ? undefined : target(map[best.key], best.star);
+}
+
+/** A bare specifier an ECMAScript module imports, by Node's ESM resolution (its exports' import conditions). */
+function resolvePackageImport(spec: string, from: string): string | undefined {
+  const parts = spec.split("/");
+  const name = spec.startsWith("@") ? parts.slice(0, 2).join("/") : (parts[0] as string);
+  const subpath = `.${spec.slice(name.length)}`;
+  for (let dir = dirname(from); ; dir = dirname(dir)) {
+    const pkgDir = join(dir, "node_modules", name);
+    const pkgFile = join(pkgDir, "package.json");
+    if (existsSync(pkgFile)) {
+      const pkg = JSON.parse(readFileSync(pkgFile, "utf8")) as { exports?: unknown };
+      if (pkg.exports === undefined) return undefined;
+      const t = exportsTarget(pkg.exports, subpath, IMPORT_CONDITIONS);
+      return t === undefined ? undefined : resolve(pkgDir, t);
+    }
+    if (dirname(dir) === dir) return undefined;
+  }
+}
+
+/** Where a module specifier, imported by a file, resolves to (an import's, `esm`, by Node's ESM resolution). */
+function resolveSpecifier(spec: string, from: string, esm = false): string {
   if (
     spec.startsWith("node:") ||
     (!spec.startsWith(".") && !spec.startsWith("/") && isBuiltin(spec))
@@ -61,9 +136,15 @@ function resolveSpecifier(spec: string, from: string): string {
       resolve(base, "index.ts"),
       resolve(base, "index.js"),
     ];
-    const hit = candidates.find((c) => existsSync(c) && !c.endsWith("/"));
+    // A file (a directory of the name is its index's, below).
+    const hit = candidates.find((c) => existsSync(c) && statSync(c).isFile());
     if (hit === undefined) throw new ProgramError(`${spec} does not resolve (imported by ${from})`);
     return hit;
+  }
+  if (esm) {
+    const hit = resolvePackageImport(spec, from);
+    // Its real path, as Node's ESM resolution gives (one module, however it is reached).
+    if (hit !== undefined && existsSync(hit)) return realpathSync(hit);
   }
   try {
     return createRequire(from).resolve(spec);
@@ -110,6 +191,7 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
     // import() of a string literal is the module's link, as a require is; of anything else, or
     // import.meta, not in the subset yet.
     const dynamic: string[] = [];
+    const metas: [number, number][] = [];
     if (/\bimport\s*[(.]/.test(text))
       sf.forEachDescendant((n) => {
         if (Node.isCallExpression(n) && n.getExpression().getKind() === SyntaxKind.ImportKeyword) {
@@ -121,7 +203,7 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
           if (!dynamic.includes(arg.getLiteralValue())) dynamic.push(arg.getLiteralValue());
         }
         if (n.getKind() === SyntaxKind.MetaProperty && n.getText().startsWith("import"))
-          throw new ProgramError(`import.meta is not in the native subset yet (${id})`);
+          metas.push([n.getStart(), n.getEnd()]);
       });
     /** The import() specifiers that resolve, each its module's (visited after this one). */
     const linkDynamic = (requires: Record<string, string>, targets: string[]): void => {
@@ -133,7 +215,7 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
           continue;
         let target: string;
         try {
-          target = resolveSpecifier(spec, file);
+          target = resolveSpecifier(spec, file, true);
         } catch {
           continue;
         }
@@ -172,17 +254,54 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
       for (const t of targets) visit(t);
       return;
     }
-    const parsed = moduleOf(sf, file, id, (spec) => idOf(resolveSpecifier(spec, file)));
+    // import.meta: the module's own object (its url, filename and dirname, Node's), a binding
+    // its first statement makes, read where the module names it.
+    let esmSf = sf;
+    let prelude: string | undefined;
+    if (metas.length > 0) {
+      let rewritten = text;
+      for (const [start, end] of [...metas].sort((a, b) => b[0] - a[0]))
+        rewritten = `${rewritten.slice(0, start)}${IMPORT_META}${rewritten.slice(end)}`;
+      esmSf = project.createSourceFile(`/m/${modules.size}.meta.ts`, rewritten, {
+        overwrite: true,
+      });
+      prelude = `const ${IMPORT_META} = { dirname: ${JSON.stringify(dirname(file))}, filename: ${JSON.stringify(file)}, url: ${JSON.stringify(pathToFileURL(file).href)} };`;
+    }
+    // A specifier of Node's module is named node:<id>, as a CommonJS module's require of it is.
+    const builtinOf = (spec: string): string | undefined =>
+      spec.startsWith("node:")
+        ? spec
+        : !spec.startsWith(".") && !spec.startsWith("/") && isBuiltin(spec)
+          ? `node:${spec}`
+          : undefined;
+    const parsed = moduleOf(
+      esmSf,
+      file,
+      id,
+      (spec) => builtinOf(spec) ?? idOf(resolveSpecifier(spec, file, true)),
+      prelude,
+    );
     const requires: Record<string, string> = { ...(parsed.module.requires ?? {}) };
+    for (const spec of parsed.specifiers) {
+      const b = builtinOf(spec);
+      if (b !== undefined) requires[spec] = b;
+    }
     const targets: string[] = [];
     linkDynamic(requires, targets);
-    modules.set(id, targets.length > 0 ? { ...parsed.module, requires } : parsed.module);
-    for (const spec of parsed.specifiers) visit(resolveSpecifier(spec, file));
+    modules.set(
+      id,
+      Object.keys(requires).length > 0 ? { ...parsed.module, requires } : parsed.module,
+    );
+    for (const spec of parsed.specifiers)
+      if (builtinOf(spec) === undefined) visit(resolveSpecifier(spec, file, true));
     for (const t of targets) visit(t);
   };
   visit(resolve(entryFile));
   return { entry: idOf(resolve(entryFile)), modules: [...modules.values()] };
 }
+
+/** The binding a module's `import.meta` becomes (a name no source of the program declares). */
+const IMPORT_META = "yakcc$importMeta";
 
 /** One module's statements and linking, with the specifiers it names (to visit). */
 function moduleOf(
@@ -190,6 +309,7 @@ function moduleOf(
   file: string,
   id: string,
   target: (spec: string) => string,
+  prelude?: string,
 ): { module: NativeModule; specifiers: string[] } {
   const statements: NativeModuleStatement[] = [];
   const imports: Record<string, NativeImport> = {};
@@ -216,6 +336,7 @@ function moduleOf(
       throw new ProgramError(`${id}: ${what} does not lift: ${(e as Error).message}`);
     }
   };
+  if (prelude !== undefined) statements.push(lift(prelude, "import.meta"));
   for (const st of sf.getStatements()) {
     if (Node.isImportDeclaration(st)) {
       if (st.isTypeOnly()) continue;
@@ -269,8 +390,16 @@ function moduleOf(
       continue;
     const exported = hasModifier(st, "export");
     const isDefault = hasModifier(st, "default");
+    // `export default function () {}` / `export default class {}`: the module's default binding,
+    // the function or class named "default" (ECMA-262 16.2.1.6.4's SetFunctionName).
+    const anonymous =
+      isDefault &&
+      (Node.isFunctionDeclaration(st) || Node.isClassDeclaration(st)) &&
+      st.getName() === undefined;
     const record = lift(
-      withoutExport(st.getText()),
+      anonymous
+        ? `const ${DEFAULT_BINDING} = { default: ${withoutExport(st.getText())} }.default;`
+        : withoutExport(st.getText()),
       `a statement at line ${st.getStartLineNumber()}`,
     );
     statements.push(record);
@@ -436,6 +565,11 @@ export function nodeBootProgram(
     "internal/errors",
     // process.emitWarning's (bootstrap/node.js), loaded at its first warning.
     "internal/process/warning",
+    // process.nextTick's (bootstrap/node.js's setupTaskQueue), and process as an EventEmitter.
+    "internal/process/task_queues",
+    "events",
+    // A warning's writer (internal/process/warning's writeOut).
+    "internal/console/global",
   ])
     visit(id);
   visit(main.id, main.source);
@@ -447,7 +581,11 @@ export function nodeBootProgram(
     [...texts.values()].some((t) => new RegExp(`\\b${name}\\b`).test(t)),
   );
   for (const [, id] of lazyGlobals) visit(id);
-  // Modules a library module requires by a name it computes (no top-level require shows them).
+  // process.setUncaughtExceptionCaptureCallback and its query, when a module names them.
+  const capture = [...texts.values()].some((t) => /UncaughtExceptionCaptureCallback/.test(t));
+  if (capture) visit("internal/process/execution");
+  // Modules a library module requires by a name it computes, or in a function that runs as another
+  // loads (no top-level require shows them).
   for (const [id, deps] of Object.entries(COMPUTED_REQUIRES))
     if (texts.has(id)) for (const d of deps) visit(d);
 
@@ -484,7 +622,7 @@ export function nodeBootProgram(
   modules.unshift(
     lifted(
       NODE_BOOT,
-      nodeBootSource(main.id, options.bindings?.id, lazyGlobals, options.user?.entry),
+      nodeBootSource(main.id, options.bindings?.id, lazyGlobals, options.user?.entry, capture),
     ),
   );
   if (options.user !== undefined) modules.push(...options.user.modules);
@@ -498,11 +636,23 @@ export const NODE_BOOT = "yakcc:node-boot";
 const MATH_VALUE =
   '// Math as a value (primordials copies its members): each member Math\'s own operation, the\n// approximated ones V8\'s shaved atoms (#1362); hypot, approximated with no atom yet, is absent.\nconst MathObject = {\n  E: Math.E,\n  LN10: Math.LN10,\n  LN2: Math.LN2,\n  LOG10E: Math.LOG10E,\n  LOG2E: Math.LOG2E,\n  PI: Math.PI,\n  SQRT1_2: Math.SQRT1_2,\n  SQRT2: Math.SQRT2,\n  abs: (a0) => Math.abs(a0),\n  acos: (a0) => Math.acos(a0),\n  acosh: (a0) => Math.acosh(a0),\n  asin: (a0) => Math.asin(a0),\n  asinh: (a0) => Math.asinh(a0),\n  atan: (a0) => Math.atan(a0),\n  atanh: (a0) => Math.atanh(a0),\n  atan2: (a0, a1) => Math.atan2(a0, a1),\n  ceil: (a0) => Math.ceil(a0),\n  cbrt: (a0) => Math.cbrt(a0),\n  expm1: (a0) => Math.expm1(a0),\n  cos: (a0) => Math.cos(a0),\n  cosh: (a0) => Math.cosh(a0),\n  exp: (a0) => Math.exp(a0),\n  floor: (a0) => Math.floor(a0),\n  log: (a0) => Math.log(a0),\n  log1p: (a0) => Math.log1p(a0),\n  log2: (a0) => Math.log2(a0),\n  log10: (a0) => Math.log10(a0),\n  max: (...a) => Math.max(...a),\n  min: (...a) => Math.min(...a),\n  pow: (a0, a1) => Math.pow(a0, a1),\n  random: () => Math.random(),\n  round: (a0) => Math.round(a0),\n  sign: (a0) => Math.sign(a0),\n  sin: (a0) => Math.sin(a0),\n  sinh: (a0) => Math.sinh(a0),\n  sqrt: (a0) => Math.sqrt(a0),\n  tan: (a0) => Math.tan(a0),\n  tanh: (a0) => Math.tanh(a0),\n  trunc: (a0) => Math.trunc(a0),\n  // Exact, so given here: ToUint32\'s leading zeros; Int32 multiplication; the nearest float32.\n  clz32: (x) => {\n    let v = x >>> 0;\n    if (v === 0) return 32;\n    let n = 0;\n    while ((v & 0x80000000) === 0) {\n      v = v << 1;\n      n++;\n    }\n    return n;\n  },\n  imul: (a, b) => {\n    const ah = (a >>> 16) & 0xffff;\n    const al = a & 0xffff;\n    const bh = (b >>> 16) & 0xffff;\n    const bl = b & 0xffff;\n    return (al * bl + (((ah * bl + al * bh) << 16) >>> 0)) | 0;\n  },\n  fround: (x) => new Float32Array([x])[0],\n};\nObject.defineProperty(MathObject, Symbol.toStringTag, { value: "Math", configurable: true });\n__yakccDefineGlobal("Math", MathObject);\n';
 
+/** Async hooks' provider types (src/async_wrap.h's NODE_ASYNC_PROVIDER_TYPES), as Node v22.23.5 numbers them. */
+const ASYNC_PROVIDERS: Readonly<Record<string, number>> = Object.fromEntries(
+  "NONE DIRHANDLE DNSCHANNEL ELDHISTOGRAM FILEHANDLE FILEHANDLECLOSEREQ BLOBREADER FSEVENTWRAP FSREQCALLBACK FSREQPROMISE GETADDRINFOREQWRAP GETNAMEINFOREQWRAP HEAPSNAPSHOT HTTP2SESSION HTTP2STREAM HTTP2PING HTTP2SETTINGS HTTPINCOMINGMESSAGE HTTPCLIENTREQUEST JSSTREAM JSUDPWRAP MESSAGEPORT PIPECONNECTWRAP PIPESERVERWRAP PIPEWRAP PROCESSWRAP PROMISE QUERYWRAP QUIC_ENDPOINT QUIC_LOGSTREAM QUIC_PACKET QUIC_SESSION QUIC_STREAM QUIC_UDP SHUTDOWNWRAP SIGNALWRAP STATWATCHER STREAMPIPE TCPCONNECTWRAP TCPSERVERWRAP TCPWRAP TTYWRAP UDPSENDWRAP UDPWRAP SIGINTWATCHDOG WORKER WORKERCPUPROFILE WORKERCPUUSAGE WORKERHEAPSNAPSHOT WORKERHEAPSTATISTICS WRITEWRAP ZLIB CHECKPRIMEREQUEST PBKDF2REQUEST KEYPAIRGENREQUEST KEYGENREQUEST KEYEXPORTREQUEST CIPHERREQUEST DERIVEBITSREQUEST HASHREQUEST RANDOMBYTESREQUEST RANDOMPRIMEREQUEST SCRYPTREQUEST SIGNREQUEST TLSWRAP VERIFYREQUEST"
+    .split(" ")
+    .map((name, i) => [name, i]),
+);
+
 /** The boot module's source: Node's realm set up over the table, then `main` loaded. */
-/** A library module's requires of a computed name: every module the name can be. */
+/** A library module's requires no top-level require shows: of a computed name, every module it can be; one in a function another module's load runs. */
 const COMPUTED_REQUIRES: Readonly<Record<string, readonly string[]>> = {
   // require(`internal/cluster/${childOrPrimary}`)
   cluster: ["internal/cluster/primary", "internal/cluster/child"],
+  // Enabling a hook (updatePromiseHookMode) loads it: domain's createHook().enable() at its load.
+  "internal/async_hooks": ["internal/promise_hooks"],
+  // Every error with a larger stack trace asks whether a snapshot is being built
+  // (isErrorStackTraceLimitWritable).
+  "internal/errors": ["internal/v8/startup_snapshot"],
 };
 
 /** Globals Node's bootstrap/node.js defines lazily: each its name, its module, and the export. */
@@ -515,6 +665,7 @@ function nodeBootSource(
   bindings: string | undefined,
   lazyGlobals: readonly (readonly [string, string, string])[] = [],
   user?: string,
+  capture = false,
 ): string {
   return `${MATH_VALUE}const table = require(${JSON.stringify(NODE_BUILTINS)});
 const given = ${bindings !== undefined ? `require(${JSON.stringify(bindings)})` : "{}"};
@@ -541,27 +692,29 @@ const privateSymbols = {
   promise_trace_id: Symbol("node:promise_trace_id"),
   source_map_data_private_symbol: Symbol("node:source_map_data_private_symbol"),
 };
+// env_properties.h's per-isolate symbols, each keyed by its description, as the symbols binding has them.
 const perIsolateSymbols = {
-  fs_use_promises_symbol: Symbol("fs_use_promises_symbol"),
   async_id_symbol: Symbol("async_id_symbol"),
-  handle_onclose_symbol: Symbol("handle_onclose"),
-  no_message_symbol: Symbol("no_message_symbol"),
-  messaging_deserialize_symbol: Symbol("messaging_deserialize_symbol"),
-  messaging_transfer_symbol: Symbol("messaging_transfer_symbol"),
+  constructor_key_symbol: Symbol("constructor_key_symbol"),
+  fs_use_promises_symbol: Symbol("fs_use_promises_symbol"),
+  handle_onclose: Symbol("handle_onclose"),
+  imported_cjs_symbol: Symbol("imported_cjs_symbol"),
   messaging_clone_symbol: Symbol("messaging_clone_symbol"),
+  messaging_deserialize_symbol: Symbol("messaging_deserialize_symbol"),
   messaging_transfer_list_symbol: Symbol("messaging_transfer_list_symbol"),
-  oninit_symbol: Symbol("oninit"),
+  messaging_transfer_symbol: Symbol("messaging_transfer_symbol"),
+  no_message_symbol: Symbol("no_message_symbol"),
+  oninit: Symbol("oninit"),
+  onpskexchange: Symbol("onpskexchange"),
   owner_symbol: Symbol("owner_symbol"),
-  onpskexchange_symbol: Symbol("onpskexchange"),
   resource_symbol: Symbol("resource_symbol"),
+  source_text_module_default_hdo: Symbol("source_text_module_default_hdo"),
   trigger_async_id_symbol: Symbol("trigger_async_id_symbol"),
+  vm_context_no_contextify: Symbol("vm_context_no_contextify"),
   vm_dynamic_import_default_internal: Symbol("vm_dynamic_import_default_internal"),
   vm_dynamic_import_main_context_default: Symbol("vm_dynamic_import_main_context_default"),
   vm_dynamic_import_missing_flag: Symbol("vm_dynamic_import_missing_flag"),
   vm_dynamic_import_no_callback: Symbol("vm_dynamic_import_no_callback"),
-  vm_context_no_contextify: Symbol("vm_context_no_contextify"),
-  entry_point_module_private_symbol: Symbol("entry_point_module"),
-  entry_point_promise_private_symbol: Symbol("entry_point_promise"),
 };
 const exportsOfContext = {};
 for (const id of ["internal/per_context/primordials", "internal/per_context/domexception", "internal/per_context/messageport"])
@@ -604,11 +757,6 @@ const runtime = {
     setTraceCategoryStateUpdateHandler: () => {},
     getEnabledCategories: () => "",
   },
-  // Ports between threads (#1361 later); DOMException is per_context/domexception's.
-  messaging: {
-    setDeserializerCreateObjectFunction: () => {},
-    DOMException: exportsOfContext.DOMException,
-  },
   // ES module linking: not yet (#1361 P2).
   module_wrap: { ModuleWrap: class ModuleWrap {}, kInstantiated: 2, kEvaluated: 4, kErrored: 5 },
   // Stack traces: the runtime keeps none yet; the callbacks are kept.
@@ -623,9 +771,368 @@ const runtime = {
     exitCodes: { kNoFailure: 0, kGenericUserError: 1 },
   },
 };
+// The microtask queue and the tick callback (src/node_task_queue.cc), V8's and Node's C++'s parts of
+// process.nextTick (#1361 P2): the microtasks are the runtime's jobs; the tick callback is run when
+// the runtime's jobs are done and again after (__yakccSetTickHook), as Node runs it after a callback.
+let tickCallback;
+runtime.task_queue = {
+  tickInfo: new Int32Array(2),
+  runMicrotasks: () => __yakccRunMicrotasks(),
+  setTickCallback: (f) => { tickCallback = f; },
+  enqueueMicrotask: (f) => queueMicrotask(f),
+  promiseRejectEvents: {
+    kPromiseRejectWithNoHandler: 0,
+    kPromiseHandlerAddedAfterReject: 1,
+    kPromiseRejectAfterResolved: 2,
+    kPromiseResolveAfterResolved: 3,
+  },
+  // V8's promise reject callback: the runtime calls it as V8 does (type, promise, reason).
+  setPromiseRejectCallback: (f) => __yakccSetPromiseRejectHook(f),
+};
+// Ports (src/node_messaging.cc's MessagePort, MessageChannel and BroadcastChannel; #1361 P2) in this
+// program's one thread, run as Node's loop runs them (#1367's loop is libuv's; this is its order):
+// - a port is entangled with one other, or is one of a broadcast group's; a message posted is cloned
+//   by the binding's structuredClone (node_messaging.cc's serializer: logic, node/src's, given) and
+//   queued at each port it goes to;
+// - each turn (the tick hook runs one when the runtime's jobs and ticks are done) is a poll, then
+//   closes: each port in the order made, started and with messages, is given them (MessagePort::
+//   OnMessage: at most what was queued, or 1000), each emitted (per_context/messageport's
+//   emitMessage) with the ticks and microtasks it makes run after it, as Node's callback scope does;
+// - a close asked for is done in its turn's closes, the last asked first (libuv's closing handles):
+//   the port's 'close' callback, and its partner given a close, after what was posted before it,
+//   which closes the partner when the partner reaches it;
+// - a turn is run while a port is closing, or one is open and referenced and a port has messages.
+//   Node waits as long as a referenced port is open; with nothing queued, this one thread is the
+//   only one that could post to it, so the program ends instead.
+let portTurn;
+{
+  const CLOSE = Symbol("close");
+  const portState = new WeakMap();
+  const groups = new Map();
+  let ports = [];
+  let closing = [];
+  const stateOf = (port) => {
+    const st = portState.get(port);
+    if (st === undefined) {
+      const e = new TypeError("Illegal invocation");
+      e.code = "ERR_INVALID_THIS";
+      throw e;
+    }
+    return st;
+  };
+  const afterCallback = () => {
+    const tickInfo = runtime.task_queue.tickInfo;
+    if ((tickInfo[0] === 1 || tickInfo[1] === 1) && tickCallback !== undefined) tickCallback();
+    else __yakccRunMicrotasks();
+  };
+  const hasWork = (st) => !st.dead && st.queue.length > 0 && (st.started || st.queue[0] === CLOSE);
+  const requestClose = (port, st) => {
+    if (st.closed) return;
+    st.closed = true;
+    closing.push(port);
+  };
+  // MessagePort::OnMessage (force: drainMessagePort's, started or not).
+  const deliver = (port, st, force) => {
+    let limit = Math.max(st.queue.length, 1000);
+    while (!st.dead && st.queue.length > 0 && limit-- > 0) {
+      if (st.queue[0] === CLOSE) {
+        st.queue.shift();
+        requestClose(port, st);
+        continue;
+      }
+      if (!st.started && !force) break;
+      exportsOfContext.emitMessage.call(port, st.queue.shift(), [], "message");
+      afterCallback();
+    }
+  };
+  // MessagePort::OnClose: the port's callback; its partner told.
+  const finishClose = (port) => {
+    const st = portState.get(port);
+    st.dead = true;
+    st.queue.length = 0;
+    ports = ports.filter((p) => p !== port);
+    if (st.group !== undefined) groups.get(st.group).delete(port);
+    const other = st.other;
+    if (other !== undefined) {
+      st.other = undefined;
+      const os = portState.get(other);
+      os.other = undefined;
+      if (!os.dead) os.queue.push(CLOSE);
+    }
+    const onclose = port[perIsolateSymbols.handle_onclose];
+    if (typeof onclose === "function") {
+      onclose.call(port);
+      afterCallback();
+    }
+  };
+  portTurn = () => {
+    const work = ports.some((p) => hasWork(portState.get(p)));
+    const refed = ports.some((p) => {
+      const st = portState.get(p);
+      return st.refed && !st.closed;
+    });
+    if (closing.length === 0 && !(work && refed)) return false;
+    for (let i = 0; i < ports.length; i++) {
+      const st = portState.get(ports[i]);
+      if (hasWork(st)) deliver(ports[i], st, false);
+    }
+    const closes = closing;
+    closing = [];
+    for (let i = closes.length - 1; i >= 0; i--) finishClose(closes[i]);
+    return true;
+  };
+  const makePort = (group) => {
+    const port = Object.create(MessagePort.prototype);
+    portState.set(port, {
+      other: undefined,
+      group,
+      queue: [],
+      started: false,
+      closed: false,
+      dead: false,
+      refed: true,
+    });
+    ports.push(port);
+    const init = port[perIsolateSymbols.oninit];
+    if (typeof init === "function") init.call(port);
+    return port;
+  };
+  // HandleWrap's members, which MessagePort inherits.
+  class HandleWrap {
+    close() {
+      requestClose(this, stateOf(this));
+    }
+    ref() {
+      const st = stateOf(this);
+      if (!st.dead) st.refed = true;
+    }
+    unref() {
+      const st = stateOf(this);
+      if (!st.dead) st.refed = false;
+    }
+    hasRef() {
+      const st = stateOf(this);
+      return st.refed && !st.dead;
+    }
+  }
+  class MessagePort extends HandleWrap {
+    constructor() {
+      super();
+      const e = new TypeError("Constructor cannot be called");
+      e.code = "ERR_CONSTRUCT_CALL_INVALID";
+      throw e;
+    }
+    postMessage(value, transfer) {
+      const st = stateOf(this);
+      const list = Array.isArray(transfer)
+        ? transfer
+        : transfer !== undefined && transfer !== null && transfer.transfer !== undefined
+          ? transfer.transfer
+          : [];
+      if (list.some((t) => portState.has(t))) {
+        const e = new Error("postMessage: a port in the transfer list is not in the native runtime yet");
+        e.code = "ERR_NOT_SUPPORTED";
+        throw e;
+      }
+      const clone = getInternalBinding("messaging").structuredClone;
+      if (typeof clone !== "function") {
+        const e = new Error("postMessage: no structuredClone (node_messaging.cc's serializer) is given");
+        e.code = "ERR_NOT_SUPPORTED";
+        throw e;
+      }
+      if (st.closed) return;
+      const targets =
+        st.group !== undefined
+          ? [...groups.get(st.group)].filter((p) => p !== this)
+          : st.other !== undefined
+            ? [st.other]
+            : [];
+      for (const target of targets) {
+        const ts = portState.get(target);
+        if (!ts.dead) ts.queue.push(clone(value, list.length > 0 ? { transfer: list } : undefined));
+      }
+    }
+    start() {
+      stateOf(this).started = true;
+    }
+  }
+  class MessageChannel {
+    constructor() {
+      this.port1 = makePort(undefined);
+      this.port2 = makePort(undefined);
+      portState.get(this.port1).other = this.port2;
+      portState.get(this.port2).other = this.port1;
+    }
+  }
+  const noMessage = perIsolateSymbols.no_message_symbol;
+  runtime.messaging = {
+    MessagePort,
+    MessageChannel,
+    DOMException: exportsOfContext.DOMException,
+    broadcastChannel: (name) => {
+      const key = String(name);
+      if (!groups.has(key)) groups.set(key, new Set());
+      const port = makePort(key);
+      groups.get(key).add(port);
+      return port;
+    },
+    // receiveMessageOnPort: the next message, taken now, or that there is none.
+    receiveMessageOnPort: (port) => {
+      const st = stateOf(port);
+      return st.queue.length > 0 && st.queue[0] !== CLOSE ? st.queue.shift() : noMessage;
+    },
+    // drainMessagePort: what is queued, emitted now.
+    drainMessagePort: (port) => deliver(port, stateOf(port), true),
+    stopMessagePort: (port) => {
+      stateOf(port).started = false;
+    },
+    moveMessagePortToContext: () => {
+      const e = new Error("moveMessagePortToContext: contexts (vm) are not in the native runtime");
+      e.code = "ERR_NOT_SUPPORTED";
+      throw e;
+    },
+    setDeserializerCreateObjectFunction: () => {},
+  };
+}
+// Threads (src/node_worker.cc): this program is its process's main thread and only one; starting a
+// Worker is not in the native runtime yet, so its constructor throws.
+runtime.worker = {
+  isMainThread: true,
+  ownsProcessState: true,
+  isInternalThread: false,
+  threadId: 0,
+  threadName: "main",
+  resourceLimits: new Float64Array(4),
+  kMaxYoungGenerationSizeMb: 0,
+  kMaxOldGenerationSizeMb: 1,
+  kCodeRangeSizeMb: 2,
+  kStackSizeMb: 3,
+  kTotalResourceLimitCount: 4,
+  getEnvMessagePort: () => undefined,
+  Worker: class Worker {
+    constructor() {
+      const e = new Error("new Worker: threads are not in the native runtime yet");
+      e.code = "ERR_NOT_SUPPORTED";
+      throw e;
+    }
+  },
+};
+// Async hooks' state (src/async_wrap.cc, Environment::AsyncHooks): the fields and the stack of
+// [execution id, trigger id] pairs, as Node keeps them; the main script runs as id 1, triggered by 0.
+const asyncFields = new Uint32Array(9);
+asyncFields[6] = 1; // kCheck
+const asyncIds = new Float64Array(4);
+asyncIds[0] = 1; // kExecutionAsyncId: the main script's
+asyncIds[2] = 1; // kAsyncIdCounter
+asyncIds[3] = -1; // kDefaultTriggerAsyncId
+const asyncIdsStack = new Float64Array(16 * 2);
+const asyncResources = [];
+const asyncStackMore = [];
+const asyncHooksSetUp = {};
+runtime.async_wrap = {
+  async_hook_fields: asyncFields,
+  async_id_fields: asyncIds,
+  async_ids_stack: asyncIdsStack,
+  execution_async_resources: asyncResources,
+  constants: {
+    kInit: 0, kBefore: 1, kAfter: 2, kDestroy: 3, kPromiseResolve: 4, kTotals: 5, kCheck: 6, kStackLength: 7,
+    kUsesExecutionAsyncResource: 8, kExecutionAsyncId: 0, kTriggerAsyncId: 1, kAsyncIdCounter: 2,
+    kDefaultTriggerAsyncId: 3,
+  },
+  Providers: ${JSON.stringify(ASYNC_PROVIDERS)},
+  // AsyncHooks::push_async_context, past the stack the library writes itself.
+  pushAsyncContext: (asyncId, triggerId, resource) => {
+    const offset = asyncFields[7];
+    if (offset * 2 < asyncIdsStack.length) {
+      asyncIdsStack[offset * 2] = asyncIds[0];
+      asyncIdsStack[offset * 2 + 1] = asyncIds[1];
+    } else asyncStackMore[offset] = [asyncIds[0], asyncIds[1]];
+    asyncFields[7] = offset + 1;
+    asyncIds[0] = asyncId;
+    asyncIds[1] = triggerId;
+    if (resource !== undefined) asyncResources[offset] = resource;
+  },
+  // AsyncHooks::pop_async_context: whether the stack is still not empty.
+  popAsyncContext: (asyncId) => {
+    if (asyncFields[7] === 0) return false;
+    if (asyncFields[6] > 0 && asyncIds[0] !== asyncId)
+      throw new Error("async hook stack has become corrupted (actual: " + asyncIds[0] + ", expected: " + asyncId + ")");
+    const offset = asyncFields[7] - 1;
+    if (offset * 2 < asyncIdsStack.length) {
+      asyncIds[0] = asyncIdsStack[offset * 2];
+      asyncIds[1] = asyncIdsStack[offset * 2 + 1];
+    } else {
+      asyncIds[0] = asyncStackMore[offset][0];
+      asyncIds[1] = asyncStackMore[offset][1];
+    }
+    asyncFields[7] = offset;
+    asyncResources.length = Math.min(asyncResources.length, offset);
+    return offset > 0;
+  },
+  executionAsyncResource: (index) => asyncResources[index],
+  clearAsyncIdStack: () => {
+    asyncIds[0] = 0;
+    asyncIds[1] = 0;
+    asyncFields[7] = 0;
+    asyncResources.length = 0;
+  },
+  setupHooks: (hooks) => { Object.assign(asyncHooksSetUp, hooks); },
+  setCallbackTrampoline: () => {},
+  // A destroy hook is called for an id queued, once the runtime's jobs are done.
+  queueDestroyAsyncId: (asyncId) => {
+    if (typeof asyncHooksSetUp.destroy === "function") queueMicrotask(() => asyncHooksSetUp.destroy(asyncId));
+  },
+  registerDestroyHook: () => {},
+  // Promise hooks need the runtime's promises to call them: none are set yet.
+  getPromiseHooks: () => [undefined, undefined, undefined, undefined],
+  setPromiseHooks: () => {},
+};
+// V8's continuation-preserved embedder data (--experimental-async-context-frame, off by default).
+let continuationData;
+runtime.async_context_frame = {
+  getContinuationPreservedEmbedderData: () => continuationData,
+  setContinuationPreservedEmbedderData: (v) => { continuationData = v; },
+};
 // env_properties.h's symbols: the util binding's private ones, and the symbols binding.
 runtime.symbols = perIsolateSymbols;
-runtime.util = { privateSymbols };
+runtime.util = {
+  privateSymbols,
+  // node_errors.cc's toggle (1: an uncaught exception aborts when --abort-on-uncaught-exception).
+  shouldAbortOnUncaughtToggle: new Uint32Array([1]),
+  // V8's stack, walked for a frame in node_modules: the runtime keeps no frames, so none is.
+  isInsideNodeModules: () => false,
+};
+// node_contextify.cc's binding: what loading vm, the module loaders and process/execution reads.
+// Compiling JavaScript at run time is not in the native runtime (DEC-DUC-NODE-BASE-SET-001's
+// "refused natively"), so each compiling member throws when it is called.
+{
+  const refuse = (what) =>
+    function () {
+      const e = new Error(what + ": compiling JavaScript at run time is not in the native runtime");
+      e.code = "ERR_NOT_SUPPORTED";
+      throw e;
+    };
+  class ContextifyScript {
+    constructor() {
+      refuse("vm.Script")();
+    }
+  }
+  ContextifyScript.prototype.runInContext = refuse("runInContext");
+  runtime.contextify = {
+    ContextifyScript,
+    compileFunction: refuse("vm.compileFunction"),
+    compileFunctionForCJSLoader: refuse("compileFunctionForCJSLoader"),
+    containsModuleSyntax: refuse("containsModuleSyntax"),
+    makeContext: refuse("vm.createContext"),
+    measureMemory: refuse("vm.measureMemory"),
+    startSigintWatchdog: () => {},
+    stopSigintWatchdog: () => false,
+    watchdogHasPendingSigint: () => false,
+    constants: {
+      measureMemory: { mode: { SUMMARY: 0, DETAILED: 1 }, execution: { DEFAULT: 0, EAGER: 1 } },
+    },
+  };
+}
 // A binding is the runtime's members (V8's role, and the boot's own) with the given ones (node/src's,
 // shaved) beside them.
 const made = { __proto__: null };
@@ -642,8 +1149,75 @@ function getLinkedBinding(name) {
   throw new Error("No such binding: " + name);
 }
 table.get("internal/bootstrap/realm")(process, getLinkedBinding, getInternalBinding, primordials);
+// process as an EventEmitter (bootstrap/node.js's setupProcessObject): its prototype one that
+// inherits EventEmitter's; 'warning' heard as pre_execution.js has it; 'exit' emitted when the
+// runtime's jobs are done (per_thread.js), the exit code process.exitCode's.
+{
+  const EventEmitter = loaders.requireBuiltin("events");
+  Object.setPrototypeOf(process, Object.create(EventEmitter.prototype));
+  EventEmitter.call(process);
+  Object.defineProperty(process, Symbol.toStringTag, {
+    enumerable: false,
+    writable: true,
+    configurable: false,
+    value: "process",
+  });
+  // stdout and stderr as streams to Node's Console: the runtime's writes, synchronous as
+  // fs.SyncWriteStream's are, with an emitter's events. (Node's own tty.WriteStream and
+  // SyncWriteStream need the tty_wrap and fs bindings: #1367.)
+  for (const stream of [process.stdout, process.stderr]) {
+    const write = stream.write;
+    Object.setPrototypeOf(stream, Object.create(EventEmitter.prototype));
+    EventEmitter.call(stream);
+    stream.write = (chunk, encoding, callback) => {
+      write(typeof chunk === "string" ? chunk : String(chunk));
+      const done = typeof encoding === "function" ? encoding : callback;
+      if (typeof done === "function") process.nextTick(done, null);
+      return true;
+    };
+    stream.writable = true;
+    stream.isTTY = false;
+  }
+  // Node's global console bound to them, as pre_execution.js binds it (a library module's console,
+  // internal/console/global: warnings are written through it).
+  loaders
+    .requireBuiltin("internal/console/constructor")
+    .initializeGlobalConsole(loaders.requireBuiltin("internal/console/global"));
+  process._exiting = false;
+  process.on("warning", (...args) => loaders.requireBuiltin("internal/process/warning").onWarning(...args));
+  __yakccOnExit(() => {
+    if (process._exiting) return;
+    process._exiting = true;
+    process.emit("exit", process.exitCode || 0);
+  });
+}
+// process.nextTick, as bootstrap/node.js sets it up: internal/process/task_queues', its tick
+// callback run when the runtime's jobs are done (and again after, while ticks are scheduled).
+{
+  const { setupTaskQueue } = loaders.requireBuiltin("internal/process/task_queues");
+  const { nextTick, runNextTicks } = setupTaskQueue();
+  process.nextTick = nextTick;
+  process._tickCallback = runNextTicks;
+  const tickInfo = runtime.task_queue.tickInfo;
+  // A turn of the ports, when the ticks are done (true: one ran, so the runtime asks again).
+  __yakccSetTickHook(() => {
+    if ((tickInfo[0] === 1 || tickInfo[1] === 1) && tickCallback !== undefined) tickCallback();
+    return portTurn();
+  });
+}
 // process.emitWarning, as bootstrap/node.js sets it: internal/process/warning's, loaded when first used.
 process.emitWarning = (...args) => loaders.requireBuiltin("internal/process/warning").emitWarning(...args);
+${
+  capture
+    ? `// process's uncaught-exception capture, as bootstrap/node.js sets it (domain uses it).
+{
+  const execution = loaders.requireBuiltin("internal/process/execution");
+  process.setUncaughtExceptionCaptureCallback = execution.setUncaughtExceptionCaptureCallback;
+  process.hasUncaughtExceptionCaptureCallback = execution.hasUncaughtExceptionCaptureCallback;
+}
+`
+    : ""
+}
 // console, as Node's prints: each line formatted by internal/util/inspect's formatWithOptions.
 let inspectModule;
 const formatLine = (args) =>

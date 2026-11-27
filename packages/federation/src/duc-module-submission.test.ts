@@ -14,7 +14,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { type SpecYak, specHash } from "@yakcc/contracts";
-import { atomShape, byMeaning, contractSignature, liftAtom, packGraph } from "@yakcc/duc";
+import { NODE, atomShape, byMeaning, contractSignature, liftAtom, packGraph } from "@yakcc/duc";
 import { collectForestSlicePlans, shavePackage, slice } from "@yakcc/shave";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -77,7 +77,7 @@ async function submissionOf(
         root: packed.root,
         links: packed.links,
         evidence: name !== "" ? evidenceFor(name) : [],
-        baseSet: { target: "node", version: 2 },
+        baseSet: { target: NODE.target, version: NODE.version },
       });
       names.push(name);
       statements.push({
@@ -125,7 +125,7 @@ function oneStatementModule(
         root: packed.root,
         links: packed.links,
         evidence: [],
-        baseSet: { target: "node", version: 2 },
+        baseSet: { target: NODE.target, version: NODE.version },
       },
     ],
     modules: [
@@ -346,7 +346,7 @@ describe("a corpus package as a shared submission (#1287, #1290)", () => {
           root: packed.root,
           links: packed.links,
           evidence: [],
-          baseSet: { target: "node", version: 2 },
+          baseSet: { target: NODE.target, version: NODE.version },
         });
         return {
           specHash: specHash(spec),

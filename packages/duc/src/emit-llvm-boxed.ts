@@ -30,7 +30,7 @@ import { bodyPathOf, joinOwners, sidePath } from "./line-form.js";
 import { atomGraph, atomNames, mathOperation, operationReference } from "./operations.js";
 import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
-import { paramIndex } from "./params.js";
+import { expectedArgumentCount, paramIndex } from "./params.js";
 import { RegexCompileError, regexMatcherGraph } from "./regex.js";
 import { type ScopeItem, scopePlanner } from "./scopes.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
@@ -149,6 +149,7 @@ const GLOBALS = new Set([
   "Symbol",
   "globalThis",
   "Reflect",
+  "Proxy",
   "Function",
   "encodeURIComponent",
   "encodeURI",
@@ -160,6 +161,10 @@ const GLOBALS = new Set([
   "__yakccRuntimeBinding",
   "__yakccDefineGlobal",
   "__yakccSetBuiltinRequire",
+  "__yakccSetTickHook",
+  "__yakccOnExit",
+  "__yakccRunMicrotasks",
+  "__yakccSetPromiseRejectHook",
   "eval",
   "EvalError",
   "ReferenceError",
@@ -262,6 +267,17 @@ const MEM_CACHE_DECLS = [
 let memorySites = 0;
 /** A BigInt literal: its digits (any radix prefix kept), then n. */
 const BIGINT_LITERAL = /^(0[xXoObB][0-9a-fA-F_]+|[0-9_]+)n$/;
+/** Math's value properties (ECMA-262 21.3.1). */
+const MATH_CONSTANTS: Readonly<Record<string, number>> = nameTable({
+  E: Math.E,
+  LN10: Math.LN10,
+  LN2: Math.LN2,
+  LOG10E: Math.LOG10E,
+  LOG2E: Math.LOG2E,
+  PI: Math.PI,
+  SQRT1_2: Math.SQRT1_2,
+  SQRT2: Math.SQRT2,
+});
 const MATH1 = new Set(["floor", "ceil", "trunc", "sqrt", "abs", "sign", "round"]);
 const APPROXIMATED =
   /^(exp|expm1|log|log1p|log2|log10|sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|cbrt|hypot|pow)$/;
@@ -373,6 +389,17 @@ function llvmBytes(text: string): { body: string; length: number } {
   return { body, length: bytes.length };
 }
 
+/** Whether a closure reads `super`: itself, or an arrow inside it, whose `super` is its own. */
+function usesSuper(g: DucGraph | undefined): boolean {
+  if (g === undefined) return false;
+  return g.nodes.some(
+    (n) =>
+      (n.label ?? "").startsWith("super.") ||
+      n.label === "super[]" ||
+      ((n.label === "closure" || n.label === "async closure") && usesSuper(n.closure)),
+  );
+}
+
 /** A slot of an object literal's label: a named or computed key, a method, a spread. */
 type Slot =
   | { readonly kind: "named"; readonly name: string }
@@ -430,6 +457,100 @@ function atomFunction(m: ModuleBuilder, atom: string): string {
   return fn;
 }
 
+/**
+ * `Math.<name>` read as a value (`const floor = Math.floor`): a function of the closure convention
+ * that does what a call of it does (the exact operations the runtime's, the others their atoms,
+ * #1362), its closure made once. The value, emitted with `emit`.
+ */
+function mathFunctionValue(
+  m: ModuleBuilder,
+  name: string,
+  fresh: () => string,
+  emit: (line: string) => void,
+): string {
+  // Its value properties (21.3.1): the numbers.
+  const constant = MATH_CONSTANTS[name];
+  if (constant !== undefined) {
+    const r = fresh();
+    emit(`${r} = add i64 0, ${boxedNumber(constant)}`);
+    return r;
+  }
+  const fn = `yk.mathval.${name}`;
+  if (!m.atoms.has(`mathval:${name}`)) {
+    m.atoms.set(`mathval:${name}`, fn);
+    const body: string[] = [];
+    let length = 1;
+    m.used.add("yk_arg");
+    const arg = (i: number): string => {
+      body.push(`  %a${i} = call i64 @yk_arg(i64 %argc, ptr %argv, i64 ${i})`);
+      return `%a${i}`;
+    };
+    const ref = mathOperation(name, 1) ?? mathOperation(name, 2);
+    if (MATH1.has(name)) {
+      const key = m.constant(name, true);
+      m.used.add("yk_math1");
+      body.push(`  %r = call i64 @yk_math1(ptr ${key.ptr}, i64 ${arg(0)})`);
+    } else if (name === "min" || name === "max") {
+      length = 2;
+      m.used.add("yk_math_minmax");
+      body.push(
+        `  %r = call i64 @yk_math_minmax(i32 ${name === "max" ? 1 : 0}, i64 %argc, ptr %argv)`,
+      );
+    } else if (name === "random") {
+      length = 0;
+      m.intrinsics.add("declare i64 @yk_math_random()");
+      body.push("  %r = call i64 @yk_math_random()");
+    } else if (ref !== undefined) {
+      length = ref.arity;
+      m.used.add("yk_pos");
+      body.push(`  %list = alloca [${ref.arity} x i64]`);
+      for (let i = 0; i < ref.arity; i++) {
+        body.push(`  %n${i} = call i64 @yk_pos(i64 ${arg(i)})`);
+        body.push(`  %p${i} = getelementptr [${ref.arity} x i64], ptr %list, i64 0, i64 ${i}`);
+        body.push(`  store i64 %n${i}, ptr %p${i}`);
+      }
+      body.push(
+        `  %r = call i64 @${atomFunction(m, ref.atom)}(ptr null, i64 ${UNDEFINED}, i64 ${ref.arity}, ptr %list)`,
+      );
+    } else throw new LlvmEmitError(`Math.${name} as a value is not in the subset yet`);
+    m.functions.push(
+      [
+        `define internal i64 @${fn}(ptr %closure, i64 %this, i64 %argc, ptr %argv) {`,
+        "entry:",
+        ...body,
+        "  ret i64 %r",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    m.globals.push(`@${fn}.c = internal global i64 0`);
+    m.atoms.set(`mathval:${name}:len`, String(length));
+  }
+  const key = m.constant(name);
+  m.intrinsics.add("declare i64 @yk_builtin_once(ptr, ptr, ptr, i64, i32)");
+  const r = fresh();
+  emit(
+    `${r} = call i64 @yk_builtin_once(ptr @${fn}.c, ptr @${fn}, ptr ${key.ptr}, i64 ${key.length}, i32 ${m.atoms.get(`mathval:${name}:len`)})`,
+  );
+  return r;
+}
+
+/**
+ * The module's constructor (run before main, from .init_array): each name and literal the module
+ * keeps in a global made then, so the lowered code reads the global with no check (#1370).
+ */
+function keyConstructor(m: ModuleBuilder): string[] {
+  if (m.keyInits.length === 0) return [];
+  return [
+    "define internal void @yk.keys.init() {",
+    ...m.keyInits,
+    "  ret void",
+    "}",
+    "@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @yk.keys.init, ptr null }]",
+    "",
+  ];
+}
+
 /** The module being built: its constants, the runtime functions it calls, its functions. */
 class ModuleBuilder {
   readonly globals: string[] = [];
@@ -447,6 +568,8 @@ class ModuleBuilder {
   readonly numClones = new Set<string>();
   /** Each property name a site reads, writes or calls by: the global its string is kept in. */
   readonly keys = new Map<string, string>();
+  /** Each key global's filling, by the module's constructor (keyConstructor). */
+  readonly keyInits: string[] = [];
   /** The number clones calls name, each its function's and its raw arguments' parameter list. */
   readonly numCalled = new Map<
     string,
@@ -844,6 +967,8 @@ function lowerFunction(
         readonly captures: number;
         /** Each capture that is a binding of the module: its name (read and written as the module's). */
         readonly moduleCaptures?: readonly (string | undefined)[] | undefined;
+        /** Each capture that is a leaf (`__ykU64`, …) where the closure is made: its name. */
+        readonly leafCaptures?: readonly (string | undefined)[] | undefined;
       }
     | undefined,
   scope?: ModuleScope,
@@ -855,6 +980,8 @@ function lowerFunction(
   recOut?: boolean,
   /** An `.int` clone's (#1369): number parameters its `.num` clone checked are integers in a range. */
   paramRanges?: ReadonlyMap<ValueId, NumRange>,
+  /** A `.big` clone's (#1369): the BigInt parameters its entry checked are below 2^64 in magnitude. */
+  bigParams?: ReadonlySet<ValueId>,
 ): void {
   const rawList = [...(rawParams ?? [])].sort((a, b) => a - b);
   const rawHead =
@@ -925,10 +1052,21 @@ function lowerFunction(
   // A function's own `arguments` (#1330): its arguments as an array, made on entry (strict code:
   // no parameter aliases them).
   const argumentsValues: ValueId[] = [];
+  // A function's own new.target (ECMA-262 13.3.12): taken on entry, as yk_new or super() left it.
+  const newTargetValues: ValueId[] = [];
+  // A capture of a leaf (a closure inside a function that names `__ykU64`): the leaf, as there.
+  for (const n of g.nodes)
+    if (n.kind === "param-source" && closure?.leafCaptures !== undefined) {
+      const k = paramIndex(n.label);
+      const leaf = k < closure.captures ? closure.leafCaptures[k] : undefined;
+      if (leaf !== undefined) leafValue.set(n.outputs[0] as ValueId, leaf);
+    }
   for (const n of g.nodes) {
     if (n.kind !== "diamond-source") continue;
     const sym = n.diamond?.symbol ?? "";
     if (sym === "arguments" && closure !== undefined) argumentsValues.push(n.outputs[0] as ValueId);
+    else if (sym === "new.target" && closure !== undefined)
+      newTargetValues.push(n.outputs[0] as ValueId);
     else if (LEAVES[sym] !== undefined) leafValue.set(n.outputs[0] as ValueId, sym);
     else if (n.diamond?.reason === "platform-primitive" && sym === "Math")
       mathValue.add(n.outputs[0] as ValueId);
@@ -953,6 +1091,29 @@ function lowerFunction(
       globalValue.set(n.outputs[0] as ValueId, sym);
     else throw new LlvmEmitError(`"${sym}" is not in the native base set`);
   }
+  // An async try awaited at once (`await __yakccTryAsync(body, handler, finalizer)`, #1276): run in
+  // this async function's coroutine, its blocks' awaits this function's, so it takes no more jobs
+  // than the source's try statement does. The calls, by their result.
+  const inlineTries = new Set<ValueId>();
+  {
+    const awaitedBy = new Map<ValueId, number>();
+    const otherUse = new Set<ValueId>();
+    for (const n of g.nodes)
+      for (const v of n.inputs) {
+        const r = resolve(v as ValueId);
+        if (n.label === "AwaitExpression") awaitedBy.set(r, (awaitedBy.get(r) ?? 0) + 1);
+        else otherUse.add(r);
+      }
+    for (const n of g.nodes)
+      if (
+        closure !== undefined &&
+        n.label === "CallExpression" &&
+        globalValue.get(resolve(n.inputs[0] as ValueId)) === "__yakccTryAsync"
+      ) {
+        const out = n.outputs[0] as ValueId;
+        if (awaitedBy.get(out) === 1 && !otherUse.has(out)) inlineTries.add(out);
+      }
+  }
   const memberOf = (v: ValueId): { node: DucNode; name: string } | undefined => {
     const p = producer.get(resolve(v));
     if (p === undefined || p.kind !== "op" || !/^\.[\w$]+$/.test(p.label ?? "")) return undefined;
@@ -962,6 +1123,8 @@ function lowerFunction(
   // Member reads whose value only a call takes as its callee: not made where they stand (a method
   // call reads its member by key itself; another call's operand makes the read where it is used).
   const calleeReads = new Map<ValueId, DucNode>();
+  /** Math.name reads only called: the call names the operation, nothing is read. */
+  const mathCalleeReads = new Set<ValueId>();
   // Calls of a direct function with a record result whose value only its keys' reads take (#1369):
   // each call's slots, and each read's slot.
   const recordCalls = new Map<ValueId, { slot: string; keys: readonly string[] }>();
@@ -996,7 +1159,10 @@ function lowerFunction(
         else bad.add(r);
       });
     for (const [v, n] of candidates)
-      if (called.has(v) && !bad.has(v) && !isMath(n.inputs[0] as ValueId)) calleeReads.set(v, n);
+      if (called.has(v) && !bad.has(v)) {
+        if (isMath(n.inputs[0] as ValueId)) mathCalleeReads.add(v);
+        else calleeReads.set(v, n);
+      }
   }
 
   // --- Typed BigInts (#1369, DEC-DUC-TYPED-NATIVE-001): a BigInt the graph proves narrower than 128
@@ -1006,10 +1172,18 @@ function lowerFunction(
   const leafOf = (n: DucNode): string | undefined =>
     n.label === "CallExpression" ? leafValue.get(resolve(n.inputs[0] as ValueId)) : undefined;
   const numRange = new Map<ValueId, NumRange>(paramRanges ?? []);
-  const bigWidth = new Map<ValueId, number>();
+  const bigWidth = new Map<ValueId, number>([...(bigParams ?? [])].map((v) => [v, 65] as const));
   /** A BigInt the graph fixes: a literal, or __ykNumToBig of an integer literal (raise-c's `32n`). */
   const literalBig = (v: ValueId): bigint | undefined => {
     const p = producer.get(resolve(v));
+    // __ykU64 / __ykI64 of a constant (raise-c's `__ykU64(__ykNumToBig(255))`): its value wrapped.
+    if (p?.kind === "op" && p.label === "CallExpression" && p.inputs.length === 2) {
+      const l = leafValue.get(resolve(p.inputs[0] as ValueId));
+      if (l === "__ykU64" || l === "__ykI64") {
+        const x = literalBig(p.inputs[1] as ValueId);
+        if (x !== undefined) return l === "__ykU64" ? BigInt.asUintN(64, x) : BigInt.asIntN(64, x);
+      }
+    }
     if (
       p?.kind === "op" &&
       p.label === "CallExpression" &&
@@ -1048,140 +1222,482 @@ function lowerFunction(
     }
     return numRange.has(resolve(v));
   };
-  for (let changed = true; changed; ) {
-    changed = false;
-    for (const n of g.nodes) {
-      if (n.kind !== "op") continue;
-      const out = n.outputs[0] as ValueId | undefined;
-      if (out === undefined || numRange.has(out) || bigWidth.has(out)) continue;
-      const ins = n.inputs as readonly ValueId[];
-      const lbl = n.label ?? "";
-      const leaf = leafOf(n);
-      let range: NumRange | undefined;
-      let width: number | undefined;
-      const directName =
-        lbl === "CallExpression" ? freeValue.get(resolve(ins[0] as ValueId)) : undefined;
-      const recordKey = /^\.([\w$]+)$/.exec(lbl)?.[1];
-      if (directName !== undefined && scope?.direct?.(directName) !== undefined) {
-        // A direct call: its callee's result range (a binding not yet its closure throws).
-        range = scope.ranges?.(directName)?.ret;
-      } else if (recordKey !== undefined && ins.length === 1) {
-        // A key of a direct call's record result, the call's result only read by key.
-        const c = producer.get(resolve(ins[0] as ValueId));
-        const cname =
-          c?.kind === "op" && c.label === "CallExpression"
-            ? freeValue.get(resolve(c.inputs[0] as ValueId))
-            : undefined;
-        const cout = c?.outputs[0] as ValueId | undefined;
-        if (cname !== undefined && cout !== undefined && scope?.direct?.(cname) !== undefined) {
-          const onlyReads = g.nodes.every((u) =>
-            u.inputs.every(
-              (x, xi) =>
-                resolve(x as ValueId) !== cout ||
-                (xi === 0 &&
-                  u.kind === "op" &&
-                  /^\.[\w$]+$/.test(u.label ?? "") &&
-                  u.inputs.length === 1),
-            ),
-          );
-          if (onlyReads && !g.obs.map((o) => resolve(o)).includes(cout))
-            range = scope.ranges?.(cname)?.keys?.get(recordKey);
+  // --- Small integer ranges for shift amounts (#1369): a loop counter (an integer literal stepped
+  // up by a positive literal while it is below a literal) is in [init, N - 1] in its loop's body,
+  // outside what its condition is made of; and the operators of such values.
+  const loopOfCarry = new Map<ValueId, DucNode>();
+  for (const n of g.nodes)
+    if (n.kind === "loop" && n.loop !== undefined)
+      for (const c of n.loop.carry) loopOfCarry.set(resolve(c), n);
+  const smallIntLiteral = (v: ValueId): number | undefined => {
+    const p = producer.get(resolve(v));
+    if (p?.kind !== "literal-source") return undefined;
+    const t = (p.label ?? "").replace(/_/g, "");
+    return /^-?(0|[1-9][0-9]*)$/.test(t) && Math.abs(Number(t)) < 2 ** 31 ? Number(t) : undefined;
+  };
+  const condParts = new Map<DucNode, Set<ValueId>>();
+  const partsOfCond = (loop: DucNode): Set<ValueId> => {
+    let parts = condParts.get(loop);
+    if (parts !== undefined) return parts;
+    parts = new Set<ValueId>();
+    const work = loop.loop?.cond !== undefined ? [resolve(loop.loop.cond)] : [];
+    while (work.length > 0) {
+      const v = work.pop() as ValueId;
+      if (parts.has(v)) continue;
+      parts.add(v);
+      const p = producer.get(v);
+      if (p !== undefined && p.kind !== "loop")
+        for (const x of p.inputs) work.push(resolve(x as ValueId));
+    }
+    condParts.set(loop, parts);
+    return parts;
+  };
+  const counterRange = (v: ValueId, at: DucNode): readonly [number, number] | undefined => {
+    const loop = loopOfCarry.get(v);
+    const rec = loop?.loop;
+    if (loop === undefined || rec === undefined || rec.cond === undefined) return undefined;
+    const body = bodyPathOf(loop);
+    const r = at.region;
+    if (r === undefined || (r !== body && !r.startsWith(`${body}/`))) return undefined;
+    if (at.outputs.some((o) => partsOfCond(loop).has(resolve(o)))) return undefined;
+    const j = rec.carry.findIndex((c) => resolve(c) === v);
+    const init = smallIntLiteral(loop.inputs[j] as ValueId);
+    if (init === undefined) return undefined;
+    // Its next value: k + c, or (k + c) | 0, for a positive literal c.
+    let nx = producer.get(resolve(rec.next[j] as ValueId));
+    if (nx?.kind === "op" && nx.label === "|" && smallIntLiteral(nx.inputs[1] as ValueId) === 0)
+      nx = producer.get(resolve(nx.inputs[0] as ValueId));
+    if (
+      nx?.kind !== "op" ||
+      nx.label !== "+" ||
+      resolve(nx.inputs[0] as ValueId) !== v ||
+      (smallIntLiteral(nx.inputs[1] as ValueId) ?? 0) <= 0
+    )
+      return undefined;
+    // Its condition: k < N or k <= N (raise-c's `((k < N) ? 1 : 0) !== 0` too).
+    let c = producer.get(resolve(rec.cond));
+    if (c?.kind === "op" && (c.label === "!==" || c.label === "!=")) {
+      const [a, b] = c.inputs as [ValueId, ValueId];
+      const other = smallIntLiteral(a) === 0 ? b : smallIntLiteral(b) === 0 ? a : undefined;
+      const sl = other === undefined ? undefined : producer.get(resolve(other));
+      c =
+        sl?.kind === "sel" &&
+        smallIntLiteral(sl.inputs[1] as ValueId) === 1 &&
+        smallIntLiteral(sl.inputs[2] as ValueId) === 0
+          ? producer.get(resolve(sl.inputs[0] as ValueId))
+          : undefined;
+    }
+    if (c?.kind !== "op" || (c.label !== "<" && c.label !== "<=")) return undefined;
+    if (resolve(c.inputs[0] as ValueId) !== v) return undefined;
+    const bound = smallIntLiteral(c.inputs[1] as ValueId);
+    if (bound === undefined) return undefined;
+    const hi = c.label === "<" ? bound - 1 : bound;
+    return init <= hi ? [init, hi] : [init, init];
+  };
+  /** An integer's range where `at` reads it: a literal's, a counter's, or its operators'. */
+  const smallRange = (
+    v0: ValueId,
+    at: DucNode,
+    depth = 0,
+  ): readonly [number, number] | undefined => {
+    const v = resolve(v0);
+    const lit = smallIntLiteral(v);
+    if (lit !== undefined) return [lit, lit];
+    if (depth > 8) return undefined;
+    const counter = counterRange(v, at);
+    if (counter !== undefined) return counter;
+    const p = producer.get(v);
+    if (p?.kind !== "op" || p.inputs.length !== 2) return undefined;
+    const ra = smallRange(p.inputs[0] as ValueId, at, depth + 1);
+    const rb = smallRange(p.inputs[1] as ValueId, at, depth + 1);
+    if (ra === undefined || rb === undefined) return undefined;
+    const inI32 = (r: readonly [number, number]): readonly [number, number] | undefined =>
+      r[0] >= -(2 ** 31) && r[1] < 2 ** 31 ? r : undefined;
+    if (p.label === "|" && rb[0] === 0 && rb[1] === 0) return inI32(ra);
+    if (p.label === "<<" && rb[0] === rb[1] && rb[0] >= 0 && rb[0] < 31 && ra[0] >= 0)
+      return inI32([ra[0] * 2 ** rb[0], ra[1] * 2 ** rb[0]]);
+    if (p.label === "+") return inI32([ra[0] + rb[0], ra[1] + rb[1]]);
+    if (p.label === "-") return inI32([ra[0] - rb[1], ra[1] - rb[0]]);
+    if (p.label === "*" && ra[0] >= 0 && rb[0] >= 0) return inI32([ra[0] * rb[0], ra[1] * rb[1]]);
+    return undefined;
+  };
+  /** A BigInt shift amount proved non-negative where `at` reads it: BigInt(x), x's range so. */
+  const nonNegativeShift = (v: ValueId, at: DucNode): boolean => {
+    const k = literalBig(v);
+    if (k !== undefined) return k >= 0n;
+    const p = producer.get(resolve(v));
+    if (
+      p?.kind !== "op" ||
+      p.label !== "CallExpression" ||
+      leafValue.get(resolve(p.inputs[0] as ValueId)) !== "__ykNumToBig"
+    )
+      return false;
+    const r = smallRange(p.inputs[1] as ValueId, at);
+    return r !== undefined && r[0] >= 0;
+  };
+  /**
+   * An operation's BigInt width from its operands' (`w`): a fixed-width leaf's, a literal shift's,
+   * or the operators' growth. Undefined when an operand's width is not known.
+   */
+  const bigRule = (n: DucNode, w: (v: ValueId) => number | undefined): number | undefined => {
+    const ins = n.inputs as readonly ValueId[];
+    const lbl = n.label ?? "";
+    if (n.kind === "sel") {
+      // A selection between two values: the wider's (a heap selection is not a value's).
+      if (lbl === "heap" || ins.length !== 3) return undefined;
+      const wa = w(ins[1] as ValueId);
+      const wb = w(ins[2] as ValueId);
+      return wa === undefined || wb === undefined ? undefined : Math.max(wa, wb);
+    }
+    if (n.kind !== "op") return undefined;
+    const leaf = leafOf(n);
+    if (leaf !== undefined) {
+      const a = ins[1] as ValueId;
+      if (leaf === "__ykF64Bits" || leaf === "__ykU64" || leaf === "__ykLoad64") return 65;
+      if (leaf === "__ykI64") return 64;
+      if (leaf === "__ykNumToBig" && a !== undefined && rangeOf(a) !== undefined) return 33;
+      return undefined;
+    }
+    if (ins.length === 2 && ["|", "&", "^", "<<", ">>"].includes(lbl)) {
+      const wa = w(ins[0] as ValueId);
+      const wb = w(ins[1] as ValueId);
+      if (wa === undefined || wb === undefined) return undefined;
+      // A right shift by an amount never negative is no wider than its operand.
+      if (lbl === ">>") return nonNegativeShift(ins[1] as ValueId, n) ? wa : undefined;
+      if (lbl === "<<") {
+        const k = literalBig(ins[1] as ValueId);
+        return k !== undefined && k >= 0n && k <= 127n ? wa + Number(k) : undefined;
+      }
+      // x & m, m a non-negative literal: in [0, m].
+      if (lbl === "&") {
+        const ka = literalBig(ins[0] as ValueId);
+        const kb = literalBig(ins[1] as ValueId);
+        const m = kb !== undefined && kb >= 0n ? kb : ka !== undefined && ka >= 0n ? ka : undefined;
+        if (m !== undefined) return m.toString(2).length + 1;
+      }
+      return Math.max(wa, wb);
+    }
+    if (ins.length === 2 && (lbl === "+" || lbl === "-" || lbl === "*")) {
+      const wa = w(ins[0] as ValueId);
+      const wb = w(ins[1] as ValueId);
+      if (wa === undefined || wb === undefined) return undefined;
+      return lbl === "*" ? wa + wb : Math.max(wa, wb) + 1;
+    }
+    if (ins.length === 1 && (lbl === "-" || lbl === "~")) {
+      const wa = w(ins[0] as ValueId);
+      return wa === undefined ? undefined : wa + 1;
+    }
+    // A remainder is no larger than either operand; a quotient no larger than its dividend (both
+    // operands typed: each is read as its i128).
+    if (ins.length === 2 && lbl === "%") {
+      const wa = w(ins[0] as ValueId);
+      const wb = w(ins[1] as ValueId);
+      return wa === undefined || wb === undefined ? undefined : Math.min(wa, wb);
+    }
+    if (ins.length === 2 && lbl === "/") {
+      const wa = w(ins[0] as ValueId);
+      return wa !== undefined && w(ins[1] as ValueId) !== undefined ? wa : undefined;
+    }
+    return undefined;
+  };
+  /**
+   * A BigInt carry's width by induction (#1369): assumed as wide as its initial value, its next
+   * value's width computed under that (and under the assumptions of the loops it is inside); no
+   * wider, the assumption holds for every iteration; wider, assumed that wide and checked again,
+   * up to 127 bits. An inner loop's carries and results are proved the same way, nested.
+   */
+  const loopOfValue = new Map<ValueId, { loop: DucNode; j: number }>();
+  for (const n of g.nodes)
+    if (n.kind === "loop" && n.loop !== undefined) {
+      n.loop.carry.forEach((c, j) => loopOfValue.set(resolve(c), { loop: n, j }));
+      n.outputs.forEach((o, j) => loopOfValue.set(resolve(o), { loop: n, j }));
+    }
+  const widthUnder = (
+    x0: ValueId,
+    assume: ReadonlyMap<ValueId, number>,
+    memo: Map<ValueId, number | undefined>,
+    depth: number,
+  ): number | undefined => {
+    const x = resolve(x0);
+    const a = assume.get(x);
+    if (a !== undefined) return a;
+    const known = widthOf(x);
+    if (known !== undefined) return known;
+    if (memo.has(x) || depth > 48) return memo.get(x);
+    memo.set(x, undefined);
+    const p = producer.get(x);
+    let r: number | undefined;
+    const lv = loopOfValue.get(x);
+    if (lv !== undefined && lv.j < (lv.loop.loop?.carry.length ?? 0))
+      r = inductCarry(lv.loop, lv.j, assume, depth + 1);
+    else if (p?.kind === "op" || p?.kind === "sel")
+      r = bigRule(p, (y) => widthUnder(y, assume, memo, depth + 1));
+    memo.set(x, r);
+    return r;
+  };
+  const inductCarry = (
+    loop: DucNode,
+    j: number,
+    assume: ReadonlyMap<ValueId, number>,
+    depth: number,
+  ): number | undefined => {
+    const rec = loop.loop;
+    if (rec === undefined || depth > 12) return undefined;
+    const v = resolve(rec.carry[j] as ValueId);
+    const known = bigWidth.get(v);
+    if (known !== undefined) return known;
+    let assumed = widthUnder(loop.inputs[j] as ValueId, assume, new Map(), depth + 1);
+    for (let tries = 0; assumed !== undefined && assumed <= 127 && tries < 8; tries++) {
+      const inner = new Map(assume).set(v, assumed);
+      const wn = widthUnder(rec.next[j] as ValueId, inner, new Map(), depth + 1);
+      if (wn === undefined) return undefined;
+      if (wn <= assumed) return assumed;
+      assumed = wn;
+    }
+    return undefined;
+  };
+  /** The widths' and ranges' fixpoint; run again when the constant tables add ranges (#1369). */
+  const widthFixpoint = (): void => {
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const n of g.nodes) {
+        if (n.kind === "sel") {
+          const out = n.outputs[0] as ValueId | undefined;
+          if (out === undefined || bigWidth.has(out)) continue;
+          // A selection between two ranged numbers (or integer literals): the ranges joined.
+          if (!numRange.has(resolve(out)) && n.label !== "heap" && n.inputs.length === 3) {
+            const rOf = (v: ValueId): NumRange | "both" | undefined => {
+              const r = numRange.get(resolve(v));
+              if (r !== undefined) return r;
+              const x = smallIntLiteral(v);
+              if (x === undefined) return undefined;
+              return x >= 0 && x < 2 ** 31
+                ? "both"
+                : x >= 0 && x < 2 ** 32
+                  ? "u32"
+                  : x >= -(2 ** 31) && x < 0
+                    ? "i32"
+                    : undefined;
+            };
+            const a = rOf(n.inputs[1] as ValueId);
+            const b = rOf(n.inputs[2] as ValueId);
+            if (a !== undefined && b !== undefined) {
+              const r: NumRange =
+                a === "both" ? (b === "both" ? "i32" : b) : b === "both" || a === b ? a : "int";
+              numRange.set(resolve(out), r);
+              changed = true;
+              continue;
+            }
+          }
+          const width = bigRule(n, widthOf);
+          if (width !== undefined && width <= 127) {
+            bigWidth.set(out, width);
+            changed = true;
+          }
+          continue;
         }
-      } else if (leaf !== undefined) {
-        const a = ins[1] as ValueId;
-        if (leaf === "__ykBigToI32" || leaf === "__ykI32Mul") range = "i32";
-        else if (
-          leaf === "__ykBigToU32" ||
-          leaf === "__ykLoad8" ||
-          leaf === "__ykLoad16" ||
-          leaf === "__ykLoad32"
-        )
+        if (n.kind !== "op") continue;
+        const out = n.outputs[0] as ValueId | undefined;
+        if (out === undefined || numRange.has(out) || bigWidth.has(out)) continue;
+        const ins = n.inputs as readonly ValueId[];
+        const lbl = n.label ?? "";
+        const leaf = leafOf(n);
+        let range: NumRange | undefined;
+        let width: number | undefined;
+        const directName =
+          lbl === "CallExpression" ? freeValue.get(resolve(ins[0] as ValueId)) : undefined;
+        const recordKey = /^\.([\w$]+)$/.exec(lbl)?.[1];
+        if (directName !== undefined && scope?.direct?.(directName) !== undefined) {
+          // A direct call: its callee's result range (a binding not yet its closure throws).
+          range = scope.ranges?.(directName)?.ret;
+        } else if (recordKey !== undefined && ins.length === 1) {
+          // A key of a direct call's record result, the call's result only read by key.
+          const c = producer.get(resolve(ins[0] as ValueId));
+          const cname =
+            c?.kind === "op" && c.label === "CallExpression"
+              ? freeValue.get(resolve(c.inputs[0] as ValueId))
+              : undefined;
+          const cout = c?.outputs[0] as ValueId | undefined;
+          if (cname !== undefined && cout !== undefined && scope?.direct?.(cname) !== undefined) {
+            const onlyReads = g.nodes.every((u) =>
+              u.inputs.every(
+                (x, xi) =>
+                  resolve(x as ValueId) !== cout ||
+                  (xi === 0 &&
+                    u.kind === "op" &&
+                    /^\.[\w$]+$/.test(u.label ?? "") &&
+                    u.inputs.length === 1),
+              ),
+            );
+            if (onlyReads && !g.obs.map((o) => resolve(o)).includes(cout))
+              range = scope.ranges?.(cname)?.keys?.get(recordKey);
+          }
+        } else if (leaf !== undefined) {
+          const a = ins[1] as ValueId;
+          if (leaf === "__ykBigToI32" || leaf === "__ykI32Mul") range = "i32";
+          else if (
+            leaf === "__ykBigToU32" ||
+            leaf === "__ykLoad8" ||
+            leaf === "__ykLoad16" ||
+            leaf === "__ykLoad32"
+          )
+            range = "u32";
+          else if (leaf === "__ykF64Bits" || leaf === "__ykU64" || leaf === "__ykLoad64")
+            width = 65;
+          else if (leaf === "__ykI64") width = 64;
+          else if (leaf === "__ykNumToBig" && a !== undefined && rangeOf(a) !== undefined)
+            width = 33;
+        } else if (ins.length === 2 && ["|", "&", "^", "<<", ">>"].includes(lbl)) {
+          // On numbers, ToInt32's; on BigInts (both operands proved BigInts), the BigInt's.
+          const wa = widthOf(ins[0] as ValueId);
+          const wb = widthOf(ins[1] as ValueId);
+          if (wa !== undefined && wb !== undefined) {
+            if (lbl === ">>") {
+              if (nonNegativeShift(ins[1] as ValueId, n)) width = wa;
+            } else if (lbl === "<<") {
+              const k = literalBig(ins[1] as ValueId);
+              if (k !== undefined && k >= 0n && k <= 127n) width = wa + Number(k);
+            } else width = lbl === "&" ? bigRule(n, widthOf) : Math.max(wa, wb);
+          } else if (isNumberish(ins[0] as ValueId) || isNumberish(ins[1] as ValueId))
+            // With a number operand the result, if there is one (a BigInt operand throws), is ToInt32's.
+            range = "i32";
+        } else if (ins.length === 2 && lbl === ">>>") {
+          // On anything but BigInts (which throw), ToUint32's.
           range = "u32";
-        else if (leaf === "__ykF64Bits" || leaf === "__ykU64" || leaf === "__ykLoad64") width = 65;
-        else if (leaf === "__ykI64") width = 64;
-        else if (leaf === "__ykNumToBig" && a !== undefined && rangeOf(a) !== undefined) width = 33;
-      } else if (ins.length === 2 && ["|", "&", "^", "<<", ">>"].includes(lbl)) {
-        // On numbers, ToInt32's; on BigInts (both operands proved BigInts), the BigInt's.
-        const wa = widthOf(ins[0] as ValueId);
-        const wb = widthOf(ins[1] as ValueId);
-        if (wa !== undefined && wb !== undefined) {
-          if (lbl === ">>") {
-            const k = literalBig(ins[1] as ValueId);
-            if (k !== undefined && k >= 0n) width = wa;
-          } else if (lbl === "<<") {
-            const k = literalBig(ins[1] as ValueId);
-            if (k !== undefined && k >= 0n && k <= 127n) width = wa + Number(k);
-          } else width = Math.max(wa, wb);
-        } else if (isNumberish(ins[0] as ValueId) || isNumberish(ins[1] as ValueId))
-          // With a number operand the result, if there is one (a BigInt operand throws), is ToInt32's.
-          range = "i32";
-      } else if (ins.length === 2 && lbl === ">>>") {
-        // On anything but BigInts (which throw), ToUint32's.
-        range = "u32";
-      } else if (ins.length === 2 && lbl === "%") {
-        // A uint32 modulo a positive integer literal: below both.
-        const k = producer.get(resolve(ins[1] as ValueId));
-        const kv =
-          k?.kind === "literal-source" ? Number((k.label ?? "").replace(/_/g, "")) : Number.NaN;
-        if (
-          numRange.get(resolve(ins[0] as ValueId)) === "u32" &&
-          Number.isInteger(kv) &&
-          kv > 0 &&
-          kv < 2 ** 32
-        )
-          range = "u32";
-      } else if (ins.length === 2 && (lbl === "+" || lbl === "-" || lbl === "*")) {
-        const wa = widthOf(ins[0] as ValueId);
-        const wb = widthOf(ins[1] as ValueId);
-        if (wa !== undefined && wb !== undefined)
-          width = lbl === "*" ? wa + wb : Math.max(wa, wb) + 1;
-      } else if (ins.length === 1 && lbl === "-") {
-        const wa = widthOf(ins[0] as ValueId);
-        if (wa !== undefined) width = wa + 1;
-      } else if (ins.length === 1 && lbl === "~") {
-        const wa = widthOf(ins[0] as ValueId);
-        if (wa !== undefined) width = wa + 1;
-        else if (isNumberish(ins[0] as ValueId)) range = "i32";
+        } else if (ins.length === 2 && lbl === "%") {
+          // A uint32 modulo a positive integer literal: below both.
+          const k = producer.get(resolve(ins[1] as ValueId));
+          const kv =
+            k?.kind === "literal-source" ? Number((k.label ?? "").replace(/_/g, "")) : Number.NaN;
+          if (
+            numRange.get(resolve(ins[0] as ValueId)) === "u32" &&
+            Number.isInteger(kv) &&
+            kv > 0 &&
+            kv < 2 ** 32
+          )
+            range = "u32";
+        } else if (ins.length === 2 && (lbl === "+" || lbl === "-" || lbl === "*")) {
+          const wa = widthOf(ins[0] as ValueId);
+          const wb = widthOf(ins[1] as ValueId);
+          if (wa !== undefined && wb !== undefined)
+            width = lbl === "*" ? wa + wb : Math.max(wa, wb) + 1;
+        } else if (ins.length === 1 && lbl === "-") {
+          const wa = widthOf(ins[0] as ValueId);
+          if (wa !== undefined) width = wa + 1;
+        } else if (ins.length === 1 && lbl === "~") {
+          const wa = widthOf(ins[0] as ValueId);
+          if (wa !== undefined) width = wa + 1;
+          else if (isNumberish(ins[0] as ValueId)) range = "i32";
+        }
+        if (range === undefined && width === undefined && (lbl === "%" || lbl === "/"))
+          width = bigRule(n, widthOf);
+        if (range !== undefined) {
+          numRange.set(out, range);
+          changed = true;
+        } else if (width !== undefined && width <= 127) {
+          bigWidth.set(out, width);
+          changed = true;
+        }
       }
-      if (range !== undefined) {
-        numRange.set(out, range);
-        changed = true;
-      } else if (width !== undefined && width <= 127) {
-        bigWidth.set(out, width);
-        changed = true;
+      // A loop's carry: its initial value or an iteration's next one, so in a range when both are
+      // (an integer literal is in the ranges it fits).
+      const litRange = (v: ValueId): NumRange | "both" | undefined => {
+        const r = numRange.get(resolve(v));
+        if (r !== undefined) return r;
+        const p = producer.get(resolve(v));
+        if (p?.kind !== "literal-source") return undefined;
+        const t = (p.label ?? "").replace(/_/g, "");
+        if (!/^(0|[1-9][0-9]*)$/.test(t)) return undefined;
+        const x = Number(t);
+        return x < 2 ** 31 ? "both" : x < 2 ** 32 ? "u32" : undefined;
+      };
+      for (const n of g.nodes) {
+        const rec = n.loop;
+        if (n.kind !== "loop" || rec === undefined) continue;
+        rec.carry.forEach((c, j) => {
+          const v = resolve(c);
+          // The loop's output for a ranged carry: the carry's last value, in its range.
+          const lout = n.outputs[j] as ValueId | undefined;
+          const cr = numRange.get(v);
+          if (lout !== undefined && cr !== undefined && !numRange.has(resolve(lout))) {
+            numRange.set(resolve(lout), cr);
+            changed = true;
+          }
+          if (numRange.has(v)) return;
+          // A BigInt carry: as wide as its initial value, when its next value is no wider given that
+          // (so, by induction, every iteration's is); else as wide as the next one is then, again
+          // checked, up to 127 bits. The next value's width is computed under the assumption alone.
+          if (!bigWidth.has(v)) {
+            const w = inductCarry(n, j, new Map(), 0);
+            if (w !== undefined) {
+              bigWidth.set(v, w);
+              changed = true;
+            }
+          }
+          // The loop's output for it: the carry's last value.
+          const out = n.outputs[j] as ValueId | undefined;
+          const cw = bigWidth.get(v);
+          if (out !== undefined && cw !== undefined && !bigWidth.has(resolve(out))) {
+            bigWidth.set(resolve(out), cw);
+            changed = true;
+          }
+          if (bigWidth.has(v)) return;
+          const a = litRange(n.inputs[j] as ValueId);
+          // Its next value's range, the carry assumed in its initial value's (a break's select
+          // keeping the carry as it is: `sel(!go, carry, inner result)`).
+          const join = (x: NumRange | "both", y: NumRange | "both"): NumRange | "both" =>
+            x === "both" ? y : y === "both" || x === y ? x : "int";
+          const under = (x0: ValueId, depth: number): NumRange | "both" | undefined => {
+            const x = resolve(x0);
+            if (x === v) return a;
+            const known = litRange(x);
+            if (known !== undefined || depth > 6) return known;
+            const p = producer.get(x);
+            if (p?.kind !== "sel" || p.label === "heap" || p.inputs.length !== 3) return undefined;
+            const ra = under(p.inputs[1] as ValueId, depth + 1);
+            const rb = under(p.inputs[2] as ValueId, depth + 1);
+            return ra === undefined || rb === undefined ? undefined : join(ra, rb);
+          };
+          const b = a === undefined ? undefined : under(rec.next[j] as ValueId, 0);
+          if (a === undefined || b === undefined) return;
+          const r: NumRange =
+            a === "both" ? (b === "both" ? "i32" : b) : b === "both" || a === b ? a : "int";
+          numRange.set(v, r);
+          changed = true;
+        });
       }
     }
-    // A loop's carry: its initial value or an iteration's next one, so in a range when both are
-    // (an integer literal is in the ranges it fits).
-    const litRange = (v: ValueId): NumRange | "both" | undefined => {
-      const r = numRange.get(resolve(v));
-      if (r !== undefined) return r;
-      const p = producer.get(resolve(v));
-      if (p?.kind !== "literal-source") return undefined;
-      const t = (p.label ?? "").replace(/_/g, "");
-      if (!/^(0|[1-9][0-9]*)$/.test(t)) return undefined;
-      const x = Number(t);
-      return x < 2 ** 31 ? "both" : x < 2 ** 32 ? "u32" : undefined;
-    };
-    for (const n of g.nodes) {
-      const rec = n.loop;
-      if (n.kind !== "loop" || rec === undefined) continue;
-      rec.carry.forEach((c, j) => {
-        const v = resolve(c);
-        if (numRange.has(v)) return;
-        const a = litRange(n.inputs[j] as ValueId);
-        const b = litRange(rec.next[j] as ValueId);
-        if (a === undefined || b === undefined) return;
-        const r: NumRange =
-          a === "both" ? (b === "both" ? "i32" : b) : b === "both" || a === b ? a : "int";
-        numRange.set(v, r);
-        changed = true;
-      });
-    }
-  }
+  };
+  widthFixpoint();
   // --- Constant tables (#1369): an array literal of number literals whose every use reads an element
   // (never written, returned, passed or captured) is one constant array, read in place.
-  const constTables = new Map<ValueId, { global: string; n: number }>();
+  const constTables = new Map<
+    ValueId,
+    { global: string; n: number; range?: NumRange | undefined }
+  >();
+  /** The range all of a table's elements are in, when one is. */
+  const rangeOfCells = (xs: readonly (number | undefined)[]): NumRange | undefined =>
+    xs.every(
+      (x) => x !== undefined && Number.isInteger(x) && x >= 0 && x < 2 ** 32 && !Object.is(x, -0),
+    )
+      ? "u32"
+      : xs.every(
+            (x) =>
+              x !== undefined &&
+              Number.isInteger(x) &&
+              x >= -(2 ** 31) &&
+              x < 2 ** 31 &&
+              !Object.is(x, -0),
+          )
+        ? "i32"
+        : undefined;
+  /** Tables of rows (#1369): the table, its rows, and each read of a row (by its index). */
+  type Table2 = { global: string; rows: number; width: number; range?: NumRange | undefined };
+  const tables2 = new Map<ValueId, Table2>();
+  const tableRows = new Set<ValueId>();
+  const rowReadOf = new Map<ValueId, { table: Table2; row: ValueId }>();
+  /** A table of rows' reads proved in range: the load alone. */
+  const rowsInRange = new Set<ValueId>();
   const dataTables = new Map<ValueId, { global: string; n: number }>();
   /** A number the graph fixes: a numeric literal, or the negation of one (`-0.5`). */
   const literalNumber = (v: ValueId): number | undefined => {
@@ -1198,6 +1714,13 @@ function lowerFunction(
       const x = literalNumber(p.inputs[0] as ValueId);
       return x === undefined ? undefined : -x;
     }
+    // raise-c's unsigned and signed constants: `(k >>> 0)`, `(k | 0)` of a number literal.
+    if (p?.kind === "op" && (p.label === ">>>" || p.label === "|") && p.inputs.length === 2) {
+      const x = literalNumber(p.inputs[0] as ValueId);
+      const k = literalNumber(p.inputs[1] as ValueId);
+      if (x === undefined || k !== 0) return undefined;
+      return p.label === ">>>" ? x >>> 0 : x | 0;
+    }
     return undefined;
   };
   {
@@ -1211,12 +1734,19 @@ function lowerFunction(
       ...g.obs.map((v) => resolve(v)),
       ...(g.branches ?? []).map((b) => resolve(b.cond as ValueId)),
     ]);
+    /** A loop the value only enters as an invariant (its reads inside are the uses that count). */
+    const invariantOnly = (c: DucNode, v: ValueId): boolean => {
+      const rec = c.loop;
+      if (c.kind !== "loop" || rec === undefined) return false;
+      const offset = rec.carry.length + (rec.iterate !== undefined ? 1 : 0);
+      return c.inputs.every((x, i) => resolve(x as ValueId) !== v || i >= offset);
+    };
     for (const n of g.nodes) {
       if (n.kind !== "op" || n.label !== "ArrayLiteral" || n.inputs.length === 0) continue;
       const out = n.outputs[0] as ValueId;
       const values = n.inputs.map((v) => literalNumber(v as ValueId));
       if (values.some((x) => x === undefined) || escaping.has(out)) continue;
-      const consumers = uses.get(out) ?? [];
+      const consumers = (uses.get(out) ?? []).filter((c) => !invariantOnly(c, out));
       // Constant data's elements (`__ykData(kind, [..])`, raise-c's constant arrays): laid out
       // once, at the first call (the address depends only on the content).
       if (
@@ -1260,7 +1790,71 @@ function lowerFunction(
       m.globals.push(
         `${name} = private unnamed_addr constant [${values.length} x i64] [${values.map((x) => `i64 ${boxedNumber(x as number)}`).join(", ")}]`,
       );
-      constTables.set(out, { global: name, n: values.length });
+      constTables.set(out, { global: name, n: values.length, range: rangeOfCells(values) });
+    }
+    // A table of rows (C's `static const T t[R][L]`): an array literal of R array literals of L
+    // number literals each, the rows read only through it and it only as t[i][j]. One constant
+    // [R*L] array, read in place; any other index, the arrays made and read as JavaScript reads them.
+    const notCallee = (c: DucNode): boolean =>
+      !(uses.get(resolve(c.outputs[0] as ValueId)) ?? []).some(
+        (u) =>
+          u.kind === "op" &&
+          u.label === "CallExpression" &&
+          resolve(u.inputs[0] as ValueId) === resolve(c.outputs[0] as ValueId),
+      );
+    const readsOf = (v: ValueId): DucNode[] | undefined => {
+      const cs = (uses.get(v) ?? []).filter((c) => !invariantOnly(c, v));
+      return cs.length > 0 &&
+        cs.every(
+          (c) =>
+            c.kind === "op" &&
+            c.label === "ElementAccess" &&
+            c.inputs.length === 2 &&
+            resolve(c.inputs[0] as ValueId) === v &&
+            resolve(c.inputs[1] as ValueId) !== v &&
+            notCallee(c),
+        )
+        ? cs
+        : undefined;
+    };
+    for (const n of g.nodes) {
+      if (n.kind !== "op" || n.label !== "ArrayLiteral" || n.inputs.length === 0) continue;
+      const out = n.outputs[0] as ValueId;
+      if (escaping.has(out)) continue;
+      const rows = n.inputs.map((v) => producer.get(resolve(v as ValueId)));
+      if (!rows.every((r) => r?.kind === "op" && r.label === "ArrayLiteral")) continue;
+      const cells = (rows as DucNode[]).map((r) =>
+        r.inputs.map((v) => literalNumber(v as ValueId)),
+      );
+      const width = cells[0]?.length ?? 0;
+      if (width === 0 || cells.some((c) => c.length !== width || c.some((x) => x === undefined)))
+        continue;
+      if (
+        !(rows as DucNode[]).every((r) => {
+          const ro = resolve(r.outputs[0] as ValueId);
+          return !escaping.has(ro) && (uses.get(ro) ?? []).every((u) => u === n);
+        })
+      )
+        continue;
+      const rowReads = readsOf(out);
+      if (rowReads === undefined) continue;
+      if (!rowReads.every((r) => readsOf(resolve(r.outputs[0] as ValueId)) !== undefined)) continue;
+      if (rowReads.some((r) => escaping.has(resolve(r.outputs[0] as ValueId)))) continue;
+      const name = `@ctab2_${m.globals.length}`;
+      m.globals.push(
+        `${name} = private unnamed_addr constant [${rows.length * width} x i64] [${cells
+          .flat()
+          .map((x) => `i64 ${boxedNumber(x as number)}`)
+          .join(", ")}]`,
+      );
+      const table = { global: name, rows: rows.length, width, range: rangeOfCells(cells.flat()) };
+      tables2.set(out, table);
+      for (const r of rows as DucNode[]) tableRows.add(resolve(r.outputs[0] as ValueId));
+      for (const r of rowReads)
+        rowReadOf.set(resolve(r.outputs[0] as ValueId), {
+          table,
+          row: resolve(r.inputs[1] as ValueId),
+        });
     }
   }
   // --- Proven numbers (#1369): a value the graph proves is a number (or never produced: its
@@ -1295,7 +1889,24 @@ function lowerFunction(
     const lit = literalNumber(v);
     const p = producer.get(v);
     if (lit !== undefined) r = Number.isInteger(lit) ? [lit, lit] : undefined;
-    else if (p?.kind === "op" && p.inputs.length === 2) {
+    else if (p !== undefined && leafOf(p) === "__ykBigToF64" && p.inputs.length === 2) {
+      // Number(b) of a BigInt masked by a non-negative literal (through __ykI64/__ykU64): [0, m].
+      const mask = (x0: ValueId, depth: number): bigint | undefined => {
+        const q = producer.get(resolve(x0));
+        if (q === undefined || depth > 4) return undefined;
+        const ql = leafOf(q);
+        if ((ql === "__ykI64" || ql === "__ykU64") && q.inputs.length === 2) {
+          const k = mask(q.inputs[1] as ValueId, depth + 1);
+          return k !== undefined && k < 2n ** 63n ? k : undefined;
+        }
+        if (q.kind !== "op" || q.label !== "&" || q.inputs.length !== 2) return undefined;
+        const ka = literalBig(q.inputs[0] as ValueId);
+        const kb = literalBig(q.inputs[1] as ValueId);
+        return kb !== undefined && kb >= 0n ? kb : ka !== undefined && ka >= 0n ? ka : undefined;
+      };
+      const k = mask(p.inputs[1] as ValueId, 0);
+      if (k !== undefined && k < 2n ** 31n) r = [0, Number(k)];
+    } else if (p?.kind === "op" && p.inputs.length === 2) {
       const a = p.inputs[0] as ValueId;
       const b = p.inputs[1] as ValueId;
       const ra = intRange(a);
@@ -1329,6 +1940,41 @@ function lowerFunction(
     const r = intRange(n.inputs[1] as ValueId);
     return table !== undefined && r !== undefined && r[0] >= 0 && r[1] < table.n;
   };
+  // A constant table's element read in range: its elements' range (C's unsigned tables: uint32),
+  // and the widths and ranges that follow from it.
+  {
+    let added = false;
+    for (const n of g.nodes) {
+      if (n.kind !== "op" || n.label !== "ElementAccess" || n.inputs.length !== 2) continue;
+      const out = resolve(n.outputs[0] as ValueId);
+      if (numRange.has(out)) continue;
+      const t1 = constTables.get(resolve(n.inputs[0] as ValueId));
+      if (t1?.range !== undefined && tableInRange(n)) {
+        numRange.set(out, t1.range);
+        added = true;
+        continue;
+      }
+      const row = rowReadOf.get(resolve(n.inputs[0] as ValueId));
+      if (row?.table.range === undefined) continue;
+      const at = (v: ValueId): readonly [number, number] | undefined =>
+        intRange(v) ?? smallRange(v, n);
+      const ri = at(row.row);
+      const rj = at(n.inputs[1] as ValueId);
+      if (
+        ri !== undefined &&
+        rj !== undefined &&
+        ri[0] >= 0 &&
+        ri[1] < row.table.rows &&
+        rj[0] >= 0 &&
+        rj[1] < row.table.width
+      ) {
+        numRange.set(out, row.table.range);
+        rowsInRange.add(out);
+        added = true;
+      }
+    }
+    if (added) widthFixpoint();
+  }
   const provenNumber = new Set<ValueId>();
   {
     const loopOf = new Map<ValueId, { loop: DucNode; i: number; carry: boolean }>();
@@ -1562,6 +2208,10 @@ function lowerFunction(
   const isTypedBig = (v: ValueId): boolean =>
     widthOf(v) !== undefined && (widthOf(v) as number) <= 127;
   const bigSlots = new Map<ValueId, string>();
+  /** A typed BigInt whose boxed value is kept too (a `.big` clone's parameter): read boxed as it came. */
+  const bigBoxed = new Set<ValueId>();
+  /** Whether this lowering takes its arguments in registers: a speculated clone's. */
+  const regClone = (numberParams?.size ?? 0) > 0 || (bigParams?.size ?? 0) > 0;
   const bigSlotOf = (v: ValueId): string => {
     let s0 = bigSlots.get(v);
     if (s0 === undefined) {
@@ -1626,12 +2276,13 @@ function lowerFunction(
       g0 = `@ykey${m.keys.size}`;
       m.keys.set(name, g0);
       m.globals.push(`${g0} = internal global i64 0`);
+      // Filled before main, by the module's constructor: each use is a load.
+      const c = m.constant(name);
+      m.intrinsics.add("declare i64 @yk_key_of(ptr, ptr, i64)");
+      m.keyInits.push(`  call i64 @yk_key_of(ptr ${g0}, ptr ${c.ptr}, i64 ${c.length})`);
     }
-    // The runtime's check-and-fill: no branch here, so this block stays one block.
-    const c = m.constant(name);
-    m.intrinsics.add("declare i64 @yk_key_of(ptr, ptr, i64)");
     const k = fresh();
-    emit(`${k} = call i64 @yk_key_of(ptr ${g0}, ptr ${c.ptr}, i64 ${c.length})`);
+    emit(`${k} = load i64, ptr ${g0}`);
     return k;
   };
   /** A string literal: the module's one string of its text (immutable, so shared). */
@@ -1706,7 +2357,11 @@ function lowerFunction(
         throw new LlvmEmitError(`the literal ${text} is not in the subset yet`);
       return boxedNumber(n);
     }
-    if ((p?.kind === "diamond-source" || freeValue.has(v)) && !argumentsValues.includes(v)) {
+    if (
+      (p?.kind === "diamond-source" || freeValue.has(v)) &&
+      !argumentsValues.includes(v) &&
+      !newTargetValues.includes(v)
+    ) {
       const leaf = leafValue.get(v);
       if (leaf !== undefined) {
         // A leaf as a value: the runtime's function value for it.
@@ -1726,7 +2381,7 @@ function lowerFunction(
       const key = m.constant(sym);
       return call("yk_global", `ptr ${key.ptr}, i64 ${key.length}`);
     }
-    if (bigWidth.has(v)) return boxBig(bigOperand(v));
+    if (bigWidth.has(v) && !bigBoxed.has(v)) return boxBig(bigOperand(v));
     const r = fresh();
     emit(`${r} = load i64, ptr ${slotOf(v)}`);
     return r;
@@ -1798,6 +2453,8 @@ function lowerFunction(
     const v = resolve(v0);
     const lit = literalBig(v);
     if (lit !== undefined) return lit.toString();
+    // A value the induction proved narrow whose own width the rules do not give: its boxed BigInt.
+    if (!bigWidth.has(v)) return unboxBig(operand(v));
     const r = fresh();
     emit(`${r} = load i128, ptr ${bigSlotOf(v)}`);
     return r;
@@ -1989,8 +2646,20 @@ function lowerFunction(
     const a = constantInt(q.inputs[0] as ValueId, depth + 1);
     const b = constantInt(q.inputs[1] as ValueId, depth + 1);
     if (a === undefined || b === undefined) return undefined;
+    const i32 = (x: number): boolean => x >= -(2 ** 31) && x < 2 ** 31;
     const r =
-      q.label === "+" ? a + b : q.label === "-" ? a - b : q.label === "*" ? a * b : undefined;
+      q.label === "+"
+        ? a + b
+        : q.label === "-"
+          ? a - b
+          : q.label === "*"
+            ? a * b
+            : // raise-c's int arithmetic: `(k + 1) | 0` of an int32 is itself.
+              q.label === "|" && b === 0 && i32(a)
+              ? a
+              : q.label === "|" && a === 0 && i32(b)
+                ? b
+                : undefined;
     return r !== undefined && Number.isSafeInteger(r) ? r : undefined;
   };
   /**
@@ -2280,10 +2949,178 @@ function lowerFunction(
         lazyFrames.set(v, { size, align });
     }
   }
+  // Access groups (#1369): loads of one region (a straight run of the graph's scopes) at constant
+  // offsets from one base (`p + k`) are checked together. The first emitted checks the whole run
+  // [p + min k, p + max k + size) against the runtime's cached region; each after it, while
+  // nothing can free memory or run other code, loads directly when that check held.
+  const accessGroups = new Map<
+    DucNode,
+    { key: string; base: ValueId; off: number; lo: number; hi: number }
+  >();
+  {
+    const byKey = new Map<string, { n: DucNode; base: ValueId; off: number; size: number }[]>();
+    for (const n of g.nodes) {
+      const leaf = leafOf(n);
+      const mem =
+        leaf === "__ykLoad64" && isTypedBig(n.outputs[0] as ValueId)
+          ? { size: 8, store: false }
+          : leaf === undefined
+            ? undefined
+            : MEM_INLINE[leaf];
+      if (mem === undefined || mem.store || n.inputs.length !== 2) continue;
+      // The base and offset through a chain of `+ k` (`buf + 1`, then that `+ 1`, …).
+      let base = resolve(n.inputs[1] as ValueId);
+      let off = 0;
+      for (let step = 0; step < 32; step++) {
+        const pa = producer.get(base);
+        if (pa?.kind !== "op" || pa.label !== "+" || pa.inputs.length !== 2) break;
+        let next: ValueId | undefined;
+        for (const [x, y] of [
+          [pa.inputs[0], pa.inputs[1]],
+          [pa.inputs[1], pa.inputs[0]],
+        ] as [ValueId, ValueId][]) {
+          const k = constantInt(y);
+          if (
+            next === undefined &&
+            k !== undefined &&
+            Number.isInteger(k) &&
+            Math.abs(off + k) < 2 ** 31
+          ) {
+            next = resolve(x);
+            off += k;
+          }
+        }
+        if (next === undefined) break;
+        base = next;
+      }
+      const key = `${n.region ?? ""}|${base}`;
+      byKey.set(key, [...(byKey.get(key) ?? []), { n, base, off, size: mem.size }]);
+    }
+    for (const [key, members] of byKey) {
+      if (members.length < 2) continue;
+      const lo = Math.min(...members.map((x) => x.off));
+      const hi = Math.max(...members.map((x) => x.off + x.size));
+      for (const x of members) accessGroups.set(x.n, { key, base: x.base, off: x.off, lo, hi });
+    }
+  }
+  /** Each group's check where it was made: whether it held, and the run's bytes. */
+  const activeSpans = new Map<string, { ok: string; bytes: string; lo: number }>();
+  const PURE_LEAVES = new Set([
+    "__ykU64",
+    "__ykI64",
+    "__ykNumToBig",
+    "__ykBigToI32",
+    "__ykBigToU32",
+    "__ykBigToF64",
+    "__ykF64Bits",
+    "__ykF64FromBits",
+    "__ykI32Mul",
+    "__ykF32",
+  ]);
+  const PURE_OPS = new Set([
+    "+",
+    "-",
+    "*",
+    "/",
+    "%",
+    "&",
+    "|",
+    "^",
+    "<<",
+    ">>",
+    ">>>",
+    "<",
+    ">",
+    "<=",
+    ">=",
+    "~",
+    "!",
+  ]);
+  /** A node that frees no memory and runs no code of the program's (a group's check still holds). */
+  const spanSafe = (n: DucNode): boolean => {
+    if (n.kind === "sel" || n.kind === "literal-source" || n.kind === "param-source") return true;
+    if (n.kind === "carry-source" || n.kind === "diamond-source") return true;
+    if (n.kind !== "op") return false;
+    const vals = (n.inputs as readonly ValueId[]).filter((v) => {
+      const p = producer.get(resolve(v));
+      return !(p?.kind === "sel" && p.label === "heap") && !(p?.label ?? "").endsWith(":heap");
+    });
+    const plain = (vs: readonly ValueId[]): boolean =>
+      vs.every((v) => allNumbers([v]) || isTypedBig(v) || literalBig(v) !== undefined);
+    const leaf = leafOf(n);
+    if (leaf !== undefined) {
+      if (MEM_INLINE[leaf] !== undefined || leaf === "__ykLoad64" || leaf === "__ykStore64")
+        return true;
+      return PURE_LEAVES.has(leaf) && plain(vals.slice(1));
+    }
+    const lbl = n.label ?? "";
+    if (lbl === "===" || lbl === "!==") return true;
+    if (
+      lbl === "ElementAccess" &&
+      (rowReadOf.has(resolve(n.inputs[0] as ValueId)) ||
+        constTables.has(resolve(n.inputs[0] as ValueId)))
+    )
+      return plain([n.inputs[1] as ValueId]);
+    return PURE_OPS.has(lbl) && plain(vals);
+  };
+  /** A group's check: its base a non-negative integer address, the run inside the cached region. */
+  const spanCheck = (grp: { base: ValueId; lo: number; hi: number }): {
+    ok: string;
+    bytes: string;
+    lo: number;
+  } => {
+    for (const d0 of MEM_CACHE_DECLS) m.intrinsics.add(d0);
+    const b = operand(grp.base);
+    const isNum = fresh();
+    emit(`${isNum} = icmp ult i64 ${b}, ${NUMBER_LIMIT}`);
+    const d = fresh();
+    emit(`${d} = bitcast i64 ${b} to double`);
+    const nonneg = fresh();
+    emit(`${nonneg} = fcmp oge double ${d}, 0.0`);
+    const below = fresh();
+    emit(`${below} = fcmp olt double ${d}, 9.0e15`);
+    const a1 = fresh();
+    emit(`${a1} = and i1 ${isNum}, ${nonneg}`);
+    const a2 = fresh();
+    emit(`${a2} = and i1 ${a1}, ${below}`);
+    // In range, fptoui is defined: each later test is taken only where the earlier ones hold.
+    const u = fresh();
+    emit(`${u} = fptoui double ${d} to i64`);
+    const back = fresh();
+    emit(`${back} = uitofp i64 ${u} to double`);
+    const integral = fresh();
+    emit(`${integral} = fcmp oeq double ${back}, ${d}`);
+    const a3 = fresh();
+    emit(`${a3} = select i1 ${a2}, i1 ${integral}, i1 false`);
+    const start = fresh();
+    emit(`${start} = add i64 ${u}, ${grp.lo}`);
+    const cBase = fresh();
+    emit(`${cBase} = load i64, ptr @yk_mcache_base`);
+    const cLen = fresh();
+    emit(`${cLen} = load i64, ptr @yk_mcache_len`);
+    const off = fresh();
+    emit(`${off} = sub i64 ${start}, ${cBase}`);
+    const end = fresh();
+    emit(`${end} = add i64 ${off}, ${grp.hi - grp.lo}`);
+    const fits = fresh();
+    emit(`${fits} = icmp ule i64 ${end}, ${cLen}`);
+    const after = fresh();
+    emit(`${after} = icmp ule i64 ${cBase}, ${start}`);
+    const inside = fresh();
+    emit(`${inside} = and i1 ${fits}, ${after}`);
+    const ok = fresh();
+    emit(`${ok} = select i1 ${a3}, i1 ${inside}, i1 false`);
+    const cBytes = fresh();
+    emit(`${cBytes} = load ptr, ptr @yk_mcache_bytes`);
+    const bytes = fresh();
+    emit(`${bytes} = getelementptr i8, ptr ${cBytes}, i64 ${off}`);
+    return { ok, bytes, lo: grp.lo };
+  };
   /** The int64 of the integer load memoryAccess made last (#1369), or undefined. */
   let loadInt: string | undefined;
   const memoryAccess = (
-    mem: { size: number; ty: string; kind: "u" | "f64" | "f32"; store: boolean },
+    /** `u64`: a 64-bit load whose value is its bits as they are (a typed BigInt's low word). */
+    mem: { size: number; ty: string; kind: "u" | "u64" | "f64" | "f32"; store: boolean },
     args: readonly string[],
     slow: () => string,
     /** Which operands (the address, a store's value) the number proof holds. */
@@ -2512,7 +3349,8 @@ function lowerFunction(
     } else {
       const v = fresh();
       emit(`${v} = load ${mem.ty}, ptr ${p}, align 1`);
-      if (mem.kind === "u") {
+      if (mem.kind === "u64") r1 = v;
+      else if (mem.kind === "u") {
         const z = fresh();
         emit(`${z} = zext ${mem.ty} ${v} to i64`);
         intFast = z;
@@ -2530,7 +3368,15 @@ function lowerFunction(
     const fastEnd = currentLabel();
     emit(`br label %${join}`);
     block(slowLabel);
-    const r2 = slow();
+    const r2 = (() => {
+      const b = slow();
+      if (mem.kind !== "u64") return b;
+      // The runtime's leaf gives a BigInt in [0, 2^64): its low word is the bits.
+      m.used.add("yk_bigint_word");
+      const w = fresh();
+      emit(`${w} = call i64 @yk_bigint_word(i64 ${b}, i32 0)`);
+      return w;
+    })();
     // The runtime found the region (or trapped) and cached it: this site's cache is it now.
     for (const [k, from, ty] of siteField === undefined
       ? []
@@ -2672,7 +3518,7 @@ function lowerFunction(
     emit(`br i1 ${inS}, label %${strIn}, label %${slowL}`);
     block(strIn);
     const unitsP = fresh();
-    emit(`${unitsP} = getelementptr i8, ptr ${sp}, i32 4`);
+    emit(`${unitsP} = getelementptr i8, ptr ${sp}, i32 8`);
     const up = fresh();
     emit(`${up} = getelementptr i16, ptr ${unitsP}, i32 ${i}`);
     const u = fresh();
@@ -2931,7 +3777,18 @@ function lowerFunction(
               read: (nm, e, f) => (nm === "require" ? scope.read(nm, e, f) : undefined),
               write: () => false,
             };
-    lowerFunction(m, graph, fn, { captures: n.inputs.length, moduleCaptures }, inner);
+    const leafCaptures = n.inputs.map((v) => leafValue.get(resolve(v as ValueId)));
+    lowerFunction(
+      m,
+      graph,
+      fn,
+      {
+        captures: n.inputs.length,
+        moduleCaptures,
+        ...(leafCaptures.some((x) => x !== undefined) ? { leafCaptures } : {}),
+      },
+      inner,
+    );
     const caps = n.inputs.map(operand);
     m.used.add("yk_closure_new");
     const r = fresh();
@@ -2944,15 +3801,16 @@ function lowerFunction(
     const text = n.origin?.text ?? "";
     const ownName =
       /^(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(/.exec(text)?.[1] ?? text;
-    const params = graph.nodes.filter(
-      (p) => p.kind === "param-source" && Number(p.label ?? "0") >= n.inputs.length,
+    // Its length is the graph's: own parameters before the first with a default or a rest one (#1370).
+    const length = expectedArgumentCount(
+      graph.nodes.filter((p) => p.kind === "param-source"),
+      n.inputs.length,
     );
-    const rest = params.findIndex((p) => (p.label ?? "").endsWith("..."));
-    const length = rest < 0 ? params.length : rest;
     m.intrinsics.add("declare i64 @yk_closure_meta(i64, ptr, i64, i64)");
     if (ownName !== undefined && /^[A-Za-z_$][\w$]*$/.test(ownName)) {
-      const k = m.constant(ownName);
-      emit(`call i64 @yk_closure_meta(i64 ${r}, ptr ${k.ptr}, i64 ${k.length}, i64 ${length})`);
+      // The name as the module's one string of it (made once, not at each closure made).
+      m.intrinsics.add("declare i64 @yk_closure_meta_key(i64, i64, i64)");
+      emit(`call i64 @yk_closure_meta_key(i64 ${r}, i64 ${keyOf(ownName)}, i64 ${length})`);
     } else if (length > 0)
       emit(`call i64 @yk_closure_meta(i64 ${r}, ptr null, i64 0, i64 ${length})`);
     const made = mode === 0 ? r : call("yk_closure_mode", `i64 ${r}, i32 ${mode}`);
@@ -2974,6 +3832,11 @@ function lowerFunction(
         const t = fresh();
         emit(`${t} = trunc i128 ${x} to i64`);
         emit(`${r} = ${leaf === "__ykU64" ? "zext" : "sext"} i64 ${t} to i128`);
+        return r;
+      }
+      if (leaf === "__ykNumToBig" && rangeOf(a) !== undefined && intKnown(a)) {
+        // An integer the proof ranges (a load, a counter, `| 0`): its int64, widened.
+        emit(`${r} = sext i64 ${intOperand(a)} to i128`);
         return r;
       }
       if (leaf === "__ykNumToBig" || leaf === "__ykF64Bits") {
@@ -3022,7 +3885,58 @@ function lowerFunction(
           return r;
         }
       }
-      // __ykU64/__ykI64 of a boxed value, __ykLoad64: the runtime's leaf, its result unboxed.
+      if (leaf === "__ykLoad64") {
+        // Through this site's cache of the region, as the narrower loads are; its bits, unsigned.
+        // In an access group whose check held, the bytes directly.
+        const grp = accessGroups.get(n);
+        let direct: { value: string; end: string; join: string } | undefined;
+        if (grp !== undefined) {
+          let sp = activeSpans.get(grp.key);
+          if (sp === undefined) {
+            sp = spanCheck(grp);
+            activeSpans.set(grp.key, sp);
+          }
+          const directL = freshLabel("gdirect");
+          const normalL = freshLabel("gnormal");
+          const joinL = freshLabel("gjoin");
+          emit(`br i1 ${sp.ok}, label %${directL}, label %${normalL}`);
+          block(directL);
+          const q = fresh();
+          emit(`${q} = getelementptr i8, ptr ${sp.bytes}, i64 ${grp.off - sp.lo}`);
+          const v = fresh();
+          emit(`${v} = load i64, ptr ${q}, align 1`);
+          direct = { value: v, end: currentLabel(), join: joinL };
+          emit(`br label %${joinL}`);
+          block(normalL);
+        }
+        const addr = operand(ins[1] as ValueId);
+        const bits0 = memoryAccess(
+          { size: 8, ty: "i64", kind: "u64", store: false },
+          [addr],
+          () => call(fn, `i64 ${addr}`),
+          [allNumbers([ins[1] as ValueId])],
+          frameAccess(ins[1] as ValueId, 8),
+          false,
+          false,
+          naturalInt(ins[1] as ValueId),
+          naturalInt(ins[1] as ValueId) && intKnown(ins[1] as ValueId)
+            ? intOperand(ins[1] as ValueId)
+            : undefined,
+        );
+        let bits = bits0;
+        if (direct !== undefined) {
+          const normalEnd = currentLabel();
+          emit(`br label %${direct.join}`);
+          block(direct.join);
+          bits = fresh();
+          emit(
+            `${bits} = phi i64 [ ${direct.value}, %${direct.end} ], [ ${bits0}, %${normalEnd} ]`,
+          );
+        }
+        emit(`${r} = zext i64 ${bits} to i128`);
+        return r;
+      }
+      // __ykU64/__ykI64 of a boxed value: the runtime's leaf, its result unboxed.
       const args = ins.slice(1).map(operand);
       return unboxBig(call(fn, args.map((x) => `i64 ${x}`).join(", ")));
     }
@@ -3032,10 +3946,34 @@ function lowerFunction(
       else emit(`${r} = xor i128 ${x}, -1`);
       return r;
     }
+    if (lbl === "%" || lbl === "/") {
+      // Truncating division and its remainder (BigInt's); by zero, the runtime's RangeError.
+      const a = bigOperand(ins[0] as ValueId);
+      const b = bigOperand(ins[1] as ValueId);
+      const zero = fresh();
+      emit(`${zero} = icmp eq i128 ${b}, 0`);
+      const byZero = freshLabel("bigzero");
+      const ok = freshLabel("bigdiv");
+      emit(`br i1 ${zero}, label %${byZero}, label %${ok}`);
+      block(byZero);
+      call(BINARY[lbl] as string, `i64 ${boxBig(a)}, i64 ${boxBig(b)}`);
+      emit("unreachable");
+      block(ok);
+      emit(`${r} = ${lbl === "%" ? "srem" : "sdiv"} i128 ${a}, ${b}`);
+      return r;
+    }
     const a = bigOperand(ins[0] as ValueId);
     // A right shift by 127 or more is the sign: an LLVM shift by the width or more is poison.
     const k = literalBig(ins[1] as ValueId);
-    const b = lbl === ">>" && k !== undefined && k > 127n ? "127" : bigOperand(ins[1] as ValueId);
+    let b = lbl === ">>" && k !== undefined && k > 127n ? "127" : bigOperand(ins[1] as ValueId);
+    if (lbl === ">>" && k === undefined) {
+      // A variable amount (proved non-negative): 127 or more is the sign, as a literal's is.
+      const big = fresh();
+      emit(`${big} = icmp sgt i128 ${b}, 127`);
+      const c = fresh();
+      emit(`${c} = select i1 ${big}, i128 127, i128 ${b}`);
+      b = c;
+    }
     const OPS: Record<string, string> = {
       "+": "add",
       "-": "sub",
@@ -3064,6 +4002,15 @@ function lowerFunction(
         emit(`${t} = trunc i128 ${x} to i32`);
         const d = fresh();
         emit(`${d} = ${leaf === "__ykBigToI32" ? "sitofp" : "uitofp"} i32 ${t} to double`);
+        const bits = fresh();
+        emit(`${bits} = bitcast double ${d} to i64`);
+        set(out, bits);
+        return true;
+      }
+      if (leaf === "__ykBigToF64") {
+        // The nearest double, ties to even (as Number(b) rounds); never NaN.
+        const d = fresh();
+        emit(`${d} = sitofp i128 ${x} to double`);
         const bits = fresh();
         emit(`${bits} = bitcast double ${d} to i64`);
         set(out, bits);
@@ -3125,6 +4072,14 @@ function lowerFunction(
       const r = fresh();
       emit(`${r} = call i64 @yk_sb_append(i64 ${h}, i64 ${operand(ins[1] as ValueId)})`);
       set(out, r);
+      return;
+    }
+    if (n.kind === "sel" && bigWidth.has(out)) {
+      const [c, t, e] = ins as [ValueId, ValueId, ValueId];
+      const cond = truthy(c);
+      const r = fresh();
+      emit(`${r} = select i1 ${cond}, i128 ${bigOperand(t)}, i128 ${bigOperand(e)}`);
+      setBig(out, r);
       return;
     }
     if (n.kind === "sel") {
@@ -3263,6 +4218,11 @@ function lowerFunction(
         "a class the lifter keeps as a summary (a parameter property, a decorator) is not in the subset",
       );
     if (lbl === "AwaitExpression" && ins.length === 1) {
+      // An inline try's result: already its block's completion (no job).
+      if (inlineTries.has(resolve(ins[0] as ValueId))) {
+        set(out, operand(ins[0] as ValueId));
+        return;
+      }
       // The coroutine suspends until the value settles (#1295).
       set(out, call("yk_await", `i64 ${operand(ins[0] as ValueId)}`));
       return;
@@ -3482,7 +4442,12 @@ function lowerFunction(
     }
     // A member read: of Math, nothing (the call names it); otherwise the property's value.
     const member = /^\.[\w$]+$/.test(lbl) && ins.length === 1;
-    if (member && isMath(ins[0] as ValueId)) return;
+    // Math.name only called (the call names it): nothing; read as a value (`const floor =
+    // Math.floor`), the runtime's Math's member.
+    if (member && isMath(ins[0] as ValueId)) {
+      if (!mathCalleeReads.has(out)) set(out, mathFunctionValue(m, lbl.slice(1), fresh, emit));
+      return;
+    }
     const fromRecord = member ? recordReads.get(out) : undefined;
     if (fromRecord !== undefined) {
       // A record result's key: its slot, which the call filled.
@@ -3522,7 +4487,93 @@ function lowerFunction(
       set(out, r);
       return;
     }
+    if (lbl === "ElementAccess" && rowReadOf.has(resolve(out))) return; // read with its element
     if (lbl === "ElementAccess" && ins.length === 2) {
+      const rowRead = rowReadOf.get(resolve(ins[0] as ValueId));
+      if (rowRead !== undefined) {
+        // t[i][j] of a table of rows: the element at i * width + j when both are integers in range.
+        const { table: t2 } = rowRead;
+        if (rowsInRange.has(resolve(out))) {
+          const i = intOperand(rowRead.row);
+          const j = intOperand(ins[1] as ValueId);
+          const at = fresh();
+          emit(`${at} = mul i64 ${i}, ${t2.width}`);
+          const k = fresh();
+          emit(`${k} = add i64 ${at}, ${j}`);
+          const p = fresh();
+          emit(
+            `${p} = getelementptr [${t2.rows * t2.width} x i64], ptr ${t2.global}, i64 0, i64 ${k}`,
+          );
+          const r = fresh();
+          emit(`${r} = load i64, ptr ${p}`);
+          set(out, r);
+          return;
+        }
+        const i0 = operand(rowRead.row);
+        const j0 = operand(ins[1] as ValueId);
+        set(
+          out,
+          numberFast(
+            [i0, j0],
+            ([di, dj]) => {
+              const i = fresh();
+              emit(`${i} = fptosi double ${di} to i64`);
+              const j = fresh();
+              emit(`${j} = fptosi double ${dj} to i64`);
+              const at = fresh();
+              emit(`${at} = mul i64 ${i}, ${t2.width}`);
+              const k = fresh();
+              emit(`${k} = add i64 ${at}, ${j}`);
+              const p = fresh();
+              emit(
+                `${p} = getelementptr [${t2.rows * t2.width} x i64], ptr ${t2.global}, i64 0, i64 ${k}`,
+              );
+              const r = fresh();
+              emit(`${r} = load i64, ptr ${p}`);
+              return r;
+            },
+            () => {
+              // Any other index: the arrays themselves, read as JavaScript reads them.
+              const rowArrs = Array.from({ length: t2.rows }, (_, r) => {
+                const p = fresh();
+                emit(
+                  `${p} = getelementptr [${t2.rows * t2.width} x i64], ptr ${t2.global}, i64 0, i64 ${r * t2.width}`,
+                );
+                return call("yk_array_of", `i64 ${t2.width}, ptr ${p}`);
+              });
+              const outer = call("yk_array_of", `i64 ${t2.rows}, ptr ${list(rowArrs)}`);
+              const row = call("yk_get", `i64 ${outer}, i64 ${i0}`);
+              return call("yk_get", `i64 ${row}, i64 ${j0}`);
+            },
+            ([di, dj]) => {
+              const okOf = (d: string, n: number): string => {
+                const nonneg = fresh();
+                emit(`${nonneg} = fcmp oge double ${d}, 0.0`);
+                const below = fresh();
+                emit(`${below} = fcmp olt double ${d}, ${n}.0`);
+                const w = fresh();
+                emit(`${w} = fptosi double ${d} to i64`);
+                const t = fresh();
+                emit(`${t} = sitofp i64 ${w} to double`);
+                const integral = fresh();
+                emit(`${integral} = fcmp oeq double ${t}, ${d}`);
+                const a = fresh();
+                emit(`${a} = and i1 ${nonneg}, ${below}`);
+                // Out of range, fptosi is poison: the select takes the integral test only in range.
+                const b = fresh();
+                emit(`${b} = select i1 ${a}, i1 ${integral}, i1 false`);
+                return b;
+              };
+              const a = okOf(di as string, t2.rows);
+              const b = okOf(dj as string, t2.width);
+              const ok = fresh();
+              emit(`${ok} = and i1 ${a}, ${b}`);
+              return ok;
+            },
+          ),
+        );
+        return;
+      }
       const table = constTables.get(resolve(ins[0] as ValueId));
       if (table !== undefined && tableInRange(n)) {
         // An index the intervals keep in range: the load alone.
@@ -3572,8 +4623,9 @@ function lowerFunction(
               emit(`${t} = sitofp i64 ${w} to double`);
               const integral = fresh();
               emit(`${integral} = fcmp oeq double ${t}, ${d}`);
+              // Out of range, fptosi is poison: the select takes the integral test only in range.
               const ok = fresh();
-              emit(`${ok} = and i1 ${inRange}, ${integral}`);
+              emit(`${ok} = select i1 ${inRange}, i1 ${integral}, i1 false`);
               return ok;
             },
           ),
@@ -3891,6 +4943,69 @@ function lowerFunction(
         }
         return;
       }
+      const grp = mem !== undefined && !mem.store ? accessGroups.get(n) : undefined;
+      if (mem !== undefined && grp !== undefined) {
+        let sp = activeSpans.get(grp.key);
+        if (sp === undefined) {
+          sp = spanCheck(grp);
+          activeSpans.set(grp.key, sp);
+        }
+        const directL = freshLabel("gdirect");
+        const normalL = freshLabel("gnormal");
+        const joinL = freshLabel("gjoin");
+        emit(`br i1 ${sp.ok}, label %${directL}, label %${normalL}`);
+        block(directL);
+        const q = fresh();
+        emit(`${q} = getelementptr i8, ptr ${sp.bytes}, i64 ${grp.off - sp.lo}`);
+        const v = fresh();
+        emit(`${v} = load ${mem.ty}, ptr ${q}, align 1`);
+        let r1: string;
+        let i1: string | undefined;
+        if (mem.kind === "u") {
+          const z = fresh();
+          emit(`${z} = zext ${mem.ty} ${v} to i64`);
+          i1 = z;
+          const f = fresh();
+          emit(`${f} = uitofp i64 ${z} to double`);
+          r1 = fresh();
+          emit(`${r1} = bitcast double ${f} to i64`);
+        } else if (mem.kind === "f64")
+          r1 = rawNumbers.has(resolve(out)) ? rawBits(v) : boxDouble(v);
+        else {
+          const f = fresh();
+          emit(`${f} = fpext float ${v} to double`);
+          r1 = rawNumbers.has(resolve(out)) ? rawBits(f) : boxDouble(f);
+        }
+        const directEnd = currentLabel();
+        emit(`br label %${joinL}`);
+        block(normalL);
+        const r2 = memoryAccess(
+          mem,
+          args,
+          () => call(fn, args.map((a) => `i64 ${a}`).join(", ")),
+          ins.slice(1).map((x) => allNumbers([x as ValueId])),
+          undefined,
+          rawNumbers.has(resolve(out as ValueId)),
+          false,
+          naturalInt(ins[1] as ValueId),
+          naturalInt(ins[1] as ValueId) && intKnown(ins[1] as ValueId)
+            ? intOperand(ins[1] as ValueId)
+            : undefined,
+        );
+        const i2 = loadInt;
+        const normalEnd = currentLabel();
+        emit(`br label %${joinL}`);
+        block(joinL);
+        const r = fresh();
+        emit(`${r} = phi i64 [ ${r1}, %${directEnd} ], [ ${r2}, %${normalEnd} ]`);
+        const intToo =
+          i1 !== undefined && i2 !== undefined && numRange.has(resolve(out as ValueId));
+        const ri = fresh();
+        if (intToo) emit(`${ri} = phi i64 [ ${i1}, %${directEnd} ], [ ${i2}, %${normalEnd} ]`);
+        set(out, r);
+        if (intToo) setInt(out as ValueId, ri);
+        return;
+      }
       if (mem !== undefined) {
         // A raw double stored (rawNumbers): the runtime's call takes it canonical.
         const rawValue = mem.store && rawNumbers.has(resolve(ins[2] as ValueId));
@@ -3918,6 +5033,14 @@ function lowerFunction(
         return;
       }
       set(out, call(fn, args.map((a) => `i64 ${a}`).join(", ")));
+      return;
+    }
+    if (lbl === "CallExpression" && inlineTries.has(out)) {
+      const args = ins.slice(1).map(operand);
+      m.intrinsics.add("declare i64 @yk_try_async_now(i64, ptr)");
+      const r = fresh();
+      emit(`${r} = call i64 @yk_try_async_now(i64 ${args.length}, ptr ${list(args)})`);
+      set(out, r);
       return;
     }
     if (lbl === "CallExpression") {
@@ -4112,7 +5235,7 @@ function lowerFunction(
           emit(`br i1 ${ok}, label %${l3}, label %${slowL}`);
           block(l3);
           const units = fresh();
-          emit(`${units} = getelementptr i8, ptr ${sp}, i32 4`);
+          emit(`${units} = getelementptr i8, ptr ${sp}, i32 8`);
           const up = fresh();
           emit(`${up} = getelementptr i16, ptr ${units}, i32 ${i}`);
           const u = fresh();
@@ -4132,10 +5255,13 @@ function lowerFunction(
           set(out, r);
           return;
         }
-        m.intrinsics.add("declare i64 @yk_call_method_k(i64, i64, i64, ptr)");
+        // With its site's cache: the index of a plain object's own method last called here.
+        const site = `@yk.ic.${m.icSites++}`;
+        m.globals.push(`${site} = internal global i32 0`);
+        m.intrinsics.add("declare i64 @yk_call_method_ic(i64, i64, ptr, i64, ptr)");
         const r = fresh();
         emit(
-          `${r} = call i64 @yk_call_method_k(i64 ${recv}, i64 ${key}, i64 ${args.length}, ptr ${list(args)})`,
+          `${r} = call i64 @yk_call_method_ic(i64 ${recv}, i64 ${key}, ptr ${site}, i64 ${args.length}, ptr ${list(args)})`,
         );
         set(out, r);
         return;
@@ -4647,6 +5773,51 @@ function lowerFunction(
         );
         return;
       }
+      if (lbl === "!") {
+        // Undefined, null, a boolean, an array, object or function: known here; anything else
+        // (a number, a string, a symbol, a BigInt) the runtime's.
+        const isU = fresh();
+        emit(`${isU} = icmp eq i64 ${x}, ${UNDEFINED}`);
+        const isN = fresh();
+        emit(`${isN} = icmp eq i64 ${x}, ${NULL}`);
+        const isF = fresh();
+        emit(`${isF} = icmp eq i64 ${x}, ${FALSE}`);
+        const isT = fresh();
+        emit(`${isT} = icmp eq i64 ${x}, ${TRUE}`);
+        const tag = fresh();
+        emit(`${tag} = lshr i64 ${x}, 48`);
+        const lo = fresh();
+        emit(`${lo} = icmp uge i64 ${tag}, 65531`);
+        const hi = fresh();
+        emit(`${hi} = icmp ule i64 ${tag}, 65533`);
+        const isRef = fresh();
+        emit(`${isRef} = and i1 ${lo}, ${hi}`);
+        const f0 = fresh();
+        emit(`${f0} = or i1 ${isU}, ${isN}`);
+        const falsy = fresh();
+        emit(`${falsy} = or i1 ${f0}, ${isF}`);
+        const t0 = fresh();
+        emit(`${t0} = or i1 ${isT}, ${isRef}`);
+        const known = fresh();
+        emit(`${known} = or i1 ${falsy}, ${t0}`);
+        const kL = freshLabel("notknown");
+        const sL = freshLabel("notslow");
+        const jL = freshLabel("notjoin");
+        emit(`br i1 ${known}, label %${kL}, label %${sL}`);
+        block(kL);
+        const r1 = fresh();
+        emit(`${r1} = select i1 ${falsy}, i64 ${TRUE}, i64 ${FALSE}`);
+        emit(`br label %${jL}`);
+        block(sL);
+        const r2 = slow();
+        const sEnd = currentLabel();
+        emit(`br label %${jL}`);
+        block(jL);
+        const r = fresh();
+        emit(`${r} = phi i64 [ ${r1}, %${kL} ], [ ${r2}, %${sEnd} ]`);
+        set(out, r);
+        return;
+      }
       set(out, slow());
       return;
     }
@@ -4665,6 +5836,7 @@ function lowerFunction(
       return;
     }
     if (lbl === "ArrayLiteral" && (constTables.has(out) || dataTables.has(out))) return; // in place
+    if (lbl === "ArrayLiteral" && (tables2.has(out) || tableRows.has(resolve(out)))) return;
     if (lbl === "ArrayLiteral") {
       if (ins.some(isSpread)) {
         set(out, spreadList(ins));
@@ -4675,6 +5847,10 @@ function lowerFunction(
       return;
     }
     if (lbl.startsWith("object:")) {
+      // A method or accessor that reads `super` has this literal as its home object (#1370). The
+      // runtime resolves `super` through a class only, so it would read undefined here: refused.
+      if (ins.some((v) => usesSuper(producer.get(v)?.closure)))
+        throw new LlvmEmitError("super in an object literal's method is not in the subset yet");
       const slots = slotsOf(lbl);
       const isProto = (x: Slot): boolean => x.kind === "named" && x.name === "__proto__";
       if (
@@ -4790,9 +5966,16 @@ function lowerFunction(
 
   const emitItems = (items: readonly ScopeItem[]): void => {
     for (const it of items) {
-      if (it.kind === "node") emitNode(it.node);
-      else if (it.kind === "branch") emitBranch(it.branch);
-      else emitLoop(it.node);
+      if (it.kind === "node") {
+        emitNode(it.node);
+        // A node that could free memory or run the program's code: the groups' checks are stale.
+        if (!spanSafe(it.node)) activeSpans.clear();
+      } else {
+        activeSpans.clear();
+        if (it.kind === "branch") emitBranch(it.branch);
+        else emitLoop(it.node);
+        activeSpans.clear();
+      }
     }
   };
   const emitScope = (scope: string | undefined): void =>
@@ -4810,7 +5993,12 @@ function lowerFunction(
     ] as const) {
       block(lbl);
       emitScope(sidePath(b, side));
-      for (const j of joins) set(j.outputs[0] as ValueId, operand(j.inputs[input] as ValueId));
+      for (const j of joins) {
+        const out = j.outputs[0] as ValueId;
+        // A typed join (a BigInt the proof types): its i128, from the side taken.
+        if (bigWidth.has(out)) setBig(out, bigOperand(j.inputs[input] as ValueId));
+        else set(out, operand(j.inputs[input] as ValueId));
+      }
       emit(`br label %${endL}`);
     }
     block(endL);
@@ -4819,7 +6007,13 @@ function lowerFunction(
   const emitLoop = (loop: DucNode): void => {
     const rec = loop.loop as DucLoop;
     const builders = builderCarries.get(loop);
+    /** A carry kept as an i128 (#1369): its slot alone, boxed only where a reader needs it. */
+    const bigCarry = (i: number): boolean => bigWidth.has(resolve(rec.carry[i] as ValueId));
     rec.carry.forEach((c, i) => {
+      if (bigCarry(i)) {
+        setBig(resolve(c), bigOperand(loop.inputs[i] as ValueId));
+        return;
+      }
       const init = operand(loop.inputs[i] as ValueId);
       if (numRange.has(resolve(c)) && intKnown(loop.inputs[i] as ValueId))
         setInt(c, intOperand(loop.inputs[i] as ValueId));
@@ -4893,14 +6087,17 @@ function lowerFunction(
     emit(`br label %${inner}`);
     block(inner);
     emitItems(items.filter((it) => !forCond.has(it)));
-    const next = rec.next.map((nv) => operand(nv));
+    const next = rec.next.map((nv, i) => (bigCarry(i) ? bigOperand(nv) : operand(nv)));
     // A carry in an integer range: its next value's int64 too (all read before any is written).
     const intNext = rec.carry.map((c, i) =>
       numRange.has(resolve(c)) && intKnown(rec.next[i] as ValueId)
         ? intOperand(rec.next[i] as ValueId)
         : undefined,
     );
-    next.forEach((r, i) => set(rec.carry[i] as ValueId, r));
+    next.forEach((r, i) => {
+      if (bigCarry(i)) setBig(resolve(rec.carry[i] as ValueId), r);
+      else set(rec.carry[i] as ValueId, r);
+    });
     intNext.forEach((r, i) => {
       if (r !== undefined) setInt(rec.carry[i] as ValueId, r);
     });
@@ -4913,6 +6110,10 @@ function lowerFunction(
       emit(`call void @yk_iter_close(i64 ${iterator})`);
     }
     loop.outputs.forEach((v, i) => {
+      if (bigCarry(i) && bigWidth.has(resolve(v))) {
+        setBig(resolve(v), bigOperand(rec.carry[i] as ValueId));
+        return;
+      }
       const at = operand(rec.carry[i] as ValueId);
       if (builders?.has(i) !== true) set(v, at);
       else {
@@ -4972,6 +6173,12 @@ function lowerFunction(
     set(n.outputs[0] as ValueId, regexObject(text));
   }
   for (const v of argumentsValues) set(v, call("yk_rest", "i64 %argc, ptr %argv, i64 0"));
+  if (newTargetValues.length > 0) {
+    m.intrinsics.add("declare i64 @yk_take_new_target(ptr)");
+    const nt = fresh();
+    emit(`${nt} = call i64 @yk_take_new_target(ptr %closure)`);
+    for (const v of newTargetValues) set(v, nt);
+  }
   // Parameters: the entry function's own; a closure's captures, then its arguments.
   params.forEach((p, i) => {
     const v = p.outputs[0] as ValueId;
@@ -4983,14 +6190,14 @@ function lowerFunction(
     else if (i < closure.captures) set(v, call("yk_capture", `ptr %closure, i64 ${i}`));
     else if ((p.label ?? "").endsWith("..."))
       set(v, call("yk_rest", `i64 %argc, ptr %argv, i64 ${i - closure.captures}`));
-    else if (
-      numberParams !== undefined &&
-      numberParams.size > 0 &&
-      regList !== undefined &&
-      regList.includes(i - closure.captures)
-    )
+    else if (regClone && regList !== undefined && regList.includes(i - closure.captures)) {
       set(v, `%n${i - closure.captures}`);
-    else if (rawParams?.has(i - closure.captures) === true) {
+      if (bigParams?.has(v) === true) {
+        // A BigInt its entry checked: its i128 too, and the boxed value kept for any other reader.
+        setBig(v, unboxBig(`%n${i - closure.captures}`));
+        bigBoxed.add(v);
+      }
+    } else if (rawParams?.has(i - closure.captures) === true) {
       // A raw block argument: its bytes and length; its address is never read (0, as a local
       // block's is, so a constant offset from it folds).
       set(v, boxedNumber(0));
@@ -5073,19 +6280,84 @@ function lowerFunction(
         });
       }
     }
+    // A parameter used as a BigInt (raised C's 64-bit integers: beside a BigInt the proof types or a
+    // BigInt literal, or a fixed-width leaf's operand): speculated a BigInt below 2^64 in magnitude.
+    const BIG_LEAVES = new Set([
+      "__ykU64",
+      "__ykI64",
+      "__ykBigToI32",
+      "__ykBigToU32",
+      "__ykBigToF64",
+    ]);
+    const bigUse = new Set<ValueId>();
+    for (const n of g.nodes) {
+      if (n.kind !== "op") continue;
+      const leaf = leafOf(n);
+      const ins = (leaf !== undefined ? n.inputs.slice(1) : n.inputs).map((v) =>
+        resolve(v as ValueId),
+      );
+      if (leaf !== undefined && BIG_LEAVES.has(leaf)) for (const v of ins) bigUse.add(v);
+      else if (leaf === undefined && ins.length === 2 && NUMERIC.has(n.label ?? "")) {
+        const [a, b] = ins as [ValueId, ValueId];
+        if (widthOf(b) !== undefined) bigUse.add(a);
+        if (widthOf(a) !== undefined) bigUse.add(b);
+      } else if (
+        leaf === undefined &&
+        ins.length === 2 &&
+        ["===", "!==", "==", "!="].includes(n.label ?? "")
+      ) {
+        const [a, b] = ins as [ValueId, ValueId];
+        if (literalBig(b) !== undefined) bigUse.add(a);
+        if (literalBig(a) !== undefined) bigUse.add(b);
+      }
+    }
+    for (let more = true; more; ) {
+      more = false;
+      for (const n of g.nodes) {
+        // An operator's BigInt result: its operands are BigInts too (mixing throws); >>> has none.
+        if (
+          n.kind === "op" &&
+          leafOf(n) === undefined &&
+          NUMERIC.has(n.label ?? "") &&
+          n.label !== ">>>" &&
+          bigUse.has(resolve(n.outputs[0] as ValueId))
+        )
+          for (const v of n.inputs)
+            if (!bigUse.has(resolve(v as ValueId))) {
+              bigUse.add(resolve(v as ValueId));
+              more = true;
+            }
+        const rec = n.loop;
+        if (n.kind !== "loop" || rec === undefined) continue;
+        rec.carry.forEach((c, j) => {
+          const init = resolve(n.inputs[j] as ValueId);
+          if (bigUse.has(resolve(c)) && !bigUse.has(init)) {
+            bigUse.add(init);
+            more = true;
+          }
+        });
+      }
+    }
     const worth = numericWork;
+    const candidate = (p: DucNode, i: number): boolean =>
+      worth &&
+      i >= closure.captures &&
+      !(p.label ?? "").endsWith("...") &&
+      rawParams?.has(i - closure.captures) !== true;
+    const speculatedBig = params.filter(
+      (p, i) => candidate(p, i) && bigUse.has(p.outputs[0] as ValueId),
+    );
     const speculated = params.filter(
       (p, i) =>
-        worth &&
-        i >= closure.captures &&
-        !(p.label ?? "").endsWith("...") &&
-        rawParams?.has(i - closure.captures) !== true &&
-        numericUse.has(p.outputs[0] as ValueId),
+        candidate(p, i) &&
+        numericUse.has(p.outputs[0] as ValueId) &&
+        !bigUse.has(p.outputs[0] as ValueId),
     );
-    if (speculated.length > 0) {
-      // Named for its function, so a caller whose arguments are numbers calls it directly.
-      const clone = `${name.replace(/"/g, "")}.num`;
-      m.numClones.add(clone);
+    if (speculated.length > 0 || speculatedBig.length > 0) {
+      // Named for its function, so a caller whose arguments are numbers calls it directly; a clone
+      // that also takes BigInts is `.big`, called only through these checks.
+      const clone = `${name.replace(/"/g, "")}.${speculatedBig.length > 0 ? "big" : "num"}`;
+      if (speculatedBig.length === 0) m.numClones.add(clone);
       lowerFunction(
         m,
         source,
@@ -5095,6 +6367,10 @@ function lowerFunction(
         new Set(speculated.map((p) => p.outputs[0] as ValueId)),
         rawParams,
         recOut,
+        undefined,
+        speculatedBig.length > 0
+          ? new Set(speculatedBig.map((p) => p.outputs[0] as ValueId))
+          : undefined,
       );
       let ok = "true";
       for (const p of speculated) {
@@ -5104,9 +6380,40 @@ function lowerFunction(
         emit(`${both} = and i1 ${ok}, ${c}`);
         ok = both;
       }
+      // Each speculated BigInt: a BigInt (its tag), then of at most two 32-bit limbs.
+      for (const p of speculatedBig) {
+        const tag = fresh();
+        emit(`${tag} = lshr i64 ${operand(p.outputs[0] as ValueId)}, 48`);
+        const c = fresh();
+        emit(`${c} = icmp eq i64 ${tag}, 65535`);
+        const both = fresh();
+        emit(`${both} = and i1 ${ok}, ${c}`);
+        ok = both;
+      }
       const spec = freshLabel("numbers");
       const general = freshLabel("general");
-      emit(`br i1 ${ok}, label %${spec}, label %${general}`);
+      if (speculatedBig.length > 0) {
+        const limbs = freshLabel("limbs");
+        emit(`br i1 ${ok}, label %${limbs}, label %${general}`);
+        block(limbs);
+        let fits = "true";
+        for (const p of speculatedBig) {
+          const a = fresh();
+          emit(`${a} = and i64 ${operand(p.outputs[0] as ValueId)}, 281474976710655`);
+          const at = fresh();
+          emit(`${at} = add i64 ${a}, 4`);
+          const ptr = fresh();
+          emit(`${ptr} = inttoptr i64 ${at} to ptr`);
+          const len = fresh();
+          emit(`${len} = load i32, ptr ${ptr}`);
+          const c = fresh();
+          emit(`${c} = icmp ule i32 ${len}, 2`);
+          const both = fresh();
+          emit(`${both} = and i1 ${fits}, ${c}`);
+          fits = both;
+        }
+        emit(`br i1 ${fits}, label %${spec}, label %${general}`);
+      } else emit(`br i1 ${ok}, label %${spec}, label %${general}`);
       block(spec);
       const r = fresh();
       emit(
@@ -5221,7 +6528,18 @@ function lowerFunction(
         if (r !== undefined) byPosition.set(pi - closure.captures, r);
       });
       m.intClones.set(name.replace(/"/g, ""), byPosition);
-      lowerFunction(m, source, intClone, closure, scope, numberParams, rawParams, recOut, assumed);
+      lowerFunction(
+        m,
+        source,
+        intClone,
+        closure,
+        scope,
+        numberParams,
+        rawParams,
+        recOut,
+        assumed,
+        bigParams,
+      );
     }
     if (ranged.size > 0) {
       let ok = "true";
@@ -5551,7 +6869,7 @@ function lowerFunction(
     const head =
       closure === undefined
         ? `define i64 @${name}(${params.map((_, i) => `i64 %p${i}`).join(", ")}) {`
-        : `define internal i64 @${name}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead}${numberParams !== undefined && numberParams.size > 0 ? (regList ?? []).map((k) => `, i64 %n${k}`).join("") : ""})${numberParams?.size === 0 ? " noinline" : (numberParams !== undefined && g.nodes.length <= SMALL_CLONE) || dispatchOnly ? " alwaysinline" : ""} {`;
+        : `define internal i64 @${name}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead}${regClone ? (regList ?? []).map((k) => `, i64 %n${k}`).join("") : ""})${numberParams?.size === 0 && !regClone ? " noinline" : (numberParams !== undefined && g.nodes.length <= SMALL_CLONE) || dispatchOnly ? " alwaysinline" : ""} {`;
     m.functions.push(
       [
         head,
@@ -5621,6 +6939,7 @@ export function emitLlvmBoxed(input: DucGraph, symbol = "f"): LlvmModule {
     ...m.globals,
     "",
     ...m.functions,
+    ...keyConstructor(m),
     ...[...m.used].sort().map((f) => RUNTIME_DECLS[f] as string),
     ...m.intrinsics,
     "",
@@ -5674,6 +6993,13 @@ export interface NativeModules {
   readonly symbols: Readonly<Record<string, string>>;
 }
 
+/** What an import or export names: a module's binding or namespace, or a CommonJS or Node module's. */
+type Resolved =
+  | { readonly slot: string }
+  | { readonly ns: number }
+  | { readonly cjs: number; readonly name: string }
+  | { readonly builtin: string; readonly name: string };
+
 /** A module id as a C symbol: `lib/parse.js` is `yk_module_lib_parse_js`. */
 export function moduleSymbol(id: string): string {
   return `yk_module_${id.replace(/[^A-Za-z0-9]/g, "_")}`;
@@ -5699,7 +7025,7 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     i: number,
     name: string,
     seen: Set<string> = new Set(),
-  ): { slot: string } | { ns: number } | undefined => {
+  ): Resolved | undefined => {
     const mod = modules[i] as NativeModule;
     const key = `${i}:${name}`;
     if (seen.has(key)) return undefined;
@@ -5722,13 +7048,73 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     }
     return undefined;
   };
+  // An import of a CommonJS module, or of Node's (a `node:` id no module of the record is, which a
+  // boot program's realm gives): its `default` is `module.exports`, `*` a namespace of it, and any
+  // other name that property of it, read where it is used (Node's interop, ECMA-262 16.2.1.7).
   const resolveImport = (
     imp: NativeImport,
     seen: Set<string> = new Set(),
-  ): { slot: string } | { ns: number } | undefined => {
+  ): Resolved | undefined => {
     const t = index.get(imp.module);
-    if (t === undefined) throw new LlvmEmitError(`the module ${imp.module} is not in the program`);
+    if (t === undefined) {
+      if (imp.module.startsWith("node:")) return { builtin: imp.module, name: imp.name };
+      throw new LlvmEmitError(`the module ${imp.module} is not in the program`);
+    }
+    if ((modules[t] as NativeModule).esm === undefined) return { cjs: t, name: imp.name };
     return resolveExport(t, imp.name, seen);
+  };
+  const namespaces = new Set<string>();
+  /** The value an import resolved to, emitted where it is read. */
+  const resolvedValue = (
+    target: Resolved,
+    from: number,
+    fresh: () => string,
+    emit: (line: string) => void,
+  ): string => {
+    const r = fresh();
+    if ("slot" in target) {
+      emit(`${r} = load i64, ptr ${target.slot}`);
+      return r;
+    }
+    if ("ns" in target) {
+      emit(`${r} = call i64 ${g(target.ns, "init")}()`);
+      return r;
+    }
+    if ("cjs" in target) emit(`${r} = call i64 ${g(target.cjs, "init")}()`);
+    else emitBuiltin(target.builtin, from, r, fresh, emit);
+    if (target.name === "default") return r;
+    const out = fresh();
+    if (target.name === "*") {
+      // One namespace per module, made at its first read.
+      const slot = `@"ns.${"cjs" in target ? `m${target.cjs}` : target.builtin}"`;
+      if (!namespaces.has(slot)) {
+        namespaces.add(slot);
+        globals.push(`${slot} = internal global i64 0`);
+      }
+      m.intrinsics.add("declare i64 @yk_cjs_namespace_once(ptr, i64)");
+      emit(`${out} = call i64 @yk_cjs_namespace_once(ptr ${slot}, i64 ${r})`);
+      return out;
+    }
+    const key = m.constant(target.name);
+    m.used.add("yk_get_named");
+    emit(`${out} = call i64 @yk_get_named(i64 ${r}, ptr ${key.ptr}, i64 ${key.length})`);
+    return out;
+  };
+  /** Node's module `node:<id>`, as a require of it from module `from` gives it. */
+  const emitBuiltin = (
+    spec: string,
+    from: number,
+    r: string,
+    fresh: () => string,
+    emit: (line: string) => void,
+  ): void => {
+    const key = m.constant(spec);
+    const who = m.constant((modules[from] as NativeModule).id);
+    const s = fresh();
+    m.used.add("yk_string_utf8");
+    m.intrinsics.add("declare i64 @yk_require_unresolved(i64, ptr, i64)");
+    emit(`${s} = call i64 @yk_string_utf8(ptr ${key.ptr}, i64 ${key.length})`);
+    emit(`${r} = call i64 @yk_require_unresolved(i64 ${s}, ptr ${who.ptr}, i64 ${who.length})`);
   };
   /** Every name a module exports, `export *`'s included (not their default). */
   const exportNames = (i: number, seen: Set<number> = new Set()): string[] => {
@@ -5757,6 +7143,30 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
       if (n.closure !== undefined) writtenIn(n.closure, out);
     }
   };
+  // Modules evaluated asynchronously (ECMA-262 16.2.1.5.3): an ECMAScript module with an await at
+  // its top level, and one that imports such a module. Each one's body runs as an async function's
+  // coroutine; its importers wait for its evaluation's promise.
+  const asyncModules = new Set<number>();
+  modules.forEach((mod, i) => {
+    if (
+      mod.esm !== undefined &&
+      mod.statements.some(
+        (st) =>
+          st.kind === "statement" && st.graph.nodes.some((n) => n.label === "AwaitExpression"),
+      )
+    )
+      asyncModules.add(i);
+  });
+  for (let grew = true; grew; ) {
+    grew = false;
+    modules.forEach((mod, i) => {
+      if (asyncModules.has(i) || mod.esm === undefined) return;
+      if (mod.esm.deps.some((d) => asyncModules.has(index.get(d) ?? -1))) {
+        asyncModules.add(i);
+        grew = true;
+      }
+    });
+  }
   const directBySlot = new Map<string, string>();
   modules.forEach((mod, i) => {
     const written = new Set<string>();
@@ -5878,6 +7288,7 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     for (const name of names)
       globals.push(`${g(i, `b.${name}`)} = internal global i64 ${UNDEFINED}`);
     globals.push(`${g(i, "state")} = internal global i32 0`);
+    if (asyncModules.has(i)) globals.push(`${g(i, "promise")} = internal global i64 0`);
     const scope = (outs?: readonly string[]): ModuleScope => ({
       read: (name, emit, fresh) => {
         const slot =
@@ -5899,11 +7310,8 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
             throw new LlvmEmitError(
               `${imp.module} has no export ${imp.name} (imported by ${mod.id})`,
             );
-          const r = fresh();
           // A live binding: the exporting module's own variable, read where it is used.
-          if ("slot" in target) emit(`${r} = load i64, ptr ${target.slot}`);
-          else emit(`${r} = call i64 ${g(target.ns, "init")}()`);
-          return r;
+          return resolvedValue(target, i, fresh, emit);
         }
         const r = fresh();
         emit(`${r} = load i64, ptr ${slot}`);
@@ -6053,19 +7461,76 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     const namespace: string[] = [];
     if (mod.esm !== undefined) {
       m.used.add("yk_set_named");
+
       exportNames(i).forEach((name, k) => {
         const target = resolveExport(i, name);
         if (target === undefined) return;
         const key = m.constant(name);
-        if ("slot" in target) namespace.push(`  %nv${k} = load i64, ptr ${target.slot}`);
-        else namespace.push(`  %nv${k} = call i64 ${g(target.ns, "init")}()`);
+        let n = 0;
+        const v = resolvedValue(
+          target,
+          i,
+          () => `%nv${k}.${n++}`,
+          (line) => namespace.push(`  ${line}`),
+        );
         namespace.push(
-          `  call i64 @yk_set_named(i64 %ex, ptr ${key.ptr}, i64 ${key.length}, i64 %nv${k})`,
+          `  call i64 @yk_set_named(i64 %ex, ptr ${key.ptr}, i64 ${key.length}, i64 ${v})`,
         );
       });
     }
+    // An ECMAScript module's dependencies are evaluated first, in order (a cycle sees a module
+    // still being evaluated, as ECMA-262's does); an async one's evaluation is waited for.
+    const isAsync = asyncModules.has(i);
+    const depLines: string[] = (mod.esm?.deps ?? []).flatMap((d, k) => {
+      const t = index.get(d);
+      if (t !== undefined) return [`  %dep${k} = call i64 ${g(t, "init")}()`];
+      if (!d.startsWith("node:")) throw new LlvmEmitError(`the module ${d} is not in the program`);
+      const lines: string[] = [];
+      let n = 0;
+      emitBuiltin(
+        d,
+        i,
+        `%dep${k}`,
+        () => `%dep${k}.${n++}`,
+        (l) => lines.push(`  ${l}`),
+      );
+      return lines;
+    });
+    if (isAsync) {
+      (mod.esm?.deps ?? []).forEach((d, k) => {
+        const t = index.get(d);
+        if (t === undefined || !asyncModules.has(t)) return;
+        const at = depLines.findIndex((l) => l.startsWith(`  %dep${k} = `));
+        depLines.splice(
+          at + 1,
+          0,
+          `  %dp${k} = load i64, ptr ${g(t, "promise")}`,
+          `  %dw${k} = call i64 @yk_await(i64 %dp${k})`,
+        );
+      });
+      m.used.add("yk_await");
+      m.used.add("yk_call");
+      m.used.add("yk_closure_mode");
+      m.intrinsics.add("declare void @yk_module_evaluating(i64, i64)");
+      m.functions.push(
+        [
+          `define internal i64 @"m${i}.body"(ptr %closure, i64 %this, i64 %argc, ptr %argv) {`,
+          "entry:",
+          `  %ex = load i64, ptr ${g(i, "exports")}`,
+          ...depLines,
+          ...init,
+          ...namespace,
+          "  br label %done",
+          "done:",
+          `  ret i64 ${UNDEFINED}`,
+          "}",
+          "",
+        ].join("\n"),
+      );
+    }
     // The initializer: once; a second call (a cycle, or another require) gets the exports so far.
     const exportsKey = m.constant("exports");
+    if (mod.esm !== undefined) m.intrinsics.add("declare i64 @yk_mark_namespace(i64)");
     m.used.add("yk_object_of");
     m.used.add("yk_get_named");
     m.functions.push(
@@ -6081,6 +7546,9 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         `  store i32 1, ptr ${g(i, "state")}`,
         "  %ex = call i64 @yk_object_of(i64 0, ptr null, ptr null)",
         `  store i64 %ex, ptr ${g(i, "exports")}`,
+        // An ECMAScript module's exports object is its namespace, marked so: import() gives it as
+        // it is (a CommonJS module's exports it wraps).
+        ...(mod.esm !== undefined ? ["  %marked = call i64 @yk_mark_namespace(i64 %ex)"] : []),
         `  %ek = call i64 @yk_string_utf8(ptr ${exportsKey.ptr}, i64 ${exportsKey.length})`,
         "  store i64 %ek, ptr %keys",
         "  store i64 %ex, ptr %vals",
@@ -6088,15 +7556,17 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
         `  store i64 %mod, ptr ${g(i, "module")}`,
         `  %req = call i64 @yk_closure_new(ptr ${g(i, "require.fn")}, i32 0, i64 0, ptr null)`,
         `  store i64 %req, ptr ${g(i, "require")}`,
-        // An ECMAScript module's dependencies are evaluated first, in order (a cycle sees a module
-        // still being evaluated, as ECMA-262's does).
-        ...(mod.esm?.deps ?? []).map((d, k) => {
-          const t = index.get(d);
-          if (t === undefined) throw new LlvmEmitError(`the module ${d} is not in the program`);
-          return `  %dep${k} = call i64 ${g(t, "init")}()`;
-        }),
-        ...init,
-        ...namespace,
+        ...(isAsync
+          ? [
+              // Its body (dependencies, statements, namespace) as an async function: its promise
+              // is its evaluation's, which importers and import() wait for.
+              `  %body = call i64 @yk_closure_new(ptr @"m${i}.body", i32 0, i64 0, ptr null)`,
+              "  %bodym = call i64 @yk_closure_mode(i64 %body, i32 1)",
+              `  %eval = call i64 @yk_call(i64 %bodym, i64 ${UNDEFINED}, i64 0, ptr null)`,
+              `  store i64 %eval, ptr ${g(i, "promise")}`,
+              "  call void @yk_module_evaluating(i64 %ex, i64 %eval)",
+            ]
+          : [...depLines, ...init, ...namespace]),
         "  br label %done",
         "done:",
         `  %m = load i64, ptr ${g(i, "module")}`,
@@ -6270,6 +7740,7 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     ...globals,
     "",
     ...m.functions,
+    ...keyConstructor(m),
     ...[...m.used].sort().map((f) => RUNTIME_DECLS[f] as string),
     ...m.intrinsics,
     "",

@@ -38,9 +38,9 @@ import type { BlockTripletRow, Registry } from "@yakcc/registry";
 import { SCHEMA_VERSION } from "@yakcc/registry";
 import * as fc from "fast-check";
 import { mirrorRegistry } from "./mirror.js";
-import { serializeWireBlockTriplet } from "./wire.js";
 import type { MirrorReport, RemotePeer, Transport, WireBlockTriplet } from "./types.js";
 import { SchemaVersionMismatchError, TransportError } from "./types.js";
+import { serializeWireBlockTriplet } from "./wire.js";
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -75,12 +75,14 @@ const TEST_ARTIFACTS = new Map<string, Uint8Array>([["mirrorProp.fc.ts", TEST_AR
  * Build an internally-consistent BlockTripletRow using @yakcc/contracts as the
  * single authority for hash computation (DEC-CONTRACTS-AUTHORITY-001).
  */
-function makeRow(tag: string = ""): BlockTripletRow {
+function makeRow(tag = ""): BlockTripletRow {
   const implSource = tag
     ? `export function mirrorProp_${tag}(x: boolean): string { return String(x); }`
     : TEST_IMPL_SOURCE;
 
-  const specCanonicalBytes = canonicalize(TEST_SPEC as unknown as Parameters<typeof canonicalize>[0]);
+  const specCanonicalBytes = canonicalize(
+    TEST_SPEC as unknown as Parameters<typeof canonicalize>[0],
+  );
   const merkleRoot = blockMerkleRoot({
     spec: TEST_SPEC,
     implSource,
@@ -138,8 +140,7 @@ function makeTransport(opts: {
       return Promise.resolve(wire);
     },
     fetchSpec: (_remote, _sh) => Promise.resolve([]),
-    fetchManifest: (_remote) =>
-      Promise.reject(new TransportError({ code: "not_implemented" })),
+    fetchManifest: (_remote) => Promise.reject(new TransportError({ code: "not_implemented" })),
     fetchCatalogPage: (_remote, _after, _limit) =>
       Promise.reject(new TransportError({ code: "not_implemented" })),
   };
@@ -198,7 +199,11 @@ export const prop_schema_version_gate_rejects_newer_remote = fc.asyncProperty(
     const registry = makeRegistry();
 
     try {
-      await mirrorRegistry(remote, registry as unknown as import("@yakcc/registry").Registry, transport);
+      await mirrorRegistry(
+        remote,
+        registry as unknown as import("@yakcc/registry").Registry,
+        transport,
+      );
       return false; // must have thrown
     } catch (err) {
       if (!(err instanceof SchemaVersionMismatchError)) return false;
@@ -291,41 +296,38 @@ export const prop_idempotency_skips_existing_blocks = fc.asyncProperty(
  * Invariant (FEDERATION_PROTOCOL.md §10): partial failure resilience — individual
  * block failures are loud (captured) but recoverable (walk continues).
  */
-export const prop_partial_failure_resilience = fc.asyncProperty(
-  remotePeerArb,
-  async (remote) => {
-    const goodRow = makeRow("good");
-    const failRow = makeRow("fail");
+export const prop_partial_failure_resilience = fc.asyncProperty(remotePeerArb, async (remote) => {
+  const goodRow = makeRow("good");
+  const failRow = makeRow("fail");
 
-    const goodRoot = goodRow.blockMerkleRoot;
-    const failRoot = failRow.blockMerkleRoot;
-    const sh = goodRow.specHash; // use goodRow's specHash for both (same spec)
-    const goodWire = serializeWireBlockTriplet(goodRow);
+  const goodRoot = goodRow.blockMerkleRoot;
+  const failRoot = failRow.blockMerkleRoot;
+  const sh = goodRow.specHash; // use goodRow's specHash for both (same spec)
+  const goodWire = serializeWireBlockTriplet(goodRow);
 
-    // Both roots belong to the same spec in the transport.
-    const transport = makeTransport({
-      specHashes: [sh],
-      blocksBySpec: new Map([[sh, [goodRoot, failRoot]]]),
-      wireByRoot: new Map([[goodRoot, goodWire]]),
-      failOnRoot: failRoot,
-    });
+  // Both roots belong to the same spec in the transport.
+  const transport = makeTransport({
+    specHashes: [sh],
+    blocksBySpec: new Map([[sh, [goodRoot, failRoot]]]),
+    wireByRoot: new Map([[goodRoot, goodWire]]),
+    failOnRoot: failRoot,
+  });
 
-    const registry = makeRegistry();
+  const registry = makeRegistry();
 
-    const report = await mirrorRegistry(
-      remote,
-      registry as unknown as import("@yakcc/registry").Registry,
-      transport,
-    );
+  const report = await mirrorRegistry(
+    remote,
+    registry as unknown as import("@yakcc/registry").Registry,
+    transport,
+  );
 
-    return (
-      report.blocksConsidered === 2 &&
-      report.blocksInserted === 1 &&
-      report.failures.length === 1 &&
-      registry.stored.length === 1
-    );
-  },
-);
+  return (
+    report.blocksConsidered === 2 &&
+    report.blocksInserted === 1 &&
+    report.failures.length === 1 &&
+    registry.stored.length === 1
+  );
+});
 
 /**
  * prop_report_fields_well_formed
@@ -338,36 +340,33 @@ export const prop_partial_failure_resilience = fc.asyncProperty(
  *
  * Invariant: the report is a faithful record of what happened.
  */
-export const prop_report_fields_well_formed = fc.asyncProperty(
-  remotePeerArb,
-  async (remote) => {
-    const clock = (() => {
-      let t = 1_700_000_000_000;
-      return () => {
-        const d = new Date(t);
-        t += 10;
-        return d;
-      };
-    })();
+export const prop_report_fields_well_formed = fc.asyncProperty(remotePeerArb, async (remote) => {
+  const clock = (() => {
+    let t = 1_700_000_000_000;
+    return () => {
+      const d = new Date(t);
+      t += 10;
+      return d;
+    };
+  })();
 
-    const transport = makeTransport({ schemaVersion: SCHEMA_VERSION });
-    const registry = makeRegistry();
+  const transport = makeTransport({ schemaVersion: SCHEMA_VERSION });
+  const registry = makeRegistry();
 
-    const report: MirrorReport = await mirrorRegistry(
-      remote,
-      registry as unknown as import("@yakcc/registry").Registry,
-      transport,
-      { clock },
-    );
+  const report: MirrorReport = await mirrorRegistry(
+    remote,
+    registry as unknown as import("@yakcc/registry").Registry,
+    transport,
+    { clock },
+  );
 
-    if (report.serveUrl !== remote) return false;
-    if (report.schemaVersion !== SCHEMA_VERSION) return false;
-    if (typeof report.startedAt !== "string") return false;
-    if (typeof report.finishedAt !== "string") return false;
-    // finishedAt >= startedAt — clock is monotonic in our stub.
-    return report.finishedAt >= report.startedAt;
-  },
-);
+  if (report.serveUrl !== remote) return false;
+  if (report.schemaVersion !== SCHEMA_VERSION) return false;
+  if (typeof report.startedAt !== "string") return false;
+  if (typeof report.finishedAt !== "string") return false;
+  // finishedAt >= startedAt — clock is monotonic in our stub.
+  return report.finishedAt >= report.startedAt;
+});
 
 /**
  * prop_full_walk_compound_interaction

@@ -206,6 +206,48 @@ describe.skipIf(!canRun("x86_64-linux"))("programs, natively (#1333)", () => {
     expect(native.stdout).toBe(node.stdout);
   }, 600_000);
 
+  it("promise rejections: handled ones end nothing; one nothing handles ends the program, exit 1; an async try's jobs (#1361 P2)", () => {
+    for (const name of ["handled", "unhandled", "try-order"]) {
+      const entry = here(`./__fixtures__/program/rejections/${name}.js`);
+      const exe = join(work, `rejections-${name}`);
+      buildProgram(entry, exe, { root: here("../../..") });
+      const native = spawnSync(exe, [], { encoding: "utf8", timeout: 60_000 });
+      const node = spawnSync(process.execPath, [entry], { encoding: "utf8", timeout: 60_000 });
+      expect(native.stdout).toBe(node.stdout);
+      expect(native.status).toBe(node.status);
+      // Node prints the error's stack (frames the runtime does not keep): its name and message.
+      if (name === "unhandled") expect(native.stderr).toBe("Uncaught RangeError: nobody listens\n");
+      else expect(native.stderr).toBe("");
+    }
+  }, 600_000);
+
+  it("top-level await: an awaiting module and its importers evaluated asynchronously, in order; import() waits (#1361 P2)", () => {
+    const entry = here("./__fixtures__/program/tla/entry.mjs");
+    const exe = join(work, "tla-run");
+    buildProgram(entry, exe, { root: here("../../..") });
+    const native = spawnSync(exe, [], { encoding: "utf8", timeout: 60_000 });
+    const node = spawnSync(process.execPath, [entry], { encoding: "utf8", timeout: 60_000 });
+    expect(native.stderr).toBe("");
+    expect(native.stdout).toBe(node.stdout);
+    expect(native.status).toBe(0);
+  }, 600_000);
+
+  it("zod 4 (yakcc's closure): its ECMAScript build, schemas built, parsed and refused as Node's (#1368, #1361 P2)", () => {
+    const entry = here("./__fixtures__/program/zod/entry.mjs");
+    const exe = join(work, "zod-run");
+    const built = buildProgram(entry, exe, { root: here("../../..") });
+    // An import resolves a package's exports as Node's ESM does (the import condition): zod's
+    // ECMAScript build, its locales' anonymous default exports among it; not its CommonJS one.
+    expect(built.modules.some((m) => m.endsWith("/zod/index.js"))).toBe(true);
+    expect(built.modules.some((m) => m.endsWith(".cjs"))).toBe(false);
+    expect(built.modules.some((m) => /\/zod\/v4\/locales\/\w+\.js$/.test(m))).toBe(true);
+    const native = spawnSync(exe, [], { encoding: "utf8", timeout: 60_000 });
+    const node = spawnSync(process.execPath, [entry], { encoding: "utf8", timeout: 60_000 });
+    expect(native.stderr).toBe("");
+    expect(native.stdout).toBe(node.stdout);
+    expect(native.status).toBe(0);
+  }, 1_200_000);
+
   it("@yakcc/contracts' canonicalize and contract id (BLAKE3 from @noble/hashes), from their sources, equal Node's", () => {
     const run = nativeProgram("contract-id", here("./__fixtures__/program/contract-id-entry.ts"));
     const specs = fc.sample(spec, { numRuns: 100, seed: 1333 });

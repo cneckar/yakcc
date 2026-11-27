@@ -509,6 +509,11 @@ func arg(args []any, i int) any {
 	return Undefined
 }
 
+// primArg is arg for a parameter declared a primitive (#1370): the name keeps the mark.
+func primArg(args []any, i int) any {
+	return arg(args, i)
+}
+
 func restArgs(args []any, i int) any {
 	if i >= len(args) {
 		return &Array{Items: []any{}}

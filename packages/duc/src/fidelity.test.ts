@@ -3,6 +3,8 @@
 // names its source reads without declaring, as TypeScript's binder finds them.
 import { describe, expect, it } from "vitest";
 import { EMIT_CASES } from "./__fixtures__/emit-cases.js";
+import { graphIdentity } from "./canonical.js";
+import { emitTypeScript } from "./emit-ts.js";
 import { graphFreeNames, liftFidelity, sourceFreeNames, topLevelNames } from "./fidelity.js";
 import { liftAtom } from "./lift.js";
 
@@ -94,5 +96,68 @@ describe("what never runs is not read (#1292)", () => {
     expect(sourceFreeNames(source).has("__name")).toBe(false);
     expect(sourceFreeNames(source).has("open")).toBe(true);
     expect(liftFidelity(source, liftAtom(source)).holds).toBe(true);
+  });
+});
+
+describe("a short-circuit its left literal decides (#1368)", () => {
+  it("never runs its right side: a bundler's list of export names reads none of them", () => {
+    // esbuild's annotation at the end of a CommonJS bundle, for a tool to read.
+    const source = "0 && (module.exports = { textChanges, codefix });";
+    expect([...sourceFreeNames(source)]).toEqual([]);
+    expect([...graphFreeNames(liftAtom(source))]).toEqual([]);
+    expect(holds(source).holds).toBe(true);
+  });
+
+  it("is that literal, before && and || and ??", () => {
+    for (const source of [
+      "function f(x) { return false && x.y; }",
+      "function f(x) { return true || x.y; }",
+      "function f(x) { return 0 ?? x.y; }",
+    ])
+      expect(liftAtom(source).nodes.some((n) => n.label === ".y")).toBe(false);
+  });
+
+  it("still runs it when the literal does not decide", () => {
+    for (const source of [
+      "function f(x) { return 1 && x.y; }",
+      "function f(x) { return null ?? x.y; }",
+      "function f(x) { return undefined || x.y; }",
+    ])
+      expect(liftAtom(source).nodes.some((n) => n.label === ".y")).toBe(true);
+  });
+});
+
+describe("an iterating loop whose leading break reads its own variable (#1368)", () => {
+  // TypeScript's lastWhere: the test is of each element, a break like any other, not the
+  // condition a lowering writes before the element is pulled.
+  const source = `function lastWhere(a, pred) {
+  let last2;
+  for (const value of a) {
+    if (!pred(value)) break;
+    last2 = value;
+  }
+  return last2;
+}`;
+
+  it("reads no name the source does not", () => {
+    expect(holds(source)).toEqual({ holds: true, missing: [], extra: [] });
+  });
+
+  it("round-trips", () => {
+    const g = liftAtom(source);
+    expect(graphIdentity(liftAtom(emitTypeScript(g)))).toBe(graphIdentity(g));
+  });
+});
+
+describe("a type's own name is no read (#1292)", () => {
+  it("a generic arrow's type parameter, a local type alias and interface", () => {
+    for (const source of [
+      "export function f() { const memo = <T>(c: Map<string, T>, make: () => T): T => make(); return memo; }",
+      "export function f(xs: unknown[]) { type E = { d: string }; return xs.map((e) => (e as E).d); }",
+      "export function f(xs: unknown[]) { interface I { d: string } return xs.map((e) => (e as I).d); }",
+    ]) {
+      expect([...graphFreeNames(liftAtom(source))]).toEqual([]);
+      expect(holds(source).holds).toBe(true);
+    }
   });
 });

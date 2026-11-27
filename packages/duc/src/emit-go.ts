@@ -14,7 +14,7 @@ import { loweringView } from "./ordering.js";
  *
  * Anything else is refused with a reason (`GoEmitError`), never guessed.
  */
-import { isRestParam, paramIndex } from "./params.js";
+import { isPrimitiveParam, isRestParam, paramIndex, readsOwnReceiver } from "./params.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, NodeId, ValueId } from "./types.js";
 
 export { GO_PRELUDE } from "./go-prelude.js";
@@ -469,7 +469,7 @@ function goFunction(
         throw new GoEmitError(
           `a closure that is ${label.replace(/ closure$/, "")} has no form here`,
         );
-      if (label === "function")
+      if (label === "function" && readsOwnReceiver(node.closure))
         throw new GoEmitError("a function with its own receiver (this) has no Go form here");
       const inner = goFunction(
         node.closure,
@@ -691,7 +691,7 @@ function goFunction(
   const bindings = own.flatMap((n, i) => [
     isRestParam(n.label)
       ? `var ${nameOf(n.outputs[0] as ValueId)} any = restArgs(args, ${i})`
-      : `var ${nameOf(n.outputs[0] as ValueId)} any = arg(args, ${i})`,
+      : `var ${nameOf(n.outputs[0] as ValueId)} any = ${isPrimitiveParam(n.label) ? "primArg" : "arg"}(args, ${i})`,
     `_ = ${nameOf(n.outputs[0] as ValueId)}`,
   ]);
   // A free or ambient name that nothing uses is still part of the atom: it is read on its own.

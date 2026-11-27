@@ -130,7 +130,13 @@ function attach(
 export function unpackGraph(
   packed: Pick<PackedGraph, "formatVersion" | "structure" | "links" | "annotations">,
 ): DucGraph {
-  if (packed.formatVersion !== GRAPH_FORMAT_VERSION && packed.formatVersion !== 1)
+  // Versions 1 and 2 have the same encoding: their structure is read, under the roots they were
+  // stored with, until #1291 migrates them.
+  if (
+    packed.formatVersion !== GRAPH_FORMAT_VERSION &&
+    packed.formatVersion !== 1 &&
+    packed.formatVersion !== 2
+  )
     throw new Error(
       `graph format ${packed.formatVersion} is not one this reads (${GRAPH_FORMAT_VERSION})`,
     );

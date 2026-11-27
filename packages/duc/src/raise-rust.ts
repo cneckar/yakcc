@@ -8,6 +8,7 @@
  * reference vocabulary, TypeScript's. It reads the lowering's own dialect, not Rust in general:
  * anything else is a RaiseError.
  */
+import { PRIMITIVE_COMMENT } from "./params.js";
 
 /** A table's own entry for a key: never one of Object.prototype's (`hasOwnProperty`, `constructor`). */
 function entry<T>(table: Readonly<Record<string, T>> | undefined, key: string): T | undefined {
@@ -160,21 +161,29 @@ class Parser {
     } else this.next();
   }
 
-  fn(): { params: { name: string; rest: boolean }[]; body: Stmt[] } {
+  fn(): { params: { name: string; rest: boolean; prim?: boolean }[]; body: Stmt[] } {
     // pub fn f(args: Vec<V>) -> V { ... }
     while (!this.is("{")) this.next();
     return this.body();
   }
 
-  body(): { params: { name: string; rest: boolean }[]; body: Stmt[] } {
+  body(): { params: { name: string; rest: boolean; prim?: boolean }[]; body: Stmt[] } {
     const stmts = this.block();
-    const params: { name: string; rest: boolean }[] = [];
+    const params: { name: string; rest: boolean; prim?: boolean }[] = [];
     const body: Stmt[] = [];
     for (const st of stmts) {
-      if (st.t === "let" && st.e.t === "call" && (st.e.fn === "arg" || st.e.fn === "rest_args")) {
+      if (
+        st.t === "let" &&
+        st.e.t === "call" &&
+        (st.e.fn === "arg" || st.e.fn === "prim_arg" || st.e.fn === "rest_args")
+      ) {
         const at = st.e.args[1];
         if (at?.t !== "num") throw new RaiseError("a parameter without its index");
-        params[Number(at.v)] = { name: st.name, rest: st.e.fn === "rest_args" };
+        params[Number(at.v)] = {
+          name: st.name,
+          rest: st.e.fn === "rest_args",
+          prim: st.e.fn === "prim_arg",
+        };
         continue;
       }
       body.push(st);
@@ -239,7 +248,7 @@ class Parser {
               e: {
                 t: "call",
                 fn: "__params",
-                args: params.map((p) => ({ t: "str", v: `${p.rest ? "..." : ""}${p.name}` })),
+                args: params.map((p) => ({ t: "str", v: paramText(p) })),
               },
             },
             ...body,
@@ -768,9 +777,15 @@ export function raiseRust(rust: string): string {
   return writeFunction(params, body);
 }
 
+/** A parameter as TypeScript writes it: `...xs`, or with PRIMITIVE_COMMENT for one declared a primitive (#1370). */
+export function paramText(p: { name: string; rest: boolean; prim?: boolean }): string {
+  return `${p.rest ? "..." : ""}${p.name}${p.prim === true ? ` ${PRIMITIVE_COMMENT}` : ""}`;
+}
+
 /** `export function f(..) {..}` from a lowering's parameters and statements, read as the dialect. */
+
 export function writeFunction(
-  params: readonly { name: string; rest: boolean }[],
+  params: readonly { name: string; rest: boolean; prim?: boolean }[],
   body: readonly Stmt[],
 ): string {
   const names = assignedNames(body);
@@ -789,6 +804,6 @@ export function writeFunction(
   };
   collect(body);
   const w = new Writer(names);
-  const list = params.map((q) => `${q.rest ? "..." : ""}${q.name}`).join(", ");
+  const list = params.map(paramText).join(", ");
   return [`export function f(${list}) {`, ...w.stmts(body), "}", ""].join("\n");
 }

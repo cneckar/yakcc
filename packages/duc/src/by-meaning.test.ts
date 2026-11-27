@@ -113,13 +113,8 @@ describe("operations chosen by meaning (#1310)", () => {
       s,
     );
     expect(emitTypeScript(g, { inputs: ["number", "number"], output: "number" })).toBe(
-      emitTypeScript(
-        liftAtom("export function f(a: number, b: number): number { return a % b - a; }"),
-        {
-          inputs: ["number", "number"],
-          output: "number",
-        },
-      ),
+      // The same graph under ECMAScript's names: chosen, its operators are not ordered (#1370).
+      emitTypeScript(ecmaScriptView(g), { inputs: ["number", "number"], output: "number" }),
     );
     expect(emitPython(g)).toBe(emitPython(ecmaScriptView(g)));
     expect(ops(ecmaScriptView(g))).toEqual(["%", "-"]);

@@ -79,6 +79,7 @@ export function byMeaning(input: DucGraph, sig: Signature): DucGraph {
         : [],
     ),
   ]);
+  const keepsOrder = tokenAsInvariant(input);
   const nodes = input.nodes.map((n): DucNode => {
     if (n.closure !== undefined) {
       // A closure is chosen under the types it is made and called with (#1310).
@@ -94,13 +95,96 @@ export function byMeaning(input: DucGraph, sig: Signature): DucGraph {
     const generic = meaningOf(symbol, operands.map(kind));
     // Not generic on these operands: ECMAScript's own operation, whatever it was given as.
     const label = generic ?? jsOperation(symbol, operands.length);
+    // An operator is ordered only because a conversion of an operand may call user code (#1370).
+    // On operands of the kinds a generic operation takes, it converts nothing: it is not ordered.
+    if (generic !== undefined && n.order === 1 && !keepsOrder.has(n.id)) {
+      changed = true;
+      const { order: _order, ...rest } = n;
+      return { ...rest, label, inputs: operands };
+    }
     if (label === n.label) return n;
     changed = true;
     return { ...n, label };
   });
   if (!changed) return input;
-  const graph = canonicalizeGraph(nodes, input.obs, input.branches ?? []);
+  const graph = canonicalizeGraph(
+    unorder(nodes, input.nodes, keepsOrder),
+    input.obs,
+    input.branches ?? [],
+  );
   return input.mode !== undefined ? { ...graph, mode: input.mode } : graph;
+}
+
+/**
+ * The ordered operations whose token a loop takes as an invariant: their order is kept, since the
+ * body may read that value both as the token and as a value, which one input cannot tell apart.
+ */
+function tokenAsInvariant(g: DucGraph): Set<string> {
+  const invariantInputs = new Set<ValueId>();
+  for (const n of g.nodes)
+    if (n.loop !== undefined)
+      for (const v of n.inputs.slice(n.inputs.length - n.loop.invariant.length))
+        invariantInputs.add(v);
+  return new Set(
+    g.nodes
+      .filter((n) => n.order === 1 && n.outputs.some((o) => invariantInputs.has(o)))
+      .map((n) => n.id),
+  );
+}
+
+/**
+ * The graph with the operations that are no longer ordered taken out of the heap token's chain:
+ * where one's value was read as the token, the token before it is read instead. The token is read
+ * as an ordered node's last input, by a `heap` select, and by a loop's heap carry (its first value
+ * and its next).
+ */
+function unorder(
+  nodes: readonly DucNode[],
+  before: readonly DucNode[],
+  keep: ReadonlySet<string>,
+): DucNode[] {
+  const was = new Map(before.map((n) => [n.id, n] as const));
+  const previous = new Map<ValueId, ValueId>();
+  for (const n of nodes) {
+    const old = was.get(n.id);
+    if (old?.order === 1 && n.order !== 1 && !keep.has(n.id)) {
+      const token = old.inputs[old.inputs.length - 1];
+      const out = old.outputs[0];
+      if (token !== undefined && out !== undefined) previous.set(out, token);
+    }
+  }
+  if (previous.size === 0) return [...nodes];
+  const resolve = (v: ValueId): ValueId => {
+    let x = v;
+    for (let p = previous.get(x); p !== undefined; p = previous.get(x)) x = p;
+    return x;
+  };
+  // The heap carries of each loop, by index: a body source labelled `carry:<i>:heap`.
+  const heapCarry = new Set<ValueId>(
+    nodes
+      .filter((n) => n.kind === "carry-source" && /^carry:\d+:heap$/.test(n.label ?? ""))
+      .flatMap((n) => n.outputs),
+  );
+  return nodes.map((n): DucNode => {
+    let inputs = n.inputs;
+    let loop = n.loop;
+    if (n.order === 1 && inputs.length > 0) {
+      const last = inputs[inputs.length - 1] as ValueId;
+      const r = resolve(last);
+      if (r !== last) inputs = [...inputs.slice(0, -1), r];
+    }
+    if (n.kind === "sel" && n.label === "heap")
+      inputs = inputs.map((v, i) => (i === 0 ? v : resolve(v)));
+    if (n.loop !== undefined) {
+      const l = n.loop;
+      const heap = l.carry.map((c) => heapCarry.has(c));
+      inputs = inputs.map((v, i) => (i < l.carry.length && heap[i] ? resolve(v) : v));
+      const next = l.next.map((v, i) => (heap[i] ? resolve(v) : v));
+      if (next.some((v, i) => v !== l.next[i])) loop = { ...l, next };
+    }
+    if (inputs === n.inputs && loop === n.loop) return n;
+    return { ...n, inputs, ...(loop !== undefined ? { loop } : {}) };
+  });
 }
 
 /** A contract's interface as the inference reads it: its input types, and its output's when it has one. */

@@ -21,7 +21,10 @@ describe("line form (#1275, item 2)", () => {
   }
 
   it("a model-style text parses to the graph the lifter produces for the same function", () => {
-    const text = ["# a + 1", "param a", 'lit "1" -> one', "op + a one -> r", "out r"].join("\n");
+    // `prim`: the function declares `a` a number (#1370), and a model writes what it declares.
+    const text = ["# a + 1", "param a prim", 'lit "1" -> one', "op + a one -> r", "out r"].join(
+      "\n",
+    );
     expect(graphIdentity(parseLineForm(text))).toBe(
       graphIdentity(liftAtom("export function f(a: number): number { return a + 1; }")),
     );
@@ -77,7 +80,7 @@ describe("one unknown, one source (line form)", () => {
     expect(
       graphIdentity(
         parseLineForm(
-          "param s\nparam t\nambient encodeURI -> e\nop CallExpression e s -> x\nop CallExpression e t ^x -> y\nop + x y -> r\nout r\n",
+          "param s prim\nparam t prim\nambient encodeURI -> e\nop CallExpression e s -> x\nop CallExpression e t ^x -> y\nop + x y ^y -> r\nout r\n",
         ),
       ),
     ).toBe(
