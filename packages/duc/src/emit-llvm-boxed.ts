@@ -1505,7 +1505,7 @@ function lowerFunction(
               continue;
             }
           }
-          const width = bigRule(n, widthOf);
+          const width = process.env.YK_NO_SELT === "1" ? undefined : bigRule(n, widthOf);
           if (width !== undefined && width <= 127) {
             bigWidth.set(out, width);
             changed = true;
@@ -1644,7 +1644,7 @@ function lowerFunction(
           // (so, by induction, every iteration's is); else as wide as the next one is then, again
           // checked, up to 127 bits. The next value's width is computed under the assumption alone.
           if (!bigWidth.has(v)) {
-            const w = inductCarry(n, j, new Map(), 0);
+            const w = process.env.YK_NO_IND === "1" ? undefined : inductCarry(n, j, new Map(), 0);
             if (w !== undefined) {
               bigWidth.set(v, w);
               changed = true;
@@ -1837,6 +1837,7 @@ function lowerFunction(
       if (n.kind !== "op" || n.label !== "ArrayLiteral" || n.inputs.length === 0) continue;
       const out = n.outputs[0] as ValueId;
       if (escaping.has(out)) continue;
+      if (process.env.YK_NO_T2 === "1") continue;
       const rows = n.inputs.map((v) => producer.get(resolve(v as ValueId)));
       if (!rows.every((r) => r?.kind === "op" && r.label === "ArrayLiteral")) continue;
       const cells = (rows as DucNode[]).map((r) =>
@@ -3013,7 +3014,7 @@ function lowerFunction(
       byKey.set(key, [...(byKey.get(key) ?? []), { n, base, off, size: mem.size }]);
     }
     for (const [key, members] of byKey) {
-      if (members.length < 2) continue;
+      if (members.length < 2 || process.env.YK_NO_GROUPS === "1") continue;
       const lo = Math.min(...members.map((x) => x.off));
       const hi = Math.max(...members.map((x) => x.off + x.size));
       for (const x of members) accessGroups.set(x.n, { key, base: x.base, off: x.off, lo, hi });
@@ -6407,7 +6408,7 @@ function lowerFunction(
       i >= closure.captures &&
       !(p.label ?? "").endsWith("...") &&
       rawParams?.has(i - closure.captures) !== true;
-    const speculatedBig = params.filter(
+    const speculatedBig = process.env.YK_NO_BIGP === "1" ? [] : params.filter(
       (p, i) => candidate(p, i) && bigUse.has(p.outputs[0] as ValueId),
     );
     const speculated = params.filter(
