@@ -10076,7 +10076,6 @@ static yk number_format(double x, int which, yk arg) {
 
 yk yk_math1(const char *name, yk a) {
   double x = to_number(a);
-  if (strcmp(name, "sqrt") == 0) return yk_number(sqrt(x));
   if (strcmp(name, "sign") == 0) return yk_number(x > 0 ? 1 : x < 0 ? -1 : x);
   if (strcmp(name, "round") == 0) {
     double r = floor(x);

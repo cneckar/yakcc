@@ -9,7 +9,7 @@ leaves in LLVM (`src/native-leaves.ts`; the system call, the thread pointer and 
 entry per target in `src/native-system.ts`). Every other section is hand-written scaffolding,
 deleted as the atom shaved from its source replaces it.
 
-**Lines to replace: 15215** of 15653 (kept: leaf 0, control 438).
+**Lines to replace: 15214** of 15652 (kept: leaf 0, control 438).
 
 Also hand-written, outside `runtime/`: the boot program's `runtime.*` bindings in
 `packages/duc/src/program.ts` (contextify, task_queue, async_wrap, messaging, worker, …), V8's and
@@ -17,7 +17,7 @@ node/src's part of Node's bindings, replaced as #1367 shaves node/src over V8's 
 
 | kind | lines |
 |---|---|
-| builtin | 10547 |
+| builtin | 10546 |
 | object-model | 2172 |
 | libc | 1110 |
 | node | 667 |
@@ -69,8 +69,8 @@ node/src's part of Node's bindings, replaced as #1367 shaves node/src over V8's 
 | `yk.c:9047` | the runtime's own internalBinding layer | 461 | node | node/src's bindings, over V8's API as atoms (#1367) |
 | `yk.c:9508` | Proxy | 247 | builtin | src/builtins/proxy-*.tq, src/objects/js-proxy.h |
 | `yk.c:9755` | spread | 320 | builtin | src/builtins/builtins-call-gen.cc (CallWithSpread), iteration |
-| `yk.c:10075` | Math, with JavaScript's results | 36 | builtin | src/builtins/math.tq, src/base/ieee754.cc (#1362's Math atoms) |
-| `yk.c:10111` | the host boundary | 136 | host | the test harnesses' text form of values |
+| `yk.c:10075` | Math, with JavaScript's results | 35 | builtin | src/builtins/math.tq, src/base/ieee754.cc (#1362's Math atoms) |
+| `yk.c:10110` | the host boundary | 136 | host | the test harnesses' text form of values |
 | `rx.h:1` | (the file's opening) | 477 | builtin | src/regexp/ (Irregexp's parser): new RegExp(string) compiled at run time |
 | `rx.h:478` | matching | 270 | builtin | src/regexp/ (Irregexp's backtracking matcher) |
 | `case.h:1` | (the file's opening) | 3076 | builtin | src/strings/unicode.cc (unibrow's case tables) |

@@ -269,7 +269,7 @@ const MATH_CONSTANTS: Readonly<Record<string, number>> = nameTable({
   SQRT1_2: Math.SQRT1_2,
   SQRT2: Math.SQRT2,
 });
-const MATH1 = new Set(["sqrt", "sign", "round"]);
+const MATH1 = new Set(["sign", "round"]);
 /**
  * Math's functions that are musl's on doubles (`atoms/math.ts`, shaved from musl's src/math): the
  * atom each calls, its argument's ToNumber first.
@@ -279,6 +279,7 @@ const MUSL_MATH_ATOM: Readonly<Record<string, string>> = nameTable({
   ceil: "ceil",
   trunc: "trunc",
   abs: "fabs",
+  sqrt: "sqrt",
 });
 const APPROXIMATED =
   /^(exp|expm1|log|log1p|log2|log10|sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|cbrt|hypot|pow)$/;
@@ -5002,26 +5003,6 @@ function lowerFunction(
         if (MATH1.has(callee.name) && args.length === 1) {
           const key = m.constant(callee.name, true);
           const slow = (): string => call("yk_math1", `ptr ${key.ptr}, i64 ${args[0]}`);
-          // sqrt of a number: the exact LLVM intrinsic, inline (#1369).
-          const intrinsic = ({ sqrt: "llvm.sqrt.f64" } as Record<string, string>)[callee.name];
-          if (intrinsic !== undefined) {
-            m.intrinsics.add(`declare double @${intrinsic}(double)`);
-            set(
-              out,
-              numberFast(
-                [args[0] as string],
-                ([d]) => {
-                  const r = fresh();
-                  emit(`${r} = call double @${intrinsic}(double ${d})`);
-                  return numberResult(out, r);
-                },
-                slow,
-                undefined,
-                allNumbers([ins[1] as ValueId]),
-              ),
-            );
-            return;
-          }
           set(out, slow());
           return;
         }
