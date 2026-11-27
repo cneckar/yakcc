@@ -1785,9 +1785,11 @@ function baseOffset(derived: string, base: string): number | undefined {
   const untagged = (n: string): string => recordKey(n).replace(/^(?:struct|class|union) /, "");
   if (untagged(derived) === untagged(base)) return 0;
   // (Or one layout under two spellings: an enumeration's argument as a cast in a type,
-  // `_Sp_counted_base<(_Lock_policy)2U>`, and as its enumerator in the dump.)
+  // `_Sp_counted_base<(_Lock_policy)2U>`, and as its enumerator in the dump; a template's default
+  // arguments spelled, `allocator<basic_string<char, char_traits<char>, allocator<char>>>`, and
+  // left out.)
   const l = unitLayout(derived);
-  if (l !== undefined && /\(/.test(base)) {
+  if (l !== undefined) {
     const bl = ["struct", "class", "union"]
       .map((t) => unitLayout(`${t} ${base.replace(/^(?:struct|class|union) /, "")}`))
       .find((x) => x !== undefined);
@@ -6651,12 +6653,22 @@ export function shaveCUnit(
                   }
                   out += plain[i];
                 }
-                const head = plain.slice(0, plain.indexOf("("));
+                // (Its own parameters, the last balanced list: a local class's method's name
+                // has its function's, `Convert(std::shared_ptr<..>)::AdaptedField::LookupImpl()`.)
+                let open = plain.indexOf("(");
+                for (let depth = 0, i = plain.lastIndexOf(")"); i >= 0; i--) {
+                  if (plain[i] === ")") depth++;
+                  else if (plain[i] === "(" && --depth === 0) {
+                    open = i;
+                    break;
+                  }
+                }
+                const head = plain.slice(0, open);
                 // (Its return type before its scope, `int N::eq`, not part of its class's name.)
                 const owner =
                   (head.split("::").slice(-2, -1)[0] ?? "").split(/[\s*&]+/).pop() ?? "";
                 const name = head.split("::").pop() ?? "";
-                const want = memberKey(name, plain.slice(plain.indexOf("(")));
+                const want = memberKey(name, plain.slice(open));
                 // (Of the classes of that name, the instance's, defined here or by its symbol: not
                 // a class template's pattern, whose method is dependent.)
                 const ids: string[] = [];
@@ -6941,8 +6953,23 @@ export function shaveCUnit(
     if (lt > 0 && name.endsWith(">") && !isClass) {
       const bareAlias = name.slice(0, lt).split("::").pop() ?? "";
       const args = splitTemplateArgs(name.slice(lt + 1, -1));
+      // (Qualified, `std::vector<..>`: an alias template of that namespace, not one of the bare
+      // name in another, std::pmr's vector.)
+      const space = name
+        .slice(0, lt)
+        .replace(/^(?:typename |::)/, "")
+        .split("::")
+        .slice(0, -1)
+        .join("::");
+      const inSpace = (n: ClangNode): boolean => {
+        if (space === "" || indexed === undefined || n.id === undefined) return true;
+        const d = indexed.byId.get(n.id);
+        // (libstdc++'s inline namespaces, `std::__cxx11`, as the name leaves them out.)
+        const plain = (x: string): string => x.replace(/::__\w+/g, "");
+        return d === undefined || plain(namespacesOf(indexed, d)) === plain(space);
+      };
       for (const n of dumpOf(bareAlias)) {
-        if (n.kind !== "TypeAliasTemplateDecl" || n.name !== bareAlias) continue;
+        if (n.kind !== "TypeAliasTemplateDecl" || n.name !== bareAlias || !inSpace(n)) continue;
         const paramDecls = (n.inner ?? []).filter(
           (c) => c.kind === "TemplateTypeParmDecl" || c.kind === "NonTypeTemplateParmDecl",
         );

@@ -466,6 +466,18 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
         });
         just(ret as number);
       });
+    // (Its template form, the array by reference: N bytes, the NUL last.)
+    {
+      const lit =
+        /^v8::Local<v8::String> v8::String::NewFromUtf8Literal<(\d+)>\(v8::Isolate\*, char const \(&\) \[\d+\], v8::NewStringType\)$/.exec(
+          d,
+        );
+      if (lit !== null) {
+        const n = Number(lit[1]) - 1;
+        return R((ret, _i, p) => put(ret as number, utf8.decode(bytes(p as number, n))));
+      }
+    }
+    if (d === "v8::Object::GetIsolate()" || d === "v8::Value::GetIsolate()") return () => isolate;
     if (d === "v8::String::NewFromUtf8Literal(v8::Isolate*, char const*, v8::NewStringType, int)")
       return R((ret, _i, p, _t, n) =>
         put(ret as number, utf8.decode(bytes(p as number, n as number))),

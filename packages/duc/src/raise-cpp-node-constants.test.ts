@@ -25,6 +25,7 @@ const ROOT =
   "_ZN4node9constants26CreatePerContextPropertiesEN2v85LocalINS1_6ObjectEEENS2_INS1_5ValueEEENS2_INS1_7ContextEEEPv";
 /** The files constants' calls reach (env.cc and node_realm.cc for statics). */
 const FILES = [
+  "src/node_zlib.cc",
   "src/util.cc",
   "src/node_errors.cc",
   "src/debug_utils.cc",
