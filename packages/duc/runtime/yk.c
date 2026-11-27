@@ -1086,8 +1086,11 @@ static inline int key_equal(yk a, yk b) {
   if (a == b) return 1;
   if (!is_string(a) || !is_string(b)) return 0;
   yk_string *x = (yk_string *)PTR(a), *y = (yk_string *)PTR(b);
-  /* Lengths (a rope's too) or kept hashes that differ: not equal, no units compared. */
-  if (x->len != y->len || (x->hash != 0 && y->hash != 0 && x->hash != y->hash)) return 0;
+  /* Two flat strings whose lengths or kept hashes differ: not equal, no units compared (a rope's
+     words are its own: it is made flat and compared). */
+  if (((x->len | y->len) & ROPE_BIT) == 0 &&
+      (x->len != y->len || (x->hash != 0 && y->hash != 0 && x->hash != y->hash)))
+    return 0;
   return string_equal(str(a), str(b));
 }
 /* ToPropertyKey: a symbol as it is; anything else its string. */

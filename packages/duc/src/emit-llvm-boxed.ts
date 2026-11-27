@@ -524,6 +524,22 @@ function mathFunctionValue(
   return r;
 }
 
+/**
+ * The module's constructor (run before main, from .init_array): each name and literal the module
+ * keeps in a global made then, so the lowered code reads the global with no check (#1370).
+ */
+function keyConstructor(m: ModuleBuilder): string[] {
+  if (m.keyInits.length === 0) return [];
+  return [
+    "define internal void @yk.keys.init() {",
+    ...m.keyInits,
+    "  ret void",
+    "}",
+    "@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @yk.keys.init, ptr null }]",
+    "",
+  ];
+}
+
 /** The module being built: its constants, the runtime functions it calls, its functions. */
 class ModuleBuilder {
   readonly globals: string[] = [];
@@ -541,6 +557,8 @@ class ModuleBuilder {
   readonly numClones = new Set<string>();
   /** Each property name a site reads, writes or calls by: the global its string is kept in. */
   readonly keys = new Map<string, string>();
+  /** Each key global's filling, by the module's constructor (keyConstructor). */
+  readonly keyInits: string[] = [];
   /** The number clones calls name, each its function's and its raw arguments' parameter list. */
   readonly numCalled = new Map<
     string,
@@ -1752,12 +1770,13 @@ function lowerFunction(
       g0 = `@ykey${m.keys.size}`;
       m.keys.set(name, g0);
       m.globals.push(`${g0} = internal global i64 0`);
+      // Filled before main, by the module's constructor: each use is a load.
+      const c = m.constant(name);
+      m.intrinsics.add("declare i64 @yk_key_of(ptr, ptr, i64)");
+      m.keyInits.push(`  call i64 @yk_key_of(ptr ${g0}, ptr ${c.ptr}, i64 ${c.length})`);
     }
-    // The runtime's check-and-fill: no branch here, so this block stays one block.
-    const c = m.constant(name);
-    m.intrinsics.add("declare i64 @yk_key_of(ptr, ptr, i64)");
     const k = fresh();
-    emit(`${k} = call i64 @yk_key_of(ptr ${g0}, ptr ${c.ptr}, i64 ${c.length})`);
+    emit(`${k} = load i64, ptr ${g0}`);
     return k;
   };
   /** A string literal: the module's one string of its text (immutable, so shared). */
@@ -5782,6 +5801,7 @@ export function emitLlvmBoxed(input: DucGraph, symbol = "f"): LlvmModule {
     ...m.globals,
     "",
     ...m.functions,
+    ...keyConstructor(m),
     ...[...m.used].sort().map((f) => RUNTIME_DECLS[f] as string),
     ...m.intrinsics,
     "",
@@ -6636,6 +6656,7 @@ export function emitNativeModules(modules: readonly NativeModule[]): NativeModul
     ...globals,
     "",
     ...m.functions,
+    ...keyConstructor(m),
     ...[...m.used].sort().map((f) => RUNTIME_DECLS[f] as string),
     ...m.intrinsics,
     "",

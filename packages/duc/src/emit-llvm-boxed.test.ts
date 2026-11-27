@@ -601,6 +601,15 @@ describe.skipIf(!canRun("x86_64-linux"))("async functions and promises, natively
     });
     expect(disagreements(source, inputs)).toEqual([]);
   }, 180_000);
+  it("computes what Node computes: a long key made by + (a rope) is the same key as its flat string", () => {
+    const source =
+      "export function f(n, s) { const t = typeof s === 'string' ? s : 'q'; const flat = 'k'.repeat(300) + t; const rope = 'k'.repeat(150) + ('k'.repeat(150) + t); const o = {}; o[flat] = 1; const small = { [rope]: 2, x: 3 }; const big = {}; for (let i = 0; i < 12; i++) big['p' + i] = i; big[flat] = 'big'; const m = new Map([[flat, 'm']]); return [o[rope], small[flat], big[rope], rope in o, flat === rope, Object.keys(small).length, m.get(rope), new Set([flat, rope]).size, Object.hasOwn(big, rope)]; }";
+    const inputs = fc.sample(fc.array(value, { minLength: 2, maxLength: 2 }), {
+      numRuns: 60,
+      seed: 1370,
+    });
+    expect(disagreements(source, inputs)).toEqual([]);
+  }, 180_000);
 });
 
 describe("boxed values on other architectures, under QEMU (#1292)", () => {
