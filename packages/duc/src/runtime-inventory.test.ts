@@ -18,7 +18,7 @@ const doc = join(here, "../../../docs/duc/runtime-inventory-1516.md");
  * scaffolding as atoms replace it, then lower this); none raises it: no built-in or engine feature
  * is added to the runtime (#1361's direction, 2026-11-27).
  */
-const CEILING = 15_010;
+const CEILING = 15_008;
 
 describe("the native runtime's inventory (#1516)", () => {
   const sections = runtimeInventory(runtime);

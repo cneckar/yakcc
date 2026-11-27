@@ -967,6 +967,8 @@ function lowerFunction(
   recOut?: boolean,
   /** An `.int` clone's (#1369): number parameters its `.num` clone checked are integers in a range. */
   paramRanges?: ReadonlyMap<ValueId, NumRange>,
+  /** A `.big` clone's (#1369): the BigInt parameters its entry checked are below 2^64 in magnitude. */
+  bigParams?: ReadonlySet<ValueId>,
 ): void {
   const rawList = [...(rawParams ?? [])].sort((a, b) => a - b);
   const rawHead =
@@ -1150,7 +1152,7 @@ function lowerFunction(
   const leafOf = (n: DucNode): string | undefined =>
     n.label === "CallExpression" ? leafValue.get(resolve(n.inputs[0] as ValueId)) : undefined;
   const numRange = new Map<ValueId, NumRange>(paramRanges ?? []);
-  const bigWidth = new Map<ValueId, number>();
+  const bigWidth = new Map<ValueId, number>([...(bigParams ?? [])].map((v) => [v, 65] as const));
   /** A BigInt the graph fixes: a literal, or __ykNumToBig of an integer literal (raise-c's `32n`). */
   const literalBig = (v: ValueId): bigint | undefined => {
     const p = producer.get(resolve(v));
@@ -1192,9 +1194,79 @@ function lowerFunction(
     }
     return numRange.has(resolve(v));
   };
+  /**
+   * An operation's BigInt width from its operands' (`w`): a fixed-width leaf's, a literal shift's,
+   * or the operators' growth. Undefined when an operand's width is not known.
+   */
+  const bigRule = (n: DucNode, w: (v: ValueId) => number | undefined): number | undefined => {
+    const ins = n.inputs as readonly ValueId[];
+    const lbl = n.label ?? "";
+    if (n.kind === "sel") {
+      // A selection between two values: the wider's (a heap selection is not a value's).
+      if (lbl === "heap" || ins.length !== 3) return undefined;
+      const wa = w(ins[1] as ValueId);
+      const wb = w(ins[2] as ValueId);
+      return wa === undefined || wb === undefined ? undefined : Math.max(wa, wb);
+    }
+    if (n.kind !== "op") return undefined;
+    const leaf = leafOf(n);
+    if (leaf !== undefined) {
+      const a = ins[1] as ValueId;
+      if (leaf === "__ykF64Bits" || leaf === "__ykU64" || leaf === "__ykLoad64") return 65;
+      if (leaf === "__ykI64") return 64;
+      if (leaf === "__ykNumToBig" && a !== undefined && rangeOf(a) !== undefined) return 33;
+      return undefined;
+    }
+    if (ins.length === 2 && ["|", "&", "^", "<<", ">>"].includes(lbl)) {
+      const wa = w(ins[0] as ValueId);
+      const wb = w(ins[1] as ValueId);
+      if (wa === undefined || wb === undefined) return undefined;
+      if (lbl === ">>") {
+        const k = literalBig(ins[1] as ValueId);
+        return k !== undefined && k >= 0n ? wa : undefined;
+      }
+      if (lbl === "<<") {
+        const k = literalBig(ins[1] as ValueId);
+        return k !== undefined && k >= 0n && k <= 127n ? wa + Number(k) : undefined;
+      }
+      return Math.max(wa, wb);
+    }
+    if (ins.length === 2 && (lbl === "+" || lbl === "-" || lbl === "*")) {
+      const wa = w(ins[0] as ValueId);
+      const wb = w(ins[1] as ValueId);
+      if (wa === undefined || wb === undefined) return undefined;
+      return lbl === "*" ? wa + wb : Math.max(wa, wb) + 1;
+    }
+    if (ins.length === 1 && (lbl === "-" || lbl === "~")) {
+      const wa = w(ins[0] as ValueId);
+      return wa === undefined ? undefined : wa + 1;
+    }
+    // A remainder is no larger than either operand; a quotient no larger than its dividend (both
+    // operands typed: each is read as its i128).
+    if (ins.length === 2 && lbl === "%") {
+      const wa = w(ins[0] as ValueId);
+      const wb = w(ins[1] as ValueId);
+      return wa === undefined || wb === undefined ? undefined : Math.min(wa, wb);
+    }
+    if (ins.length === 2 && lbl === "/") {
+      const wa = w(ins[0] as ValueId);
+      return wa !== undefined && w(ins[1] as ValueId) !== undefined ? wa : undefined;
+    }
+    return undefined;
+  };
   for (let changed = true; changed; ) {
     changed = false;
     for (const n of g.nodes) {
+      if (n.kind === "sel") {
+        const out = n.outputs[0] as ValueId | undefined;
+        if (out === undefined || bigWidth.has(out)) continue;
+        const width = bigRule(n, widthOf);
+        if (width !== undefined && width <= 127) {
+          bigWidth.set(out, width);
+          changed = true;
+        }
+        continue;
+      }
       if (n.kind !== "op") continue;
       const out = n.outputs[0] as ValueId | undefined;
       if (out === undefined || numRange.has(out) || bigWidth.has(out)) continue;
@@ -1287,6 +1359,8 @@ function lowerFunction(
         if (wa !== undefined) width = wa + 1;
         else if (isNumberish(ins[0] as ValueId)) range = "i32";
       }
+      if (range === undefined && width === undefined && (lbl === "%" || lbl === "/"))
+        width = bigRule(n, widthOf);
       if (range !== undefined) {
         numRange.set(out, range);
         changed = true;
@@ -1313,6 +1387,49 @@ function lowerFunction(
       rec.carry.forEach((c, j) => {
         const v = resolve(c);
         if (numRange.has(v)) return;
+        // A BigInt carry: as wide as its initial value, when its next value is no wider given that
+        // (so, by induction, every iteration's is); else as wide as the next one is then, again
+        // checked, up to 127 bits. The next value's width is computed under the assumption alone.
+        if (!bigWidth.has(v)) {
+          const wi = widthOf(n.inputs[j] as ValueId);
+          let assumed = wi;
+          for (let tries = 0; assumed !== undefined && assumed <= 127 && tries < 8; tries++) {
+            const memo = new Map<ValueId, number | undefined>();
+            const under = (x0: ValueId, depth: number): number | undefined => {
+              const x = resolve(x0);
+              if (x === v) return assumed;
+              const known = widthOf(x);
+              if (known !== undefined) return known;
+              if (memo.has(x)) return memo.get(x);
+              memo.set(x, undefined);
+              const p = producer.get(x);
+              const r =
+                p?.kind === "op" && depth < 64 ? bigRule(p, (y) => under(y, depth + 1)) : undefined;
+              memo.set(x, r);
+              return r;
+            };
+            const wn = under(rec.next[j] as ValueId, 0);
+            if (wn === undefined) break;
+            if (wn <= assumed) {
+              // Proved: the carry's width, and each value's the proof computed under it (so the
+              // next value, and what it is made of, are i128s as the carry is).
+              bigWidth.set(v, assumed);
+              for (const [x, wx] of memo)
+                if (wx !== undefined && wx <= 127 && !bigWidth.has(x)) bigWidth.set(x, wx);
+              changed = true;
+              break;
+            }
+            assumed = wn;
+          }
+        }
+        // The loop's output for it: the carry's last value.
+        const out = n.outputs[j] as ValueId | undefined;
+        const cw = bigWidth.get(v);
+        if (out !== undefined && cw !== undefined && !bigWidth.has(resolve(out))) {
+          bigWidth.set(resolve(out), cw);
+          changed = true;
+        }
+        if (bigWidth.has(v)) return;
         const a = litRange(n.inputs[j] as ValueId);
         const b = litRange(rec.next[j] as ValueId);
         if (a === undefined || b === undefined) return;
@@ -1706,6 +1823,10 @@ function lowerFunction(
   const isTypedBig = (v: ValueId): boolean =>
     widthOf(v) !== undefined && (widthOf(v) as number) <= 127;
   const bigSlots = new Map<ValueId, string>();
+  /** A typed BigInt whose boxed value is kept too (a `.big` clone's parameter): read boxed as it came. */
+  const bigBoxed = new Set<ValueId>();
+  /** Whether this lowering takes its arguments in registers: a speculated clone's. */
+  const regClone = (numberParams?.size ?? 0) > 0 || (bigParams?.size ?? 0) > 0;
   const bigSlotOf = (v: ValueId): string => {
     let s0 = bigSlots.get(v);
     if (s0 === undefined) {
@@ -1875,7 +1996,7 @@ function lowerFunction(
       const key = m.constant(sym);
       return call("yk_global", `ptr ${key.ptr}, i64 ${key.length}`);
     }
-    if (bigWidth.has(v)) return boxBig(bigOperand(v));
+    if (bigWidth.has(v) && !bigBoxed.has(v)) return boxBig(bigOperand(v));
     const r = fresh();
     emit(`${r} = load i64, ptr ${slotOf(v)}`);
     return r;
@@ -3185,6 +3306,22 @@ function lowerFunction(
       else emit(`${r} = xor i128 ${x}, -1`);
       return r;
     }
+    if (lbl === "%" || lbl === "/") {
+      // Truncating division and its remainder (BigInt's); by zero, the runtime's RangeError.
+      const a = bigOperand(ins[0] as ValueId);
+      const b = bigOperand(ins[1] as ValueId);
+      const zero = fresh();
+      emit(`${zero} = icmp eq i128 ${b}, 0`);
+      const byZero = freshLabel("bigzero");
+      const ok = freshLabel("bigdiv");
+      emit(`br i1 ${zero}, label %${byZero}, label %${ok}`);
+      block(byZero);
+      call(BINARY[lbl] as string, `i64 ${boxBig(a)}, i64 ${boxBig(b)}`);
+      emit("unreachable");
+      block(ok);
+      emit(`${r} = ${lbl === "%" ? "srem" : "sdiv"} i128 ${a}, ${b}`);
+      return r;
+    }
     const a = bigOperand(ins[0] as ValueId);
     // A right shift by 127 or more is the sign: an LLVM shift by the width or more is poison.
     const k = literalBig(ins[1] as ValueId);
@@ -3278,6 +3415,14 @@ function lowerFunction(
       const r = fresh();
       emit(`${r} = call i64 @yk_sb_append(i64 ${h}, i64 ${operand(ins[1] as ValueId)})`);
       set(out, r);
+      return;
+    }
+    if (n.kind === "sel" && bigWidth.has(out)) {
+      const [c, t, e] = ins as [ValueId, ValueId, ValueId];
+      const cond = truthy(c);
+      const r = fresh();
+      emit(`${r} = select i1 ${cond}, i128 ${bigOperand(t)}, i128 ${bigOperand(e)}`);
+      setBig(out, r);
       return;
     }
     if (n.kind === "sel") {
@@ -5029,7 +5174,12 @@ function lowerFunction(
     ] as const) {
       block(lbl);
       emitScope(sidePath(b, side));
-      for (const j of joins) set(j.outputs[0] as ValueId, operand(j.inputs[input] as ValueId));
+      for (const j of joins) {
+        const out = j.outputs[0] as ValueId;
+        // A typed join (a BigInt the proof types): its i128, from the side taken.
+        if (bigWidth.has(out)) setBig(out, bigOperand(j.inputs[input] as ValueId));
+        else set(out, operand(j.inputs[input] as ValueId));
+      }
       emit(`br label %${endL}`);
     }
     block(endL);
@@ -5038,7 +5188,13 @@ function lowerFunction(
   const emitLoop = (loop: DucNode): void => {
     const rec = loop.loop as DucLoop;
     const builders = builderCarries.get(loop);
+    /** A carry kept as an i128 (#1369): its slot alone, boxed only where a reader needs it. */
+    const bigCarry = (i: number): boolean => bigWidth.has(resolve(rec.carry[i] as ValueId));
     rec.carry.forEach((c, i) => {
+      if (bigCarry(i)) {
+        setBig(resolve(c), bigOperand(loop.inputs[i] as ValueId));
+        return;
+      }
       const init = operand(loop.inputs[i] as ValueId);
       if (numRange.has(resolve(c)) && intKnown(loop.inputs[i] as ValueId))
         setInt(c, intOperand(loop.inputs[i] as ValueId));
@@ -5112,14 +5268,17 @@ function lowerFunction(
     emit(`br label %${inner}`);
     block(inner);
     emitItems(items.filter((it) => !forCond.has(it)));
-    const next = rec.next.map((nv) => operand(nv));
+    const next = rec.next.map((nv, i) => (bigCarry(i) ? bigOperand(nv) : operand(nv)));
     // A carry in an integer range: its next value's int64 too (all read before any is written).
     const intNext = rec.carry.map((c, i) =>
       numRange.has(resolve(c)) && intKnown(rec.next[i] as ValueId)
         ? intOperand(rec.next[i] as ValueId)
         : undefined,
     );
-    next.forEach((r, i) => set(rec.carry[i] as ValueId, r));
+    next.forEach((r, i) => {
+      if (bigCarry(i)) setBig(resolve(rec.carry[i] as ValueId), r);
+      else set(rec.carry[i] as ValueId, r);
+    });
     intNext.forEach((r, i) => {
       if (r !== undefined) setInt(rec.carry[i] as ValueId, r);
     });
@@ -5132,6 +5291,10 @@ function lowerFunction(
       emit(`call void @yk_iter_close(i64 ${iterator})`);
     }
     loop.outputs.forEach((v, i) => {
+      if (bigCarry(i) && bigWidth.has(resolve(v))) {
+        setBig(resolve(v), bigOperand(rec.carry[i] as ValueId));
+        return;
+      }
       const at = operand(rec.carry[i] as ValueId);
       if (builders?.has(i) !== true) set(v, at);
       else {
@@ -5208,14 +5371,14 @@ function lowerFunction(
     else if (i < closure.captures) set(v, call("yk_capture", `ptr %closure, i64 ${i}`));
     else if ((p.label ?? "").endsWith("..."))
       set(v, call("yk_rest", `i64 %argc, ptr %argv, i64 ${i - closure.captures}`));
-    else if (
-      numberParams !== undefined &&
-      numberParams.size > 0 &&
-      regList !== undefined &&
-      regList.includes(i - closure.captures)
-    )
+    else if (regClone && regList !== undefined && regList.includes(i - closure.captures)) {
       set(v, `%n${i - closure.captures}`);
-    else if (rawParams?.has(i - closure.captures) === true) {
+      if (bigParams?.has(v) === true) {
+        // A BigInt its entry checked: its i128 too, and the boxed value kept for any other reader.
+        setBig(v, unboxBig(`%n${i - closure.captures}`));
+        bigBoxed.add(v);
+      }
+    } else if (rawParams?.has(i - closure.captures) === true) {
       // A raw block argument: its bytes and length; its address is never read (0, as a local
       // block's is, so a constant offset from it folds).
       set(v, boxedNumber(0));
@@ -5298,19 +5461,84 @@ function lowerFunction(
         });
       }
     }
+    // A parameter used as a BigInt (raised C's 64-bit integers: beside a BigInt the proof types or a
+    // BigInt literal, or a fixed-width leaf's operand): speculated a BigInt below 2^64 in magnitude.
+    const BIG_LEAVES = new Set([
+      "__ykU64",
+      "__ykI64",
+      "__ykBigToI32",
+      "__ykBigToU32",
+      "__ykBigToF64",
+    ]);
+    const bigUse = new Set<ValueId>();
+    for (const n of g.nodes) {
+      if (n.kind !== "op") continue;
+      const leaf = leafOf(n);
+      const ins = (leaf !== undefined ? n.inputs.slice(1) : n.inputs).map((v) =>
+        resolve(v as ValueId),
+      );
+      if (leaf !== undefined && BIG_LEAVES.has(leaf)) for (const v of ins) bigUse.add(v);
+      else if (leaf === undefined && ins.length === 2 && NUMERIC.has(n.label ?? "")) {
+        const [a, b] = ins as [ValueId, ValueId];
+        if (widthOf(b) !== undefined) bigUse.add(a);
+        if (widthOf(a) !== undefined) bigUse.add(b);
+      } else if (
+        leaf === undefined &&
+        ins.length === 2 &&
+        ["===", "!==", "==", "!="].includes(n.label ?? "")
+      ) {
+        const [a, b] = ins as [ValueId, ValueId];
+        if (literalBig(b) !== undefined) bigUse.add(a);
+        if (literalBig(a) !== undefined) bigUse.add(b);
+      }
+    }
+    for (let more = true; more; ) {
+      more = false;
+      for (const n of g.nodes) {
+        // An operator's BigInt result: its operands are BigInts too (mixing throws); >>> has none.
+        if (
+          n.kind === "op" &&
+          leafOf(n) === undefined &&
+          NUMERIC.has(n.label ?? "") &&
+          n.label !== ">>>" &&
+          bigUse.has(resolve(n.outputs[0] as ValueId))
+        )
+          for (const v of n.inputs)
+            if (!bigUse.has(resolve(v as ValueId))) {
+              bigUse.add(resolve(v as ValueId));
+              more = true;
+            }
+        const rec = n.loop;
+        if (n.kind !== "loop" || rec === undefined) continue;
+        rec.carry.forEach((c, j) => {
+          const init = resolve(n.inputs[j] as ValueId);
+          if (bigUse.has(resolve(c)) && !bigUse.has(init)) {
+            bigUse.add(init);
+            more = true;
+          }
+        });
+      }
+    }
     const worth = numericWork;
+    const candidate = (p: DucNode, i: number): boolean =>
+      worth &&
+      i >= closure.captures &&
+      !(p.label ?? "").endsWith("...") &&
+      rawParams?.has(i - closure.captures) !== true;
+    const speculatedBig = params.filter(
+      (p, i) => candidate(p, i) && bigUse.has(p.outputs[0] as ValueId),
+    );
     const speculated = params.filter(
       (p, i) =>
-        worth &&
-        i >= closure.captures &&
-        !(p.label ?? "").endsWith("...") &&
-        rawParams?.has(i - closure.captures) !== true &&
-        numericUse.has(p.outputs[0] as ValueId),
+        candidate(p, i) &&
+        numericUse.has(p.outputs[0] as ValueId) &&
+        !bigUse.has(p.outputs[0] as ValueId),
     );
-    if (speculated.length > 0) {
-      // Named for its function, so a caller whose arguments are numbers calls it directly.
-      const clone = `${name.replace(/"/g, "")}.num`;
-      m.numClones.add(clone);
+    if (speculated.length > 0 || speculatedBig.length > 0) {
+      // Named for its function, so a caller whose arguments are numbers calls it directly; a clone
+      // that also takes BigInts is `.big`, called only through these checks.
+      const clone = `${name.replace(/"/g, "")}.${speculatedBig.length > 0 ? "big" : "num"}`;
+      if (speculatedBig.length === 0) m.numClones.add(clone);
       lowerFunction(
         m,
         source,
@@ -5320,6 +5548,10 @@ function lowerFunction(
         new Set(speculated.map((p) => p.outputs[0] as ValueId)),
         rawParams,
         recOut,
+        undefined,
+        speculatedBig.length > 0
+          ? new Set(speculatedBig.map((p) => p.outputs[0] as ValueId))
+          : undefined,
       );
       let ok = "true";
       for (const p of speculated) {
@@ -5329,9 +5561,40 @@ function lowerFunction(
         emit(`${both} = and i1 ${ok}, ${c}`);
         ok = both;
       }
+      // Each speculated BigInt: a BigInt (its tag), then of at most two 32-bit limbs.
+      for (const p of speculatedBig) {
+        const tag = fresh();
+        emit(`${tag} = lshr i64 ${operand(p.outputs[0] as ValueId)}, 48`);
+        const c = fresh();
+        emit(`${c} = icmp eq i64 ${tag}, 65535`);
+        const both = fresh();
+        emit(`${both} = and i1 ${ok}, ${c}`);
+        ok = both;
+      }
       const spec = freshLabel("numbers");
       const general = freshLabel("general");
-      emit(`br i1 ${ok}, label %${spec}, label %${general}`);
+      if (speculatedBig.length > 0) {
+        const limbs = freshLabel("limbs");
+        emit(`br i1 ${ok}, label %${limbs}, label %${general}`);
+        block(limbs);
+        let fits = "true";
+        for (const p of speculatedBig) {
+          const a = fresh();
+          emit(`${a} = and i64 ${operand(p.outputs[0] as ValueId)}, 281474976710655`);
+          const at = fresh();
+          emit(`${at} = add i64 ${a}, 4`);
+          const ptr = fresh();
+          emit(`${ptr} = inttoptr i64 ${at} to ptr`);
+          const len = fresh();
+          emit(`${len} = load i32, ptr ${ptr}`);
+          const c = fresh();
+          emit(`${c} = icmp ule i32 ${len}, 2`);
+          const both = fresh();
+          emit(`${both} = and i1 ${fits}, ${c}`);
+          fits = both;
+        }
+        emit(`br i1 ${fits}, label %${spec}, label %${general}`);
+      } else emit(`br i1 ${ok}, label %${spec}, label %${general}`);
       block(spec);
       const r = fresh();
       emit(
@@ -5446,7 +5709,18 @@ function lowerFunction(
         if (r !== undefined) byPosition.set(pi - closure.captures, r);
       });
       m.intClones.set(name.replace(/"/g, ""), byPosition);
-      lowerFunction(m, source, intClone, closure, scope, numberParams, rawParams, recOut, assumed);
+      lowerFunction(
+        m,
+        source,
+        intClone,
+        closure,
+        scope,
+        numberParams,
+        rawParams,
+        recOut,
+        assumed,
+        bigParams,
+      );
     }
     if (ranged.size > 0) {
       let ok = "true";
@@ -5776,7 +6050,7 @@ function lowerFunction(
     const head =
       closure === undefined
         ? `define i64 @${name}(${params.map((_, i) => `i64 %p${i}`).join(", ")}) {`
-        : `define internal i64 @${name}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead}${numberParams !== undefined && numberParams.size > 0 ? (regList ?? []).map((k) => `, i64 %n${k}`).join("") : ""})${numberParams?.size === 0 ? " noinline" : (numberParams !== undefined && g.nodes.length <= SMALL_CLONE) || dispatchOnly ? " alwaysinline" : ""} {`;
+        : `define internal i64 @${name}(ptr %closure, i64 %this, i64 %argc, ptr %argv${rawHead}${regClone ? (regList ?? []).map((k) => `, i64 %n${k}`).join("") : ""})${numberParams?.size === 0 && !regClone ? " noinline" : (numberParams !== undefined && g.nodes.length <= SMALL_CLONE) || dispatchOnly ? " alwaysinline" : ""} {`;
     m.functions.push(
       [
         head,
