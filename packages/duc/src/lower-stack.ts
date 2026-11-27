@@ -23,7 +23,7 @@ import { liftAtom } from "./lift.js";
 import { bodyPathOf, joinOwners, sidePath } from "./line-form.js";
 import { ecmaScriptView } from "./ops.js";
 import { loweringView } from "./ordering.js";
-import { isRestParam, paramIndex } from "./params.js";
+import { isRestParam, paramIndex, readsOwnReceiver } from "./params.js";
 import { type ScopeItem, scopePlanner } from "./scopes.js";
 import type { DucBranch, DucGraph, DucLoop, DucNode, ValueId } from "./types.js";
 import {
@@ -903,6 +903,8 @@ function lowerFunction(
   };
   /** The empty array literals something other than a number is stored in. */
   const grown = new Set<ValueId>();
+  /** Closures that did not lower in this round of typing, under its types (knownResult). */
+  const deferred: LoweringError[] = [];
   /** The parameters (arrays of numbers) something other than a number is stored in. */
   const grownParams = new Set<number>();
   /** The empty array literals an array value may be: through carries, choices and writes. */
@@ -1058,6 +1060,12 @@ function lowerFunction(
     try {
       return mod.closure(k.fn, sig, trusted, k.caps.length).result;
     } catch (e) {
+      // Under types not yet settled (an array of numbers a later store grows), a closure may not
+      // lower: it is typed again in the next round, and only the settled round's failure stands.
+      if (e instanceof LoweringError && !(e instanceof GrowParams)) {
+        deferred.push(e);
+        return "?";
+      }
       if (!(e instanceof GrowParams)) throw e;
       for (const path of e.paths) growAt(k, args, path);
       return "?";
@@ -1257,7 +1265,9 @@ function lowerFunction(
       };
     }
     if (p.closure !== undefined) {
-      if (p.label !== "closure")
+      // A function declaration is `function` (#1370); one that does not read its own `this` is
+      // the closure it is when called.
+      if (p.label !== "closure" && !(p.label === "function" && !readsOwnReceiver(p.closure)))
         throw new LoweringError(`a "${p.label}" with a body is not in the subset`);
       typeAsValue(v, p);
       return { call: { k: "closure", node: p } };
@@ -1403,6 +1413,11 @@ function lowerFunction(
         try {
           return mod.atomWith(arrayFnAtom(sig.kind, sig.method, sig.args.length), sig.sig).result;
         } catch (e) {
+          // Under types not yet settled (knownResult): typed again in the next round.
+          if (e instanceof LoweringError && !(e instanceof GrowParams)) {
+            deferred.push(e);
+            return "?";
+          }
           if (!(e instanceof GrowParams)) throw e;
           for (const path of e.paths) {
             const [i, ...rest] = path as [number, ...number[]];
@@ -1562,6 +1577,7 @@ function lowerFunction(
       throw new LoweringError("the types do not settle");
     const grownBefore = grown.size;
     changed = false;
+    deferred.length = 0;
     for (const v of allValues) {
       const t = computeType(v);
       const was = types.get(v) ?? "?";
@@ -1580,6 +1596,8 @@ function lowerFunction(
       changed = true;
     }
   }
+  // A closure that does not lower under the settled types: that failure is the function's.
+  if (deferred[0] !== undefined) throw deferred[0];
   if (grownParams.size > 0) throw new GrowParams([...grownParams].map((i) => [i]));
   /** A value's settled type: never typed is undefined (it never has a value). */
   const ty = (v: ValueId): VT => {
