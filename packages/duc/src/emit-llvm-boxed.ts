@@ -269,7 +269,17 @@ const MATH_CONSTANTS: Readonly<Record<string, number>> = nameTable({
   SQRT1_2: Math.SQRT1_2,
   SQRT2: Math.SQRT2,
 });
-const MATH1 = new Set(["floor", "ceil", "trunc", "sqrt", "abs", "sign", "round"]);
+const MATH1 = new Set(["sqrt", "sign", "round"]);
+/**
+ * Math's functions that are musl's on doubles (`atoms/math.ts`, shaved from musl's src/math): the
+ * atom each calls, its argument's ToNumber first.
+ */
+const MUSL_MATH_ATOM: Readonly<Record<string, string>> = nameTable({
+  floor: "floor",
+  ceil: "ceil",
+  trunc: "trunc",
+  abs: "fabs",
+});
 const APPROXIMATED =
   /^(exp|expm1|log|log1p|log2|log10|sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|cbrt|hypot|pow)$/;
 
@@ -484,7 +494,11 @@ function mathFunctionValue(
       body.push(`  %a${i} = call i64 @yk_arg(i64 %argc, ptr %argv, i64 ${i})`);
       return `%a${i}`;
     };
-    const ref = mathOperation(name, 1) ?? mathOperation(name, 2);
+    const musl = MUSL_MATH_ATOM[name];
+    const ref =
+      musl !== undefined
+        ? { atom: musl, arity: 1 }
+        : (mathOperation(name, 1) ?? mathOperation(name, 2));
     if (MATH1.has(name)) {
       const key = m.constant(name, true);
       m.used.add("yk_math1");
@@ -4988,16 +5002,8 @@ function lowerFunction(
         if (MATH1.has(callee.name) && args.length === 1) {
           const key = m.constant(callee.name, true);
           const slow = (): string => call("yk_math1", `ptr ${key.ptr}, i64 ${args[0]}`);
-          // floor, ceil, trunc, sqrt and abs of a number: the exact LLVM intrinsic, inline (#1369).
-          const intrinsic = (
-            {
-              floor: "llvm.floor.f64",
-              ceil: "llvm.ceil.f64",
-              trunc: "llvm.trunc.f64",
-              sqrt: "llvm.sqrt.f64",
-              abs: "llvm.fabs.f64",
-            } as Record<string, string>
-          )[callee.name];
+          // sqrt of a number: the exact LLVM intrinsic, inline (#1369).
+          const intrinsic = ({ sqrt: "llvm.sqrt.f64" } as Record<string, string>)[callee.name];
           if (intrinsic !== undefined) {
             m.intrinsics.add(`declare double @${intrinsic}(double)`);
             set(
@@ -5090,7 +5096,11 @@ function lowerFunction(
           );
           return;
         }
-        const ref = mathOperation(callee.name, args.length);
+        const muslAtom = args.length === 1 ? MUSL_MATH_ATOM[callee.name] : undefined;
+        const ref =
+          muslAtom !== undefined
+            ? { atom: muslAtom, arity: 1 }
+            : mathOperation(callee.name, args.length);
         if (ref !== undefined) {
           // A reference to the atom implementing it: ToNumber of each argument, then the atom.
           const nums = args.map((a) => call("yk_pos", `i64 ${a}`));

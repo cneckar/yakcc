@@ -1193,12 +1193,14 @@ __asm__(".text\n.syntax unified\n.arm\n"
   "  fld fs0, 112(a0)\n  fld fs1, 120(a0)\n  fld fs2, 128(a0)\n  fld fs3, 136(a0)\n"               \
   "  fld fs4, 144(a0)\n  fld fs5, 152(a0)\n  fld fs6, 160(a0)\n  fld fs7, 168(a0)\n"               \
   "  fld fs8, 176(a0)\n  fld fs9, 184(a0)\n  fld fs10, 192(a0)\n  fld fs11, 200(a0)\n"
-__asm__(".text\n"
+/* The double registers by name whatever the file's features (bitcode's module asm is read with
+   the triple's defaults alone). */
+__asm__(".text\n.option push\n.option arch, +d\n"
         ".globl setjmp\n.type setjmp,@function\nsetjmp:\n" YK_SAVE "  li a0, 0\n  ret\n"
         ".globl longjmp\n.type longjmp,@function\nlongjmp:\n" YK_LOAD
         "  mv a0, a1\n  bnez a0, 1f\n  li a0, 1\n1:\n  ret\n"
         ".globl yk_switch\n.type yk_switch,@function\nyk_switch:\n" YK_SAVE "  mv a0, a1\n"
-        ".globl yk_resume\n.type yk_resume,@function\nyk_resume:\n" YK_LOAD "  ret\n");
+        ".globl yk_resume\n.type yk_resume,@function\nyk_resume:\n" YK_LOAD "  ret\n.option pop\n");
 #endif
 
 typedef struct {

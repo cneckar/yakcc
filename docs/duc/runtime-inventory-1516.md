@@ -9,7 +9,7 @@ leaves in LLVM (`src/native-leaves.ts`; the system call, the thread pointer and 
 entry per target in `src/native-system.ts`). Every other section is hand-written scaffolding,
 deleted as the atom shaved from its source replaces it.
 
-**Lines to replace: 15219** of 15655 (kept: leaf 0, control 436).
+**Lines to replace: 15215** of 15653 (kept: leaf 0, control 438).
 
 Also hand-written, outside `runtime/`: the boot program's `runtime.*` bindings in
 `packages/duc/src/program.ts` (contextify, task_queue, async_wrap, messaging, worker, …), V8's and
@@ -17,12 +17,12 @@ node/src's part of Node's bindings, replaced as #1367 shaves node/src over V8's 
 
 | kind | lines |
 |---|---|
-| builtin | 10551 |
+| builtin | 10547 |
 | object-model | 2172 |
 | libc | 1110 |
 | node | 667 |
 | collector | 583 |
-| control | 436 |
+| control | 438 |
 | host | 136 |
 
 | where | section | lines | kind | replaced by |
@@ -69,8 +69,8 @@ node/src's part of Node's bindings, replaced as #1367 shaves node/src over V8's 
 | `yk.c:9047` | the runtime's own internalBinding layer | 461 | node | node/src's bindings, over V8's API as atoms (#1367) |
 | `yk.c:9508` | Proxy | 247 | builtin | src/builtins/proxy-*.tq, src/objects/js-proxy.h |
 | `yk.c:9755` | spread | 320 | builtin | src/builtins/builtins-call-gen.cc (CallWithSpread), iteration |
-| `yk.c:10075` | Math, with JavaScript's results | 40 | builtin | src/builtins/math.tq, src/base/ieee754.cc (#1362's Math atoms) |
-| `yk.c:10115` | the host boundary | 136 | host | the test harnesses' text form of values |
+| `yk.c:10075` | Math, with JavaScript's results | 36 | builtin | src/builtins/math.tq, src/base/ieee754.cc (#1362's Math atoms) |
+| `yk.c:10111` | the host boundary | 136 | host | the test harnesses' text form of values |
 | `rx.h:1` | (the file's opening) | 477 | builtin | src/regexp/ (Irregexp's parser): new RegExp(string) compiled at run time |
 | `rx.h:478` | matching | 270 | builtin | src/regexp/ (Irregexp's backtracking matcher) |
 | `case.h:1` | (the file's opening) | 3076 | builtin | src/strings/unicode.cc (unibrow's case tables) |
@@ -86,6 +86,6 @@ node/src's part of Node's bindings, replaced as #1367 shaves node/src over V8's 
 | `nolibc.h:585` | formatted output | 245 | libc | musl: src/stdio/vfprintf.c (#1365) |
 | `nolibc.h:830` | strtod, exact | 147 | libc | musl: src/internal/floatscan.c (#1365) |
 | `nolibc.h:977` | stdio | 116 | libc | musl: src/stdio/ (#1365) |
-| `nolibc.h:1093` | setjmp | 156 | control | setjmp and a coroutine's switch, per architecture |
-| `nolibc.h:1249` | the program's ELF segments | 40 | collector | the collector's roots: the program's writable segments |
-| `nolibc.h:1289` | the entry | 18 | libc | musl: src/env/__libc_start_main.c (#1365); _start is the system module's |
+| `nolibc.h:1093` | setjmp | 158 | control | setjmp and a coroutine's switch, per architecture |
+| `nolibc.h:1251` | the program's ELF segments | 40 | collector | the collector's roots: the program's writable segments |
+| `nolibc.h:1291` | the entry | 18 | libc | musl: src/env/__libc_start_main.c (#1365); _start is the system module's |
