@@ -8889,12 +8889,15 @@ export interface StaticDef {
 export function createCMemory() {
   interface Region {
     readonly base: number;
-    readonly bytes: Uint8Array;
-    readonly view: DataView;
+    bytes: Uint8Array;
+    view: DataView;
     readonly constant: boolean;
     live: boolean;
   }
+  const EMPTY_BYTES = new Uint8Array(0);
+  const EMPTY_VIEW = new DataView(EMPTY_BYTES.buffer);
   const regions: Region[] = []; // by base, ascending (addresses only grow)
+  let dead = 0;
   // Functions as addresses, for function pointers (stored in memory, compared, called through):
   // a range no region uses, 16 apart.
   const FN_BASE = 0x7f0000000000;
@@ -9045,6 +9048,19 @@ export function createCMemory() {
         throw new CMemoryTrap(`memory trap: free of 0x${a.toString(16)}`);
       r.live = false;
       if (freedAt !== undefined) freedAt.set(r.base, new Error().stack ?? "");
+      // Its bytes released (a long run frees millions of frames: ICU's); a later access traps
+      // as one in no region does. The dead regions dropped from the list once they are most of it.
+      else {
+        r.bytes = EMPTY_BYTES;
+        r.view = EMPTY_VIEW;
+        dead++;
+        if (dead > 4096 && dead * 2 > regions.length) {
+          let w = 0;
+          for (const x of regions) if (x.live) regions[w++] = x;
+          regions.length = w;
+          dead = 0;
+        }
+      }
     },
     __ykData: (kind: string, values: readonly (number | bigint)[]): number => {
       const key = `${kind}:${values.map(String).join(",")}`;
