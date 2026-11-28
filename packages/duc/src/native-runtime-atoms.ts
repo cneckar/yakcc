@@ -37,7 +37,8 @@ export function runtimeAtomsModule(): { ir: string; entry: string } {
   const { ir, symbols } = emitNativeModules(
     withStatics([{ id: ID, statements }], new Map(Object.entries(V8_BIGINT_STATICS))),
   );
-  memo = { ir, entry: symbols[ID] as string };
+  // Its own symbols (a module's are m0_s0, m0.init, …, as every program's are): prefixed.
+  memo = { ir: ir.replace(/@("?)m(\d+)([._])/g, "@$1ykv8.m$2$3"), entry: symbols[ID] as string };
   return memo;
 }
 
