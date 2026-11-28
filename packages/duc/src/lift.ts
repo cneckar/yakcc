@@ -23,6 +23,7 @@
 import { createHash } from "node:crypto";
 import {
   type CallExpression,
+  type Identifier,
   type LabeledStatement,
   Node,
   Project,
@@ -2595,15 +2596,13 @@ class Lifter {
     // it as it captures `this`. An arrow with no function around it has none.
     const argumentsUses = closureLocals(fn).has("arguments")
       ? []
-      : fn
-          .getDescendantsOfKind(SyntaxKind.Identifier)
-          .filter(
-            (id) =>
-              id.getText() === "arguments" &&
-              isValueRead(id) &&
-              (receiverOwner(id) === fn ||
-                (Node.isArrowFunction(fn) && receiverOwner(id) === receiverOwner(fn))),
-          );
+      : identifiersIn(fn).filter(
+          (id) =>
+            id.getText() === "arguments" &&
+            isValueRead(id) &&
+            (receiverOwner(id) === fn ||
+              (Node.isArrowFunction(fn) && receiverOwner(id) === receiverOwner(fn))),
+        );
     const lexicalArguments = Node.isArrowFunction(fn) && argumentsUses.length > 0;
     if (lexicalArguments && !this.env.has(ARGUMENTS) && !this.ownsArguments) return undefined;
     const lexicalThis = Node.isArrowFunction(fn) && thisUses.length > 0;
@@ -2625,9 +2624,7 @@ class Lifter {
       Node.isSetAccessorDeclaration(fn)
         ? fn.getNameNode().compilerNode
         : undefined;
-    const reads = fn
-      .getDescendantsOfKind(SyntaxKind.Identifier)
-      .filter((id) => id.compilerNode !== ownName);
+    const reads = identifiersIn(fn).filter((id) => id.compilerNode !== ownName);
     // A closure that rebinds a name outside itself needs a shared cell, which the graph does not
     // have. A write to a member of an outer object or of the receiver keeps the binding: it changes
     // the shared object, as a call that changes its argument does.
@@ -2648,10 +2645,13 @@ class Lifter {
     };
     if (assignmentTargets(fn).some(rebindsOutside)) return undefined;
     const outerReads: string[] = [];
+    const seenReads = new Set<string>();
     for (const id of reads) {
       if (!isValueRead(id)) continue;
       const name = id.getText();
-      if (!declaredWithin(id, fn) && !outerReads.includes(name)) outerReads.push(name);
+      if (seenReads.has(name) || declaredWithin(id, fn)) continue;
+      seenReads.add(name);
+      outerReads.push(name);
     }
     // A class's own name in its members is the class (`class-self`), not a capture.
     if (classSelf !== undefined) {
@@ -5403,6 +5403,16 @@ function scopeNames(scope: Node): Set<string> {
 }
 
 function closureLocals(fn: Node): Set<string> {
+  // Asked for again by each scope around the closure, and by the closure's own lift: memoized per
+  // node (#1361), a copy each time, since a caller deletes from it.
+  const cached = closureLocalsCache.get(fn.compilerNode);
+  if (cached !== undefined) return new Set(cached);
+  const locals = closureLocalsOf(fn);
+  closureLocalsCache.set(fn.compilerNode, locals);
+  return new Set(locals);
+}
+
+function closureLocalsOf(fn: Node): Set<string> {
   const locals = collectRegionLocals(fn);
   for (const decl of [
     ...fn.getDescendantsOfKind(SyntaxKind.FunctionDeclaration),
@@ -5530,8 +5540,7 @@ function cellNames(scope: Node): Set<string> {
     if (!isFunctionLikeNode(fn)) continue;
     const locals = closureLocals(fn);
     const reads = new Set(
-      fn
-        .getDescendantsOfKind(SyntaxKind.Identifier)
+      identifiersIn(fn)
         .filter((id) => isValueRead(id) && !declaredWithin(id, fn))
         .map((id) => id.getText()),
     );
@@ -7182,6 +7191,20 @@ const exitCache = new WeakMap<object, boolean>();
 const readNamesCache = new WeakMap<object, string[]>();
 const switchArmsCache = new WeakMap<object, SwitchArm[] | null>();
 const assignmentTargetsCache = new WeakMap<object, Node[]>();
+const closureLocalsCache = new WeakMap<object, Set<string>>();
+const identifiersCache = new WeakMap<object, readonly Identifier[]>();
+
+/**
+ * The identifiers under a closure, as getDescendantsOfKind gives them, memoized per node (#1361):
+ * each scope around the closure asks again, and so does its own lift.
+ */
+function identifiersIn(fn: Node): readonly Identifier[] {
+  const cached = identifiersCache.get(fn.compilerNode);
+  if (cached !== undefined) return cached;
+  const ids = fn.getDescendantsOfKind(SyntaxKind.Identifier);
+  identifiersCache.set(fn.compilerNode, ids);
+  return ids;
+}
 
 function insideOpaque(ret: Node, root: Node): boolean {
   for (
