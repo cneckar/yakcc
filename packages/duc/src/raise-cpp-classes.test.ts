@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // The C++ front end on classes (#1364): methods with `this`, constructors with member and base
 // initializers, destructors run when a block is left (in reverse, on every way out), references,
-// operators, virtual calls through vtables, new/delete, and a lambda. The fixture's entry points
+// operators, virtual calls through vtables (a second base's too), new/delete, and a lambda. The fixture's entry points
 // run shaved over the memory leaves and compiled natively; each result must be the same.
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -31,6 +31,7 @@ const ENTRIES: readonly [string, number][] = [
   ["yk_refs", 2],
   ["yk_box", 2],
   ["yk_modern", 2],
+  ["yk_multi", 2],
 ];
 
 const work = mkdtempSync(join(tmpdir(), "yakcc-raise-cpp-classes-"));

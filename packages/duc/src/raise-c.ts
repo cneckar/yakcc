@@ -511,6 +511,15 @@ export interface RecordLayout {
     }
   >;
 }
+/**
+ * A class's vtable group as clang dumps it (Itanium's): its rows (offset-to-top, RTTI, entries; a
+ * secondary table's entry with the `this` adjustment its thunk makes), and each subobject's
+ * address point, by its offset in the object, as a row index.
+ */
+interface VtableGroup {
+  readonly rows: { readonly text: string; adjust?: number }[];
+  readonly points: { readonly offset: number; readonly row: number }[];
+}
 /** The type a typedef names, as clang spells it, when the unit has the typedef. */
 export type TypedefResolver = (name: string) => string | undefined;
 /** A record's layout by its name (`struct P`), when clang laid it out. */
@@ -1496,6 +1505,13 @@ export interface CxxUnit {
     /** The class's declaration (a constructor's), which a local class's vtable is of alone. */
     classId?: string,
   ) => string;
+  /**
+   * A class's secondary vtable pointers (C++, a polymorphic base after the first): each one's
+   * offset in the object, and its address point's offset in the class's vtable static.
+   */
+  readonly secondaryVtables: (
+    record: string,
+  ) => readonly { readonly offset: number; readonly at: number }[];
   /** A member function's class's declaration id. */
   readonly classIdOf: (fnId: string) => string | undefined;
 }
@@ -3866,6 +3882,12 @@ function raiseBody(
     }
     return [
       `__ykStore64(${vp === 0 ? addr : `(${addr} + ${vp})`}, __ykNumToBig(__ykStatic(${JSON.stringify(key)}) + 16))`,
+      ...unitCxx
+        .secondaryVtables(record)
+        .map(
+          (v) =>
+            `__ykStore64((${addr} + ${v.offset}), __ykNumToBig(__ykStatic(${JSON.stringify(key)}) + ${v.at}))`,
+        ),
     ];
   };
   const relocate = (to: string, from: string, t: CType, move: boolean): string[] => {
@@ -5581,7 +5603,14 @@ function raiseBody(
         return "";
       throw e;
     }
-    return `__ykStore64(${vptrAt === 0 ? "__this" : `(__this + ${vptrAt})`}, __ykNumToBig(__ykStatic(${JSON.stringify(key)}) + 16));`;
+    // (And each secondary base's, at its address point in the same group.)
+    return [
+      `__ykStore64(${vptrAt === 0 ? "__this" : `(__this + ${vptrAt})`}, __ykNumToBig(__ykStatic(${JSON.stringify(key)}) + 16));`,
+      ...(unitCxx?.secondaryVtables(thisRecord as string) ?? []).map(
+        (v) =>
+          `__ykStore64((__this + ${v.offset}), __ykNumToBig(__ykStatic(${JSON.stringify(key)}) + ${v.at}));`,
+      ),
+    ].join("\n");
   };
   if (fn.kind === "CXXDestructorDecl" && vptrAt !== undefined) entry.push(setVptr());
   for (const init of fn.kind === "CXXConstructorDecl" ? baseFirst : []) {
@@ -6873,23 +6902,21 @@ function shaveUnit(
                   .map((x) => `${x};`)
                   .join("\n")}\n}`,
               );
-            const init: StaticItem[] = [];
-            // (Itanium's: offset-to-top and the RTTI before the address point, the class's
-            // type_info, see typeinfoOf; the entries after it.)
-            init.push({ offset: 8, static: typeinfoOf(record), addend: 0 });
-            entries.forEach((text, i) => {
-              const offset = 16 + 8 * i;
-              if (text.endsWith("[pure]")) return;
-              if (text.endsWith("[complete]")) init.push({ offset, fn: complete() });
-              else if (text.endsWith("[deleting]"))
-                init.push({
-                  offset,
-                  fn: synth(
+            // An entry's function: its destructor's (complete, or deleting: then freed), or its
+            // final overrider, with the method's declaration (a thunk's signature is its).
+            const fnOf = (
+              text: string,
+            ): { key: string; method?: string | undefined } | undefined => {
+              if (text.endsWith("[pure]")) return undefined;
+              if (text.endsWith("[complete]")) return { key: complete() };
+              if (text.endsWith("[deleting]"))
+                return {
+                  key: synth(
                     `${ident(simple)}_delete`,
                     `export function f(__this: number): void {\n${complete()}(__this);\n__ykFree(__this);\n}`,
                   ),
-                });
-              else {
+                };
+              {
                 // The final overrider: a method of the class the entry names. (Its scope without
                 // `(anonymous namespace)`, whose parenthesis is not the parameters'.)
                 // (And a template instance's: its arguments, and the `[T = ..]` clang appends.)
@@ -6960,25 +6987,95 @@ function shaveUnit(
                     Number(indexed.byId.get(a)?.mangled !== undefined),
                 );
                 let fnKey: string | undefined;
+                let chosen: string | undefined;
                 for (const id of ids) {
                   fnKey =
                     (definitionIn(indexed, id) !== undefined
                       ? resolve({ name, kind: "CXXMethodDecl", type: "", id })
                       : undefined) ?? (bySymbol ? symbolOfId(id) : undefined);
-                  if (fnKey !== undefined) break;
+                  if (fnKey !== undefined) {
+                    chosen = id;
+                    break;
+                  }
                 }
                 if (fnKey === undefined && ids.length > 0)
                   fnKey =
                     resolve({ name, kind: "CXXMethodDecl", type: "", id: ids[0] as string }) ??
                     undefined;
                 if (fnKey === undefined) throw new RaiseCError(`the overrider ${text}`);
-                init.push({ offset, fn: fnKey });
+                return { key: fnKey, method: chosen ?? ids[0] };
               }
+            };
+            const init: StaticItem[] = [];
+            // (Itanium's: offset-to-top and the RTTI before each address point, the class's
+            // type_info, see typeinfoOf; the entries after it. The primary table's address point
+            // is the static's start + 16; a secondary base's, its own row's, see secondaryVtables.)
+            const group = vtables().groups.get(simple);
+            const rows = group?.rows ?? [
+              { text: "offset_to_top (0)" },
+              { text: "RTTI" },
+              ...entries.map((text) => ({ text })),
+            ];
+            rows.forEach((row, r) => {
+              const offset = 8 * r;
+              const off = /^(?:offset_to_top|vcall_offset|vbase_offset) \((-?\d+)\)$/.exec(
+                row.text,
+              );
+              if (off !== null) {
+                if (Number(off[1]) !== 0)
+                  init.push({ offset, kind: "i64", value: BigInt(off[1] as string) });
+                return;
+              }
+              if (/ RTTI$|^RTTI$/.test(row.text)) {
+                init.push({ offset, static: typeinfoOf(record), addend: 0 });
+                return;
+              }
+              const f = fnOf(row.text);
+              if (f === undefined) return;
+              if (row.adjust === undefined || row.adjust === 0) {
+                init.push({ offset, fn: f.key });
+                return;
+              }
+              // A secondary base's entry: a thunk, `this` moved back to the whole object first.
+              const m = f.method === undefined ? undefined : indexed.byId.get(f.method);
+              const node = m === undefined ? undefined : readDecl(indexed, m);
+              const params = (node?.inner ?? []).filter((c) => c.kind === "ParmVarDecl");
+              const result =
+                node === undefined
+                  ? ({ k: "void" } as CType)
+                  : ctype({ qualType: returnTypeOf(node.type?.qualType ?? "void ()") });
+              const sretThunk = result.k === "rec";
+              const sig = [
+                ...(sretThunk ? ["__ret: number"] : []),
+                "__this: number",
+                ...params.map((q, j) => `a${j}: ${tsType(ctype(q.type))}`),
+              ];
+              const call = [
+                ...(sretThunk ? ["__ret"] : []),
+                `(__this + ${row.adjust})`,
+                ...params.map((_q, j) => `a${j}`),
+              ];
+              init.push({
+                offset,
+                fn: synth(
+                  `${f.key}_thunk${-row.adjust}`,
+                  `export function f(${sig.join(", ")}): ${tsType(result)} {\nreturn ${f.key}(${call.join(", ")});\n}`,
+                ),
+              });
             });
-            statics.set(key, { size: 16 + 8 * entries.length, align: 8, init });
+            statics.set(key, { size: 8 * rows.length, align: 8, init });
             return key;
           },
           typeinfoOf: (record) => typeinfoOf(record),
+          secondaryVtables: (record) => {
+            // (Not the primary's, which may be after a base with none.)
+            const seen = new Set<number>([vptrOf(record) ?? 0]);
+            return (vtables().groups.get(simpleClass(record))?.points ?? []).flatMap((p) => {
+              if (seen.has(p.offset)) return [];
+              seen.add(p.offset);
+              return [{ offset: p.offset, at: 8 * p.row }];
+            });
+          },
           calledDirectly: (caller, methodId) => {
             const m = symbolOfId(methodId);
             return m !== undefined && irCalls(caller).includes(m);
@@ -6986,7 +7083,14 @@ function shaveUnit(
         };
   // The unit's vtables, as clang lays them out (its code generation dumps them): each class's
   // entries from its address point, and the slot of each virtual function it declares.
-  let vt: { tables: Map<string, string[]>; indices: Map<string, Map<string, number>> } | undefined;
+  let vt:
+    | {
+        tables: Map<string, string[]>;
+        indices: Map<string, Map<string, number>>;
+        /** The whole vtable group: every row (a thunk's `this` adjustment), each address point. */
+        groups: Map<string, VtableGroup>;
+      }
+    | undefined;
   const vtables = (): NonNullable<typeof vt> => {
     if (vt !== undefined) return vt;
     const text = execFileSync(
@@ -7008,6 +7112,7 @@ function shaveUnit(
     );
     const tables = new Map<string, string[]>();
     const indices = new Map<string, Map<string, number>>();
+    const groups = new Map<string, VtableGroup>();
     for (const block of text.split(/\n\s*\n/)) {
       const lines = block.split("\n");
       const head = /^(Vtable for|VTable indices for) '(.+?)'/.exec(lines[0] ?? "");
@@ -7018,6 +7123,23 @@ function shaveUnit(
         return m === null ? [] : [[Number(m[1]), (m[2] as string).trim()] as const];
       });
       if (head[1] === "Vtable for") {
+        // (The group: rows in order, an entry's `this` adjustment after it, a subobject's address
+        // point before its first entry.)
+        const group: VtableGroup = { rows: [], points: [] };
+        for (const l of lines) {
+          const row = /^\s*(\d+) \| (.*)$/.exec(l);
+          if (row !== null) {
+            group.rows.push({ text: (row[2] as string).trim() });
+            continue;
+          }
+          const adj = /^\s*\[this adjustment: (-?\d+) non-virtual\]/.exec(l);
+          const last = group.rows[group.rows.length - 1];
+          if (adj !== null && last !== undefined) last.adjust = Number(adj[1]);
+          const point = /^\s*-- \((.+), (\d+)\) vtable address --/.exec(l);
+          if (point !== null)
+            group.points.push({ offset: Number(point[2]), row: group.rows.length });
+        }
+        groups.set(simple, group);
         // The primary vtable: the entries after its offset-to-top and RTTI, up to a secondary one.
         const after = rows.filter(([i]) => i >= 2);
         const end = after.findIndex(([, t]) =>
@@ -7042,7 +7164,7 @@ function shaveUnit(
         indices.set(simple, m);
       }
     }
-    vt = { tables, indices };
+    vt = { tables, indices, groups };
     return vt;
   };
   // The whole unit's declarations, read once, when an enumeration constant or offsetof is used.
