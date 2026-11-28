@@ -129,6 +129,25 @@ struct More : Both {
 };
 } // namespace yk
 
+// A union member of a class whose assignment is not trivial (ICU's Precision): the class's
+// implicit assignment assigns the union, whose own trivial assignment is its bytes.
+namespace yk {
+struct Counted {
+  Counted &operator=(const Counted &) { return *this; }
+};
+struct Settings : Counted {
+  int kind = 0;
+  union Value {
+    struct {
+      short lo, hi;
+    } pair;
+    double real;
+    long whole;
+  } value{};
+  int tail = 0;
+};
+} // namespace yk
+
 extern "C" {
 
 int yk_point(int a, int b) {
@@ -212,6 +231,21 @@ int yk_multi(int a, int b) {
   delete m;
   delete l;
   return out + yk::destroyed * 11;
+}
+
+
+int yk_unions(int a, int b) {
+  yk::Settings s, t;
+  s.kind = a;
+  s.value.pair.lo = static_cast<short>(b);
+  s.value.pair.hi = static_cast<short>(a - b);
+  s.tail = b;
+  t = s;
+  yk::Settings u;
+  u.value.real = a * 0.5;
+  t.tail += static_cast<int>(u.value.real);
+  u = t;
+  return u.kind * 3 + u.value.pair.lo * 5 + u.value.pair.hi * 7 + u.tail;
 }
 
 }

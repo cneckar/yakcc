@@ -32,6 +32,7 @@ const ENTRIES: readonly [string, number][] = [
   ["yk_box", 2],
   ["yk_modern", 2],
   ["yk_multi", 2],
+  ["yk_unions", 2],
 ];
 
 const work = mkdtempSync(join(tmpdir(), "yakcc-raise-cpp-classes-"));

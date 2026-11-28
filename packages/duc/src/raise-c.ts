@@ -5613,6 +5613,22 @@ function raiseBody(
     ].join("\n");
   };
   if (fn.kind === "CXXDestructorDecl" && vptrAt !== undefined) entry.push(setVptr());
+  // A trivial copy or move assignment (implicit: clang gives it no body but its `return *this`,
+  // a union's, `Precision::PrecisionUnion`): the object's bytes.
+  if (
+    fn.kind === "CXXMethodDecl" &&
+    fn.name === "operator=" &&
+    (fn as { isImplicit?: boolean }).isImplicit === true &&
+    thisRecord !== undefined &&
+    unitCxx?.trivialAssign(thisRecord) === true &&
+    params.length === 1
+  )
+    for (const step of copyBytes(
+      "__this",
+      declName(params[0] as ClangNode),
+      copiedSize({ k: "rec", name: thisRecord }),
+    ))
+      entry.push(`${step};`);
   for (const init of fn.kind === "CXXConstructorDecl" ? baseFirst : []) {
     if (init === undefined) {
       if (vptrAt !== undefined) entry.push(setVptr());
