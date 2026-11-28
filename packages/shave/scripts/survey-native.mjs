@@ -7,7 +7,7 @@
 //   node scripts/survey-native.mjs <file list> <report.json> [max statement bytes]
 import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { atomShape, emitNativeModules, liftAtom } from "@yakcc/duc";
+import { atomShape, emitNativeModules, liftAtom, unwrapModuleFunction } from "@yakcc/duc";
 
 const ts = createRequire(import.meta.url)("typescript");
 
@@ -57,6 +57,8 @@ for (const file of files) {
   let src;
   try {
     src = readFileSync(file, "utf8");
+    // A bundler's wrapper is its body's statements, as `programRecord` reads a CommonJS module.
+    if (!file.endsWith(".ts")) src = unwrapModuleFunction(src) ?? src;
   } catch {
     continue;
   }
