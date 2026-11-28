@@ -3,8 +3,10 @@
 // node.gyp and node.gypi compile it for linux-x64, each file a unit linked by its symbols, V8's
 // API the boundary (raise-c's isV8Api; its leaves, raise-cpp-v8.ts), the C library musl.
 import { fileURLToPath } from "node:url";
-import { type ShavedUnit, isV8Api, shaveCUnit } from "../raise-c.js";
+import { type ShavedUnit, createCMemory, createCSystem, isV8Api, shaveCUnit } from "../raise-c.js";
+import { type V8Host, createV8 } from "../raise-cpp-v8.js";
 import { type ShavedFiles, shaveCFiles } from "./c-files.js";
+import { type Fn, link, runInitializers } from "./c-link.js";
 import { shaveMusl, withMuslInit } from "./c-musl.js";
 
 export const NODE = fileURLToPath(new URL("../../vendor/node/", import.meta.url));
@@ -126,4 +128,39 @@ export function shaveBinding(
     v8: outside.filter(isV8Api),
     missing: outside.filter((x) => x.startsWith("_Z") && !isV8Api(x)),
   };
+}
+
+/**
+ * A shaved binding made ready as Node's startup makes it: its atoms linked over one memory with
+ * the system-call leaf and V8's API as leaves, musl's init and the C++ globals' constructors run,
+ * the context given Node's Environment and realm (node-env.cc), and the binding's initializer (a
+ * NODE_BINDING_CONTEXT_AWARE_INTERNAL one) run on a fresh object: that object, what
+ * internalBinding(name) gives Node's JavaScript.
+ */
+export function instantiateBinding(
+  shaved: ShavedBinding,
+  initializer: string,
+): { binding: Record<string, unknown>; v8: V8Host } {
+  const memory = createCMemory();
+  const system = createCSystem(memory);
+  const v8 = createV8(memory, shaved.v8);
+  const env = link(
+    new Map([
+      ...shaved.musl.atoms,
+      ...shaved.files.atoms,
+      ...shaved.units.flatMap((u) => [...u.atoms]),
+    ]),
+    false,
+    memory,
+    [...shaved.musl.units, ...shaved.files.units, ...shaved.units],
+    { ...(system.leaves as unknown as Record<string, Fn>), ...v8.leaves },
+  );
+  env.yk_musl_init?.();
+  runInitializers(env, [...shaved.files.units, ...shaved.units]);
+  const context = memory.leaves.__ykAlloc(8, 8);
+  memory.leaves.__ykStore64(context, BigInt(v8.context));
+  (env.yk_node_environment as Fn)(v8.isolate, context);
+  const binding: Record<string, unknown> = {};
+  (env[initializer] as Fn)(v8.local(binding), v8.local(undefined), context, 0);
+  return { binding, v8 };
 }
