@@ -5158,6 +5158,28 @@ function raiseBody(
       // `cpuid` (clang's cpuid.h, `__cpuid` and `__cpuid_count`): each register from the leaf.
       case "GCCAsmStmt": {
         if (isEmptyAsm(s) || unitEmptyAsm().has(raisingSymbol)) return;
+        // `cld; rep ; stos` (V8's MemsetPointer: `"+&c"(counter), "+&D"(dest) : "a"(value)`): the
+        // value stored counter times from dest, a word of its width each; then counter is 0 and
+        // dest past the last.
+        const stos = repStosWidth(s);
+        if (stos !== undefined) {
+          const [count, dest, value] = kids as [ClangNode, ClangNode, ClangNode];
+          const n = temp({ k: "f64" });
+          const p = temp({ k: "f64" });
+          const v = temp({ k: "u64" });
+          const ct = typeOf(count);
+          push(`${n} = ${convert(expr(count), ct, { k: "f64" })};`);
+          push(`${p} = ${expr(dest)};`);
+          push(`${v} = ${convert(expr(value), typeOf(value), { k: "u64" })};`);
+          const store = { 1: "__ykStore8", 2: "__ykStore16", 4: "__ykStore32", 8: "__ykStore64" }[
+            stos
+          ];
+          const word = stos === 8 ? v : `Number(BigInt.asUintN(${stos * 8}, ${v}))`;
+          push(`for (; ${n} > 0; ${n}--, ${p} += ${stos}) ${store}(${p}, ${word});`);
+          push(`${write(place(count), convert("0", { k: "f64" }, ct))};`);
+          push(`${write(place(dest), p)};`);
+          return;
+        }
         if (!isCpuid(s)) throw new RaiseCError("an asm statement other than cpuid");
         const [leafOf, subOf] = kids.slice(4) as [ClangNode, ClangNode?];
         const leaf = temp({ k: "u32" });
@@ -9147,6 +9169,38 @@ function isEmptyAsm(s: ClangNode): boolean {
   return /^(?:__)?asm(?:__)?\s*(?:(?:__)?volatile(?:__)?\s*)?\(\s*""\s*[:)]/.test(
     text.slice(loc.offset, loc.offset + 120),
   );
+}
+
+/** An asm statement's source text (clang's JSON leaves it out), from its file by its range. */
+function asmText(s: ClangNode): string | undefined {
+  type Loc = { offset?: number; file?: string; tokLen?: number };
+  const r = (
+    s as { range?: { begin?: { spellingLoc?: Loc } & Loc; end?: { spellingLoc?: Loc } & Loc } }
+  ).range;
+  const b = r?.begin?.spellingLoc ?? r?.begin;
+  const e = r?.end?.spellingLoc ?? r?.end;
+  const file = b?.file ?? (r?.begin?.spellingLoc === undefined ? unitFile : undefined) ?? unitFile;
+  if (b?.offset === undefined || e?.offset === undefined || file === "") return undefined;
+  try {
+    return readFileSync(file, "latin1").slice(b.offset, e.offset + (e.tokLen ?? 1));
+  } catch {
+    return undefined;
+  }
+}
+
+/** `cld; rep ; stos` with V8's operands (src/utils/memcopy.h): its word's width in bytes. */
+function repStosWidth(s: ClangNode): 1 | 2 | 4 | 8 | undefined {
+  if ((s.inner ?? []).length !== 3) return undefined;
+  const text = asmText(s)?.replace(/\s+/g, " ");
+  if (text === undefined) return undefined;
+  const m =
+    /^asm volatile\( ?"cld;" ?"rep ; " ?(STOS|"stos[bwlq]") ?: ?"\+&c" ?\([^)]*\), ?"\+&D" ?\([^)]*\) ?: ?"a" ?\(/.exec(
+      text,
+    );
+  if (m === null) return undefined;
+  // (V8's STOS: stosq on x64, the target here.)
+  const op = m[1] === "STOS" ? "q" : (m[1] as string).slice(-2, -1);
+  return ({ b: 1, w: 2, l: 4, q: 8 } as const)[op as "b" | "w" | "l" | "q"];
 }
 
 function isCpuid(s: ClangNode): boolean {

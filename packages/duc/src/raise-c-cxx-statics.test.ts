@@ -17,16 +17,16 @@ const work = mkdtempSync(join(tmpdir(), "yakcc-cxx-statics-"));
 afterAll(() => rmSync(work, { recursive: true, force: true }));
 
 describe("C++ statics and offsetof, as V8's heap setup has them", () => {
-  it("a constexpr std::initializer_list read by a range-for, offsetof by function, and a static member read through an object (V8's read-only flags), equal native", () => {
+  it("a constexpr std::initializer_list read by a range-for, offsetof by function, and a static member read through an object (V8's read-only flags), and V8's `rep stosq` MemsetPointer, equal native", () => {
     writeFileSync(
       join(work, "main.cc"),
-      `#include "${FIXTURE}"\n#include <cstdio>\nint main() { printf("%d %d %d %d\\n", table_sum(), offsets(5), offsets(-9), flags_read(2)); }\n`,
+      `#include "${FIXTURE}"\n#include <cstdio>\nint main() { printf("%d %d %d %d %ld %ld\\n", table_sum(), offsets(5), offsets(-9), flags_read(2), memset_words(5), memset_words(0)); }\n`,
     );
     execFileSync("clang++", ["-std=c++20", "main.cc", "-o", "main"], { cwd: work });
     const want = execFileSync(join(work, "main"), { encoding: "utf8" }).trim();
     const unit = shaveCUnit(
       FIXTURE,
-      ["_Z9table_sumv", "_Z7offsetsi", "_Z10flags_readi"],
+      ["_Z9table_sumv", "_Z7offsetsi", "_Z10flags_readi", "_Z12memset_wordsi"],
       ["-std=c++20"],
       "clang++",
       "v8-statics.cc",
@@ -52,6 +52,8 @@ describe("C++ statics and offsetof, as V8's heap setup has them", () => {
         (env._Z7offsetsi as Fn)(5),
         (env._Z7offsetsi as Fn)(-9),
         (env._Z10flags_readi as Fn)(2),
+        (env._Z12memset_wordsi as Fn)(5),
+        (env._Z12memset_wordsi as Fn)(0),
       ].join(" ");
       expect(got).toBe(want);
     }

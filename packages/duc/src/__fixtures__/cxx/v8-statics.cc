@@ -56,3 +56,22 @@ int flags_read(int i) {
   if (v8_flags.single_generation) return v8_flags.full + v8_flags.limit + i;
   return -1;
 }
+
+// V8's MemsetPointer (src/utils/memcopy.h), as it is on x64: `cld; rep ; stosq`.
+using Address = unsigned long;
+#define STOS "stosq"
+inline void MemsetPointer(Address* dest, Address value, size_t counter) {
+  asm volatile(
+      "cld;"
+      "rep ; " STOS
+      : "+&c"(counter), "+&D"(dest)
+      : "a"(value)
+      : "memory", "cc");
+}
+long memset_words(int n) {
+  Address words[16] = {};
+  MemsetPointer(words + 2, 0x0102030405060708UL + static_cast<Address>(n), static_cast<size_t>(n));
+  long sum = 0;
+  for (int i = 0; i < 16; i++) sum = sum * 3 + static_cast<long>(words[i] & 0xffff);
+  return sum;
+}
