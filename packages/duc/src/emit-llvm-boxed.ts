@@ -5747,7 +5747,7 @@ function lowerFunction(
       set(out, slow());
       return;
     }
-    if (ins.length === 2 && lbl === "**") {
+    if (ins.length === 2 && (lbl === "**" || lbl === "**=")) {
       // Two integer literals whose power is an integer a double holds exactly (2 ** 32): that
       // value, which every pow that is right on exact cases gives.
       const exact = exactPower(
@@ -5772,7 +5772,7 @@ function lowerFunction(
       set(out, r);
       return;
     }
-    if (ins.length === 2 && lbl === "**") {
+    if (ins.length === 2 && (lbl === "**" || lbl === "**=")) {
       // ToNumeric of each, once; two BigInts: the runtime's exact power; two Numbers: pow's atom
       // (Number::exponentiate is Math.pow, V8's shaved `pow`, #1362).
       m.intrinsics.add("declare i32 @yk_exponent(i64, i64, ptr)");
