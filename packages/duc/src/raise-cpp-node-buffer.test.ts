@@ -70,12 +70,10 @@ describe.skipIf(!hasClang)("Node's buffer binding, shaved from node/src", () => 
       /^_ZN(?:K4node28NativeSymbolDebuggingContext|St7__cxx1119basic_ostringstream|St7__cxx1115basic_stringbuf|St27__uninitialized_default_n_1|4node11per_process11cli_optionsE)/;
     expect(shaved.files.refused.filter((r) => !known.test(r))).toEqual([]);
     expect(shaved.musl.refused).toEqual([]);
-    expect([...shaved.musl.missing].sort()).toEqual([
-      "__cxa_demangle",
-      "backtrace",
-      "uv_get_process_title",
-      "uv_os_getpid",
-    ]);
+    // (The C library's functions node::Assert's native backtrace calls, which musl has not.)
+    expect(shaved.musl.missing.filter((m) => !["__cxa_demangle", "backtrace"].includes(m))).toEqual(
+      [],
+    );
     expect(shaved.missing.every((m) => /^_ZN?K?St(?:6locale|8ios_base|9basic_ios)/.test(m))).toBe(
       true,
     );

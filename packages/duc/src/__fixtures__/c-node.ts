@@ -104,6 +104,60 @@ export const nodeArgsFor = (file: string): readonly string[] => {
   ];
 };
 
+/** libuv as uv.gyp builds it for Linux (its common, posix and linux sources), C. */
+const UV = `${NODE}deps/uv/`;
+const UV_FILES = [
+  ...[
+    "fs-poll",
+    "idna",
+    "inet",
+    "random",
+    "strscpy",
+    "strtok",
+    "thread-common",
+    "threadpool",
+    "timer",
+    "uv-data-getter-setters",
+    "uv-common",
+    "version",
+  ].map((f) => `src/${f}.c`),
+  ...[
+    "async",
+    "core",
+    "dl",
+    "fs",
+    "getaddrinfo",
+    "getnameinfo",
+    "loop",
+    "loop-watcher",
+    "pipe",
+    "poll",
+    "process",
+    "random-devurandom",
+    "signal",
+    "stream",
+    "tcp",
+    "thread",
+    "tty",
+    "udp",
+    "proctitle",
+    "linux",
+    "procfs-exepath",
+    "random-getrandom",
+    "random-sysctl-linux",
+  ].map((f) => `src/unix/${f}.c`),
+].map((f) => `${UV}${f}`);
+const UV_ARGS = [
+  "-std=gnu11",
+  "-D_GNU_SOURCE",
+  "-D_LARGEFILE_SOURCE",
+  "-D_FILE_OFFSET_BITS=64",
+  "-D_POSIX_C_SOURCE=200112",
+  `-I${UV}include`,
+  `-I${UV}src`,
+  `-I${UV}src/unix`,
+];
+
 export interface ShavedBinding {
   /** The binding's own unit and node-env.cc's (Node's startup for its context). */
   readonly units: readonly ShavedUnit[];
@@ -159,8 +213,20 @@ export function shaveBinding(
   const outside = [...new Set([...files.externals, ...wanted])].filter(
     (x) => !own.has(x) && !files.atoms.has(x),
   );
-  const libc = outside.filter((x) => !x.startsWith("_Z"));
+  // (C the binding calls: libuv's, shaved as C from its sources; the rest the C library's.)
+  const c = outside.filter((x) => !x.startsWith("_Z"));
+  const uv = shaveCFiles(
+    UV_FILES,
+    c.filter((x) => x.startsWith("uv_")),
+    UV_ARGS,
+    "clang",
+  );
+  const libc = [...new Set([...uv.externals, ...c])].filter((x) => !uv.atoms.has(x));
   const musl = withMuslInit(shaveMusl([...libc, "malloc", "free"]));
+  // (libuv's with the C++ files': one link.)
+  for (const [k, a] of uv.atoms) if (!files.atoms.has(k)) files.atoms.set(k, a);
+  files.units.push(...uv.units);
+  files.refused.push(...uv.refused);
   return {
     units: [env, root],
     files,
