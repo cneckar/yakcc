@@ -7071,7 +7071,13 @@ function shaveCUnitOnce(
         });
       let dump: string;
       try {
-        dump = run(["-fsyntax-only", "-Xclang", "-fdump-record-layouts-complete"]);
+        // (No crash reproducer left behind: 15 MB a unit of V8.)
+        dump = run([
+          "-fsyntax-only",
+          "-fno-crash-diagnostics",
+          "-Xclang",
+          "-fdump-record-layouts-complete",
+        ]);
       } catch {
         // clang 18 can crash dumping every record of libstdc++'s headers: the records code
         // generation lays out, then.
