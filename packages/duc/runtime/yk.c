@@ -4865,7 +4865,9 @@ static int numeric_pair(yk *a, yk *b) {
 int32_t yk_exponent(yk a, yk b, yk *out) {
   if (numeric_pair(&a, &b)) {
     const yk_bigint *e = big(b);
-    if (e->neg) range_error("Exponent must be non-negative");
+    /* (V8's BigInt::Exponentiate throws kMustBePositive, "% must be positive", with no argument:
+       Node says "undefined must be positive".) */
+    if (e->neg) range_error("undefined must be positive");
     const yk_bigint *x = big(a);
     yk one = big_from_u64(1, 0);
     if (e->len == 0) return out[0] = one, 1;
