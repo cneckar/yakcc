@@ -73,8 +73,8 @@ export interface ClangNode {
 interface UnitIndex {
   readonly path: string;
   /**
-   * The dump, open for as long as the index is used: another process's cache may remove the file
-   * (its least recently used), and an open file stays readable.
+   * The dump, open for as long as the index is used (the shave of its unit): another process's
+   * cache may remove the file (its least recently used), and an open file stays readable.
    */
   readonly fd: number;
   /** The top-level declarations, in order. */
@@ -140,7 +140,8 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
   let total = kept.reduce((n, k) => n + k.size, 0);
   for (const k of kept.sort((a, b) => a.used - b.used)) {
     if (total <= 12 * 2 ** 30) break;
-    if (k.file === path) continue;
+    // (Not one used in the last half hour: a process is likely reading it.)
+    if (k.file === path || Date.now() - k.used < 1_800_000) continue;
     rmSync(k.file, { force: true });
     total -= k.size;
   }
@@ -327,6 +328,8 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
     }
   }
 
+  // (Closed when the shave that opened it is done: see shaveCUnit.)
+  openIndexes.push(fd);
   return { path, fd, decls, byName, byId, byMangled, next, previous };
 }
 
@@ -5898,6 +5901,31 @@ export function shaveCUnit(
    * unit defines called by it, as a linker resolves them (see c-files).
    */
   bySymbol = false,
+): ShavedUnit {
+  // (The dumps it opens closed when it is done: a removed one holds its disk while open.)
+  const opened = openIndexes.length;
+  try {
+    return shaveUnit(file, filters, args, clang, unit, defineStatics, bySymbol);
+  } finally {
+    for (const fd of openIndexes.splice(opened))
+      try {
+        closeSync(fd);
+      } catch {
+        // closed already
+      }
+  }
+}
+/** The dumps indexes have open, in the order opened (see shaveCUnit). */
+const openIndexes: number[] = [];
+
+function shaveUnit(
+  file: string,
+  filters: readonly string[],
+  args: readonly string[],
+  clang: string,
+  unit: string,
+  defineStatics: readonly string[],
+  bySymbol: boolean,
 ): ShavedUnit {
   // A large unit (an amalgamation), and any C++ one, is dumped once and indexed by declaration id;
   // a small C one, filtered per name.
