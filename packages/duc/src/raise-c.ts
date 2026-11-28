@@ -798,6 +798,8 @@ function parseType(spelled: string, depth = 0): CType {
   }
   // An anonymous member record (C++), desugared (`std::basic_string<char>::(anonymous union at
   // f.h:204:7)`): the record, tagged as its spelling says.
+  // (C++: a name qualified from the global scope, `::v8::base::Use`: the name.)
+  if (raw.startsWith("::")) return parseType(raw.slice(2), depth + 1);
   const anon = /\((?:anonymous|unnamed) (struct|union|class) at [^()]*\)$/.exec(raw);
   if (anon !== null) return { k: "rec", name: `${anon[1]} ${raw}` };
   if (/\)$/.test(raw)) return { k: "fn" };
@@ -2547,6 +2549,47 @@ function raiseBody(
           addr: `__ykData("u8", [${cStringBytes(e.value ?? '""').join(", ")}])`,
           t: typeOf(e),
         };
+      // C++'s initializer list (`std::min({a, b, c})`): its elements an array of their own (the
+      // temporary inside, `const T[n]`), and the list an object of its own, its fields as the
+      // library lays them out: its first element's address and its length (libstdc++'s
+      // `_M_array` and `_M_len`, libc++'s `__begin_` and `__size_`).
+      case "CXXStdInitializerListExpr": {
+        const t = typeOf(e);
+        const arrT = typeOf(k0);
+        if (t.k !== "rec" || arrT.k !== "arr" || arrT.size === undefined)
+          throw new RaiseCError("an initializer list of no array");
+        const layout = layoutOf(t);
+        const field = (names: readonly string[]): number => {
+          for (const n of names) {
+            const f = layout.fields.get(n);
+            if (f !== undefined) return f.offset;
+          }
+          throw new RaiseCError(
+            `an initializer list's fields (${[...layout.fields.keys()].join(", ")})`,
+          );
+        };
+        const elems = place(k0);
+        if (elems.k !== "mem")
+          throw new RaiseCError("an initializer list's elements not in memory");
+        const slot = `__il${temps++}`;
+        top.push(
+          `const ${slot} = __ykAlloc(${Math.max(8, sizeOf(t))}, ${Math.max(8, alignOf(t))});`,
+        );
+        frame.push(slot);
+        const steps = [
+          storeAt(
+            `(${slot} + ${field(["_M_array", "__begin_"])})`,
+            { k: "ptr", to: arrT.of },
+            elems.addr,
+          ),
+          storeAt(
+            `(${slot} + ${field(["_M_len", "__size_"])})`,
+            { k: "u64" },
+            `__ykNumToBig(${arrT.size})`,
+          ),
+        ].map((x) => `(${x.replace(/;$/, "")})`);
+        return { k: "mem", addr: `(${[...steps, slot].join(", ")})`, t };
+      }
     }
     throw new RaiseCError(
       `the lvalue ${e.kind}${e.castKind !== undefined ? ` (${e.castKind})` : ""} is not raised yet`,
@@ -2856,7 +2899,9 @@ function raiseBody(
         )
           return (place(e) as Place & { k: "mem" }).addr;
         // (A record cast to void, `(void)u.minor;`, is not read.)
-        if (ck === "ToVoid") return typeOf(k0).k === "rec" ? "undefined" : expr(k0);
+        // (A record's or an array's value is not read: `(void)arr`, V8's USE().)
+        if (ck === "ToVoid")
+          return typeOf(k0).k === "rec" || typeOf(k0).k === "arr" ? "undefined" : expr(k0);
         if (
           [
             "IntegralCast",
@@ -3336,6 +3381,14 @@ function raiseBody(
         // returned. (`_mm_shuffle_epi32` is a macro of `__builtin_ia32_pshufd`.)
         // std::addressof's builtin: its operand's address.
         if (name === "__builtin_addressof" && kids.length === 2) return argOf(kids[1] as ClangNode);
+        // fpclassify's builtin (`__builtin_fpclassify(FP_NAN, FP_INFINITE, FP_NORMAL, FP_SUBNORMAL,
+        // FP_ZERO, x)`): the class of x, by its value.
+        if (name === "__builtin_fpclassify" && kids.length === 7) {
+          const [nan, inf, normal, sub, zero, x] = kids.slice(1).map((k) => expr(k as ClangNode));
+          const v = `__fpc${temps++}`;
+          top.push(`let ${v} = 0;`);
+          return `((${v} = (${x})), (${v} !== ${v} ? ${nan} : ${v} === Infinity || ${v} === -Infinity ? ${inf} : ${v} === 0 ? ${zero} : (${v} < 0 ? -${v} : ${v}) < 2.2250738585072014e-308 ? ${sub} : ${normal}))`;
+        }
         const vec = vectorIntrinsic(name, kids.slice(1), ret);
         if (vec !== undefined) return vec;
         // (A record argument is passed by address: see argOf.)
@@ -3362,7 +3415,9 @@ function raiseBody(
           const to = typeOf(e);
           const from = typeOf(kids[1] as ClangNode);
           if (to.k === "u64" && from.k === "f64") return `__ykF64Bits(${args[0]})`;
+          if (to.k === "i64" && from.k === "f64") return `__ykI64(__ykF64Bits(${args[0]}))`;
           if (to.k === "f64" && from.k === "u64") return `__ykF64FromBits(${args[0]})`;
+          if (to.k === "f64" && from.k === "i64") return `__ykF64FromBits(__ykU64(${args[0]}))`;
           // Between integers of one width: the same bits, read as the other signedness.
           if (
             sizeOf(to) === sizeOf(from) &&
@@ -6640,10 +6695,16 @@ export function shaveCUnit(
         }
         for (const k of n.inner ?? []) walk(k);
       };
-      for (const d of eachDecl(
-        new Set(["EnumDecl", "TypedefDecl", "NamespaceDecl", "LinkageSpecDecl"]),
-      ))
-        walk(d);
+      // (An indexed unit's enumerations each by itself, in order: a namespace's whole extent can be
+      // larger than a string holds, V8's v8::internal.)
+      if (indexed !== undefined)
+        for (const e of [...enumDecls()].sort((a, b) => a.start - b.start))
+          walk(readDecl(indexed, e));
+      else
+        for (const d of eachDecl(
+          new Set(["EnumDecl", "TypedefDecl", "NamespaceDecl", "LinkageSpecDecl"]),
+        ))
+          walk(d);
       enums = values;
     }
     return enums.get(name);

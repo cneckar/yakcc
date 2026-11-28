@@ -842,6 +842,47 @@ static yk buffer_primitive(yk v);
 static int buffer_set(yk obj, yk key, yk value);
 static int buffer_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
 
+/* --- V8's atoms (#1516) ---
+ *
+ * What the runtime calls of V8's own code, shaved: its atoms' module (native-runtime-atoms.ts:
+ * V8's src/bigint, src/numbers/conversions.cc and src/base/numbers, and the C library's they call),
+ * evaluated once, each function by its name (a C++ function by its symbol), called with boxed
+ * values: a pointer as its address, a C++ object or vector by its address, laid out as x86-64's.
+ */
+yk yk_get_named(yk obj, const char *name, uint64_t n);
+yk yk_call(yk f, yk self, uint64_t argc, const yk *argv);
+extern yk YK_V8_BIGINT_ENTRY(void);
+static yk v8_call(yk *fn, const char *name, uint64_t argc, const yk *argv) {
+  static yk lib;
+  if (*fn == 0) {
+    if (lib == 0) lib = YK_V8_BIGINT_ENTRY();
+    *fn = yk_get_named(lib, name, strlen(name));
+  }
+  return yk_call(*fn, YK_UNDEFINED, argc, argv);
+}
+#define V8(name, ...)                                                                            \
+  ({                                                                                             \
+    static yk fn_;                                                                               \
+    yk argv_[] = {__VA_ARGS__};                                                                  \
+    v8_call(&fn_, #name, sizeof argv_ / sizeof argv_[0], argv_);                                \
+  })
+/* A name that is a macro (a C++ symbol), expanded first. */
+#define V8_(name, ...) V8(name, __VA_ARGS__)
+static yk v8p(const void *p) { return yk_number((double)(uintptr_t)p); }
+static yk v8i(int64_t k) { return yk_number((double)k); }
+static yk v8b(int b) { return b ? YK_TRUE : YK_FALSE; }
+static int v8int(yk r) { return (int)num(r); }
+static char *v8str(yk r) { return (char *)(uintptr_t)num(r); }
+/* base::Vector<T>: { T *start_; size_t length_; }. */
+typedef struct {
+  uint64_t start;
+  uint64_t length;
+} v8_vector;
+static v8_vector v8v(const void *p, size_t n) { return (v8_vector){(uint64_t)(uintptr_t)p, (uint64_t)n}; }
+/* An array V8 made with NewArray (new[]): freed as the atoms free it. */
+yk yk_leaf_free(yk addr);
+static void v8_delete_array(char *p) { yk_leaf_free(v8p(p)); }
+
 /* --- ToString --- */
 
 /* Two strings as `+` joins them: one alone when the other is empty; a rope when long (#1370). */
@@ -866,139 +907,27 @@ static yk concat(yk_string *a, yk_string *b) {
 }
 
 /* Number::toString(10): the shortest digits that round-trip, laid out as ECMA-262 says. */
+/* Number::toString (V8's NumberToString): an int32's IntToCString, any other's DoubleToCString. */
+#define V8_DOUBLE_TO_CSTRING _ZN2v88internal15DoubleToCStringEdNS_4base6VectorIcEE
+#define V8_INT_TO_CSTRING _ZN2v88internal12IntToCStringEiNS_4base6VectorIcEE
+#define V8_DOUBLE_TO_RADIX_CSTRING _ZN2v88internal20DoubleToRadixCStringEdi
 static yk number_to_string(double d) {
-  if (d != d) return ascii("NaN");
-  if (d == 0) return ascii("0");
-  if (isinf(d)) return ascii(d < 0 ? "-Infinity" : "Infinity");
-  /* An integer below 2^53 (an index, most often): its digits, which are the shortest. */
-  if (d == (double)(int64_t)d && fabs(d) < 9007199254740992.0) {
-    char t[24];
-    int64_t v = (int64_t)d;
-    uint64_t u = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v;
-    int i = (int)sizeof t;
-    t[--i] = 0;
-    do {
-      t[--i] = (char)('0' + u % 10);
-      u /= 10;
-    } while (u != 0);
-    if (v < 0) t[--i] = '-';
-    return ascii(t + i);
-  }
-  char buf[64], digits[32];
-  int k = 0, n = 0;
-  for (int p = 1; p <= 17; p++) {
-    snprintf(buf, sizeof buf, "%.*e", p - 1, fabs(d));
-    if (strtod(buf, NULL) == fabs(d)) break;
-  }
-  /* buf is d.ddde±x: the digits, and n = x + 1. */
-  for (char *c = buf; *c != 'e'; c++)
-    if (*c >= '0' && *c <= '9') digits[k++] = *c;
-  while (k > 1 && digits[k - 1] == '0') k--;
-  n = atoi(strchr(buf, 'e') + 1) + 1;
-  char out[64];
-  int o = 0;
-  if (d < 0) out[o++] = '-';
-  if (k <= n && n <= 21) {
-    for (int i = 0; i < k; i++) out[o++] = digits[i];
-    for (int i = k; i < n; i++) out[o++] = '0';
-  } else if (0 < n && n <= 21) {
-    for (int i = 0; i < n; i++) out[o++] = digits[i];
-    out[o++] = '.';
-    for (int i = n; i < k; i++) out[o++] = digits[i];
-  } else if (-6 < n && n <= 0) {
-    out[o++] = '0';
-    out[o++] = '.';
-    for (int i = 0; i < -n; i++) out[o++] = '0';
-    for (int i = 0; i < k; i++) out[o++] = digits[i];
-  } else {
-    out[o++] = digits[0];
-    if (k > 1) {
-      out[o++] = '.';
-      for (int i = 1; i < k; i++) out[o++] = digits[i];
-    }
-    o += snprintf(out + o, sizeof out - o, "e%c%d", n - 1 < 0 ? '-' : '+', abs(n - 1));
-  }
-  out[o] = 0;
-  return ascii(out);
+  char buf[100]; /* V8's kNumberToStringBufferSize */
+  v8_vector v = v8v(buf, sizeof buf);
+  int32_t i = (int32_t)d;
+  if (d == d && d >= -2147483648.0 && d <= 2147483647.0 && (double)i == d && !(d == 0 && signbit(d)))
+    return ascii(v8str(V8_(V8_INT_TO_CSTRING, v8i(i), v8p(&v))));
+  return ascii(v8str(V8_(V8_DOUBLE_TO_CSTRING, yk_number(d), v8p(&v))));
 }
 
 static yk to_string(yk v);
 
-/*
- * Number::toString(radix) for a radix other than 10, as V8 writes it (DoubleToRadixCString): the
- * fraction's digits while they are above half a unit in the last place of the value (scaled with
- * them), rounded half to even with a carry back through the digits written; the integer's digits by
- * repeated division, those below the double's precision zeros.
- */
+/* Number::toString(radix) for a radix other than 10: V8's DoubleToRadixCString. */
 static yk number_to_radix(double value, int radix) {
-  static const char chars[] = "0123456789abcdefghijklmnopqrstuvwxyz";
-  if (value != value) return ascii("NaN");
-  if (isinf(value)) return ascii(value < 0 ? "-Infinity" : "Infinity");
-  /* An integer below 2^53 (a byte's hex, most often): its digits by integer division. */
-  if (value == (double)(int64_t)value && fabs(value) < 9007199254740992.0) {
-    char t[72];
-    int64_t v = (int64_t)value;
-    uint64_t u = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v;
-    int i = (int)sizeof t;
-    t[--i] = 0;
-    do {
-      t[--i] = chars[u % (uint64_t)radix];
-      u /= (uint64_t)radix;
-    } while (u != 0);
-    if (v < 0) t[--i] = '-';
-    return ascii(t + i);
-  }
-  enum { kBufferSize = 2200 };
-  char buffer[kBufferSize];
-  int integer_cursor = kBufferSize / 2;
-  int fraction_cursor = integer_cursor;
-  int negative = value < 0;
-  if (negative) value = -value;
-  double integer = floor(value);
-  double fraction = value - integer;
-  double delta = 0.5 * (nextafter(value, INFINITY) - value);
-  double min_delta = nextafter(0.0, 1.0);
-  if (delta < min_delta) delta = min_delta;
-  if (fraction >= delta) {
-    buffer[fraction_cursor++] = '.';
-    do {
-      fraction *= radix;
-      delta *= radix;
-      int digit = (int)fraction;
-      buffer[fraction_cursor++] = chars[digit];
-      fraction -= digit;
-      if (fraction > 0.5 || (fraction == 0.5 && (digit & 1))) {
-        if (fraction + delta > 1) {
-          for (;;) {
-            fraction_cursor--;
-            if (fraction_cursor == kBufferSize / 2) {
-              integer += 1;
-              break;
-            }
-            char c = buffer[fraction_cursor];
-            int d = c > '9' ? (c - 'a' + 10) : (c - '0');
-            if (d + 1 < radix) {
-              buffer[fraction_cursor++] = chars[d + 1];
-              break;
-            }
-          }
-          break;
-        }
-      }
-    } while (fraction >= delta);
-  }
-  while (integer / radix >= 9007199254740992.0) {
-    integer /= radix;
-    buffer[--integer_cursor] = '0';
-  }
-  do {
-    double remainder = fmod(integer, radix);
-    buffer[--integer_cursor] = chars[(int)remainder];
-    integer = (integer - remainder) / radix;
-  } while (integer > 0);
-  if (negative) buffer[--integer_cursor] = '-';
-  buffer[fraction_cursor] = 0;
-  return ascii(buffer + integer_cursor);
+  char *p = v8str(V8_(V8_DOUBLE_TO_RADIX_CSTRING, yk_number(value), v8i(radix)));
+  yk r = ascii(p);
+  v8_delete_array(p);
+  return r;
 }
 
 static yk array_join(yk_array *a, yk_string *sep) {
@@ -1205,55 +1134,11 @@ static int is_space(uint16_t c) {
          c == 0x202F || c == 0x205F || c == 0x3000 || c == 0xFEFF;
 }
 
+/* ToNumber of a string (V8's String::ToNumber): StringToDouble, hex, octal and binary allowed. */
+#define V8_STRING_TO_DOUBLE _ZN2v88internal14StringToDoubleENS_4base6VectorIKtEEid
 static double string_to_number(yk_string *s) {
-  uint32_t a = 0, b = s->len;
-  while (a < b && is_space(s->units[a])) a++;
-  while (b > a && is_space(s->units[b - 1])) b--;
-  if (a == b) return 0;
-  char buf[400];
-  if (b - a >= sizeof buf) return NAN;
-  for (uint32_t i = a; i < b; i++) {
-    if (s->units[i] > 0x7F) return NAN;
-    buf[i - a] = (char)s->units[i];
-  }
-  buf[b - a] = 0;
-  /* 0x, 0o, 0b: an unsigned integer in that radix. */
-  if (buf[0] == '0' && (buf[1] == 'x' || buf[1] == 'X' || buf[1] == 'o' || buf[1] == 'O' ||
-                        buf[1] == 'b' || buf[1] == 'B')) {
-    int radix = buf[1] == 'x' || buf[1] == 'X' ? 16 : buf[1] == 'o' || buf[1] == 'O' ? 8 : 2;
-    if (buf[2] == 0) return NAN;
-    double r = 0;
-    for (char *c = buf + 2; *c; c++) {
-      int dgt = *c >= '0' && *c <= '9'   ? *c - '0'
-                : *c >= 'a' && *c <= 'f' ? *c - 'a' + 10
-                : *c >= 'A' && *c <= 'F' ? *c - 'A' + 10
-                                         : 99;
-      if (dgt >= radix) return NAN;
-      r = r * radix + dgt;
-    }
-    return r;
-  }
-  const char *p = buf;
-  int neg = 0;
-  if (*p == '+' || *p == '-') neg = *p++ == '-';
-  if (strcmp(p, "Infinity") == 0) return neg ? -INFINITY : INFINITY;
-  /* StrUnsignedDecimalLiteral: digits [. digits] [e[+-]digits], at least one digit before e. */
-  const char *q = p;
-  int digits = 0;
-  while (*q >= '0' && *q <= '9') q++, digits++;
-  if (*q == '.') {
-    q++;
-    while (*q >= '0' && *q <= '9') q++, digits++;
-  }
-  if (digits == 0) return NAN;
-  if (*q == 'e' || *q == 'E') {
-    q++;
-    if (*q == '+' || *q == '-') q++;
-    if (!(*q >= '0' && *q <= '9')) return NAN;
-    while (*q >= '0' && *q <= '9') q++;
-  }
-  if (*q != 0) return NAN;
-  return strtod(buf, NULL);
+  v8_vector v = v8v(s->units, s->len);
+  return num(V8_(V8_STRING_TO_DOUBLE, v8p(&v), v8i(1 | 2 | 8), yk_number(0)));
 }
 
 static double to_number(yk v) {
@@ -4567,22 +4452,6 @@ static yk big_from_i64(int64_t x) {
   return x < 0 ? big_from_u64((uint64_t)0 - (uint64_t)x, 1) : big_from_u64((uint64_t)x, 0);
 }
 
-/* V8's BigInt library: its atoms' module, evaluated once, and each function by name. */
-extern yk YK_V8_BIGINT_ENTRY(void);
-static yk v8_call(yk *fn, const char *name, uint64_t argc, const yk *argv) {
-  static yk lib;
-  if (*fn == 0) {
-    if (lib == 0) lib = YK_V8_BIGINT_ENTRY();
-    *fn = yk_get_named(lib, name, strlen(name));
-  }
-  return yk_call(*fn, YK_UNDEFINED, argc, argv);
-}
-#define V8(name, ...)                                                                            \
-  ({                                                                                             \
-    static yk fn_;                                                                               \
-    yk argv_[] = {__VA_ARGS__};                                                                  \
-    v8_call(&fn_, #name, sizeof argv_ / sizeof argv_[0], argv_);                                \
-  })
 /* Its Digits and RWDigits: { digit_t *digits; int len; }, as the atoms (raised for x86-64) read it. */
 typedef struct {
   uint64_t digits;
@@ -4590,10 +4459,6 @@ typedef struct {
   int32_t pad;
 } v8_digits;
 static v8_digits v8d(const yk_bigint *b) { return (v8_digits){(uint64_t)(uintptr_t)b->d, (int32_t)b->len, 0}; }
-static yk v8p(const void *p) { return yk_number((double)(uintptr_t)p); }
-static yk v8i(int64_t k) { return yk_number((double)k); }
-static yk v8b(int b) { return b ? YK_TRUE : YK_FALSE; }
-static int v8int(yk r) { return (int)num(r); }
 /* The processor V8 multiplies, divides and prints with. */
 static yk v8_processor(void) {
   static yk p;
@@ -4606,7 +4471,6 @@ static yk v8_processor(void) {
 #define V8_TO_STRING _ZN2v86bigint9Processor8ToStringEPcPiNS0_6DigitsEib
 #define V8_LEFT_SHIFT _ZN2v86bigint9LeftShiftENS0_8RWDigitsENS0_6DigitsEm
 #define V8_RIGHT_SHIFT _ZN2v86bigint10RightShiftENS0_8RWDigitsENS0_6DigitsEmRKNS0_15RightShiftStateE
-#define V8_(name, ...) V8(name, __VA_ARGS__)
 
 /* |a| compared with |b|: its sign (bigint::Compare). */
 static int mag_cmp(const yk_bigint *a, const yk_bigint *b) {
@@ -9894,64 +9758,17 @@ _Noreturn void yk_module_not_found(yk spec, const char *from, uint64_t n) {
   yk_throw(e);
 }
 
-/* A finite double's exact decimal digits (no leading zeros; "0" for zero) and how many of them are
-   before the point (which may be negative or past the digits): x = mantissa * 2^e, and for e < 0
-   mantissa * 5^-e scaled by 10^e. */
-static char *exact_digits(double x, int *point) {
-  int e;
-  double m = frexp(x, &e); /* x = m * 2^e, 0.5 <= m < 1 */
-  uint64_t mant = (uint64_t)ldexp(m, 53);
-  e -= 53;
-  /* The number, base 10^9, least significant limb first. */
-  size_t cap = 140, n = 1;
-  uint32_t *v = alloc(cap * sizeof(uint32_t));
-  v[0] = (uint32_t)(mant % 1000000000u);
-  if (mant >= 1000000000u) {
-    v[n++] = (uint32_t)(mant / 1000000000u % 1000000000u);
-    if (mant >= 1000000000000000000ull) v[n++] = (uint32_t)(mant / 1000000000000000000ull);
-  }
-  int shift = e >= 0 ? e : -e;
-  uint32_t by = e >= 0 ? 2 : 5;
-  for (int i = 0; i < shift; i++) {
-    uint64_t carry = 0;
-    for (size_t j = 0; j < n; j++) {
-      uint64_t t = (uint64_t)v[j] * by + carry;
-      v[j] = (uint32_t)(t % 1000000000u);
-      carry = t / 1000000000u;
-    }
-    if (carry != 0) v[n++] = (uint32_t)carry;
-  }
-  char *d = alloc(n * 9 + 2);
-  int len = snprintf(d, 12, "%u", v[n - 1]);
-  for (size_t j = n - 1; j-- > 0;) len += snprintf(d + len, 12, "%09u", v[j]);
-  int lead = 0;
-  while (lead < len - 1 && d[lead] == '0') lead++;
-  *point = (len - lead) - (e >= 0 ? 0 : -e);
-  return d + lead;
-}
-/* digits[0..keep) rounded at digits[keep] as Number's formatting does (a tie to the larger): the
-   kept digits in out, and 1 when the rounding carried into a new leading digit. */
-static int round_digits(const char *digits, int len, int keep, char *out) {
-  for (int i = 0; i < keep; i++) out[i] = i < len ? digits[i] : '0';
-  out[keep] = 0;
-  if (keep < 0 || keep >= len || digits[keep] < '5') return 0;
-  for (int i = keep - 1; i >= 0; i--) {
-    if (out[i] != '9') {
-      out[i]++;
-      return 0;
-    }
-    out[i] = '0';
-  }
-  memmove(out + 1, out, (size_t)keep + 1);
-  out[0] = '1';
-  return 1;
-}
-/* Number.prototype.toFixed (0), toPrecision (1) and toExponential (2), ECMA-262 21.1.3. */
+/* Number.prototype.toFixed (0), toPrecision (1) and toExponential (2): the argument's checks of V8's
+   builtins-number.cc, the digits V8's DoubleToFixedCString, DoubleToPrecisionCString and
+   DoubleToExponentialCString. */
+#define V8_DOUBLE_TO_FIXED_CSTRING _ZN2v88internal20DoubleToFixedCStringEdi
+#define V8_DOUBLE_TO_PRECISION_CSTRING _ZN2v88internal24DoubleToPrecisionCStringEdi
+#define V8_DOUBLE_TO_EXPONENTIAL_CSTRING _ZN2v88internal26DoubleToExponentialCStringEdi
 static yk number_format(double x, int which, yk arg) {
   static const char *const names[3] = {"toFixed() digits argument", "toPrecision() argument", "toExponential() argument"};
-  double f = arg == YK_UNDEFINED ? (which == 1 ? NAN : 0) : trunc(to_number(arg));
-  if (f != f && !(which == 1 && arg == YK_UNDEFINED)) f = 0;
   if (which == 1 && arg == YK_UNDEFINED) return to_string(yk_number(x));
+  double f = arg == YK_UNDEFINED ? 0 : trunc(to_number(arg));
+  if (f != f) f = 0;
   if (!isfinite(x)) return to_string(yk_number(x));
   int lo = which == 1 ? 1 : 0;
   if (!(f >= lo && f <= 100)) {
@@ -9959,109 +9776,14 @@ static yk number_format(double x, int which, yk arg) {
     snprintf(msg, sizeof msg, "%s must be between %d and 100", names[which], lo);
     range_error(msg);
   }
-  int digits_n = (int)f;
   if (which == 0 && fabs(x) >= 1e21) return to_string(yk_number(x));
-  int neg = x < 0;
-  double a = fabs(x);
-  int point = 1;
-  const char *d = a == 0 ? "0" : exact_digits(a, &point);
-  int len = (int)strlen(d);
-  char *buf = alloc((size_t)len + 260), *r = alloc((size_t)len + 260);
-  int o = 0;
-  if (neg) buf[o++] = '-';
-  if (which == 0) {
-    /* n / 10^f nearest x: the digits through f places after the point. */
-    int keep = point + digits_n;
-    if (a == 0 || keep <= 0) {
-      int up = a != 0 && keep == 0 && d[0] >= '5';
-      buf[o++] = up && digits_n == 0 ? '1' : '0';
-      if (digits_n > 0) {
-        buf[o++] = '.';
-        for (int i = 0; i < digits_n; i++) buf[o++] = (up && i == digits_n - 1) ? '1' : '0';
-      }
-      buf[o] = 0;
-      return ascii(buf);
-    }
-    int carry = round_digits(d, len, keep, r);
-    int ip = point + carry; /* digits before the point */
-    int rl = keep + carry;
-    if (ip <= 0) {
-      buf[o++] = '0';
-    } else
-      for (int i = 0; i < ip; i++) buf[o++] = r[i];
-    if (digits_n > 0) {
-      buf[o++] = '.';
-      for (int i = 0; i < digits_n; i++) {
-        int at = ip + i;
-        buf[o++] = at >= 0 && at < rl ? r[at] : '0';
-      }
-    }
-    buf[o] = 0;
-    return ascii(buf);
-  }
-  /* toExponential with no digits given: as many as the shortest round-trip needs. */
-  if (which == 2 && arg == YK_UNDEFINED) {
-    if (a == 0) return ascii(neg ? "-0e+0" : "0e+0");
-    yk_string *sh = str(number_to_string(a));
-    char t[64], sc[64];
-    for (uint32_t i = 0; i < sh->len && i < 63; i++) sc[i] = (char)sh->units[i];
-    sc[sh->len < 63 ? sh->len : 63] = 0;
-    int k = 0, dot = -1, exp10 = 0;
-    for (uint32_t i = 0; i < sh->len; i++) {
-      uint16_t c = sh->units[i];
-      if (c == 'e') {
-        exp10 = atoi(sc + i + 1 + (sc[i + 1] == '+'));
-        break;
-      }
-      if (c == '.') dot = k;
-      else t[k++] = (char)c;
-    }
-    int intdigits = dot < 0 ? k : dot;
-    int first = 0;
-    while (first < k - 1 && t[first] == '0') first++;
-    int e10 = exp10 + intdigits - first - 1;
-    int last = k;
-    while (last > first + 1 && t[last - 1] == '0') last--;
-    buf[o++] = t[first];
-    if (last > first + 1) {
-      buf[o++] = '.';
-      for (int i = first + 1; i < last; i++) buf[o++] = t[i];
-    }
-    o += snprintf(buf + o, 16, "e%c%d", e10 < 0 ? '-' : '+', abs(e10));
-    return ascii(buf);
-  }
-  int sig = which == 1 ? digits_n : digits_n + 1;
-  int e10;
-  if (a == 0) {
-    for (int i = 0; i < sig; i++) r[i] = '0';
-    r[sig] = 0;
-    e10 = 0;
-  } else {
-    int carry = round_digits(d, len, sig, r);
-    e10 = point - 1 + carry;
-    r[sig] = 0;
-  }
-  if (which == 2 || e10 < -6 || e10 >= sig) {
-    buf[o++] = r[0];
-    if (sig > 1) {
-      buf[o++] = '.';
-      for (int i = 1; i < sig; i++) buf[o++] = r[i];
-    }
-    o += snprintf(buf + o, 16, "e%c%d", e10 < 0 ? '-' : '+', abs(e10));
-  } else if (e10 >= 0) {
-    for (int i = 0; i <= e10; i++) buf[o++] = r[i];
-    if (sig > e10 + 1) {
-      buf[o++] = '.';
-      for (int i = e10 + 1; i < sig; i++) buf[o++] = r[i];
-    }
-  } else {
-    buf[o++] = '0';
-    buf[o++] = '.';
-    for (int i = 0; i < -e10 - 1; i++) buf[o++] = '0';
-    for (int i = 0; i < sig; i++) buf[o++] = r[i];
-  }
-  buf[o] = 0;
-  return ascii(buf);
+  yk fv = v8i(which == 2 && arg == YK_UNDEFINED ? -1 : (int)f);
+  char *p = v8str(which == 0   ? V8_(V8_DOUBLE_TO_FIXED_CSTRING, yk_number(x), fv)
+                  : which == 1 ? V8_(V8_DOUBLE_TO_PRECISION_CSTRING, yk_number(x), fv)
+                               : V8_(V8_DOUBLE_TO_EXPONENTIAL_CSTRING, yk_number(x), fv));
+  yk r = ascii(p);
+  v8_delete_array(p);
+  return r;
 }
 
 /* --- Math, with JavaScript's results --- */

@@ -68,9 +68,15 @@ export const RUNTIME_SECTIONS: readonly RuntimeSection[] = [
   s(YK, "/* --- arrays ---", "object-model", "src/objects/js-array.h, elements.cc"),
   s(
     YK,
+    "/* --- V8's atoms",
+    "object-model",
+    "the runtime's calls of V8's shaved code (native-runtime-atoms.ts): gone with its callers",
+  ),
+  s(
+    YK,
     "/* --- ToString ---",
     "builtin",
-    "src/numbers/conversions.cc, src/base/numbers/dtoa.cc; ConsString (src/objects/string.cc)",
+    "ConsString (src/objects/string.cc); its numbers V8's conversions.cc, shaved",
   ),
   s(YK, "/* --- symbols", "builtin", "src/objects/symbol.h, src/builtins/builtins-symbol.cc"),
   s(YK, "/* --- ToNumber ---", "builtin", "src/numbers/conversions.cc (StringToDouble)"),
