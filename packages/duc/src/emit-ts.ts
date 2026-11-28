@@ -135,6 +135,19 @@ export function emitTypeScript(
   const asModule =
     (declaredNamesOf(g) !== undefined || completionOf(g) !== undefined) &&
     !g.nodes.some((n) => n.kind === "param-source");
+  takenNames.set(
+    imports,
+    new Set([
+      ...freeNamesOf(g),
+      ...(declaredNamesOf(g) ?? []),
+      ...(completionOf(g) ?? []),
+      options.name ?? "f",
+      "Fn_",
+      "Self_",
+      RETURNED_NAME,
+      RETURN_VALUE_NAME,
+    ]),
+  );
   const { params, body } = emitFunction(g, "", [], imports, asModule);
   const importLines = [...imports.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -204,6 +217,43 @@ function objectSlots(
 function modeHead(mode: DucGraph["mode"]): string {
   if (mode === undefined) return "function ";
   return `${mode.startsWith("async") ? "async " : ""}function${mode.endsWith("generator") ? "*" : ""} `;
+}
+
+/**
+ * The names one emission may not give a closure, by the emission's imports (one map per emission):
+ * every free name its graphs read, and the names the emitter writes itself. A closure gets the name
+ * the lifter inferred for it (the binding an anonymous function is assigned to, a declaration's own)
+ * only when it is none of these, so the name shadows nothing it reads.
+ */
+const takenNames = new WeakMap<Map<string, Set<string>>, Set<string>>();
+
+/** A closure's own name, as the lifter inferred it, when the emitter may write it (test262). */
+function closureName(node: DucNode, taken: Set<string> | undefined): string | undefined {
+  if (taken === undefined) return undefined;
+  const text = node.origin?.text ?? "";
+  // A named function's text, or the name of the binding an anonymous one is assigned to.
+  const own = /^(?:async\s+)?function\s*\*?\s*([A-Za-z_][\w]*)\s*\(/.exec(text)?.[1] ?? text;
+  if (!/^[A-Za-z_][\w]*$/.test(own) || RESERVED.has(own) || taken.has(own)) return undefined;
+  taken.add(own);
+  return own;
+}
+
+const RESERVED = new Set(
+  (
+    "break case catch class const continue debugger default delete do else enum export extends " +
+    "false finally for function if import in instanceof new null return super switch this throw " +
+    "true try typeof var void while with yield let static implements interface package private " +
+    "protected public await arguments eval undefined NaN Infinity async of get set"
+  ).split(" "),
+);
+
+/** Every free name a graph and its closures read. */
+function freeNamesOf(g: DucGraph, out = new Set<string>()): Set<string> {
+  for (const n of g.nodes) {
+    if (n.diamond !== undefined) out.add(n.diamond.symbol);
+    if (n.closure !== undefined) freeNamesOf(n.closure, out);
+  }
+  return out;
 }
 
 /**
@@ -702,6 +752,17 @@ function emitFunction(
           : base === "closure"
             ? `${isAsync ? "async " : ""}(${params}) => {`
             : `${fn} (${params}) {`;
+      // Its own name, as written: a function is named by the binding it is made in (`const g =
+      // () => ..` makes `g.name` "g"), so it is made in a const of that name, then read by its own.
+      const own = recursive ? undefined : closureName(node, takenNames.get(imports));
+      if (own !== undefined)
+        return [
+          ...snapshots,
+          `const ${own} = ${head}`,
+          ...inner.body.map((l) => `  ${l}`),
+          "};",
+          `const ${name} = ${own};`,
+        ];
       return [...snapshots, `const ${name} = ${head}`, ...inner.body.map((l) => `  ${l}`), "};"];
     }
     // A reassigned variable is a temporary, and the value's own name is a const: a closure that

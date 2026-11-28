@@ -2833,7 +2833,7 @@ class Lifter {
               : this.resolveIdentifier(name),
     );
     const [value] = this.emit("op", inputs, 1, {
-      origin: { kind: "Closure", text: truncate(selfName ?? fn.getText()) },
+      origin: { kind: "Closure", text: truncate(selfName ?? inferredName(fn) ?? fn.getText()) },
       label: closureLabel(dynamicThis, mode),
     });
     (this.nodes[this.nodes.length - 1] as MutableNode).closure = graph;
@@ -6127,6 +6127,54 @@ function functionModeOf(fn: FunctionLike): FunctionMode | undefined {
  * when it is async. A generator is always a `function*`: it has no arrow form.
  */
 /** The const a function expression or arrow initializes directly, when it does. */
+/**
+ * The name ECMAScript gives an anonymous function where it is written (NamedEvaluation): the binding
+ * it initializes or is assigned to, the property it defines, or the parameter or element it is the
+ * default of. A lowering names the function so (`origin.text`); identity does not depend on it.
+ */
+function inferredName(fn: Node): string | undefined {
+  if (!(Node.isArrowFunction(fn) || (Node.isFunctionExpression(fn) && fn.getName() === undefined)))
+    return undefined;
+  let at: Node = fn;
+  let up = fn.getParent();
+  while (up !== undefined && Node.isParenthesizedExpression(up)) {
+    at = up;
+    up = up.getParent();
+  }
+  if (up === undefined) return undefined;
+  const plain = (n: Node | undefined): string | undefined =>
+    n !== undefined && (Node.isIdentifier(n) || Node.isStringLiteral(n))
+      ? Node.isStringLiteral(n)
+        ? n.getLiteralText()
+        : n.getText()
+      : undefined;
+  if (
+    (Node.isVariableDeclaration(up) ||
+      Node.isParameterDeclaration(up) ||
+      Node.isBindingElement(up) ||
+      Node.isPropertyDeclaration(up)) &&
+    up.getInitializer() === at
+  )
+    return plain(up.getNameNode());
+  if (Node.isBinaryExpression(up) && up.getRight() === at) {
+    const op = up.getOperatorToken().getKind();
+    if (
+      op === SyntaxKind.EqualsToken ||
+      op === SyntaxKind.BarBarEqualsToken ||
+      op === SyntaxKind.AmpersandAmpersandEqualsToken ||
+      op === SyntaxKind.QuestionQuestionEqualsToken
+    )
+      return Node.isIdentifier(up.getLeft()) ? up.getLeft().getText() : undefined;
+  }
+  if (Node.isPropertyAssignment(up) && up.getInitializer() === at) {
+    const key = plain(up.getNameNode());
+    return key === "__proto__" ? undefined : key;
+  }
+  if (Node.isShorthandPropertyAssignment(up) && up.getObjectAssignmentInitializer() === at)
+    return up.getName();
+  return undefined;
+}
+
 function constInitializedBy(fn: Node): string | undefined {
   if (!Node.isFunctionExpression(fn) && !Node.isArrowFunction(fn)) return undefined;
   let up = fn.getParent();

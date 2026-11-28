@@ -387,3 +387,25 @@ describe("9. a return from a try inside a branch is the function's", () => {
     agrees(`export function f(a) { ${body} }`, [[0], [1], [2]]);
   });
 });
+
+describe("10. an anonymous function's name is the one ECMAScript gives it where it is written", () => {
+  it.each([
+    ["a const", "const g = () => 1; return g.name;"],
+    ["a let, a function expression", "let h = function () {}; return h.name;"],
+    ["an assignment", "let k; k = () => 1; return k.name;"],
+    ["a logical assignment", "let k; k ??= () => 1; return k.name;"],
+    ["a property", "const o = { m: () => 1, 'q': function () {} }; return [o.m.name, o.q.name];"],
+    ["a parameter's default", "const k = (p = () => 1) => p.name; return k();"],
+    [
+      "a destructuring default",
+      "const { d = () => 1 } = {}; const [e = function () {}] = []; return [d.name, e.name];",
+    ],
+    ["parenthesized", "const g = (() => 1); return g.name;"],
+    [
+      "not __proto__'s",
+      "const o = { __proto__: function () {} }; return typeof Object.getPrototypeOf(o);",
+    ],
+  ] as const)("%s", (_what, body) => {
+    agrees(`export function f(a) { ${body} }`, [[0]]);
+  });
+});
