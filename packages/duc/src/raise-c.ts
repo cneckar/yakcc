@@ -911,7 +911,27 @@ function parseType(spelled: string, depth = 0): CType {
   if (raw === "long double" && unitLongDouble64) return F64;
   if (raw === "long double") throw new RaiseCError(`the C type "${raw}" is not raised yet`);
   if (raw === "__builtin_va_list") return parseType("struct __va_list_tag[1]", depth + 1);
-  const named = localTypedefs.get(raw) ?? unitTypedef(raw) ?? LP64_TYPEDEFS[raw];
+  const local = localTypedefs.get(raw);
+  if (local !== undefined) return parseType(local, depth + 1);
+  // C++: a name in a member function is looked up in its class's scope first. The class's own
+  // name (`Representation` in `Representation::Smi()`), and a class or enumeration it declares,
+  // before any other of that name the unit has (V8's wasm `ValueTypeBase::Representation`).
+  if (/^[A-Za-z_]\w*$/.test(raw))
+    for (const scope of localScopes) {
+      if (scope.split("::").pop()?.replace(/<.*$/, "") === raw)
+        for (const tag of ["class", "struct", "union"])
+          if (unitLayout(`${tag} ${scope}`) !== undefined)
+            return { k: "rec", name: `${tag} ${scope}` };
+      for (const tag of ["class", "struct", "union"])
+        if (unitLayout(`${tag} ${scope}::${raw}`) !== undefined)
+          return { k: "rec", name: `${tag} ${scope}::${raw}` };
+    }
+  // (A qualified name a class is laid out by, `v8::internal::Representation`, is that class: the
+  // unit's typedefs are found by their last name, and V8's wasm has an enumeration of that one.)
+  if (/^[A-Za-z_][\w:]*::\w+$/.test(raw))
+    for (const tag of ["class", "struct", "union"])
+      if (unitLayout(`${tag} ${raw}`) !== undefined) return { k: "rec", name: `${tag} ${raw}` };
+  const named = unitTypedef(raw) ?? LP64_TYPEDEFS[raw];
   if (named !== undefined) return parseType(named, depth + 1);
   // A C++ class by its name alone (`yk::Point`): a record clang laid out.
   for (const tag of ["struct", "class", "union"])
@@ -3199,7 +3219,9 @@ function raiseBody(
         )
           return convert(expr(k0), typeOf(k0), typeOf(e));
         if (ck === "FloatingCast") return convert(expr(k0), typeOf(k0), typeOf(e));
-        throw new RaiseCError(`the cast ${ck} is not raised yet`);
+        throw new RaiseCError(
+          `the cast ${ck} is not raised yet (to ${typeOf(e).k}, ${e.type?.qualType ?? ""})`,
+        );
       }
       case "ArraySubscriptExpr":
       case "MemberExpr": {
