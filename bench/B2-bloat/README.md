@@ -135,14 +135,8 @@ bundling one function from each:
 | `v4` | 2,095 | 1,050 | 0.50 |
 
 That gap is what any CommonJS-aware tree-shaker closes, and so the most atoms could claim on
-size. The earlier reasoning stands: a win there is not evidence for atoms.
-
-The original text of this point follows. It is not unique to atoms where it wins. esbuild tree-shakes ESM at the statement level, which is the granularity of a program
-record's statements, so on ESM there is little to gain. On CommonJS, esbuild keeps whole
-modules. Keeping only the `exports.X = …` statements a requirer reads would cut far more: semver's
+size. So a win there is not evidence for atoms. The gap can be large inside one module: semver's
 `coerce` reaches all 60 statements of `internal/re.js` for the few regular expressions it uses.
-That is CommonJS tree-shaking, which any CommonJS-aware tree-shaker can do, so a win there is not
-evidence for atoms. A fair arm must compare against such a tree-shaker, not esbuild alone.
 
 ---
 
