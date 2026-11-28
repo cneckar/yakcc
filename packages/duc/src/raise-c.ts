@@ -754,6 +754,15 @@ function parseType(spelled: string, depth = 0): CType {
       const of = parseType(as[1] as string, depth + 1);
       return { k: "arr", of: { k: "u8" }, size: sizeOf(of) };
     }
+    // (std::array<T, N>'s storage, `__array_traits<T, N>::_Type`: T[N]; for no elements, an
+    // empty struct of libstdc++'s, left to its layout.)
+    const at = /^(?:typename )?(?:std::)?__array_traits<(.*)>::_Type$/.exec(raw);
+    if (at !== null) {
+      const parts = splitTemplateArgs(at[1] as string);
+      const n = /^(\d+)[uUlL]*$/.exec((parts[1] ?? "").trim());
+      if (parts.length === 2 && n !== null && Number(n[1]) > 0)
+        return { k: "arr", of: parseType(parts[0] as string, depth + 1), size: Number(n[1]) };
+    }
     if (/^(?:typename )?(?:std::)?_Build_index_tuple<.*>::__type$/.test(raw))
       return parseType("struct std::_Index_tuple<>", depth + 1);
   }
@@ -2461,9 +2470,17 @@ function raiseBody(
       case "CXXConstCastExpr":
       case "CXXStaticCastExpr":
       case "CXXFunctionalCastExpr":
+      case "CXXReinterpretCastExpr":
         // A cast that keeps an lvalue (a qualification): the same object; a record read as a
         // value (to be copied), the record itself.
         if (e.castKind === "NoOp") return place(k0);
+        // An object seen as another type (`reinterpret_cast<const type_info &>(x)`): its bytes,
+        // as that type's.
+        if (e.castKind === "LValueBitCast") {
+          const p = place(k0);
+          if (p.k === "mem") return { k: "mem", addr: p.addr, t: typeOf(e) };
+          break;
+        }
         if (e.castKind === "LValueToRValue" && typeOf(e).k === "rec") return place(k0);
         // A record made by a conversion (C++: a converting constructor, a conversion operator):
         // a temporary in a frame slot.
@@ -2626,7 +2643,19 @@ function raiseBody(
           throw new RaiseCError(
             `the member ${e.name} of a ${baseT.k} (${JSON.stringify(k0.type)})`,
           );
-        const field = layoutOf(baseT).fields.get(memberName(e));
+        let field = layoutOf(baseT).fields.get(memberName(e));
+        // (A type named as its class's scope spells it, `SerializeInfo` in AsyncHooks', which is
+        // one of several: the class the member is declared in.)
+        if (field === undefined) {
+          const owner = unitCxx?.classOf(
+            (e as { referencedMemberDecl?: string }).referencedMemberDecl ?? "",
+          );
+          const l = owner === undefined ? undefined : unitLayout(owner);
+          if (owner !== undefined && l?.fields.has(memberName(e)) === true) {
+            baseT = { k: "rec", name: owner };
+            field = l.fields.get(memberName(e));
+          }
+        }
         if (field === undefined) throw new RaiseCError(`the field "${e.name}" of ${baseT.name}`);
         let addr: string;
         if (arrow) addr = expr(k0);

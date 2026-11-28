@@ -20,9 +20,12 @@ export const NODE = fileURLToPath(new URL("../../vendor/node/", import.meta.url)
  * src/shared/hashtable-aux.cc it includes). A binding that hashes strings needs them.
  */
 export const LIBSTDCXX = fileURLToPath(new URL("../../vendor/gcc-libstdcxx/", import.meta.url));
-export const LIBSTDCXX_FILES = ["hash_bytes.cc", "src/c++11/hashtable_c++0x.cc"].map(
-  (f) => `${LIBSTDCXX}${f}`,
-);
+export const LIBSTDCXX_FILES = [
+  "hash_bytes.cc",
+  "src/c++11/hashtable_c++0x.cc",
+  "src/c++98/list.cc",
+  "src/c++11/shared_ptr.cc",
+].map((f) => `${LIBSTDCXX}${f}`);
 export const hasLibstdcxx = LIBSTDCXX_FILES.every((f) => existsSync(f));
 const FIXTURES = fileURLToPath(new URL("./c/", import.meta.url));
 
@@ -93,6 +96,9 @@ export const NODE_ARGS: readonly string[] = [
  * icu-generic.gyp compiles them, with RTTI and their implementation defines.
  */
 export const nodeArgsFor = (file: string): readonly string[] => {
+  // (libstdc++'s sources, as GCC builds them: its x86-64 interference sizes, which clang has not.)
+  if (file.startsWith(LIBSTDCXX))
+    return [...NODE_ARGS, "-D__GCC_DESTRUCTIVE_SIZE=64", "-D__GCC_CONSTRUCTIVE_SIZE=64"];
   const icu = /deps\/icu-small\/source\/(common|i18n|stubdata)\//.exec(file);
   if (icu === null) return NODE_ARGS;
   return [
