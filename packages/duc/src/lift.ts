@@ -2686,9 +2686,14 @@ class Lifter {
     // member keeps the same object, so the closure still holds it. A reassignment that is certainly
     // done before the closure is made (earlier, in the same function, not in another closure, with
     // the closure in no loop and not hoisted) is the value the closure captures.
-    const outside = assignmentTargets(fn.getSourceFile()).filter(
-      (t) => !t.getAncestors().some((a) => a.compilerNode === fn.compilerNode),
-    );
+    // Only a plain name the closure captures, or a destructuring, can change a capture
+    // (changesCapture): those are the targets looked at, found by name in the file's targets (#1361).
+    // Each closure filtered every target of the file, by walking its ancestors.
+    const index = targetIndexOf(fn.getSourceFile());
+    const outside = [
+      ...index.patterns,
+      ...captures.flatMap((name) => index.byName.get(name) ?? []),
+    ].filter((t) => !holds(fn, t));
     const scopeOf = (n: Node): Node | undefined =>
       n.getAncestors().find((a) => isFunctionLikeNode(a));
     const inLoop = (n: Node, scope: Node | undefined): boolean => {
@@ -2759,9 +2764,7 @@ class Lifter {
     };
     // Only the closure's own enclosing function can change a capture under it: an assignment in a
     // scope further out was settled there (a cell, or a value captured by the closure in between).
-    const withinScope = (t: Node): boolean =>
-      fnScope === undefined ||
-      t.getAncestors().some((a) => a.compilerNode === fnScope.compilerNode);
+    const withinScope = (t: Node): boolean => fnScope === undefined || holds(fnScope, t);
     if (outside.filter(withinScope).some(changesCapture)) return undefined;
 
     let graph: DucGraph;
@@ -7191,6 +7194,42 @@ const switchArmsCache = new WeakMap<object, SwitchArm[] | null>();
 const assignmentTargetsCache = new WeakMap<object, Node[]>();
 const closureLocalsCache = new WeakMap<object, Set<string>>();
 const identifiersCache = new WeakMap<object, readonly Identifier[]>();
+const targetIndexCache = new WeakMap<
+  object,
+  { readonly byName: ReadonlyMap<string, readonly Node[]>; readonly patterns: readonly Node[] }
+>();
+
+/** A file's assignment targets: its plain names by name, and its destructurings (#1361). */
+function targetIndexOf(sf: Node): {
+  readonly byName: ReadonlyMap<string, readonly Node[]>;
+  readonly patterns: readonly Node[];
+} {
+  const cached = targetIndexCache.get(sf.compilerNode);
+  if (cached !== undefined) return cached;
+  const byName = new Map<string, Node[]>();
+  const patterns: Node[] = [];
+  for (const t of assignmentTargets(sf)) {
+    if (Node.isIdentifier(t)) {
+      const list = byName.get(t.getText());
+      if (list === undefined) byName.set(t.getText(), [t]);
+      else list.push(t);
+    } else if (Node.isArrayLiteralExpression(t) || Node.isObjectLiteralExpression(t))
+      patterns.push(t);
+  }
+  const index = { byName, patterns };
+  targetIndexCache.set(sf.compilerNode, index);
+  return index;
+}
+
+/** Whether `node` is under `scope` in their tree: its range is inside the scope's (ranges nest). */
+function holds(scope: Node, node: Node): boolean {
+  return (
+    node.compilerNode !== scope.compilerNode &&
+    scope.compilerNode.pos <= node.compilerNode.pos &&
+    node.compilerNode.end <= scope.compilerNode.end
+  );
+}
+
 const receiverKeywordsCache = new WeakMap<
   object,
   { readonly thises: readonly Node[]; readonly supers: readonly Node[] }
