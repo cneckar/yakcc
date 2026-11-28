@@ -72,6 +72,8 @@ export function shaveCFiles(
   index?: ReadonlyMap<string, string>,
   /** Statics the caller's own units use, for these files to define (by their keys). */
   statics: readonly string[] = [],
+  /** Called as each file is shaved (a long shave's progress, kept as it goes). */
+  onUnit?: (file: string, names: readonly string[], unit: ShavedUnit | Error, ms: number) => void,
 ): ShavedFiles {
   const defs = index ?? definitions(files, args, clang);
   const cxx = /\+\+$/.test(clang);
@@ -142,9 +144,11 @@ export function shaveCFiles(
       } catch (e) {
         // (A unit that fails as a whole, a static it cannot lay out: refused, and the rest on.)
         refused.push(`${names.join(", ")} (${basename(file)}): ${(e as Error).message}`);
+        onUnit?.(file, names, e as Error, Date.now() - t);
         continue;
       }
       take(unit, file);
+      onUnit?.(file, names, unit, Date.now() - t);
       if (
         process.env.YAKCC_PROGRESS !== undefined &&
         (Date.now() - t > 10_000 || process.memoryUsage().heapUsed > 3 * 2 ** 30)
