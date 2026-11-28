@@ -154,6 +154,8 @@ function resolveSpecifier(spec: string, from: string, esm = false): string {
 }
 /** A module with no ECMAScript import or export, in a .js or .cjs file: CommonJS. */
 function isCommonJs(sf: SourceFile, file: string): boolean {
+  // (A JSON module is recorded as one: `module.exports = JSON.parse(..)`.)
+  if (/\.json$/i.test(file)) return true;
   if (!/\.c?js$/.test(file)) return false;
   return !sf
     .getStatements()
@@ -185,7 +187,14 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
     if (modules.has(id)) return;
     // A placeholder first: a cycle sees the module as known.
     modules.set(id, { id, statements: [] });
-    const text = readFileSync(file, "utf8");
+    // A JSON module (`import pkg from "./package.json" with { type: "json" }`, or required): its
+    // value, as Node gives it to both: a require's result, an import's default.
+    const source = readFileSync(file, "utf8");
+    const text = /\.json$/i.test(file)
+      ? // (JSON.parse of its text, as Node does: a `"__proto__"` key is an own property, not the
+        // prototype an object literal's would set.)
+        `module.exports = JSON.parse(${JSON.stringify(source.replace(/^\uFEFF/, ""))});\n`
+      : source;
     const sf = project.createSourceFile(`/m/${modules.size}.ts`, text, { overwrite: true });
     // import() and import.meta, as syntax (a string or comment that mentions them is neither): an
     // import() of a string literal is the module's link, as a require is. One of a computed

@@ -1,0 +1,7 @@
+{
+  "name": "pkg",
+  "version": "1.2.3",
+  "list": [1, 2.5, -3e2, null, true, "é "],
+  "nested": { "a": { "b": [] } },
+  "__proto__": { "own": 1 }
+}
