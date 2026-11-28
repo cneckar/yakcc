@@ -142,7 +142,9 @@ export function indexUnit(clang: string, args: readonly string[], file: string):
     try {
       const o = statSync(join(dir, old));
       const used = Math.max(o.atimeMs, o.mtimeMs);
-      if (Date.now() - used > 86_400_000) rmSync(join(dir, old), { force: true });
+      // (A partial dump an hour old is a killed process's: one takes under a minute.)
+      if (Date.now() - used > (old.endsWith(".part") ? 3_600_000 : 86_400_000))
+        rmSync(join(dir, old), { force: true });
       else if (old.endsWith(".json")) kept.push({ file: join(dir, old), size: o.size, used });
     } catch {
       // another process's, gone
@@ -6327,7 +6329,17 @@ function shaveUnit(
    * A class's definition by its record type (`struct v8::base::Magic<uint32_t>`): the record of
    * its name; a class template's instance, the one with its arguments.
    */
+  const foundRecords = new Map<string, ClangNode | undefined>();
   const findRecord = (record: string): ClangNode | undefined => {
+    if (indexed === undefined) return undefined;
+    // (Once per record type: each candidate is read from the dump and parsed, and V8's classes
+    // have thousands of instances.)
+    if (foundRecords.has(record)) return foundRecords.get(record);
+    const found = findRecordUncached(record);
+    foundRecords.set(record, found);
+    return found;
+  };
+  const findRecordUncached = (record: string): ClangNode | undefined => {
     if (indexed === undefined) return undefined;
     const bare = record.replace(/^(struct|class|union) /, "");
     // (An integer argument without its suffix: `256UL` is `256`; a bool as clang's dump has it,
@@ -7672,7 +7684,13 @@ function shaveUnit(
         });
       let dump: string;
       try {
-        dump = run(["-fsyntax-only", "-Xclang", "-fdump-record-layouts-complete"]);
+        // (No crash reproducer left behind: 15 MB a unit of V8.)
+        dump = run([
+          "-fsyntax-only",
+          "-fno-crash-diagnostics",
+          "-Xclang",
+          "-fdump-record-layouts-complete",
+        ]);
       } catch {
         // clang 18 can crash dumping every record of libstdc++'s headers: the records code
         // generation lays out, then.

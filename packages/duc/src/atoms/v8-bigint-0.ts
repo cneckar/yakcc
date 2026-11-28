@@ -673,9 +673,33 @@ export const PART_0: Readonly<Record<string, ShavedAtomSource>> = {
       "export function f(__this: number, v: number): void {\n\nlet __t0 = 0;\nRecursionLevel___2(__this, v);\n{\n}\n}",
     externals: [],
   },
+  RecursionLevel___: {
+    source:
+      "export function f(__this: number): void {\n\n\n__ykBigToF64(__ykI64(__ykStore64(__this, __ykNumToBig(0))));\n{\n}\n}",
+    externals: [],
+  },
   RecursionLevel___2: {
     source:
-      "export function f(__this: number, __p: number): void {\n\nlet __t0 = 0;\n(((__t0 = __this), __ykStore8(__t0, 0), __ykStore8((__t0 + 1), 0), __ykStore8((__t0 + 2), 0), __ykStore8((__t0 + 3), 0), __ykStore8((__t0 + 4), 0), __ykStore8((__t0 + 5), 0), __ykStore8((__t0 + 6), 0), __ykStore8((__t0 + 7), 0), undefined));\n{\n__ykBigToF64(__ykI64(__ykStore64(_M_ptr_3(__this), __ykNumToBig(__p))));\n}\n}",
+      "export function f(__this: number, __p: number): void {\n\nlet __t0 = 0;\n(RecursionLevel___3(__this));\n{\n__ykBigToF64(__ykI64(__ykStore64(_M_ptr_3(__this), __ykNumToBig(__p))));\n}\n}",
+    externals: [],
+  },
+  RecursionLevel___3: {
+    source:
+      "export function f(__this: number): void {\n\nlet __t0 = 0;\nRecursionLevel___4(__this);\n{\n}\n}",
+    externals: [],
+  },
+  RecursionLevel___4: {
+    source:
+      "export function f(__this: number): void {\n\nlet __t0 = 0;\nlet __t1 = 0;\nRecursionLevel___5(__this);\nRecursionLevel___(__this);\n{\n}\n}",
+    externals: [],
+  },
+  RecursionLevel___5: {
+    source:
+      "export function f(__this: number): void {\n\nlet __t0 = 0;\nRecursionLevel___6(__this);\n{\n}\n}",
+    externals: [],
+  },
+  RecursionLevel___6: {
+    source: "export function f(__this: number): void {\n\nlet __t0 = 0;\n(undefined);\n{\n}\n}",
     externals: [],
   },
   RecursionLevel_dtor: {
@@ -786,9 +810,33 @@ export const PART_0: Readonly<Record<string, ShavedAtomSource>> = {
       "export function f(__this: number): void {\n\nlet __t0 = 0;\nStorage___2(__this);\n{\n}\n}",
     externals: [],
   },
+  Storage___: {
+    source:
+      "export function f(__this: number): void {\n\n\n__ykBigToF64(__ykI64(__ykStore64(__this, __ykNumToBig(0))));\n{\n}\n}",
+    externals: [],
+  },
   Storage___2: {
     source:
-      "export function f(__this: number): void {\n\nlet __t0 = 0;\n(((__t0 = __this), __ykStore8(__t0, 0), __ykStore8((__t0 + 1), 0), __ykStore8((__t0 + 2), 0), __ykStore8((__t0 + 3), 0), __ykStore8((__t0 + 4), 0), __ykStore8((__t0 + 5), 0), __ykStore8((__t0 + 6), 0), __ykStore8((__t0 + 7), 0), undefined));\n{\n}\n}",
+      "export function f(__this: number): void {\n\nlet __t0 = 0;\n(Storage___3(__this));\n{\n}\n}",
+    externals: [],
+  },
+  Storage___3: {
+    source:
+      "export function f(__this: number): void {\n\nlet __t0 = 0;\nStorage___4(__this);\n{\n}\n}",
+    externals: [],
+  },
+  Storage___4: {
+    source:
+      "export function f(__this: number): void {\n\nlet __t0 = 0;\nlet __t1 = 0;\nStorage___5(__this);\nStorage___(__this);\n{\n}\n}",
+    externals: [],
+  },
+  Storage___5: {
+    source:
+      "export function f(__this: number): void {\n\nlet __t0 = 0;\nStorage___6(__this);\n{\n}\n}",
+    externals: [],
+  },
+  Storage___6: {
+    source: "export function f(__this: number): void {\n\nlet __t0 = 0;\n(undefined);\n{\n}\n}",
     externals: [],
   },
   Storage_dtor: {
@@ -893,6 +941,11 @@ export const PART_0: Readonly<Record<string, ShavedAtomSource>> = {
   _Exit: {
     source:
       "export function f(ec: number): void {\n\n\n\n{\n__syscall1___Exit(__ykNumToBig(231), (__ykNumToBig(ec)));\n{\nfor (; true; ) {\n__syscall1___Exit(__ykNumToBig(60), (__ykNumToBig(ec)));\n}\n}\n}\n}",
+    externals: [],
+  },
+  _Head_base_0__unsigned_long___: {
+    source:
+      "export function f(__this: number): void {\n\n\n__ykBigToF64(__ykI64(__ykStore64(__this, __ykNumToBig(0))));\n{\n}\n}",
     externals: [],
   },
   _M_deleter: {
@@ -1168,12 +1221,31 @@ export const PART_0: Readonly<Record<string, ShavedAtomSource>> = {
   },
   default_delete_unsigned_long_____3: {
     source:
-      "export function f(__this: number): void {\n\nlet __t0 = 0;\n(((__t0 = __this), __ykStore8(__t0, 0), __ykStore8((__t0 + 1), 0), __ykStore8((__t0 + 2), 0), __ykStore8((__t0 + 3), 0), __ykStore8((__t0 + 4), 0), __ykStore8((__t0 + 5), 0), __ykStore8((__t0 + 6), 0), __ykStore8((__t0 + 7), 0), undefined));\n{\n}\n}",
+      "export function f(__this: number): void {\n\nlet __t0 = 0;\n(default_delete_unsigned_long_____5(__this));\n{\n}\n}",
     externals: [],
   },
   default_delete_unsigned_long_____4: {
     source:
-      "export function f(__this: number, __p: number): void {\n\nlet __t0 = 0;\n(((__t0 = __this), __ykStore8(__t0, 0), __ykStore8((__t0 + 1), 0), __ykStore8((__t0 + 2), 0), __ykStore8((__t0 + 3), 0), __ykStore8((__t0 + 4), 0), __ykStore8((__t0 + 5), 0), __ykStore8((__t0 + 6), 0), __ykStore8((__t0 + 7), 0), undefined));\n{\n__ykBigToF64(__ykI64(__ykStore64(_M_ptr(__this), __ykNumToBig(__p))));\n}\n}",
+      "export function f(__this: number, __p: number): void {\n\nlet __t0 = 0;\n(default_delete_unsigned_long_____5(__this));\n{\n__ykBigToF64(__ykI64(__ykStore64(_M_ptr(__this), __ykNumToBig(__p))));\n}\n}",
+    externals: [],
+  },
+  default_delete_unsigned_long_____5: {
+    source:
+      "export function f(__this: number): void {\n\nlet __t0 = 0;\ndefault_delete_unsigned_long_____6(__this);\n{\n}\n}",
+    externals: [],
+  },
+  default_delete_unsigned_long_____6: {
+    source:
+      "export function f(__this: number): void {\n\nlet __t0 = 0;\nlet __t1 = 0;\ndefault_delete_unsigned_long_____7(__this);\n_Head_base_0__unsigned_long___(__this);\n{\n}\n}",
+    externals: [],
+  },
+  default_delete_unsigned_long_____7: {
+    source:
+      "export function f(__this: number): void {\n\nlet __t0 = 0;\ndefault_delete_unsigned_long_____8(__this);\n{\n}\n}",
+    externals: [],
+  },
+  default_delete_unsigned_long_____8: {
+    source: "export function f(__this: number): void {\n\nlet __t0 = 0;\n(undefined);\n{\n}\n}",
     externals: [],
   },
   digit_add2: {
@@ -1337,12 +1409,12 @@ export const PART_0: Readonly<Record<string, ShavedAtomSource>> = {
   },
   operator_assign_2: {
     source:
-      "export function f(__this: number, v: number): number {\n\n\n\n{\n__ykBigToF64(__ykI64(__ykStore64(__this, __ykNumToBig(__ykBigToF64(__ykI64(__ykLoad64(v)))))));\n__ykStore32((__this + 8), (__ykLoad32((v + 8)) | 0));\nreturn __this;\n}\n}",
+      "export function f(__this: number, v: number): number {\n\n\n__ykStore64((__this + 0), __ykLoad64((v + 0)));\n__ykStore64((__this + 8), __ykLoad64((v + 8)));\n{\n__ykBigToF64(__ykI64(__ykStore64(__this, __ykNumToBig(__ykBigToF64(__ykI64(__ykLoad64(v)))))));\n__ykStore32((__this + 8), (__ykLoad32((v + 8)) | 0));\nreturn __this;\n}\n}",
     externals: [],
   },
   operator_assign_3: {
     source:
-      "export function f(__this: number, v: number): number {\n\n\n\n{\n__ykBigToF64(__ykI64(__ykStore64(__this, __ykNumToBig(__ykBigToF64(__ykI64(__ykLoad64(v)))))));\n__ykStore32((__this + 8), (__ykLoad32((v + 8)) | 0));\nreturn __this;\n}\n}",
+      "export function f(__this: number, v: number): number {\n\n\n__ykStore64((__this + 0), __ykLoad64((v + 0)));\n__ykStore64((__this + 8), __ykLoad64((v + 8)));\n{\n__ykBigToF64(__ykI64(__ykStore64(__this, __ykNumToBig(__ykBigToF64(__ykI64(__ykLoad64(v)))))));\n__ykStore32((__this + 8), (__ykLoad32((v + 8)) | 0));\nreturn __this;\n}\n}",
     externals: [],
   },
   operator_assign_4: {
@@ -1352,7 +1424,7 @@ export const PART_0: Readonly<Record<string, ShavedAtomSource>> = {
   },
   operator_assign_5: {
     source:
-      "export function f(__this: number, v: number): number {\n\n\n\n{\noperator_assign_2(__this, v);\nreturn __this;\n}\n}",
+      "export function f(__this: number, v: number): number {\n\n\n__ykStore64((__this + 0), __ykLoad64((v + 0)));\n__ykStore64((__this + 8), __ykLoad64((v + 8)));\n{\noperator_assign_2(__this, v);\nreturn __this;\n}\n}",
     externals: [],
   },
   operator_call: {
