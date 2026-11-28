@@ -213,6 +213,27 @@ export function analyze(rows) {
       };
     }
   }
+  // The forced arm (secondary, added after phase 1c): its gain over the routed arm, and H1's rule
+  // for it.
+  if (has("F-haiku") && has("R-haiku")) {
+    const gain = (pool) => {
+      const d = pool
+        .filter((id) => C[id]["F-haiku"] && C[id]["R-haiku"])
+        .map((id) => C[id]["F-haiku"].pass1 - C[id]["R-haiku"].pass1);
+      return { tasks: d.length, meanForcedMinusRouted: mean(d), ci: bootstrap(d, mean) };
+    };
+    H.forcedGain = { hard: gain(byTier("hard")), all: gain(ids) };
+    if (FRONTIER.some(has)) {
+      const d = diff(byTier("hard"), "F-haiku", bestScratch);
+      const ci = bootstrap(d, mean);
+      H.H1_forcedArm = {
+        tasks: d.length,
+        meanDiff: mean(d),
+        ci,
+        holds: d.length > 0 && mean(d) >= -0.05 && ci[0] > -0.1,
+      };
+    }
+  }
   // H4 generality: the parity and cost directions per family (≥ 4 tasks).
   const families = [...new Set(perTask.map((t) => t.family))];
   H.H4_byFamily = Object.fromEntries(
