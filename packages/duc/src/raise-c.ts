@@ -1793,6 +1793,9 @@ function vptrOf(record: string): number | undefined {
  */
 function isUnion(name: string): boolean {
   if (/^union /.test(name)) return true;
+  // (An unnamed record says which it is in its name, `(unnamed struct at ..)`; the layouts' keys
+  // do not.)
+  if (/\((?:unnamed|anonymous)/.test(name)) return /\((?:unnamed|anonymous) union\b/.test(name);
   if (!/^(?:struct|class) /.test(name)) return false;
   const u = unitLayout(`union ${name.replace(/^(?:struct|class) /, "")}`);
   return u !== undefined && u === unitLayout(name);
@@ -3765,6 +3768,25 @@ function raiseBody(
    * A record value (an lvalue, or a call that returns one: the address of a fresh copy, freed once
    * copied) copied to `to`: expression steps.
    */
+  /**
+   * C++: the step that sets an object's vtable pointer to its class's own vtable (an implicit
+   * constructor's, after its bases'), when the class has one; none for a class with no vtable or
+   * an abstract one no unit lays out.
+   */
+  const ownVtable = (addr: string, record: string): string[] => {
+    if (unitCxx === undefined) return [];
+    const vp = vptrOf(record);
+    if (vp === undefined) return [];
+    let key: string | undefined;
+    try {
+      key = unitCxx.vtableOf(record, destroy);
+    } catch {
+      return [];
+    }
+    return [
+      `__ykStore64(${vp === 0 ? addr : `(${addr} + ${vp})`}, __ykNumToBig(__ykStatic(${JSON.stringify(key)}) + 16))`,
+    ];
+  };
   const relocate = (to: string, from: string, t: CType, move: boolean): string[] => {
     // An object of a class that is not trivially copyable (C++), moved or copied to `to` from
     // `from`: its move (or copy) constructor; any other, its bytes.
@@ -3787,6 +3809,8 @@ function raiseBody(
         const at = (b: string, o: number): string => (o === 0 ? b : `(${b} + ${o})`);
         for (const [b, o] of l.bases ?? [])
           out.push(...relocate(at(to, o), at(from, o), { k: "rec", name: b }, move));
+        // (Its own vtable after its bases', which their copies set to theirs.)
+        out.push(...ownVtable(to, t.name));
         for (const [, f] of l.fields) {
           const ft = isReferenceType(f.type) || f.bit !== undefined ? undefined : parseType(f.type);
           if (ft?.k === "rec")
@@ -4011,6 +4035,9 @@ function raiseBody(
             inner: [],
           }) as ClangNode;
         for (const [b, o] of l.bases ?? []) steps.push(construct(at(o), dflt(b)));
+        // (Its own vtable after its bases', as a compiler's implicit constructor sets it: a
+        // class with virtual methods, `EmptyModifier`, is not left with its base's.)
+        steps.push(...ownVtable(to, t.name));
         for (const [name, f] of l.fields) {
           if (f.bit !== undefined || isReferenceType(f.type)) continue;
           const given = unitCxx.memberInitOf(t.name, name);
@@ -6513,9 +6540,29 @@ export function shaveCUnit(
             );
           },
           memberInitOf: (record, field) => {
-            const f = (findRecord(record)?.inner ?? []).find(
-              (c) => c.kind === "FieldDecl" && c.name === field,
-            );
+            let rec = findRecord(record);
+            // (An unnamed struct of a class, `MicroProps::(unnamed struct at f.h:117:5)`: the
+            // class's unnamed record with that member, by its line when several have it.)
+            const unnamed =
+              /^(?:struct |class |union )?(.*?)::\((?:unnamed|anonymous)(?: struct| union| class)? at [^()]*?:(\d+):(\d+)\)$/.exec(
+                record,
+              );
+            if (rec === undefined && unnamed !== null) {
+              const outer = findRecord(`struct ${unnamed[1]}`) ?? findRecord(`class ${unnamed[1]}`);
+              const cands = (outer?.inner ?? []).filter(
+                (c) =>
+                  RECORD_KINDS.has(c.kind) &&
+                  (c.name === undefined || c.name === "") &&
+                  (c.inner ?? []).some((x) => x.kind === "FieldDecl" && x.name === field),
+              );
+              rec =
+                cands.find(
+                  (c) =>
+                    String((c as { loc?: { line?: number } }).loc?.line) === unnamed[2] &&
+                    String((c as { loc?: { col?: number } }).loc?.col) === unnamed[3],
+                ) ?? (cands.length === 1 ? cands[0] : undefined);
+            }
+            const f = (rec?.inner ?? []).find((c) => c.kind === "FieldDecl" && c.name === field);
             return f?.id === undefined ? undefined : cxx?.fieldInitOf(f.id);
           },
           fieldInitOf: (fieldId) => {
