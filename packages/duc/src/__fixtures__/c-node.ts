@@ -2,6 +2,7 @@
 // node/src's bindings shaved over V8's API (#1367): Node's own C++ (vendor/node/src, v22.23.5) as
 // node.gyp and node.gypi compile it for linux-x64, each file a unit linked by its symbols, V8's
 // API the boundary (raise-c's isV8Api; its leaves, raise-cpp-v8.ts), the C library musl.
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { type ShavedUnit, createCMemory, createCSystem, isV8Api, shaveCUnit } from "../raise-c.js";
 import { type V8Host, createV8 } from "../raise-cpp-v8.js";
@@ -10,6 +11,19 @@ import { type Fn, link, runInitializers } from "./c-link.js";
 import { shaveMusl, withMuslInit } from "./c-musl.js";
 
 export const NODE = fileURLToPath(new URL("../../vendor/node/", import.meta.url));
+/**
+ * libstdc++'s compiled sources a std::unordered_map calls (std::_Hash_bytes, its hash; the
+ * prime rehash policy), GCC 13's, as the headers clang uses are: not in the project (GPL-3.0
+ * with the GCC Runtime Library Exception), fetched beside it, not committed
+ * (packages/duc/vendor/gcc-libstdcxx/, from gcc-mirror/gcc's releases/gcc-13:
+ * libstdc++-v3/libsupc++/hash_bytes.cc, libstdc++-v3/src/c++11/hashtable_c++0x.cc and the
+ * src/shared/hashtable-aux.cc it includes). A binding that hashes strings needs them.
+ */
+export const LIBSTDCXX = fileURLToPath(new URL("../../vendor/gcc-libstdcxx/", import.meta.url));
+export const LIBSTDCXX_FILES = ["hash_bytes.cc", "src/c++11/hashtable_c++0x.cc"].map(
+  (f) => `${LIBSTDCXX}${f}`,
+);
+export const hasLibstdcxx = LIBSTDCXX_FILES.every((f) => existsSync(f));
 const FIXTURES = fileURLToPath(new URL("./c/", import.meta.url));
 
 /**
@@ -133,6 +147,7 @@ export function shaveBinding(
       ...others.filter((f) => f !== file).map((f) => `${NODE}${f}`),
       `${FIXTURES}libstdcxx-inst.cpp`,
       `${FIXTURES}cxx-runtime.cpp`,
+      ...(hasLibstdcxx ? LIBSTDCXX_FILES : []),
     ],
     wanted,
     nodeArgsFor,

@@ -7,7 +7,7 @@
 // a run's flags set: that option's value is left out.)
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { instantiateBinding, shaveBinding } from "./__fixtures__/c-node.js";
+import { hasLibstdcxx, instantiateBinding, shaveBinding } from "./__fixtures__/c-node.js";
 
 const hasClang = (() => {
   try {
@@ -49,7 +49,9 @@ delete values['--expose-internals'];
 console.log(JSON.stringify(plain({ values, info: b.getCLIOptionsInfo(), envSettings: b.envSettings,
   types: b.types, input: b.getEnvOptionsInputType() })));`;
 
-describe.skipIf(!hasClang)("Node's options binding, shaved from node/src", () => {
+// (Its parser's options are a std::unordered_map, iterated in its hash's order: libstdc++'s own
+// compiled hash, fetched beside the project, not committed: see c-node's LIBSTDCXX.)
+describe.skipIf(!hasClang || !hasLibstdcxx)("Node's options binding, shaved from node/src", () => {
   const shaved = shaveBinding("src/node_options.cc", [INITIALIZE], FILES, [
     "yk_node_environment_options",
   ]);
