@@ -23,7 +23,6 @@ import { createRequire } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Node, Project, type SourceFile, type Statement, SyntaxKind, ts } from "ts-morph";
-import { unwrapBundles } from "./bundles.js";
 import type {
   NativeEsm,
   NativeImport,
@@ -186,8 +185,7 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
     if (modules.has(id)) return;
     // A placeholder first: a cycle sees the module as known.
     modules.set(id, { id, statements: [] });
-    // A bundle's wrapper is its body's statements, lifted one by one (#1361).
-    const text = unwrapBundles(readFileSync(file, "utf8"));
+    const text = readFileSync(file, "utf8");
     const sf = project.createSourceFile(`/m/${modules.size}.ts`, text, { overwrite: true });
     // import() and import.meta, as syntax (a string or comment that mentions them is neither): an
     // import() of a string literal is the module's link, as a require is; of anything else, or

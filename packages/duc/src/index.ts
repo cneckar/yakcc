@@ -162,7 +162,7 @@ export {
 export type { NativeModule, NativeModuleStatement, NativeModules } from "./emit-llvm-boxed.js";
 export { emitLlvmBoxed, emitNativeModules, moduleSymbol } from "./emit-llvm-boxed.js";
 export type { NativeEsm, NativeImport } from "./emit-llvm-boxed.js";
-export { DEFAULT_BINDING, ProgramError, programRecord } from "./program.js";
+export { DEFAULT_BINDING, ProgramError, programRecord, unwrapModuleFunction } from "./program.js";
 export type { ProgramRecord } from "./program.js";
 export { buildProgram } from "./build.js";
 export type { BuildOptions, BuildResult } from "./build.js";
