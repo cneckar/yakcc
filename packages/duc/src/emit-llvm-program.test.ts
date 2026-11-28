@@ -206,6 +206,16 @@ describe.skipIf(!canRun("x86_64-linux"))("programs, natively (#1333)", () => {
     expect(native.stdout).toBe(node.stdout);
   }, 600_000);
 
+  it("module bindings that shadow platform globals, read and written in a class, a method and nested functions (Node's esm/hooks.js `let MessageChannel`, #1370)", () => {
+    const entry = here("./__fixtures__/program/shadow/entry.js");
+    const exe = join(work, "shadow-run");
+    buildProgram(entry, exe, { root: here("../../..") });
+    const native = spawnSync(exe, [], { encoding: "utf8", timeout: 60_000 });
+    const node = spawnSync(process.execPath, [entry], { encoding: "utf8", timeout: 60_000 });
+    expect(native.stderr).toBe("");
+    expect(native.stdout).toBe(node.stdout);
+  }, 600_000);
+
   it("promise rejections: handled ones end nothing; one nothing handles ends the program, exit 1; an async try's jobs (#1361 P2)", () => {
     for (const name of ["handled", "unhandled", "try-order"]) {
       const entry = here(`./__fixtures__/program/rejections/${name}.js`);

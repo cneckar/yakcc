@@ -465,6 +465,16 @@ const PROGRAMS: [string, string, number][] = [
     2,
   ],
   [
+    "Math.fround, and Math.fround, Math.imul and Math.clz32 read as values (fast-check's `const safeMathImul = Math.imul`), on numbers and on values ToNumber converts (#1370)",
+    "export function f(a, b) { const fround = Math.fround; const { imul, clz32 } = Math; const xs = [a, b, 0, -0, 1.1, -1.5, 3.4028235677973366e38, 3.5e38, -3.5e38, 1e-46, -1e-46, 1.401298464324817e-45, 16777217, NaN, Infinity, -Infinity, 2 ** 31, -(2 ** 31) - 1, 2 ** 53, '2.5', '0x10', true, null, undefined, [7], {}]; return [xs.map((x) => Math.fround(x)), xs.map(fround), xs.map((x) => imul(x, 3)), xs.map((x) => imul(-1, x)), xs.map(clz32), [fround.name, fround.length, imul.name, imul.length, clz32.name, clz32.length, fround === Math.fround, typeof imul], Object.is(Math.fround(-0), -0), 1 / fround(-1e-46)]; }",
+    2,
+  ],
+  [
+    "`**=` on a variable, an element and a property (transformers' `magnitude[j] **= pow`), on numbers, BigInts and values ToNumeric converts (#1370)",
+    "export function f(a, b) { const m = [a, 2, -3, 0.5, '4']; for (let j = 0; j < m.length; j++) m[j] **= 2; const f64 = new Float64Array([1.5, -2, a]); for (let j = 0; j < f64.length; j++) f64[j] **= 3; const o = { k: b, n: 2n }; o.k **= 0.5; o.n **= 10n; let x = a; x **= -1; let y = 10; y **= b; const out = []; try { let z = 2n; z **= -1n; out.push(z); } catch (e) { out.push(e instanceof RangeError, e.message); } return [m, [...f64], o.k, String(o.n), x, y, out]; }",
+    2,
+  ],
+  [
     "a write to a property of undefined or null: V8's TypeError and message (#1331)",
     "export function f(a, b) { const out = []; for (const o of [undefined, null, a === null ? undefined : null]) { try { o.k = b; out.push('wrote'); } catch (e) { out.push(e instanceof TypeError, e.message); } } return out; }",
     2,

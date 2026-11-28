@@ -15,10 +15,9 @@ describe("program records: what the native subset refuses (#1333)", () => {
       "src/__fixtures__/program/syntax/mentions.js",
     ]);
   });
-  it("an import() of a computed specifier is refused", () => {
-    expect(() =>
-      programRecord(here("./__fixtures__/program/syntax/dynamic.js"), here("..")),
-    ).toThrow(ProgramError);
+  it("an import() of a computed specifier links nothing: it is resolved when it runs (#1370)", () => {
+    const record = programRecord(here("./__fixtures__/program/syntax/dynamic.js"), here(".."));
+    expect(record.modules.map((m) => m.id)).toEqual(["src/__fixtures__/program/syntax/dynamic.js"]);
   });
 });
 

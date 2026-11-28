@@ -188,19 +188,19 @@ export function programRecord(entryFile: string, root = process.cwd()): ProgramR
     const text = readFileSync(file, "utf8");
     const sf = project.createSourceFile(`/m/${modules.size}.ts`, text, { overwrite: true });
     // import() and import.meta, as syntax (a string or comment that mentions them is neither): an
-    // import() of a string literal is the module's link, as a require is; of anything else, or
-    // import.meta, not in the subset yet.
+    // import() of a string literal is the module's link, as a require is. One of a computed
+    // specifier (assemblyscript's asc.js: `--wasm <file>`, transform plugins) is resolved when it
+    // runs, by the module's require: a specifier the module links is its module, any other rejects
+    // (Node's module-not-found), as Node's import() of a file that is not there does.
     const dynamic: string[] = [];
     const metas: [number, number][] = [];
     if (/\bimport\s*[(.]/.test(text))
       sf.forEachDescendant((n) => {
         if (Node.isCallExpression(n) && n.getExpression().getKind() === SyntaxKind.ImportKeyword) {
           const arg = n.getArguments()[0];
-          if (arg === undefined || !Node.isStringLiteral(arg))
-            throw new ProgramError(
-              `an import() of a computed specifier is not in the native subset yet (${id})`,
-            );
-          if (!dynamic.includes(arg.getLiteralValue())) dynamic.push(arg.getLiteralValue());
+          if (arg === undefined) throw new ProgramError(`an import() without a specifier (${id})`);
+          if (Node.isStringLiteral(arg) && !dynamic.includes(arg.getLiteralValue()))
+            dynamic.push(arg.getLiteralValue());
         }
         if (n.getKind() === SyntaxKind.MetaProperty && n.getText().startsWith("import"))
           metas.push([n.getStart(), n.getEnd()]);

@@ -526,6 +526,38 @@ function mathFunctionValue(
       body.push(
         `  %r = call i64 @${atomFunction(m, ref.atom)}(ptr null, i64 ${UNDEFINED}, i64 ${ref.arity}, ptr %list)`,
       );
+    } else if (name === "fround") {
+      // ToNumber, then the nearest binary32 (round to nearest, ties to even) widened back.
+      m.used.add("yk_pos");
+      body.push(
+        `  %n = call i64 @yk_pos(i64 ${arg(0)})`,
+        "  %d = bitcast i64 %n to double",
+        "  %f = fptrunc double %d to float",
+        "  %e = fpext float %f to double",
+        "  %r = bitcast double %e to i64",
+      );
+    } else if (name === "imul") {
+      // ToNumber of each, then the leaf of the low 32 bits of their ToInt32s' product.
+      length = 2;
+      m.used.add("yk_pos");
+      m.used.add("yk_leaf_i32mul");
+      body.push(
+        `  %x = call i64 @yk_pos(i64 ${arg(0)})`,
+        `  %y = call i64 @yk_pos(i64 ${arg(1)})`,
+        "  %r = call i64 @yk_leaf_i32mul(i64 %x, i64 %y)",
+      );
+    } else if (name === "clz32") {
+      // ToUint32 (an unsigned shift by 0, which converts), then its leading zeros.
+      m.used.add("yk_ushr");
+      m.intrinsics.add("declare i32 @llvm.ctlz.i32(i32, i1)");
+      body.push(
+        `  %u = call i64 @yk_ushr(i64 ${arg(0)}, i64 ${boxedNumber(0)})`,
+        "  %ud = bitcast i64 %u to double",
+        "  %w = fptoui double %ud to i32",
+        "  %c = call i32 @llvm.ctlz.i32(i32 %w, i1 false)",
+        "  %cd = sitofp i32 %c to double",
+        "  %r = bitcast double %cd to i64",
+      );
     } else throw new LlvmEmitError(`Math.${name} as a value is not in the subset yet`);
     m.functions.push(
       [
@@ -3705,11 +3737,16 @@ function lowerFunction(
               ...(scope.ranges !== undefined ? { ranges: scope.ranges } : {}),
               ...(scope.record !== undefined ? { record: scope.record } : {}),
               ...(scope.staticGetter !== undefined ? { staticGetter: scope.staticGetter } : {}),
+              ...(scope.binds !== undefined ? { binds: scope.binds } : {}),
             }
           : {
-              // The module's require (a global of the module's own) for an import() in it.
-              read: (nm, e, f) => (nm === "require" ? scope.read(nm, e, f) : undefined),
-              write: () => false,
+              // The module's require (a global of the module's own) for an import() in it; and a
+              // binding of the module that shadows a platform global (`let MessageChannel`), which
+              // the lifter leaves the closure's own free name: the module's, read and written.
+              read: (nm, e, f) =>
+                nm === "require" || scope.binds?.(nm) === true ? scope.read(nm, e, f) : undefined,
+              write: (nm, v, e) => scope.binds?.(nm) === true && scope.write(nm, v, e),
+              ...(scope.binds !== undefined ? { binds: scope.binds } : {}),
             };
     const leafCaptures = n.inputs.map((v) => leafValue.get(resolve(v as ValueId)));
     lowerFunction(
@@ -5132,6 +5169,20 @@ function lowerFunction(
           );
           return;
         }
+        if (callee.name === "fround") {
+          // ToNumber, then the nearest binary32 widened back (21.3.2.17).
+          const n = call("yk_pos", `i64 ${args[0] ?? UNDEFINED}`);
+          const d = fresh();
+          emit(`${d} = bitcast i64 ${n} to double`);
+          const f = fresh();
+          emit(`${f} = fptrunc double ${d} to float`);
+          const e = fresh();
+          emit(`${e} = fpext float ${f} to double`);
+          const r = fresh();
+          emit(`${r} = bitcast double ${e} to i64`);
+          set(out, r);
+          return;
+        }
         if (callee.name === "imul") {
           set(
             out,
@@ -5696,7 +5747,7 @@ function lowerFunction(
       set(out, slow());
       return;
     }
-    if (ins.length === 2 && lbl === "**") {
+    if (ins.length === 2 && (lbl === "**" || lbl === "**=")) {
       // Two integer literals whose power is an integer a double holds exactly (2 ** 32): that
       // value, which every pow that is right on exact cases gives.
       const exact = exactPower(
@@ -5721,7 +5772,7 @@ function lowerFunction(
       set(out, r);
       return;
     }
-    if (ins.length === 2 && lbl === "**") {
+    if (ins.length === 2 && (lbl === "**" || lbl === "**=")) {
       // ToNumeric of each, once; two BigInts: the runtime's exact power; two Numbers: pow's atom
       // (Number::exponentiate is Math.pow, V8's shaved `pow`, #1362).
       m.intrinsics.add("declare i32 @yk_exponent(i64, i64, ptr)");
