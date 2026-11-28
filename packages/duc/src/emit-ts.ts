@@ -230,6 +230,10 @@ function emitFunction(
     for (const v of node.outputs) producer.set(v, node);
     for (const v of node.inputs) consumers.set(v, [...(consumers.get(v) ?? []), node]);
   }
+  // Every value something reads: a node, a result, or a branch's condition.
+  let readSet: Set<ValueId> | undefined;
+  const readAnywhere = (): Set<ValueId> =>
+    (readSet ??= new Set<ValueId>([...consumers.keys(), ...g.obs, ...branches.map((b) => b.cond)]));
   const owners = joinOwners(g);
   const loops = g.nodes.filter((n) => n.kind === "loop");
 
@@ -546,6 +550,9 @@ function emitFunction(
     if (node.kind !== "op") throw new EmitError(`a ${node.kind} is not a statement`);
     const arg = (i: number): string => ref(node.inputs[i] as ValueId);
     if (label === "throw") return [`throw ${arg(0)};`];
+    // A read of a binding outside the atom that nothing uses is the statement `name;`: the read is
+    // what it does (it may throw), and lifted again it is that read (test262).
+    if (label === "binding" && !readAnywhere().has(out as ValueId)) return [`${arg(0)};`];
     // A module statement's one result: written below, as its declared names.
     if (label.startsWith(DECLARES) || label.startsWith(COMPLETES)) return [];
     // A write to a binding outside the atom: `name = value` (#1276).

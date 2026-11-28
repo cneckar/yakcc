@@ -1343,6 +1343,8 @@ class Lifter {
   // --- driver ---
   run(file: Node): void {
     for (const name of writtenFreeNames(file)) if (!this.imports.has(name)) this.bindings.add(name);
+    for (const name of bareReadFreeNames(file))
+      if (!this.imports.has(name)) this.bindings.add(name);
     const primary = findPrimaryFunction(file);
     // The atom is the function: a name the file declares outside it, and the function writes, is a
     // binding outside the atom too (#1330): `let d = function () { .. d = g; .. }`.
@@ -2997,7 +2999,10 @@ class Lifter {
       return;
     }
     if (Node.isExpressionStatement(node)) {
-      this.liftExpr(node.getExpression());
+      // `void name;` of a binding outside the atom is the statement `name;`: the read is all it does.
+      let e: Node = node.getExpression();
+      while (Node.isParenthesizedExpression(e) || Node.isVoidExpression(e)) e = e.getExpression();
+      this.liftExpr(Node.isIdentifier(e) && this.isBinding(e.getText()) ? e : node.getExpression());
       return;
     }
     if (Node.isReturnStatement(node)) {
@@ -3906,6 +3911,15 @@ class Lifter {
         origin: { kind: "Literal", text },
         label: normalizeLiteral(text),
       })[0] as ValueId;
+    if (Node.isObjectBindingPattern(nameNode) && nameNode.getElements().length === 0) {
+      // `{}` reads nothing, but its value must be one an object can be made of (RequireObject-
+      // Coercible): null and undefined are a TypeError, raised as the iterator protocol raises one.
+      const p = `${ITERATOR_PREFIX}${this.iteratorCount++}_`;
+      this.env.set(`${p}src`, value);
+      this.liftSynthetic(nameNode, `if (${p}src === null || ${p}src === undefined) (0)();`);
+      this.env.delete(`${p}src`);
+      return;
+    }
     if (Node.isObjectBindingPattern(nameNode)) {
       const taken: string[] = [];
       for (const el of nameNode.getElements()) {
@@ -4505,6 +4519,19 @@ class Lifter {
         origin: { kind: "TaggedTemplate" },
         label: `tagged:${labelJson(parts)}`,
       })[0] as ValueId;
+    }
+    if (Node.isTypeOfExpression(node)) {
+      // `typeof name` of a binding outside the atom is typeof of the reference, as of any free name,
+      // not of a read of it: an unresolvable name's typeof is "undefined", where reading it throws.
+      // It stays in order with the writes around it, as the read would.
+      let operand: Node = node.getExpression();
+      while (Node.isParenthesizedExpression(operand)) operand = operand.getExpression();
+      if (Node.isIdentifier(operand) && this.isBinding(operand.getText()))
+        return this.emit("op", [this.throughLoop(this.resolveName(operand.getText()))], 1, {
+          origin: { kind: node.getKindName() },
+          label: node.getKindName(),
+          heap: true,
+        })[0] as ValueId;
     }
     if (Node.isTypeOfExpression(node) || Node.isVoidExpression(node)) {
       // An operator on one value: its operand is the input.
@@ -5595,6 +5622,27 @@ function writtenFreeNames(file: Node): string[] {
     }
   }
   return written;
+}
+
+/**
+ * The free names a statement only reads, `name;` or `void name;` (test262's probes; `try { g; } catch {}`): the read is
+ * all the statement does, and it may throw (the name may be unresolvable, or uninitialized), so it is
+ * a read of a binding outside the atom, in its place and in order, not a value read on entry.
+ */
+function bareReadFreeNames(file: Node): string[] {
+  const read: string[] = [];
+  forEachCompilerDescendant(file.compilerNode, (d) => {
+    if (d.kind !== SyntaxKind.ExpressionStatement) return;
+    let e = (d as ts.ExpressionStatement).expression;
+    // `name;`, `(name);` and `void name;`: the statement is the read.
+    while (e.kind === SyntaxKind.ParenthesizedExpression || e.kind === SyntaxKind.VoidExpression)
+      e = (e as ts.ParenthesizedExpression | ts.VoidExpression).expression;
+    if (e.kind !== SyntaxKind.Identifier) return;
+    const id = wrappedNode(file.getSourceFile(), e);
+    const name = id.getText();
+    if (name !== "undefined" && !declaredWithin(id, file) && !read.includes(name)) read.push(name);
+  });
+  return read;
 }
 
 /** Whether an identifier is the key of a property assignment (`k` in `{ k: v }`), not a name. */
@@ -6707,7 +6755,19 @@ function containsLoopJump(stmt: Node, loop: Node): boolean {
  * what Lifter.lowerTry needs. Undefined when it cannot be lowered: a var that is not a plain name, a
  * yield, or a break or continue that leaves the statement.
  */
-function tryShape(t: import("ts-morph").TryStatement):
+type TryShape = NonNullable<ReturnType<typeof computeTryShape>>;
+const tryShapeCache = new WeakMap<ts.Node, TryShape | null>();
+
+/** tryShape, memoized: it is asked again for each return inside the try (containsDirectReturn). */
+function tryShape(t: import("ts-morph").TryStatement): TryShape | undefined {
+  const known = tryShapeCache.get(t.compilerNode);
+  if (known !== undefined) return known ?? undefined;
+  const shape = computeTryShape(t);
+  tryShapeCache.set(t.compilerNode, shape ?? null);
+  return shape;
+}
+
+function computeTryShape(t: import("ts-morph").TryStatement):
   | {
       parts: import("ts-morph").Block[];
       vars: string[];
@@ -7135,8 +7195,10 @@ function alwaysReturns(node: Node): boolean {
 
 /** True when the node has a return that is not inside a nested function, loop, switch or try. */
 function containsDirectReturn(node: Node): boolean {
+  // A try that lowers to its call (lowerTry) returns as the statements after the call do, so its
+  // returns are the statement's own: an if around it returns on some path (test262).
   return descendantsOfKind(node, SyntaxKind.ReturnStatement).some(
-    (ret) => !insideOpaque(ret, node),
+    (ret) => !insideOpaque(ret, node, true),
   );
 }
 
@@ -7278,7 +7340,7 @@ function identifiersIn(fn: Node): readonly Identifier[] {
   return ids;
 }
 
-function insideOpaque(ret: Node, root: Node): boolean {
+function insideOpaque(ret: Node, root: Node, loweredTries = false): boolean {
   for (
     let p = ret.getParent();
     p !== undefined && p.compilerNode !== root.compilerNode;
@@ -7294,7 +7356,7 @@ function insideOpaque(ret: Node, root: Node): boolean {
       Node.isWhileStatement(p) ||
       Node.isDoStatement(p) ||
       (Node.isSwitchStatement(p) && opaqueSwitch(p)) ||
-      Node.isTryStatement(p)
+      (Node.isTryStatement(p) && !(loweredTries && tryShape(p) !== undefined))
     ) {
       return true;
     }

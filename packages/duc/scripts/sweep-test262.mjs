@@ -2,9 +2,10 @@
 // The lifter against test262 (#1361, #1370): each test of `test/language` is run as written, and as its
 // lifted graph printed back to TypeScript (`emitTypeScript`, made runnable as the lift-semantics probes
 // are), both in a fresh realm with test262's harness. A test that passes as written must pass lifted;
-// one that does not is a place where the lift changes meaning. Each test is the body of a function `f`
-// (strict for `onlyStrict`), so both sides see the same wrapping; a test that fails as written so
-// wrapped is not counted. Negative, module, async and raw tests are skipped. Run after building:
+// one that does not is a place where the lift changes meaning. Each test is the body of a strict
+// function `f` (the lifter's input is strict TypeScript, and a graph has no sloppy mode), so both sides
+// see the same wrapping; a test that fails as written so wrapped is not counted. Negative, module,
+// async, raw and sloppy-only (noStrict) tests are skipped. Run after building:
 //   node scripts/sweep-test262.mjs <test262 dir> <report.json> [path filter] [workers]
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -60,6 +61,8 @@ if (isMainThread) {
         });
         worker.on("error", (e) => {
           clearTimeout(timer);
+          // A message the worker sent before it died is not the next test's.
+          worker.removeAllListeners();
           results[relative(dir, current)] = { status: "crash", msg: String(e?.message ?? e).slice(0, 300) };
           start();
           step();
@@ -115,6 +118,9 @@ if (isMainThread) {
   console.log(`elapsed ${Math.round((Date.now() - started) / 1000)}s`);
 } else {
   const { dir } = workerData;
+  // A realm's promise rejected after its test ended (a dynamic import, which a realm cannot do here)
+  // is that test's, not the worker's: it must not end the worker under a later test.
+  process.on("unhandledRejection", () => {});
   const { liftAtom, emitTypeScript } = await import("@yakcc/duc");
   // The probes' runnable form, from its source, so the runtime it inlines is the one the tests use.
   const runnableSrc = readFileSync(new URL("../src/__fixtures__/runnable.ts", import.meta.url), "utf8");
@@ -150,14 +156,15 @@ if (isMainThread) {
     const m = meta(text);
     if (
       m.negative ||
-      m.flags.some((f) => f === "module" || f === "async" || f === "raw" || f === "CanBlockIsTrue")
+      m.flags.some((f) =>
+        ["module", "async", "raw", "noStrict", "CanBlockIsTrue"].includes(f),
+      )
     ) {
       parentPort.postMessage({ status: "skip" });
       return;
     }
     const prelude = ["assert.js", "sta.js", ...m.includes].map(harness).join("\n");
-    const strict = m.flags.includes("onlyStrict") ? '"use strict";\n' : "";
-    const source = `export function f() {\n${strict}${text}\n}`;
+    const source = `export function f() {\n"use strict";\n${text}\n}`;
     const orig = run(prelude, source.replace(/^export /, ""));
     if (!orig.ok) {
       parentPort.postMessage({ status: "orig-fail", msg: orig.msg });
@@ -187,7 +194,12 @@ if (isMainThread) {
       parentPort.postMessage({ status: "emit-error", msg: `transpile: ${String(e?.message ?? e).slice(0, 200)}` });
       return;
     }
-    const lifted = run(prelude, js);
+    // The graph's meaning is strict mode's: the directive opens f's body, after the harness.
+    if (!/^function f\(\) \{$/m.test(js)) {
+      parentPort.postMessage({ status: "emit-error", msg: "no function f() { in the emitted code" });
+      return;
+    }
+    const lifted = run(prelude, js.replace(/^function f\(\) \{$/m, 'function f() {\n"use strict";'));
     if (lifted.ok) parentPort.postMessage({ status: op.length === 0 ? "pass" : "pass-opaque" });
     else parentPort.postMessage({ status: "mismatch", msg: lifted.msg, opaque: op.length });
   });

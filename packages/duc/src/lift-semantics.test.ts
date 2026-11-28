@@ -326,3 +326,64 @@ describe("the round trip and the fidelity of these fixes", () => {
     ).toThrow(/Symbol is a binding of the program's own/);
   });
 });
+
+describe("8. test262: a read of a name outside the atom where it is written, and the empty pattern", () => {
+  it("a bare read of an unresolvable name throws where it stands, in a try", () => {
+    agrees(
+      "export function f(a) { try { if (a) zzzUnresolvedA; return 'read'; } catch (e) { return e.constructor.name; } }",
+      [[0], [1]],
+    );
+  });
+
+  it("in a closure, when the closure runs", () => {
+    agrees(
+      "export function f(a) { const g = () => { zzzUnresolvedB; }; if (a) { try { g(); } catch (e) { return e.constructor.name; } } return 'made'; }",
+      [[0], [1]],
+    );
+  });
+
+  it("in order after the calls before it", () => {
+    agrees(
+      "export function f(a) { const log = [a]; try { log.push(1); void zzzUnresolvedC; } catch (e) { log.push(2); } return log; }",
+      [[0]],
+    );
+  });
+
+  it("typeof of a name the atom writes but nothing declares is the reference's", () => {
+    agrees(
+      "export function f(a) { const g = () => { zzzWrittenD = a; }; return [typeof zzzWrittenD, typeof g]; }",
+      [[1]],
+    );
+  });
+
+  it("an empty object pattern refuses null and undefined", () => {
+    agrees(
+      "export function f(a) { try { const {} = a; return 'ok'; } catch (e) { return e.constructor.name; } }",
+      [[null], [undefined], [{}], [1], ["s"]],
+    );
+    agrees(
+      "export function f(a) { const g = ({}) => 1; try { return g(a); } catch (e) { return e.constructor.name; } }",
+      [[null], [{}]],
+    );
+  });
+});
+
+describe("9. a return from a try inside a branch is the function's", () => {
+  it.each([
+    ["in the try, in an if", "if (a) { try { return 'try'; } catch (e) {} } return 'after';"],
+    [
+      "in the catch, in an if",
+      "if (a) { try { throw 1; } catch (e) { return 'caught'; } } return 'after';",
+    ],
+    [
+      "in the catch, in an else",
+      "if (!a) {} else { try { throw 1; } catch (e) { return 'caught'; } } return 'after';",
+    ],
+    [
+      "nested twice",
+      "if (a) { if (a > 1) { try { throw a; } catch (e) { return e; } } } return 'after';",
+    ],
+  ] as const)("%s", (_what, body) => {
+    agrees(`export function f(a) { ${body} }`, [[0], [1], [2]]);
+  });
+});
