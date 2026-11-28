@@ -23,11 +23,13 @@
 import { createHash } from "node:crypto";
 import {
   type CallExpression,
+  type LabeledStatement,
   Node,
   Project,
   ScriptKind,
   type SourceFile,
   SyntaxKind,
+  type VariableDeclaration,
   VariableDeclarationKind,
   ts,
 } from "ts-morph";
@@ -808,9 +810,8 @@ function nextJumpRewrite(sf: SourceFile, round: number): string | undefined {
     ...(byKind.get(SyntaxKind.ContinueStatement) ?? []),
   ];
   // A label whose jumps are all of the loop it labels is dropped, and the labels from its jumps.
-  for (const l of (byKind.get(SyntaxKind.LabeledStatement) ?? []) as import(
-    "ts-morph",
-  ).LabeledStatement[]) {
+  const labels = (byKind.get(SyntaxKind.LabeledStatement) ?? []) as LabeledStatement[];
+  for (const l of labels) {
     const name = l.getLabel().getText();
     const target = labelled(l);
     if (!isLoopStatement(target)) continue;
@@ -5431,16 +5432,29 @@ function cellNames(scope: Node): Set<string> {
   // field's initializer, run with the instance when it is made (#1330: `id = ++ID` in minimatch).
   const fieldInit = (d: Node): boolean =>
     Node.isPropertyDeclaration(d) && d.getInitializer() !== undefined;
-  const nested = scope
-    .getDescendants()
-    .filter(
-      (d) =>
-        isFunctionLikeNode(d) ||
-        Node.isClassStaticBlockDeclaration(d) ||
-        fieldInit(d) ||
-        (Node.isBlock(d) && Node.isTryStatement(d.getParent())) ||
-        Node.isCatchClause(d),
-    );
+  // Found on the compiler's nodes, wrapping only those (#1361): a scope's descendants, each wrapped,
+  // were most of a large statement's lift (the TypeScript compiler's bundle, 9 MB).
+  const sf = scope.getSourceFile();
+  const nested: Node[] = [];
+  const declarations: VariableDeclaration[] = [];
+  forEachCompilerDescendant(scope.compilerNode, (d) => {
+    if (d.kind === SyntaxKind.VariableDeclaration)
+      declarations.push(wrappedNode(sf, d) as VariableDeclaration);
+    if (
+      ts.isFunctionDeclaration(d) ||
+      ts.isFunctionExpression(d) ||
+      ts.isArrowFunction(d) ||
+      ts.isMethodDeclaration(d) ||
+      ts.isConstructorDeclaration(d) ||
+      ts.isGetAccessorDeclaration(d) ||
+      ts.isSetAccessorDeclaration(d) ||
+      ts.isClassStaticBlockDeclaration(d) ||
+      (ts.isPropertyDeclaration(d) && d.initializer !== undefined) ||
+      (ts.isBlock(d) && ts.isTryStatement(d.parent)) ||
+      ts.isCatchClause(d)
+    )
+      nested.push(wrappedNode(sf, d));
+  });
   if (nested.length === 0) return new Set();
   const insideNested = (n: Node): boolean => {
     for (const a of n.getAncestors()) {
@@ -5461,7 +5475,7 @@ function cellNames(scope: Node): Set<string> {
   if (isFunctionLikeNode(scope))
     for (const p of (scope as FunctionLike).getParameters())
       for (const name of patternNames(p.getNameNode())) declared.add(name);
-  for (const decl of scope.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
+  for (const decl of declarations) {
     if (insideNested(decl)) continue;
     const list = decl.getParent();
     const header = list?.getParent();
