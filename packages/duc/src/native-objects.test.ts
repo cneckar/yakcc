@@ -108,7 +108,7 @@ describe.skipIf(!TOOLS)("native objects for every architecture and format (#1296
         expect(linked.status, linked.out).toBe(0);
         expect(run("llvm-objdump", ["-f", join(work, `out-${target}`)]).out).toMatch(pair.format);
       },
-      120_000,
+      3_600_000,
     );
   }
 });

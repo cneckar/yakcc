@@ -63,8 +63,10 @@ export function shaveCFiles(
   args: readonly string[],
   /** The compiler: clang (C), clang++ (C++, whose functions link by their mangled names). */
   clang = "clang",
+  /** The files' symbols, already known (name -> file), for a library too large to compile here. */
+  index?: ReadonlyMap<string, string>,
 ): ShavedFiles {
-  const defs = definitions(files, args, clang);
+  const defs = index ?? definitions(files, args, clang);
   const cxx = /\+\+$/.test(clang);
   const atoms = new Map<string, { source: string; externals: readonly string[] }>();
   const units: ShavedUnit[] = [];

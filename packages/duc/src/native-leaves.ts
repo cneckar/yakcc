@@ -497,8 +497,8 @@ const DEFS: Readonly<Record<string, Def>> = {
     ],
     { helpers: ["yk.l.big64"] },
   ),
-  // A BigInt's double: one of at most two words exactly rounded inline (its two's complement's
-  // words), any other Number(x).
+  // A BigInt's double: one of at most one 64-bit digit exactly rounded inline (its two's
+  // complement's words), any other Number(x).
   yk_leaf_big_to_f64: leaf(
     "yk_leaf_big_to_f64",
     1,
@@ -508,7 +508,7 @@ const DEFS: Readonly<Record<string, Def>> = {
       "%p = inttoptr i64 %pi to ptr",
       "%lp = getelementptr i8, ptr %p, i64 4",
       "%len = load i32, ptr %lp",
-      "%short = icmp ule i32 %len, 2",
+      "%short = icmp ule i32 %len, 1",
       "br i1 %short, label %words, label %slow",
       "words:",
       "%hi = call i64 @yk_bigint_word(i64 %a, i32 1)",

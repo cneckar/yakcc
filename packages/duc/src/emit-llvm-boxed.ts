@@ -3942,9 +3942,64 @@ function lowerFunction(
         return true;
       }
       if (leaf === "__ykBigToF64") {
-        // The nearest double, ties to even (as Number(b) rounds); never NaN.
-        const d = fresh();
-        emit(`${d} = sitofp i128 ${x} to double`);
+        // The nearest double, ties to even (as Number(b) rounds); never NaN. On 64-bit words only:
+        // a 32-bit target has no conversion of a 128-bit integer (libgcc's __floattidf).
+        const w = bigWidth.get(resolve(ins[1] as ValueId)) ?? 128;
+        const lo = fresh();
+        emit(`${lo} = trunc i128 ${x} to i64`);
+        let d: string;
+        if (w <= 64) {
+          d = fresh();
+          emit(`${d} = sitofp i64 ${lo} to double`);
+        } else {
+          const hs = fresh();
+          emit(`${hs} = lshr i128 ${x}, 64`);
+          const hi = fresh();
+          emit(`${hi} = trunc i128 ${hs} to i64`);
+          // Below 2^64 in magnitude: the magnitude's double, the sign the high word's.
+          const pos = fresh();
+          emit(`${pos} = uitofp i64 ${lo} to double`);
+          const m = fresh();
+          emit(`${m} = sub i64 0, ${lo}`);
+          const mag = fresh();
+          emit(`${mag} = uitofp i64 ${m} to double`);
+          const nmag = fresh();
+          emit(`${nmag} = fneg double ${mag}`);
+          const z = fresh();
+          emit(`${z} = icmp eq i64 ${lo}, 0`);
+          const neg = fresh();
+          emit(`${neg} = select i1 ${z}, double -18446744073709551616.0, double ${nmag}`);
+          const isNeg = fresh();
+          emit(`${isNeg} = icmp slt i64 ${hi}, 0`);
+          const small = fresh();
+          emit(`${small} = select i1 ${isNeg}, double ${neg}, double ${pos}`);
+          if (w <= 65) d = small;
+          else {
+            // Wider: the words' double when the high word is the sign's; else the boxed leaf.
+            const sign = fresh();
+            emit(`${sign} = ashr i64 ${lo}, 63`);
+            const fits = fresh();
+            emit(`${fits} = icmp eq i64 ${hi}, ${sign}`);
+            const fitL = freshLabel("f64fit");
+            const wideL = freshLabel("f64wide");
+            const joinL = freshLabel("f64join");
+            emit(`br i1 ${fits}, label %${fitL}, label %${wideL}`);
+            block(fitL);
+            const df = fresh();
+            emit(`${df} = sitofp i64 ${lo} to double`);
+            emit(`br label %${joinL}`);
+            block(wideL);
+            const boxed = boxBig(x);
+            const r = call("yk_leaf_big_to_f64", `i64 ${boxed}`);
+            const dw = fresh();
+            emit(`${dw} = bitcast i64 ${r} to double`);
+            const wideEnd = currentLabel();
+            emit(`br label %${joinL}`);
+            block(joinL);
+            d = fresh();
+            emit(`${d} = phi double [ ${df}, %${fitL} ], [ ${dw}, %${wideEnd} ]`);
+          }
+        }
         const bits = fresh();
         emit(`${bits} = bitcast double ${d} to i64`);
         set(out, bits);
@@ -6353,7 +6408,7 @@ function lowerFunction(
         emit(`${both} = and i1 ${ok}, ${c}`);
         ok = both;
       }
-      // Each speculated BigInt: a BigInt (its tag), then of at most two 32-bit limbs.
+      // Each speculated BigInt: a BigInt (its tag), then of at most one 64-bit digit (V8's layout).
       for (const p of speculatedBig) {
         const tag = fresh();
         emit(`${tag} = lshr i64 ${operand(p.outputs[0] as ValueId)}, 48`);
@@ -6380,7 +6435,7 @@ function lowerFunction(
           const len = fresh();
           emit(`${len} = load i32, ptr ${ptr}`);
           const c = fresh();
-          emit(`${c} = icmp ule i32 ${len}, 2`);
+          emit(`${c} = icmp ule i32 ${len}, 1`);
           const both = fresh();
           emit(`${both} = and i1 ${fits}, ${c}`);
           fits = both;

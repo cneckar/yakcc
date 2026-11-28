@@ -14,6 +14,7 @@ import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { LlvmModule } from "./emit-llvm.js";
+import { RUNTIME_ATOMS_ENTRY, runtimeAtomsObject } from "./native-runtime-atoms.js";
 import { systemModuleIr } from "./native-system.js";
 
 export class NativeToolError extends Error {
@@ -176,6 +177,10 @@ export function compileRuntime(
   const triple = NATIVE_TARGETS[options.target ?? "x86_64-linux"] ?? (options.target as string);
   const target = [`--target=${triple}`, ...(CLANG_TARGET[triple] ?? [])];
   const clang = options.clang ?? "clang";
+  // The atoms the runtime calls (V8's BigInt library), compiled once per target and cached.
+  const atomsObject = runtimeAtomsObject(triple, (ir) =>
+    compileObject({ ir, symbol: "", params: [], result: "i64" }, { target: triple }),
+  );
   const dir = mkdtempSync(join(tmpdir(), "yakcc-rt-"));
   try {
     // The C, as bitcode; the system module (in LLVM: the system-call leaf, the entry) linked to it;
@@ -197,6 +202,7 @@ export function compileRuntime(
         "-O2",
         // Position-independent code is an ELF and Mach-O notion; a COFF target has no -fPIC (#1296).
         ...pic,
+        `-DYK_V8_BIGINT_ENTRY=${RUNTIME_ATOMS_ENTRY}`,
         "-emit-llvm",
         "-c",
         RUNTIME_SOURCE,
@@ -209,7 +215,10 @@ export function compileRuntime(
     writeFileSync(join(dir, "system.ll"), systemModuleIr(triple, { noLibc }));
     tool("llvm-link", ["yk.bc", "system.ll", "-o", "rt.bc"], "the runtime needs LLVM's llvm-link");
     tool(clang, [...target, "-O2", ...pic, "-c", "rt.bc", "-o", "rt.o"], "the runtime needs clang");
-    return new Uint8Array(readFileSync(join(dir, "rt.o")));
+    // And the atoms' object with it: one relocatable object.
+    writeFileSync(join(dir, "atoms.o"), atomsObject);
+    tool("ld.lld", ["-r", "rt.o", "atoms.o", "-o", "runtime.o"], "the runtime needs LLVM's ld.lld");
+    return new Uint8Array(readFileSync(join(dir, "runtime.o")));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

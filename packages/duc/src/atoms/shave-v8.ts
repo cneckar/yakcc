@@ -8,12 +8,18 @@ import { type ShavedUnit, shaveCUnit } from "../raise-c.js";
 
 const here = (p: string): string => fileURLToPath(new URL(p, import.meta.url));
 
-/** The processor's methods the callers use, by symbol (a method is a root by its mangled name). */
+/**
+ * The functions the callers use by symbol: the processor's methods (a method is a root by its
+ * mangled name) and overloads whose names another function has.
+ */
 export const V8_BIGINT_METHODS = {
   multiply: "_ZN2v86bigint9Processor8MultiplyENS0_8RWDigitsENS0_6DigitsES3_",
   divide: "_ZN2v86bigint9Processor6DivideENS0_8RWDigitsENS0_6DigitsES3_",
   modulo: "_ZN2v86bigint9Processor6ModuloENS0_8RWDigitsENS0_6DigitsES3_",
   toString: "_ZN2v86bigint9Processor8ToStringEPcPiNS0_6DigitsEib",
+  // The shifts by a digit_t (bitwise.cc), not div-helpers' by an int of the same names.
+  leftShift: "_ZN2v86bigint9LeftShiftENS0_8RWDigitsENS0_6DigitsEm",
+  rightShift: "_ZN2v86bigint10RightShiftENS0_8RWDigitsENS0_6DigitsEmRKNS0_15RightShiftStateE",
 } as const;
 
 /** V8 12.4's `src/bigint`, shaved: its functions, the processor's methods, and V8's processor. */

@@ -31,7 +31,8 @@
       ".worktrees/**",
       "tmp/**",
       "runtime/**",
-      "packages/node-platform/vendor/**"
+      "packages/node-platform/vendor/**",
+      "packages/duc/src/atoms/v8-*.ts"
     ]
   }
 }

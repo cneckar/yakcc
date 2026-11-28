@@ -92,11 +92,12 @@ typedef struct {
                          an ECMAScript module's namespace; INTEGRITY_* bits (freeze, seal, …) */
 } yk_object;
 
-/* A BigInt: a sign and a magnitude, 32-bit limbs least significant first, no zero limb on top. */
+/* A BigInt: a sign and a magnitude, 64-bit digits least significant first, no zero digit on top
+   (V8's src/bigint layout). */
 typedef struct {
   int32_t neg;
   uint32_t len;
-  uint32_t d[];
+  uint64_t d[];
 } yk_bigint;
 
 /* Every function has one calling convention: the closure, the receiver, the arguments. */
@@ -841,6 +842,47 @@ static yk buffer_primitive(yk v);
 static int buffer_set(yk obj, yk key, yk value);
 static int buffer_method(yk recv, yk key, uint64_t argc, const yk *argv, yk *out);
 
+/* --- V8's atoms (#1516) ---
+ *
+ * What the runtime calls of V8's own code, shaved: its atoms' module (native-runtime-atoms.ts:
+ * V8's src/bigint, src/numbers/conversions.cc and src/base/numbers, and the C library's they call),
+ * evaluated once, each function by its name (a C++ function by its symbol), called with boxed
+ * values: a pointer as its address, a C++ object or vector by its address, laid out as x86-64's.
+ */
+yk yk_get_named(yk obj, const char *name, uint64_t n);
+yk yk_call(yk f, yk self, uint64_t argc, const yk *argv);
+extern yk YK_V8_BIGINT_ENTRY(void);
+static yk v8_call(yk *fn, const char *name, uint64_t argc, const yk *argv) {
+  static yk lib;
+  if (*fn == 0) {
+    if (lib == 0) lib = YK_V8_BIGINT_ENTRY();
+    *fn = yk_get_named(lib, name, strlen(name));
+  }
+  return yk_call(*fn, YK_UNDEFINED, argc, argv);
+}
+#define V8(name, ...)                                                                            \
+  ({                                                                                             \
+    static yk fn_;                                                                               \
+    yk argv_[] = {__VA_ARGS__};                                                                  \
+    v8_call(&fn_, #name, sizeof argv_ / sizeof argv_[0], argv_);                                \
+  })
+/* A name that is a macro (a C++ symbol), expanded first. */
+#define V8_(name, ...) V8(name, __VA_ARGS__)
+static yk v8p(const void *p) { return yk_number((double)(uintptr_t)p); }
+static yk v8i(int64_t k) { return yk_number((double)k); }
+static yk v8b(int b) { return b ? YK_TRUE : YK_FALSE; }
+static int v8int(yk r) { return (int)num(r); }
+static char *v8str(yk r) { return (char *)(uintptr_t)num(r); }
+/* base::Vector<T>: { T *start_; size_t length_; }. */
+typedef struct {
+  uint64_t start;
+  uint64_t length;
+} v8_vector;
+static v8_vector v8v(const void *p, size_t n) { return (v8_vector){(uint64_t)(uintptr_t)p, (uint64_t)n}; }
+/* An array V8 made with NewArray (new[]): freed as the atoms free it. */
+yk yk_leaf_free(yk addr);
+static void v8_delete_array(char *p) { yk_leaf_free(v8p(p)); }
+
 /* --- ToString --- */
 
 /* Two strings as `+` joins them: one alone when the other is empty; a rope when long (#1370). */
@@ -865,139 +907,30 @@ static yk concat(yk_string *a, yk_string *b) {
 }
 
 /* Number::toString(10): the shortest digits that round-trip, laid out as ECMA-262 says. */
+/* Number::toString (V8's NumberToString): an int32's IntToCString, any other's DoubleToCString. */
+#define V8_DOUBLE_TO_CSTRING _ZN2v88internal15DoubleToCStringEdNS_4base6VectorIcEE
+#define V8_INT_TO_CSTRING _ZN2v88internal12IntToCStringEiNS_4base6VectorIcEE
+#define V8_DOUBLE_TO_RADIX_CSTRING _ZN2v88internal20DoubleToRadixCStringEdi
 static yk number_to_string(double d) {
-  if (d != d) return ascii("NaN");
-  if (d == 0) return ascii("0");
-  if (isinf(d)) return ascii(d < 0 ? "-Infinity" : "Infinity");
-  /* An integer below 2^53 (an index, most often): its digits, which are the shortest. */
-  if (d == (double)(int64_t)d && fabs(d) < 9007199254740992.0) {
-    char t[24];
-    int64_t v = (int64_t)d;
-    uint64_t u = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v;
-    int i = (int)sizeof t;
-    t[--i] = 0;
-    do {
-      t[--i] = (char)('0' + u % 10);
-      u /= 10;
-    } while (u != 0);
-    if (v < 0) t[--i] = '-';
-    return ascii(t + i);
-  }
-  char buf[64], digits[32];
-  int k = 0, n = 0;
-  for (int p = 1; p <= 17; p++) {
-    snprintf(buf, sizeof buf, "%.*e", p - 1, fabs(d));
-    if (strtod(buf, NULL) == fabs(d)) break;
-  }
-  /* buf is d.ddde±x: the digits, and n = x + 1. */
-  for (char *c = buf; *c != 'e'; c++)
-    if (*c >= '0' && *c <= '9') digits[k++] = *c;
-  while (k > 1 && digits[k - 1] == '0') k--;
-  n = atoi(strchr(buf, 'e') + 1) + 1;
-  char out[64];
-  int o = 0;
-  if (d < 0) out[o++] = '-';
-  if (k <= n && n <= 21) {
-    for (int i = 0; i < k; i++) out[o++] = digits[i];
-    for (int i = k; i < n; i++) out[o++] = '0';
-  } else if (0 < n && n <= 21) {
-    for (int i = 0; i < n; i++) out[o++] = digits[i];
-    out[o++] = '.';
-    for (int i = n; i < k; i++) out[o++] = digits[i];
-  } else if (-6 < n && n <= 0) {
-    out[o++] = '0';
-    out[o++] = '.';
-    for (int i = 0; i < -n; i++) out[o++] = '0';
-    for (int i = 0; i < k; i++) out[o++] = digits[i];
-  } else {
-    out[o++] = digits[0];
-    if (k > 1) {
-      out[o++] = '.';
-      for (int i = 1; i < k; i++) out[o++] = digits[i];
-    }
-    o += snprintf(out + o, sizeof out - o, "e%c%d", n - 1 < 0 ? '-' : '+', abs(n - 1));
-  }
-  out[o] = 0;
-  return ascii(out);
+  char buf[100]; /* V8's kNumberToStringBufferSize */
+  v8_vector v = v8v(buf, sizeof buf);
+  int32_t i = (int32_t)d;
+  if (d == d && d >= -2147483648.0 && d <= 2147483647.0 && (double)i == d && !(d == 0 && signbit(d)))
+    return ascii(v8str(V8_(V8_INT_TO_CSTRING, v8i(i), v8p(&v))));
+  return ascii(v8str(V8_(V8_DOUBLE_TO_CSTRING, yk_number(d), v8p(&v))));
 }
 
 static yk to_string(yk v);
 
-/*
- * Number::toString(radix) for a radix other than 10, as V8 writes it (DoubleToRadixCString): the
- * fraction's digits while they are above half a unit in the last place of the value (scaled with
- * them), rounded half to even with a carry back through the digits written; the integer's digits by
- * repeated division, those below the double's precision zeros.
- */
+/* Number::toString(radix) for a radix other than 10 (NumberPrototypeToString): NaN and the
+   infinities their names, any other V8's DoubleToRadixCString. */
 static yk number_to_radix(double value, int radix) {
-  static const char chars[] = "0123456789abcdefghijklmnopqrstuvwxyz";
   if (value != value) return ascii("NaN");
   if (isinf(value)) return ascii(value < 0 ? "-Infinity" : "Infinity");
-  /* An integer below 2^53 (a byte's hex, most often): its digits by integer division. */
-  if (value == (double)(int64_t)value && fabs(value) < 9007199254740992.0) {
-    char t[72];
-    int64_t v = (int64_t)value;
-    uint64_t u = v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v;
-    int i = (int)sizeof t;
-    t[--i] = 0;
-    do {
-      t[--i] = chars[u % (uint64_t)radix];
-      u /= (uint64_t)radix;
-    } while (u != 0);
-    if (v < 0) t[--i] = '-';
-    return ascii(t + i);
-  }
-  enum { kBufferSize = 2200 };
-  char buffer[kBufferSize];
-  int integer_cursor = kBufferSize / 2;
-  int fraction_cursor = integer_cursor;
-  int negative = value < 0;
-  if (negative) value = -value;
-  double integer = floor(value);
-  double fraction = value - integer;
-  double delta = 0.5 * (nextafter(value, INFINITY) - value);
-  double min_delta = nextafter(0.0, 1.0);
-  if (delta < min_delta) delta = min_delta;
-  if (fraction >= delta) {
-    buffer[fraction_cursor++] = '.';
-    do {
-      fraction *= radix;
-      delta *= radix;
-      int digit = (int)fraction;
-      buffer[fraction_cursor++] = chars[digit];
-      fraction -= digit;
-      if (fraction > 0.5 || (fraction == 0.5 && (digit & 1))) {
-        if (fraction + delta > 1) {
-          for (;;) {
-            fraction_cursor--;
-            if (fraction_cursor == kBufferSize / 2) {
-              integer += 1;
-              break;
-            }
-            char c = buffer[fraction_cursor];
-            int d = c > '9' ? (c - 'a' + 10) : (c - '0');
-            if (d + 1 < radix) {
-              buffer[fraction_cursor++] = chars[d + 1];
-              break;
-            }
-          }
-          break;
-        }
-      }
-    } while (fraction >= delta);
-  }
-  while (integer / radix >= 9007199254740992.0) {
-    integer /= radix;
-    buffer[--integer_cursor] = '0';
-  }
-  do {
-    double remainder = fmod(integer, radix);
-    buffer[--integer_cursor] = chars[(int)remainder];
-    integer = (integer - remainder) / radix;
-  } while (integer > 0);
-  if (negative) buffer[--integer_cursor] = '-';
-  buffer[fraction_cursor] = 0;
-  return ascii(buffer + integer_cursor);
+  char *p = v8str(V8_(V8_DOUBLE_TO_RADIX_CSTRING, yk_number(value), v8i(radix)));
+  yk r = ascii(p);
+  v8_delete_array(p);
+  return r;
 }
 
 static yk array_join(yk_array *a, yk_string *sep) {
@@ -1204,55 +1137,11 @@ static int is_space(uint16_t c) {
          c == 0x202F || c == 0x205F || c == 0x3000 || c == 0xFEFF;
 }
 
+/* ToNumber of a string (V8's String::ToNumber): StringToDouble, hex, octal and binary allowed. */
+#define V8_STRING_TO_DOUBLE _ZN2v88internal14StringToDoubleENS_4base6VectorIKtEEid
 static double string_to_number(yk_string *s) {
-  uint32_t a = 0, b = s->len;
-  while (a < b && is_space(s->units[a])) a++;
-  while (b > a && is_space(s->units[b - 1])) b--;
-  if (a == b) return 0;
-  char buf[400];
-  if (b - a >= sizeof buf) return NAN;
-  for (uint32_t i = a; i < b; i++) {
-    if (s->units[i] > 0x7F) return NAN;
-    buf[i - a] = (char)s->units[i];
-  }
-  buf[b - a] = 0;
-  /* 0x, 0o, 0b: an unsigned integer in that radix. */
-  if (buf[0] == '0' && (buf[1] == 'x' || buf[1] == 'X' || buf[1] == 'o' || buf[1] == 'O' ||
-                        buf[1] == 'b' || buf[1] == 'B')) {
-    int radix = buf[1] == 'x' || buf[1] == 'X' ? 16 : buf[1] == 'o' || buf[1] == 'O' ? 8 : 2;
-    if (buf[2] == 0) return NAN;
-    double r = 0;
-    for (char *c = buf + 2; *c; c++) {
-      int dgt = *c >= '0' && *c <= '9'   ? *c - '0'
-                : *c >= 'a' && *c <= 'f' ? *c - 'a' + 10
-                : *c >= 'A' && *c <= 'F' ? *c - 'A' + 10
-                                         : 99;
-      if (dgt >= radix) return NAN;
-      r = r * radix + dgt;
-    }
-    return r;
-  }
-  const char *p = buf;
-  int neg = 0;
-  if (*p == '+' || *p == '-') neg = *p++ == '-';
-  if (strcmp(p, "Infinity") == 0) return neg ? -INFINITY : INFINITY;
-  /* StrUnsignedDecimalLiteral: digits [. digits] [e[+-]digits], at least one digit before e. */
-  const char *q = p;
-  int digits = 0;
-  while (*q >= '0' && *q <= '9') q++, digits++;
-  if (*q == '.') {
-    q++;
-    while (*q >= '0' && *q <= '9') q++, digits++;
-  }
-  if (digits == 0) return NAN;
-  if (*q == 'e' || *q == 'E') {
-    q++;
-    if (*q == '+' || *q == '-') q++;
-    if (!(*q >= '0' && *q <= '9')) return NAN;
-    while (*q >= '0' && *q <= '9') q++;
-  }
-  if (*q != 0) return NAN;
-  return strtod(buf, NULL);
+  v8_vector v = v8v(s->units, s->len);
+  return num(V8_(V8_STRING_TO_DOUBLE, v8p(&v), v8i(1 | 2 | 8), yk_number(0)));
 }
 
 static double to_number(yk v) {
@@ -4530,23 +4419,25 @@ yk yk_bitnot(yk a) {
 
 /* --- BigInt (ECMA-262 6.1.6.2) ---------------------------------------------------------------
  *
- * A BigInt is a sign and a magnitude of 32-bit limbs, least significant first, with no zero limb
- * at the top (zero has none, and is never negative). Every operation is exact, as ECMAScript's:
- * arbitrary precision, division truncating, `>>` flooring, the bitwise operators on the infinite
- * two's complement. The leaves of DEC-DUC-OPERATIONS-AS-ATOMS-001 that C's fixed-width integers
- * and a float64's bits are raised to are defined here as their JavaScript definitions
- * (`raise-c.ts`'s C_LEAVES_JS) define them.
+ * A BigInt is a sign and a magnitude of 64-bit digits, least significant first, with no zero
+ * digit at the top (zero has none, and is never negative): V8's layout (src/bigint). Its
+ * arithmetic is V8's own (#1516): V8 12.4's src/bigint, shaved, its atoms in the runtime's atoms
+ * module (native-runtime-atoms.ts), called by name. What this section does around them (make the
+ * result, choose the operation by the signs, the shortcuts) is V8's src/objects/bigint.cc, which
+ * shaves with V8's object model (#1366); until then it is here, as that file has it. The
+ * conversions to and from doubles and strings, and the 128-bit shortcut, are still this file's.
  */
 
 static void range_error(const char *what) { yk_throw(make_error("RangeError", ascii(what))); }
 
 static yk_bigint *big_new(uint32_t len) {
-  yk_bigint *b = alloc(sizeof(yk_bigint) + (size_t)len * 4);
+  yk_bigint *b = alloc(sizeof(yk_bigint) + (size_t)len * 8);
+  memset(b->d, 0, (size_t)len * 8);
   b->neg = 0;
   b->len = len;
   return b;
 }
-/* Its top zero limbs dropped, and a zero's sign cleared: the normal form. */
+/* Its top zero digits dropped, and a zero's sign cleared: the normal form. */
 static yk big_box(yk_bigint *b) {
   while (b->len > 0 && b->d[b->len - 1] == 0) b->len--;
   if (b->len == 0) b->neg = 0;
@@ -4555,9 +4446,8 @@ static yk big_box(yk_bigint *b) {
 static yk_bigint *big(yk v) { return (yk_bigint *)PTR(v); }
 
 static yk big_from_u64(uint64_t m, int neg) {
-  yk_bigint *b = big_new(2);
-  b->d[0] = (uint32_t)m;
-  b->d[1] = (uint32_t)(m >> 32);
+  yk_bigint *b = big_new(1);
+  b->d[0] = m;
   b->neg = neg;
   return big_box(b);
 }
@@ -4565,210 +4455,192 @@ static yk big_from_i64(int64_t x) {
   return x < 0 ? big_from_u64((uint64_t)0 - (uint64_t)x, 1) : big_from_u64((uint64_t)x, 0);
 }
 
-/* |a| compared with |b|: -1, 0 or 1. */
+/* Its Digits and RWDigits: { digit_t *digits; int len; }, as the atoms (raised for x86-64) read it. */
+typedef struct {
+  uint64_t digits;
+  int32_t len;
+  int32_t pad;
+} v8_digits;
+static v8_digits v8d(const yk_bigint *b) { return (v8_digits){(uint64_t)(uintptr_t)b->d, (int32_t)b->len, 0}; }
+/* The processor V8 multiplies, divides and prints with. */
+static yk v8_processor(void) {
+  static yk p;
+  if (p == 0) p = V8(yk_v8_bigint_processor);
+  return p;
+}
+#define V8_MULTIPLY _ZN2v86bigint9Processor8MultiplyENS0_8RWDigitsENS0_6DigitsES3_
+#define V8_DIVIDE _ZN2v86bigint9Processor6DivideENS0_8RWDigitsENS0_6DigitsES3_
+#define V8_MODULO _ZN2v86bigint9Processor6ModuloENS0_8RWDigitsENS0_6DigitsES3_
+#define V8_TO_STRING _ZN2v86bigint9Processor8ToStringEPcPiNS0_6DigitsEib
+#define V8_LEFT_SHIFT _ZN2v86bigint9LeftShiftENS0_8RWDigitsENS0_6DigitsEm
+#define V8_RIGHT_SHIFT _ZN2v86bigint10RightShiftENS0_8RWDigitsENS0_6DigitsEmRKNS0_15RightShiftStateE
+
+/* |a| compared with |b|: its sign (bigint::Compare). */
 static int mag_cmp(const yk_bigint *a, const yk_bigint *b) {
-  if (a->len != b->len) return a->len < b->len ? -1 : 1;
-  for (uint32_t i = a->len; i-- > 0;)
-    if (a->d[i] != b->d[i]) return a->d[i] < b->d[i] ? -1 : 1;
-  return 0;
-}
-static yk_bigint *mag_add(const yk_bigint *a, const yk_bigint *b) {
-  uint32_t n = (a->len > b->len ? a->len : b->len) + 1;
-  yk_bigint *r = big_new(n);
-  uint64_t carry = 0;
-  for (uint32_t i = 0; i < n; i++) {
-    uint64_t t = carry + (i < a->len ? a->d[i] : 0) + (i < b->len ? b->d[i] : 0);
-    r->d[i] = (uint32_t)t;
-    carry = t >> 32;
+  if (a->len <= 1 && b->len <= 1) {
+    uint64_t p = a->len == 0 ? 0 : a->d[0], q = b->len == 0 ? 0 : b->d[0];
+    return p < q ? -1 : p > q;
   }
-  return r;
+  v8_digits x = v8d(a), y = v8d(b);
+  int c = v8int(V8(Compare, v8p(&x), v8p(&y)));
+  return c < 0 ? -1 : c > 0;
 }
-/* |a| - |b|, for |a| >= |b|. */
-static yk_bigint *mag_sub(const yk_bigint *a, const yk_bigint *b) {
-  yk_bigint *r = big_new(a->len);
-  int64_t borrow = 0;
-  for (uint32_t i = 0; i < a->len; i++) {
-    int64_t t = (int64_t)a->d[i] - (i < b->len ? b->d[i] : 0) - borrow;
-    borrow = t < 0;
-    r->d[i] = (uint32_t)(t + (borrow ? ((int64_t)1 << 32) : 0));
-  }
-  return r;
-}
-/* a + b with signs: the magnitudes added or subtracted. */
+/* a + b and a - b with signs (BigInt::Add, BigInt::Subtract). */
 static yk big_add_signed(const yk_bigint *a, int aneg, const yk_bigint *b, int bneg) {
-  yk_bigint *r;
-  if (aneg == bneg) {
-    r = mag_add(a, b);
-    r->neg = aneg;
-  } else if (mag_cmp(a, b) >= 0) {
-    r = mag_sub(a, b);
-    r->neg = aneg;
-  } else {
-    r = mag_sub(b, a);
-    r->neg = bneg;
-  }
+  v8_digits x = v8d(a), y = v8d(b);
+  yk_bigint *r = big_new((uint32_t)v8int(V8(AddSignedResultLength, v8i(a->len), v8i(b->len), v8b(aneg == bneg))));
+  v8_digits z = v8d(r);
+  r->neg = V8(AddSigned, v8p(&z), v8p(&x), v8b(aneg), v8p(&y), v8b(bneg)) == YK_TRUE;
   return big_box(r);
 }
+/* a * b (BigInt::Multiply). */
 static yk big_mul(const yk_bigint *a, const yk_bigint *b) {
-  yk_bigint *r = big_new(a->len + b->len);
-  memset(r->d, 0, (size_t)r->len * 4);
-  for (uint32_t i = 0; i < a->len; i++) {
-    uint64_t carry = 0;
-    for (uint32_t j = 0; j < b->len; j++) {
-      uint64_t t = (uint64_t)a->d[i] * b->d[j] + r->d[i + j] + carry;
-      r->d[i + j] = (uint32_t)t;
-      carry = t >> 32;
-    }
-    for (uint32_t k = i + b->len; carry != 0; k++) {
-      uint64_t t = (uint64_t)r->d[k] + carry;
-      r->d[k] = (uint32_t)t;
-      carry = t >> 32;
-    }
-  }
+  if (a->len == 0 || b->len == 0) return big_from_u64(0, 0);
+  v8_digits x = v8d(a), y = v8d(b);
+  yk_bigint *r = big_new((uint32_t)v8int(V8(MultiplyResultLength, v8p(&x), v8p(&y))));
+  v8_digits z = v8d(r);
+  V8_(V8_MULTIPLY, v8_processor(), v8p(&z), v8p(&x), v8p(&y));
   r->neg = a->neg != b->neg;
   return big_box(r);
 }
-static uint64_t mag_bitlen(const yk_bigint *a) {
-  if (a->len == 0) return 0;
-  uint32_t top = a->d[a->len - 1];
-  int bits = 0;
-  while (top != 0) bits++, top >>= 1;
-  return (uint64_t)(a->len - 1) * 32 + bits;
-}
-static int mag_bit(const yk_bigint *a, uint64_t i) {
-  uint64_t limb = i / 32;
-  return limb < a->len ? (a->d[limb] >> (i % 32)) & 1 : 0;
-}
-/* |a| / |b| and |a| % |b| (b nonzero), by shifting and subtracting. */
-static void mag_divmod(const yk_bigint *a, const yk_bigint *b, yk_bigint **q, yk_bigint **r) {
-  yk_bigint *quo = big_new(a->len);
-  memset(quo->d, 0, (size_t)quo->len * 4);
-  yk_bigint *rem = big_new(b->len + 1);
-  memset(rem->d, 0, (size_t)rem->len * 4);
-  rem->len = 0;
-  for (uint64_t i = mag_bitlen(a); i-- > 0;) {
-    /* rem = rem * 2 + bit i of a */
-    uint32_t carry = (uint32_t)mag_bit(a, i);
-    for (uint32_t k = 0; k < rem->len; k++) {
-      uint32_t next = rem->d[k] >> 31;
-      rem->d[k] = (rem->d[k] << 1) | carry;
-      carry = next;
+/* a / b and a % b (BigInt::Divide, BigInt::Remainder; b nonzero). */
+static yk big_div(const yk_bigint *a, const yk_bigint *b, int remainder) {
+  if (mag_cmp(a, b) < 0) return remainder ? BOX(T_BIGINT, (yk_bigint *)a) : big_from_u64(0, 0);
+  int one = b->len == 1 && b->d[0] == 1;
+  v8_digits x = v8d(a), y = v8d(b);
+  yk_bigint *r;
+  if (remainder) {
+    if (one) return big_from_u64(0, 0);
+    r = big_new((uint32_t)v8int(V8(ModuloResultLength, v8p(&y))));
+    v8_digits z = v8d(r);
+    V8_(V8_MODULO, v8_processor(), v8p(&z), v8p(&x), v8p(&y));
+    r->neg = a->neg;
+  } else {
+    r = big_new(one ? a->len : (uint32_t)v8int(V8(DivideResultLength, v8p(&x), v8p(&y))));
+    if (one) memcpy(r->d, a->d, (size_t)a->len * 8);
+    else {
+      v8_digits z = v8d(r);
+      V8_(V8_DIVIDE, v8_processor(), v8p(&z), v8p(&x), v8p(&y));
     }
-    if (carry) rem->d[rem->len++] = carry;
-    if (mag_cmp(rem, b) >= 0) {
-      yk_bigint *t = mag_sub(rem, b);
-      while (t->len > 0 && t->d[t->len - 1] == 0) t->len--;
-      memcpy(rem->d, t->d, (size_t)t->len * 4);
-      rem->len = t->len;
-      quo->d[i / 32] |= 1u << (i % 32);
-    }
+    r->neg = a->neg != b->neg;
   }
-  *q = quo;
-  *r = rem;
+  return big_box(r);
 }
-
-/* The infinite two's complement of a, in n limbs (n past its magnitude: the sign extends). */
-static void twos(const yk_bigint *a, uint32_t *out, uint32_t n) {
-  for (uint32_t i = 0; i < n; i++) out[i] = i < a->len ? a->d[i] : 0;
-  if (!a->neg) return;
-  uint64_t carry = 1;
-  for (uint32_t i = 0; i < n; i++) {
-    uint64_t t = (uint64_t)(uint32_t)~out[i] + carry;
-    out[i] = (uint32_t)t;
-    carry = t >> 32;
+/* a & b, a | b, a ^ b (BigInt::BitwiseAnd, BitwiseOr, BitwiseXor). */
+static yk big_bitwise(const yk_bigint *a, const yk_bigint *b, char op) {
+  int xs = a->neg, ys = b->neg;
+  if (xs != ys && xs) {
+    const yk_bigint *t = a;
+    a = b, b = t; /* the positive first */
   }
-}
-/* A two's complement of n limbs (its top limb's top bit the sign) as a BigInt. */
-static yk from_twos(const uint32_t *in, uint32_t n) {
-  yk_bigint *r = big_new(n);
-  int neg = n > 0 && (in[n - 1] >> 31);
-  memcpy(r->d, in, (size_t)n * 4);
-  if (neg) {
-    uint64_t carry = 1;
-    for (uint32_t i = 0; i < n; i++) {
-      uint64_t t = (uint64_t)(uint32_t)~r->d[i] + carry;
-      r->d[i] = (uint32_t)t;
-      carry = t >> 32;
-    }
-  }
+  v8_digits x = v8d(a), y = v8d(b);
+  yk xl = v8i(a->len), yl = v8i(b->len);
+  int len, neg;
+  if (op == '&')
+    len = v8int(!xs && !ys ? V8(BitwiseAnd_PosPos_ResultLength, xl, yl)
+                : xs && ys ? V8(BitwiseAnd_NegNeg_ResultLength, xl, yl)
+                           : V8(BitwiseAnd_PosNeg_ResultLength, xl)),
+    neg = xs && ys;
+  else if (op == '|') len = v8int(V8(BitwiseOrResultLength, xl, yl)), neg = xs || ys;
+  else
+    len = v8int(!xs && !ys ? V8(BitwiseXor_PosPos_ResultLength, xl, yl)
+                : xs && ys ? V8(BitwiseXor_NegNeg_ResultLength, xl, yl)
+                           : V8(BitwiseXor_PosNeg_ResultLength, xl, yl)),
+    neg = xs != ys;
+  yk_bigint *r = big_new((uint32_t)len);
+  v8_digits z = v8d(r);
+  yk Z = v8p(&z), X = v8p(&x), Y = v8p(&y);
+  if (op == '&') !xs && !ys ? V8(BitwiseAnd_PosPos, Z, X, Y) : xs && ys ? V8(BitwiseAnd_NegNeg, Z, X, Y) : V8(BitwiseAnd_PosNeg, Z, X, Y);
+  else if (op == '|') !xs && !ys ? V8(BitwiseOr_PosPos, Z, X, Y) : xs && ys ? V8(BitwiseOr_NegNeg, Z, X, Y) : V8(BitwiseOr_PosNeg, Z, X, Y);
+  else !xs && !ys ? V8(BitwiseXor_PosPos, Z, X, Y) : xs && ys ? V8(BitwiseXor_NegNeg, Z, X, Y) : V8(BitwiseXor_PosNeg, Z, X, Y);
   r->neg = neg;
   return big_box(r);
 }
-static yk big_bitwise(const yk_bigint *a, const yk_bigint *b, char op) {
-  uint32_t n = (a->len > b->len ? a->len : b->len) + 1;
-  uint32_t *x = alloc((size_t)n * 4), *y = alloc((size_t)n * 4);
-  twos(a, x, n);
-  twos(b, y, n);
-  for (uint32_t i = 0; i < n; i++) x[i] = op == '&' ? x[i] & y[i] : op == '|' ? x[i] | y[i] : x[i] ^ y[i];
-  return from_twos(x, n);
-}
 
-/* a * 2^k (k >= 0). */
+/* BigInt::kMaxLengthBits: a shift past it is too big (left) or the maximum (right). */
+#define BIG_MAX_BITS ((uint64_t)1 << 30)
+/* a * 2^k (MutableBigInt::LeftShiftByAbsolute). */
 static yk big_shl_mag(const yk_bigint *a, int neg, uint64_t k) {
   if (a->len == 0) return big_from_u64(0, 0);
-  if (k > (uint64_t)1 << 30) range_error("Maximum BigInt size exceeded");
-  uint32_t words = (uint32_t)(k / 32), bits = (uint32_t)(k % 32);
-  yk_bigint *r = big_new(a->len + words + 1);
-  memset(r->d, 0, (size_t)r->len * 4);
-  for (uint32_t i = 0; i < a->len; i++) {
-    uint64_t t = (uint64_t)a->d[i] << bits;
-    r->d[i + words] |= (uint32_t)t;
-    r->d[i + words + 1] |= (uint32_t)(t >> 32);
+  if (k > BIG_MAX_BITS) range_error("Maximum BigInt size exceeded");
+  v8_digits x = v8d(a);
+  int len = v8int(V8(LeftShift_ResultLength, v8i(a->len), big_from_u64(a->d[a->len - 1], 0), big_from_u64(k, 0)));
+  if ((uint64_t)len > BIG_MAX_BITS / 64) range_error("Maximum BigInt size exceeded");
+  yk_bigint *r = big_new((uint32_t)len);
+  v8_digits z = v8d(r);
+  V8_(V8_LEFT_SHIFT, v8p(&z), v8p(&x), big_from_u64(k, 0));
+  r->neg = neg;
+  return big_box(r);
+}
+/* floor(a / 2^k) (MutableBigInt::RightShiftByAbsolute). */
+static yk big_sar(const yk_bigint *a, uint64_t k) {
+  if (k > BIG_MAX_BITS) return a->neg ? big_from_u64(1, 1) : big_from_u64(0, 0);
+  v8_digits x = v8d(a);
+  uint8_t state[8] = {0}; /* RightShiftState: { bool must_round_down; } */
+  int len = v8int(V8(RightShift_ResultLength, v8p(&x), v8b(a->neg), big_from_u64(k, 0), v8p(state)));
+  if (len <= 0) return a->neg ? big_from_u64(1, 1) : big_from_u64(0, 0);
+  yk_bigint *r = big_new((uint32_t)len);
+  v8_digits z = v8d(r);
+  V8_(V8_RIGHT_SHIFT, v8p(&z), v8p(&x), big_from_u64(k, 0), v8p(state));
+  r->neg = a->neg;
+  return big_box(r);
+}
+/* a << b and a >> b (BigInt::LeftShift, BigInt::SignedRightShift; ToShiftAmount). */
+static yk big_shift(const yk_bigint *a, const yk_bigint *b, int left) {
+  if (b->len == 0 || a->len == 0) return BOX(T_BIGINT, (yk_bigint *)a);
+  uint64_t k = b->len > 1 ? UINT64_MAX : b->d[0];
+  return left != b->neg ? big_shl_mag(a, a->neg, k) : big_sar(a, k);
+}
+
+/* The infinite two's complement of a, in n 64-bit words (past its magnitude the sign extends). */
+static void twos(const yk_bigint *a, uint64_t *out, uint32_t n) {
+  for (uint32_t i = 0; i < n; i++) out[i] = i < a->len ? a->d[i] : 0;
+  if (!a->neg) return;
+  int carry = 1;
+  for (uint32_t i = 0; i < n; i++) {
+    out[i] = ~out[i] + (uint64_t)carry;
+    carry = carry && out[i] == 0;
+  }
+}
+/* A two's complement of n words (its top word's top bit the sign) as a BigInt. */
+static yk from_twos(const uint64_t *in, uint32_t n) {
+  yk_bigint *r = big_new(n);
+  int neg = n > 0 && (in[n - 1] >> 63);
+  memcpy(r->d, in, (size_t)n * 8);
+  if (neg) {
+    int carry = 1;
+    for (uint32_t i = 0; i < n; i++) {
+      r->d[i] = ~r->d[i] + (uint64_t)carry;
+      carry = carry && r->d[i] == 0;
+    }
   }
   r->neg = neg;
   return big_box(r);
 }
-/* floor(a / 2^k) (k >= 0). */
-static yk big_sar(const yk_bigint *a, uint64_t k) {
-  if (!a->neg) {
-    uint64_t words = k / 32;
-    uint32_t bits = (uint32_t)(k % 32);
-    if (words >= a->len) return big_from_u64(0, 0);
-    yk_bigint *r = big_new(a->len - (uint32_t)words);
-    for (uint32_t i = 0; i < r->len; i++) {
-      uint64_t lo = a->d[i + words];
-      uint64_t hi = i + words + 1 < a->len ? a->d[i + words + 1] : 0;
-      r->d[i] = (uint32_t)(((hi << 32) | lo) >> bits);
-    }
-    return big_box(r);
-  }
-  /* A negative's: -(((|a| - 1) >> k) + 1). */
-  yk_bigint *one_p = big_new(1);
-  one_p->d[0] = 1;
-  yk_bigint *m = mag_sub(a, one_p);
-  m->neg = 0;
-  yk s = big_sar(big(big_box(m)), k);
-  yk_bigint *r = mag_add(big(s), one_p);
-  r->neg = 1;
-  return big_box(r);
-}
-static int64_t shift_count(const yk_bigint *b) {
-  if (b->len > 1 || (b->len == 1 && b->d[0] > (1u << 30))) return b->neg ? INT64_MIN : INT64_MAX;
-  int64_t k = b->len == 0 ? 0 : b->d[0];
-  return b->neg ? -k : k;
-}
-static yk big_shift(const yk_bigint *a, const yk_bigint *b, int left) {
-  int64_t k = shift_count(b);
-  if (!left) k = k == INT64_MIN ? INT64_MAX : -k;
-  if (k >= 0) return big_shl_mag(a, a->neg, (uint64_t)k);
-  return big_sar(a, k == INT64_MIN ? (uint64_t)INT64_MAX : (uint64_t)(-k));
-}
-
 /* The low 64 bits of a's two's complement: BigInt.asUintN(64, a). */
 static uint64_t big_low64(const yk_bigint *a) {
-  uint32_t w[2];
-  twos(a, w, 2);
-  return ((uint64_t)w[1] << 32) | w[0];
+  uint64_t w[1];
+  twos(a, w, 1);
+  return w[0];
+}
+static uint64_t mag_bitlen(const yk_bigint *a) {
+  if (a->len == 0) return 0;
+  uint64_t top = a->d[a->len - 1];
+  int bits = 0;
+  while (top != 0) bits++, top >>= 1;
+  return (uint64_t)(a->len - 1) * 64 + bits;
+}
+static int mag_bit(const yk_bigint *a, uint64_t i) {
+  uint64_t w = i / 64;
+  return w < a->len ? (int)((a->d[w] >> (i % 64)) & 1) : 0;
 }
 
 /* Number(a): the nearest double, ties to even. */
 static double big_to_double(const yk_bigint *a) {
   uint64_t L = mag_bitlen(a);
   double r;
-  if (L <= 64) {
-    uint64_t m = a->len == 0 ? 0 : a->len == 1 ? a->d[0] : ((uint64_t)a->d[1] << 32) | a->d[0];
-    r = (double)m;
-  } else {
+  if (L <= 64) r = (double)(a->len == 0 ? 0 : a->d[0]);
+  else {
     /* The top 64 bits, with every lower bit folded into the last (a sticky bit). */
     uint64_t t = 0;
     for (uint64_t i = 0; i < 64; i++) t |= (uint64_t)mag_bit(a, L - 64 + i) << i;
@@ -4796,64 +4668,32 @@ static yk big_from_double(double x) {
   int e;
   double f = frexp(m, &e); /* m = f * 2^e, f in [0.5, 1) */
   uint64_t mant = (uint64_t)ldexp(f, 53);
-  yk_bigint *b = big(big_from_u64(mant, 0));
-  return big_shl_mag(b, neg, (uint64_t)(e - 53));
+  return big_shl_mag(big(big_from_u64(mant, 0)), neg, (uint64_t)(e - 53));
 }
 
-/* The BigInt's decimal digits. */
-/* A BigInt's digits in a radix 2…36 (BigInt.prototype.toString(radix)). */
+/* A BigInt's digits in a radix 2…36 (BigInt.prototype.toString; BigInt::ToString). */
 static yk big_to_radix(const yk_bigint *a, uint32_t radix) {
   if (a->len == 0) return ascii("0");
-  uint32_t n = a->len;
-  uint32_t *w = alloc((size_t)n * 4);
-  memcpy(w, a->d, (size_t)n * 4);
-  size_t cap = (size_t)n * 33 + 2, k = 0;
-  char *digits = alloc(cap);
-  while (n > 0) {
-    uint64_t rem = 0;
-    for (uint32_t i = n; i-- > 0;) {
-      uint64_t cur = (rem << 32) | w[i];
-      w[i] = (uint32_t)(cur / radix);
-      rem = cur % radix;
-    }
-    while (n > 0 && w[n - 1] == 0) n--;
-    digits[k++] = "0123456789abcdefghijklmnopqrstuvwxyz"[rem];
-  }
-  char *out = alloc(k + 2);
-  size_t o = 0;
-  if (a->neg) out[o++] = '-';
-  while (k > 0) out[o++] = digits[--k];
-  out[o] = 0;
+  v8_digits x = v8d(a);
+  int n = v8int(V8(ToStringResultLength, v8p(&x), v8i(radix), v8b(a->neg)));
+  char *out = alloc((size_t)n + 1);
+  int32_t written = n;
+  V8_(V8_TO_STRING, v8_processor(), v8p(out), v8p(&written), v8p(&x), v8i(radix), v8b(a->neg));
+  out[written] = 0;
   return ascii(out);
 }
-static yk big_to_string(const yk_bigint *a) {
-  if (a->len == 0) return ascii("0");
-  uint32_t n = a->len;
-  uint32_t *w = alloc((size_t)n * 4);
-  memcpy(w, a->d, (size_t)n * 4);
-  size_t cap = (size_t)n * 10 + 2, k = 0;
-  char *digits = alloc(cap);
-  while (n > 0) {
-    uint64_t rem = 0;
-    for (uint32_t i = n; i-- > 0;) {
-      uint64_t cur = (rem << 32) | w[i];
-      w[i] = (uint32_t)(cur / 1000000000u);
-      rem = cur % 1000000000u;
-    }
-    while (n > 0 && w[n - 1] == 0) n--;
-    for (int j = 0; j < 9 && (n > 0 || rem > 0); j++) {
-      digits[k++] = (char)('0' + rem % 10);
-      rem /= 10;
-    }
-  }
-  char *out = alloc(k + 2);
-  size_t o = 0;
-  if (a->neg) out[o++] = '-';
-  while (k > 0) out[o++] = digits[--k];
-  out[o] = 0;
-  return ascii(out);
-}
+static yk big_to_string(const yk_bigint *a) { return big_to_radix(a, 10); }
 
+/* r = r * m + k over its digits, r's last digit room for the carry (m, k below 2^32). */
+static void digits_mul_add(yk_bigint *r, uint32_t m, uint32_t k) {
+  uint64_t carry = k;
+  for (uint32_t i = 0; i < r->len; i++) {
+    uint64_t lo = (r->d[i] & 0xFFFFFFFFu) * m + carry;
+    uint64_t hi = (r->d[i] >> 32) * m + (lo >> 32);
+    r->d[i] = (hi << 32) | (lo & 0xFFFFFFFFu);
+    carry = hi >> 32;
+  }
+}
 /* StringToBigInt over UTF-16 units: undefined (0) when the string is not one. */
 static yk big_from_units(const uint16_t *u, uint32_t len, int literal) {
   uint32_t a = 0, b = len;
@@ -4868,19 +4708,13 @@ static yk big_from_units(const uint16_t *u, uint32_t len, int literal) {
   else if (b - a >= 2 && u[a] == '0' && (u[a + 1] | 32) == 'b') radix = 2, a += 2;
   else if (!literal && (u[a] == '+' || u[a] == '-')) neg = u[a] == '-', a++;
   if (a == b) return 0;
-  yk_bigint *r = big_new((b - a) / 2 + 2);
-  memset(r->d, 0, (size_t)r->len * 4);
+  yk_bigint *r = big_new((b - a) / 8 + 2);
   for (uint32_t i = a; i < b; i++) {
     uint16_t c = u[i];
     if (literal && c == '_') continue;
     int d = c >= '0' && c <= '9' ? c - '0' : (c | 32) >= 'a' && (c | 32) <= 'z' ? (c | 32) - 'a' + 10 : 99;
     if (d >= radix) return 0;
-    uint64_t carry = (uint64_t)d;
-    for (uint32_t k = 0; k < r->len; k++) {
-      uint64_t t = (uint64_t)r->d[k] * radix + carry;
-      r->d[k] = (uint32_t)t;
-      carry = t >> 32;
-    }
+    digits_mul_add(r, (uint32_t)radix, (uint32_t)d);
   }
   r->neg = neg;
   return big_box(r);
@@ -4918,61 +4752,81 @@ static int big_cmp(const yk_bigint *a, const yk_bigint *b) {
 
 static void mix_error(void) { type_error("Cannot mix BigInt and other types, use explicit conversions"); }
 
-#ifdef __SIZEOF_INT128__
-/* A BigInt of at most two limbs (|x| < 2^64) as a signed 128-bit integer. */
-static int big_small(const yk_bigint *x, __int128 *out) {
-  if (x->len > 2) return 0;
-  unsigned __int128 m = x->len == 0 ? 0 : x->len == 1 ? x->d[0] : ((unsigned __int128)x->d[1] << 32) | x->d[0];
-  *out = x->neg ? -(__int128)m : (__int128)m;
-  return 1;
-}
-/* A signed 128-bit integer as a BigInt. */
-static yk big_from_i128(__int128 v) {
-  int neg = v < 0;
-  unsigned __int128 m = neg ? (unsigned __int128)0 - (unsigned __int128)v : (unsigned __int128)v;
-  yk_bigint *r = big_new(4);
-  for (int i = 0; i < 4; i++) r->d[i] = (uint32_t)(m >> (32 * i));
+/* Values of one digit: the machine's arithmetic on it, as V8's digit_t operations are, on every
+   target. V8's own digit arithmetic (its atoms') runs here: it never calls back into V8. */
+/* A magnitude of two digits (hi, lo) and a sign as a BigInt. */
+static yk big_from_u128(uint64_t hi, uint64_t lo, int neg) {
+  yk_bigint *r = big_new(2);
+  r->d[0] = lo;
+  r->d[1] = hi;
   r->neg = neg;
   return big_box(r);
 }
-#endif
+/* a * b of 64 bits each: the 128-bit product, as (hi, lo). */
+static void mul_64x64(uint64_t a, uint64_t b, uint64_t *hi, uint64_t *lo) {
+  uint64_t a0 = (uint32_t)a, a1 = a >> 32, b0 = (uint32_t)b, b1 = b >> 32;
+  uint64_t p00 = a0 * b0, p01 = a0 * b1, p10 = a1 * b0, p11 = a1 * b1;
+  uint64_t mid = (p00 >> 32) + (uint32_t)p01 + (uint32_t)p10;
+  *lo = (mid << 32) | (uint32_t)p00;
+  *hi = p11 + (p01 >> 32) + (p10 >> 32) + (mid >> 32);
+}
+/* An operator of two BigInts of at most one digit each, or 0 when it is V8's (a shift past a
+   digit, a division by zero). */
+static yk big_binary_small(const yk_bigint *x, const yk_bigint *y, char op) {
+  uint64_t p = x->len == 0 ? 0 : x->d[0], q = y->len == 0 ? 0 : y->d[0];
+  int pn = x->neg, qn = y->neg;
+  switch (op) {
+  case '-':
+    qn = q != 0 && !qn;
+    /* fall through */
+  case '+':
+    if (pn == qn) {
+      uint64_t lo = p + q;
+      return big_from_u128(lo < p, lo, pn);
+    }
+    return p >= q ? big_from_u64(p - q, pn) : big_from_u64(q - p, qn);
+  case '*': {
+    uint64_t hi, lo;
+    mul_64x64(p, q, &hi, &lo);
+    return big_from_u128(hi, lo, pn != qn);
+  }
+  case '/':
+  case '%':
+    if (q == 0) return 0;
+    return op == '/' ? big_from_u64(p / q, pn != qn) : big_from_u64(p % q, pn);
+  case '&':
+  case '|':
+  case '^': {
+    uint64_t u[2], v[2], w[2];
+    twos(x, u, 2);
+    twos(y, v, 2);
+    for (int i = 0; i < 2; i++) w[i] = op == '&' ? u[i] & v[i] : op == '|' ? u[i] | v[i] : u[i] ^ v[i];
+    return from_twos(w, 2);
+  }
+  case '<':
+  case '>': {
+    if (q == 0 || p == 0) return BOX(T_BIGINT, (yk_bigint *)x);
+    int left = (op == '<') != qn;
+    if (left) {
+      if (q > 63) return 0;
+      return big_from_u128(p >> (64 - q), p << q, pn);
+    }
+    /* floor(x / 2^q): a negative's -(((|x| - 1) >> q) + 1). */
+    if (!pn) return big_from_u64(q >= 64 ? 0 : p >> q, 0);
+    uint64_t m = q >= 64 ? 0 : (p - 1) >> q;
+    return big_from_u128(m + 1 == 0, m + 1, 1);
+  }
+  }
+  return 0;
+}
 
 /* An arithmetic or bitwise operator of two BigInts. */
 static yk big_binary(yk a, yk b, char op) {
   yk_bigint *x = big(a), *y = big(b);
-  /* Both below 2^64 in magnitude: 128-bit arithmetic computes exactly what the limbs do. A sum or
-     difference stays below 2^65 and a product below 2^128 in magnitude (a product's sign apart);
-     the bitwise operators are the two's complement's; a shift's result is checked to fit. */
-#ifdef __SIZEOF_INT128__
-  __int128 p, q;
-  if (big_small(x, &p) && big_small(y, &q)) {
-    switch (op) {
-    case '+': return big_from_i128(p + q);
-    case '-': return big_from_i128(p - q);
-    case '*': {
-      unsigned __int128 mp = p < 0 ? (unsigned __int128)0 - (unsigned __int128)p : (unsigned __int128)p;
-      unsigned __int128 mq = q < 0 ? (unsigned __int128)0 - (unsigned __int128)q : (unsigned __int128)q;
-      unsigned __int128 m = mp * mq;
-      if ((m >> 127) == 0) {
-        __int128 v = (__int128)m;
-        return big_from_i128((p < 0) != (q < 0) ? -v : v);
-      }
-      break; /* 2^127 or more: the limbs' */
-    }
-    case '&': return big_from_i128(p & q);
-    case '|': return big_from_i128(p | q);
-    case '^': return big_from_i128(p ^ q);
-    case '>':
-      if (q >= 0) return big_from_i128(q >= 127 ? (p < 0 ? -1 : 0) : p >> q);
-      break;
-    case '<':
-      if (q >= 0 && q <= 62) return big_from_i128(p * ((__int128)1 << q));
-      break;
-    default:
-      break;
-    }
+  if (x->len <= 1 && y->len <= 1) {
+    yk r = big_binary_small(x, y, op);
+    if (r != 0) return r;
   }
-#endif
   switch (op) {
   case '+':
     return big_add_signed(x, x->neg, y, y->neg);
@@ -4981,17 +4835,9 @@ static yk big_binary(yk a, yk b, char op) {
   case '*':
     return big_mul(x, y);
   case '/':
-  case '%': {
+  case '%':
     if (y->len == 0) range_error("Division by zero");
-    yk_bigint *q, *r;
-    mag_divmod(x, y, &q, &r);
-    if (op == '/') {
-      q->neg = x->neg != y->neg;
-      return big_box(q);
-    }
-    r->neg = x->neg;
-    return big_box(r);
-  }
+    return big_div(x, y, op == '%');
   case '&':
   case '|':
   case '^':
@@ -5046,16 +4892,16 @@ int32_t yk_exponent(yk a, yk b, yk *out) {
 /* A 128-bit two's complement integer (as its low and high words) as a BigInt: the typed
    lowering's boxing of the BigInts it keeps unboxed (#1369). Portable: no __int128 needed. */
 yk yk_bigint_from_i128(uint64_t lo, uint64_t hi) {
-  uint32_t w[4] = {(uint32_t)lo, (uint32_t)(lo >> 32), (uint32_t)hi, (uint32_t)(hi >> 32)};
-  return from_twos(w, 4);
+  uint64_t w[2] = {lo, hi};
+  return from_twos(w, 2);
 }
 
 /* Word i (0 low, 1 high) of a BigInt's 128-bit two's complement (the typed lowering's unboxing of a
    value it proved fits). */
 uint64_t yk_bigint_word(yk b, int32_t i) {
-  uint32_t w[4];
-  twos(big(b), w, 4);
-  return ((uint64_t)w[2 * i + 1] << 32) | w[2 * i];
+  uint64_t w[2];
+  twos(big(b), w, 2);
+  return w[i];
 }
 
 static yk big_to_string_v(yk v) { return big_to_string(big(v)); }
@@ -5066,7 +4912,7 @@ static int big_cmp_double_v(yk a, double y) { return big_cmp_double(big(a), y); 
 static yk big_from_string_v(yk s) { return big_from_units(str(s)->units, str(s)->len, 0); }
 static yk big_negate(yk a) {
   yk_bigint *x = big(a), *r = big_new(x->len);
-  memcpy(r->d, x->d, (size_t)x->len * 4);
+  memcpy(r->d, x->d, (size_t)x->len * 8);
   r->neg = !x->neg;
   return big_box(r);
 }
@@ -7898,7 +7744,7 @@ _Static_assert(offsetof(yk_buffer, data) == offsetof(struct yk_buffer_mirror, da
                "yk_buffer's layout is the lowering's");
 _Static_assert(offsetof(yk_string, len) == 0 && offsetof(yk_string, units) == 8,
                "a string's length, its hash, then its units");
-_Static_assert(offsetof(yk_bigint, len) == 4, "a BigInt's limb count, as a .big clone's entry reads it");
+_Static_assert(offsetof(yk_bigint, len) == 4, "a BigInt's digit count, as a .big clone's entry reads it");
 
 enum { TA_I8, TA_U8, TA_U8C, TA_I16, TA_U16, TA_I32, TA_U32, TA_F32, TA_F64, TA_BI64, TA_BU64, TA_COUNT };
 static const char *const ta_names[TA_COUNT] = {"Int8Array",   "Uint8Array",    "Uint8ClampedArray",
@@ -8939,24 +8785,37 @@ static yk builtin_bigint(void *c, yk s, uint64_t argc, const yk *argv) {
   return BOX(T_BIGINT, want_bigint(v));
 }
 /* BigInt.asUintN(bits, x) and asIntN: x modulo 2^bits, then (asIntN) the upper half negative. */
+/* BigInt.asIntN(bits, x) and asUintN: V8's BigInt::AsIntN and BigInt::AsUintN, over its library. */
 static yk big_as_n(uint64_t argc, const yk *argv, int is_signed) {
-  uint32_t bits = to_index(argc > 0 ? argv[0] : YK_UNDEFINED, "Invalid value: not (convertible to) a safe integer");
+  uint32_t n = to_index(argc > 0 ? argv[0] : YK_UNDEFINED, "Invalid value: not (convertible to) a safe integer");
   yk_bigint *x = want_bigint(argc > 1 ? argv[1] : YK_UNDEFINED);
-  if (bits == 0) return big_from_u64(0, 0);
-  uint32_t n = (bits + 31) / 32;
-  uint32_t m = (x->len > n ? x->len : n) + 1;
-  uint32_t *w = alloc((size_t)m * 4);
-  twos(x, w, m);
-  if (bits % 32 != 0) w[n - 1] &= (1u << (bits % 32)) - 1;
-  for (uint32_t i = n; i < m; i++) w[i] = 0;
-  yk_bigint *r = big_new(n);
-  memcpy(r->d, w, (size_t)n * 4);
-  yk u = big_box(r);
-  if (is_signed && mag_bit(big(u), bits - 1)) {
-    yk_bigint *p = big(big_shl_mag(big(big_from_u64(1, 0)), 0, bits));
-    return big_add_signed(big(u), 0, p, 1);
+  yk xv = BOX(T_BIGINT, x);
+  if (x->len == 0) return xv;
+  if (is_signed && n > BIG_MAX_BITS) return xv;
+  if (n == 0) return big_from_u64(0, 0);
+  v8_digits X = v8d(x);
+  int len;
+  yk_bigint *r;
+  if (is_signed) {
+    len = v8int(V8(AsIntNResultLength, v8p(&X), v8b(x->neg), v8i(n)));
+    if (len == -1) return xv;
+    r = big_new((uint32_t)len);
+    v8_digits Z = v8d(r);
+    r->neg = V8(AsIntN, v8p(&Z), v8p(&X), v8b(x->neg), v8i(n)) == YK_TRUE;
+  } else if (x->neg) {
+    if (n > BIG_MAX_BITS) range_error("Maximum BigInt size exceeded");
+    r = big_new((uint32_t)v8int(V8(AsUintN_Neg_ResultLength, v8i(n))));
+    v8_digits Z = v8d(r);
+    V8(AsUintN_Neg, v8p(&Z), v8p(&X), v8i(n));
+  } else {
+    if (n >= BIG_MAX_BITS) return xv;
+    len = v8int(V8(AsUintN_Pos_ResultLength, v8p(&X), v8i(n)));
+    if (len < 0) return xv;
+    r = big_new((uint32_t)len);
+    v8_digits Z = v8d(r);
+    V8(AsUintN_Pos, v8p(&Z), v8p(&X), v8i(n));
   }
-  return u;
+  return big_box(r);
 }
 static yk builtin_bigint_as_uint_n(void *c, yk s, uint64_t argc, const yk *argv) {
   (void)c, (void)s;
@@ -9902,64 +9761,17 @@ _Noreturn void yk_module_not_found(yk spec, const char *from, uint64_t n) {
   yk_throw(e);
 }
 
-/* A finite double's exact decimal digits (no leading zeros; "0" for zero) and how many of them are
-   before the point (which may be negative or past the digits): x = mantissa * 2^e, and for e < 0
-   mantissa * 5^-e scaled by 10^e. */
-static char *exact_digits(double x, int *point) {
-  int e;
-  double m = frexp(x, &e); /* x = m * 2^e, 0.5 <= m < 1 */
-  uint64_t mant = (uint64_t)ldexp(m, 53);
-  e -= 53;
-  /* The number, base 10^9, least significant limb first. */
-  size_t cap = 140, n = 1;
-  uint32_t *v = alloc(cap * sizeof(uint32_t));
-  v[0] = (uint32_t)(mant % 1000000000u);
-  if (mant >= 1000000000u) {
-    v[n++] = (uint32_t)(mant / 1000000000u % 1000000000u);
-    if (mant >= 1000000000000000000ull) v[n++] = (uint32_t)(mant / 1000000000000000000ull);
-  }
-  int shift = e >= 0 ? e : -e;
-  uint32_t by = e >= 0 ? 2 : 5;
-  for (int i = 0; i < shift; i++) {
-    uint64_t carry = 0;
-    for (size_t j = 0; j < n; j++) {
-      uint64_t t = (uint64_t)v[j] * by + carry;
-      v[j] = (uint32_t)(t % 1000000000u);
-      carry = t / 1000000000u;
-    }
-    if (carry != 0) v[n++] = (uint32_t)carry;
-  }
-  char *d = alloc(n * 9 + 2);
-  int len = snprintf(d, 12, "%u", v[n - 1]);
-  for (size_t j = n - 1; j-- > 0;) len += snprintf(d + len, 12, "%09u", v[j]);
-  int lead = 0;
-  while (lead < len - 1 && d[lead] == '0') lead++;
-  *point = (len - lead) - (e >= 0 ? 0 : -e);
-  return d + lead;
-}
-/* digits[0..keep) rounded at digits[keep] as Number's formatting does (a tie to the larger): the
-   kept digits in out, and 1 when the rounding carried into a new leading digit. */
-static int round_digits(const char *digits, int len, int keep, char *out) {
-  for (int i = 0; i < keep; i++) out[i] = i < len ? digits[i] : '0';
-  out[keep] = 0;
-  if (keep < 0 || keep >= len || digits[keep] < '5') return 0;
-  for (int i = keep - 1; i >= 0; i--) {
-    if (out[i] != '9') {
-      out[i]++;
-      return 0;
-    }
-    out[i] = '0';
-  }
-  memmove(out + 1, out, (size_t)keep + 1);
-  out[0] = '1';
-  return 1;
-}
-/* Number.prototype.toFixed (0), toPrecision (1) and toExponential (2), ECMA-262 21.1.3. */
+/* Number.prototype.toFixed (0), toPrecision (1) and toExponential (2): the argument's checks of V8's
+   builtins-number.cc, the digits V8's DoubleToFixedCString, DoubleToPrecisionCString and
+   DoubleToExponentialCString. */
+#define V8_DOUBLE_TO_FIXED_CSTRING _ZN2v88internal20DoubleToFixedCStringEdi
+#define V8_DOUBLE_TO_PRECISION_CSTRING _ZN2v88internal24DoubleToPrecisionCStringEdi
+#define V8_DOUBLE_TO_EXPONENTIAL_CSTRING _ZN2v88internal26DoubleToExponentialCStringEdi
 static yk number_format(double x, int which, yk arg) {
   static const char *const names[3] = {"toFixed() digits argument", "toPrecision() argument", "toExponential() argument"};
-  double f = arg == YK_UNDEFINED ? (which == 1 ? NAN : 0) : trunc(to_number(arg));
-  if (f != f && !(which == 1 && arg == YK_UNDEFINED)) f = 0;
   if (which == 1 && arg == YK_UNDEFINED) return to_string(yk_number(x));
+  double f = arg == YK_UNDEFINED ? 0 : trunc(to_number(arg));
+  if (f != f) f = 0;
   if (!isfinite(x)) return to_string(yk_number(x));
   int lo = which == 1 ? 1 : 0;
   if (!(f >= lo && f <= 100)) {
@@ -9967,109 +9779,14 @@ static yk number_format(double x, int which, yk arg) {
     snprintf(msg, sizeof msg, "%s must be between %d and 100", names[which], lo);
     range_error(msg);
   }
-  int digits_n = (int)f;
   if (which == 0 && fabs(x) >= 1e21) return to_string(yk_number(x));
-  int neg = x < 0;
-  double a = fabs(x);
-  int point = 1;
-  const char *d = a == 0 ? "0" : exact_digits(a, &point);
-  int len = (int)strlen(d);
-  char *buf = alloc((size_t)len + 260), *r = alloc((size_t)len + 260);
-  int o = 0;
-  if (neg) buf[o++] = '-';
-  if (which == 0) {
-    /* n / 10^f nearest x: the digits through f places after the point. */
-    int keep = point + digits_n;
-    if (a == 0 || keep <= 0) {
-      int up = a != 0 && keep == 0 && d[0] >= '5';
-      buf[o++] = up && digits_n == 0 ? '1' : '0';
-      if (digits_n > 0) {
-        buf[o++] = '.';
-        for (int i = 0; i < digits_n; i++) buf[o++] = (up && i == digits_n - 1) ? '1' : '0';
-      }
-      buf[o] = 0;
-      return ascii(buf);
-    }
-    int carry = round_digits(d, len, keep, r);
-    int ip = point + carry; /* digits before the point */
-    int rl = keep + carry;
-    if (ip <= 0) {
-      buf[o++] = '0';
-    } else
-      for (int i = 0; i < ip; i++) buf[o++] = r[i];
-    if (digits_n > 0) {
-      buf[o++] = '.';
-      for (int i = 0; i < digits_n; i++) {
-        int at = ip + i;
-        buf[o++] = at >= 0 && at < rl ? r[at] : '0';
-      }
-    }
-    buf[o] = 0;
-    return ascii(buf);
-  }
-  /* toExponential with no digits given: as many as the shortest round-trip needs. */
-  if (which == 2 && arg == YK_UNDEFINED) {
-    if (a == 0) return ascii(neg ? "-0e+0" : "0e+0");
-    yk_string *sh = str(number_to_string(a));
-    char t[64], sc[64];
-    for (uint32_t i = 0; i < sh->len && i < 63; i++) sc[i] = (char)sh->units[i];
-    sc[sh->len < 63 ? sh->len : 63] = 0;
-    int k = 0, dot = -1, exp10 = 0;
-    for (uint32_t i = 0; i < sh->len; i++) {
-      uint16_t c = sh->units[i];
-      if (c == 'e') {
-        exp10 = atoi(sc + i + 1 + (sc[i + 1] == '+'));
-        break;
-      }
-      if (c == '.') dot = k;
-      else t[k++] = (char)c;
-    }
-    int intdigits = dot < 0 ? k : dot;
-    int first = 0;
-    while (first < k - 1 && t[first] == '0') first++;
-    int e10 = exp10 + intdigits - first - 1;
-    int last = k;
-    while (last > first + 1 && t[last - 1] == '0') last--;
-    buf[o++] = t[first];
-    if (last > first + 1) {
-      buf[o++] = '.';
-      for (int i = first + 1; i < last; i++) buf[o++] = t[i];
-    }
-    o += snprintf(buf + o, 16, "e%c%d", e10 < 0 ? '-' : '+', abs(e10));
-    return ascii(buf);
-  }
-  int sig = which == 1 ? digits_n : digits_n + 1;
-  int e10;
-  if (a == 0) {
-    for (int i = 0; i < sig; i++) r[i] = '0';
-    r[sig] = 0;
-    e10 = 0;
-  } else {
-    int carry = round_digits(d, len, sig, r);
-    e10 = point - 1 + carry;
-    r[sig] = 0;
-  }
-  if (which == 2 || e10 < -6 || e10 >= sig) {
-    buf[o++] = r[0];
-    if (sig > 1) {
-      buf[o++] = '.';
-      for (int i = 1; i < sig; i++) buf[o++] = r[i];
-    }
-    o += snprintf(buf + o, 16, "e%c%d", e10 < 0 ? '-' : '+', abs(e10));
-  } else if (e10 >= 0) {
-    for (int i = 0; i <= e10; i++) buf[o++] = r[i];
-    if (sig > e10 + 1) {
-      buf[o++] = '.';
-      for (int i = e10 + 1; i < sig; i++) buf[o++] = r[i];
-    }
-  } else {
-    buf[o++] = '0';
-    buf[o++] = '.';
-    for (int i = 0; i < -e10 - 1; i++) buf[o++] = '0';
-    for (int i = 0; i < sig; i++) buf[o++] = r[i];
-  }
-  buf[o] = 0;
-  return ascii(buf);
+  yk fv = v8i(which == 2 && arg == YK_UNDEFINED ? -1 : (int)f);
+  char *p = v8str(which == 0   ? V8_(V8_DOUBLE_TO_FIXED_CSTRING, yk_number(x), fv)
+                  : which == 1 ? V8_(V8_DOUBLE_TO_PRECISION_CSTRING, yk_number(x), fv)
+                               : V8_(V8_DOUBLE_TO_EXPONENTIAL_CSTRING, yk_number(x), fv));
+  yk r = ascii(p);
+  v8_delete_array(p);
+  return r;
 }
 
 /* --- Math, with JavaScript's results --- */
