@@ -513,6 +513,57 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
       return R((ret, _i, p, _t, n) =>
         put(ret as number, utf8.decode(bytes(p as number, n as number))),
       );
+    // Symbols, private ones as symbols too (a property key no script names).
+    if (
+      d === "v8::Private::New(v8::Isolate*, v8::Local<v8::String>)" ||
+      d === "v8::Private::ForApi(v8::Isolate*, v8::Local<v8::String>)"
+    )
+      return R((ret, _i, n) => put(ret as number, Symbol(String(at(n as number)))));
+    if (d === "v8::Symbol::New(v8::Isolate*, v8::Local<v8::String>)")
+      return R((ret, _i, n) =>
+        put(ret as number, Symbol(n === 0 ? undefined : String(at(n as number)))),
+      );
+    if (d === "v8::Isolate::Enter()" || d === "v8::Isolate::Exit()") return () => undefined;
+    if (/^v8::Isolate::Scope::(?:~)?Scope\((?:v8::Isolate\*)?\)$/.test(d)) return () => undefined;
+    // Eternal, Global and Persistent handles: each holds its value's handle (handles are not
+    // reclaimed, nor are weak ones collected: SetWeak does nothing).
+    if (d === "v8::api_internal::Eternalize(v8::Isolate*, v8::Value*)") return (_i, v) => v;
+    if (/^v8::api_internal::GlobalizeReference\(v8::internal::Isolate\*, unsigned long\)$/.test(d))
+      return (_i, v) => v;
+    if (/^void v8::Eternal<.*>::Set<.*>\(v8::Isolate\*, v8::Local<.*>\)$/.test(d))
+      return (self, _i, l) => st64(self as number, ld64(l as number));
+    if (/^v8::Local<.*> v8::Eternal<.*>::Get\(v8::Isolate\*\) const$/.test(d))
+      return R((ret, self) => st64(ret as number, ld64(self as number)));
+    if (
+      /^v8::(?:Eternal|PersistentBase|Global|Persistent|TracedReference)<.*>::IsEmpty\(\) const$/.test(
+        d,
+      )
+    )
+      return (self) => bool(ld64(self as number) === 0);
+    if (
+      /^v8::(?:Global|Persistent)<.*>::(?:Global|Persistent)<.*>\(v8::Isolate\*, v8::Local<.*>\)$/.test(
+        d,
+      )
+    )
+      return (self, _i, l) => st64(self as number, ld64(l as number));
+    if (/^v8::(?:Global|Persistent)<.*>::(?:Global|Persistent)\(\)$/.test(d))
+      return (self) => st64(self as number, 0);
+    if (/^v8::(?:Global|Persistent)<.*>::~(?:Global|Persistent)\(\)$/.test(d))
+      return () => undefined;
+    if (/^void v8::PersistentBase<.*>::Reset<.*>\(v8::Isolate\*, v8::Local<.*> const&\)$/.test(d))
+      return (self, _i, l) => st64(self as number, ld64(l as number));
+    if (/^v8::PersistentBase<.*>::Reset\(\)$/.test(d)) return (self) => st64(self as number, 0);
+    if (
+      /^void v8::PersistentBase<.*>::SetWeak/.test(d) ||
+      /^v8::PersistentBase<.*>::(?:SetWeak|ClearWeak|MarkActive|SetWrapperClassId)/.test(d)
+    )
+      return () => undefined;
+    if (/^v8::(?:Global|Persistent)<.*>::operator=\(v8::(?:Global|Persistent)<.*>&&\)$/.test(d))
+      return (self, o) => {
+        st64(self as number, ld64(o as number));
+        st64(o as number, 0);
+        return self;
+      };
     // Strings.
     if (d === "v8::String::Empty(v8::Isolate*)") return R((ret) => put(ret as number, ""));
     if (d === "v8::String::Length() const")
