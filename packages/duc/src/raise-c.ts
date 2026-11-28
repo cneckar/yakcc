@@ -24,6 +24,7 @@ import {
   existsSync,
   fstatSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readFileSync,
   readSync,
@@ -32,6 +33,7 @@ import {
   rmSync,
   statSync,
   utimesSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -724,6 +726,30 @@ function parseType(spelled: string, depth = 0): CType {
   if (enable !== null) {
     const args = splitTemplateArgs(enable[1] as string);
     return parseType(args.length > 1 ? (args[args.length - 1] as string) : "void", depth + 1);
+  }
+  // libstdc++'s: tuple_element<N, pair<A, B>>::type is A or B (a structured binding's); an
+  // aligned_storage<sizeof(T), alignof(T)>::type is T's bytes (a hash node's storage);
+  // _Build_index_tuple<..>::__type is an _Index_tuple, empty (piecewise construction's).
+  {
+    const te =
+      /^(?:typename )?(?:std::)?tuple_element<(\d+)[uUlL]*, (?:const )?(?:std::)?pair<(.*)>>::type$/.exec(
+        raw,
+      );
+    if (te !== null) {
+      const parts = splitTemplateArgs(te[2] as string);
+      const k = Number(te[1]);
+      if (parts.length === 2 && k < 2) return parseType(parts[k] as string, depth + 1);
+    }
+    const as =
+      /^(?:typename )?(?:std::)?aligned_storage<sizeof\((.*)\), (?:__alignof|alignof)\((.*)\)>::type$/.exec(
+        raw,
+      );
+    if (as !== null) {
+      const of = parseType(as[1] as string, depth + 1);
+      return { k: "arr", of: { k: "u8" }, size: sizeOf(of) };
+    }
+    if (/^(?:typename )?(?:std::)?_Build_index_tuple<.*>::__type$/.test(raw))
+      return parseType("struct std::_Index_tuple<>", depth + 1);
   }
   // std::add_lvalue_reference<T>::type is T & (unique_ptr<T[]>::operator[]'s), remove_reference
   // and remove_cv give T.
@@ -2394,9 +2420,9 @@ function raiseBody(
         const list = `__tmp${temps++}`;
         top.push(`const ${list} = __ykAlloc(16, 8);`);
         frame.push(list);
-        const steps = initialize(arr, at, items as ClangNode).map(
-          (x) => `(${x.replace(/;$/, "")})`,
-        );
+        const steps = initialize(arr, at, items as ClangNode)
+          .filter((x) => x.replace(/;$/, "").trim() !== "")
+          .map((x) => `(${x.replace(/;$/, "")})`);
         if (
           bound &&
           at.of.k === "rec" &&
@@ -2623,7 +2649,9 @@ function raiseBody(
         frame.push(slot);
         const steps = (
           t.k === "rec" || t.k === "arr" ? initialize(slot, t, k0) : [storeAt(slot, t, expr(k0))]
-        ).map((x) => `(${x.replace(/;$/, "")})`);
+        )
+          .filter((x) => x.replace(/;$/, "").trim() !== "")
+          .map((x) => `(${x.replace(/;$/, "")})`);
         return { k: "mem", addr: `(${[...steps, slot].join(", ")})`, t };
       }
       // `__func__`, `__PRETTY_FUNCTION__`: their string.
@@ -2658,7 +2686,9 @@ function raiseBody(
         frame.push(slot);
         const steps = (
           t.k === "rec" || t.k === "arr" ? initialize(slot, t, k0) : [storeAt(slot, t, expr(k0))]
-        ).map((x) => `(${x.replace(/;$/, "")})`);
+        )
+          .filter((x) => x.replace(/;$/, "").trim() !== "")
+          .map((x) => `(${x.replace(/;$/, "")})`);
         return { k: "mem", addr: `(${[...steps, slot].join(", ")})`, t };
       }
       case "StringLiteral":
@@ -3340,6 +3370,8 @@ function raiseBody(
                 : madeBy?.kind === "InitListExpr"
                   ? // (An aggregate's braces, `new B{x, 2}`: its members, as a variable's.)
                     initialize(a, t.to, init)
+                      .filter((x) => x.replace(/;$/, "").trim() !== "")
+                      .filter((x) => x.replace(/;$/, "").trim() !== "")
                       .map((x) => `(${x.replace(/;$/, "")})`)
                       .join(", ") || "undefined"
                   : construct(a, init)
@@ -3761,7 +3793,11 @@ function raiseBody(
     const steps = [`(${d} = ${dst.addr})`];
     if (s0.kind === "CompoundLiteralExpr") {
       const init = (s0.inner ?? [])[0];
-      steps.push(...initialize(d, t, init).map((x) => `(${x.replace(/;$/, "")})`));
+      steps.push(
+        ...initialize(d, t, init)
+          .filter((x) => x.replace(/;$/, "").trim() !== "")
+          .map((x) => `(${x.replace(/;$/, "")})`),
+      );
     } else steps.push(...copyFrom(d, t, s0));
     return `(${steps.join(", ")}, undefined)`;
   };
@@ -3839,7 +3875,9 @@ function raiseBody(
     const s0 = unwrapTemporary(src);
     // A braced list (`return { src[0] };`): the object made from it, there.
     if (stripParens(s0).kind === "InitListExpr")
-      return initialize(to, t, stripParens(s0)).map((x) => `(${x.replace(/;$/, "")})`);
+      return initialize(to, t, stripParens(s0))
+        .filter((x) => x.replace(/;$/, "").trim() !== "")
+        .map((x) => `(${x.replace(/;$/, "")})`);
     // A lambda (C++): its closure, each capture stored in its field.
     if (s0.kind === "LambdaExpr") {
       const inits = (s0.inner ?? []).slice(1, -1);
@@ -3855,9 +3893,9 @@ function raiseBody(
         if (f.byRef) steps.push(`__ykStore64(${at}, __ykNumToBig(${argOf(init)}))`);
         else
           steps.push(
-            ...initialize(at, parseType(caps[i]?.type ?? ""), init).map(
-              (x) => `(${x.replace(/;$/, "")})`,
-            ),
+            ...initialize(at, parseType(caps[i]?.type ?? ""), init)
+              .filter((x) => x.replace(/;$/, "").trim() !== "")
+              .map((x) => `(${x.replace(/;$/, "")})`),
           );
       });
       return steps;
@@ -4061,7 +4099,9 @@ function raiseBody(
           }
           if (given !== undefined)
             steps.push(
-              ...initialize(at(f.offset), ft, given).map((x) => `(${x.replace(/;$/, "")})`),
+              ...initialize(at(f.offset), ft, given)
+                .filter((x) => x.replace(/;$/, "").trim() !== "")
+                .map((x) => `(${x.replace(/;$/, "")})`),
             );
           else if (ft.k === "rec" && !isUnion(ft.name))
             steps.push(construct(at(f.offset), dflt(ft.name)));
@@ -4189,7 +4229,7 @@ function raiseBody(
       const slot = `__arg${temps++}`;
       top.push(`const ${slot} = __ykAlloc(${Math.max(8, sizeOf(t))}, ${Math.max(8, alignOf(t))});`);
       frame.push(slot);
-      return `(${copyFrom(slot, t, x).join(", ")}, ${slot})`;
+      return `(${[...copyFrom(slot, t, x), slot].join(", ")})`;
     }
     if (cat !== "lvalue" && cat !== "xvalue") return expr(x);
     let n = x;
@@ -4205,7 +4245,7 @@ function raiseBody(
       frame.push(slot);
       const inner = (n.inner ?? [])[0] as ClangNode;
       if (t.k === "rec") {
-        const made = `(${copyFrom(slot, t, inner).join(", ")}, ${slot})`;
+        const made = `(${[...copyFrom(slot, t, inner), slot].join(", ")})`;
         if ((n as { extendingDecl?: unknown }).extendingDecl === undefined)
           temporary(slot, t, inner);
         return made;
@@ -4308,7 +4348,11 @@ function raiseBody(
     return `${key}(${[...ret.slot(), self, ...withDefaults(args, id).map(argOf)].join(", ")})`;
   };
   /** Stores that initialize an object in memory at `addr` from an initializer (zero-filled). */
-  const initialize = (addr: string, t: CType, given: ClangNode | undefined): string[] => {
+  // (An initialization's steps without the empty ones, an empty aggregate's `{}`'s `();`: each a
+  // statement, wrapped as an expression where one is wanted, `()` not one.)
+  const initialize = (addr: string, t: CType, init: ClangNode | undefined): string[] =>
+    initializeOf(addr, t, init).filter((x) => !/^\(\s*\)\s*;?$/.test(x.trim()));
+  const initializeOf = (addr: string, t: CType, given: ClangNode | undefined): string[] => {
     // A member an initializer leaves out (clang's ImplicitValueInitExpr) is zero.
     const init = given?.kind === "ImplicitValueInitExpr" ? undefined : given;
     if (t.k === "arr") {
@@ -5163,7 +5207,9 @@ function raiseBody(
             const made = nrvo
               ? []
               : s1.kind === "InitListExpr"
-                ? initialize("__ret", result, s1).map((x) => `(${x.replace(/;$/, "")})`)
+                ? initialize("__ret", result, s1)
+                    .filter((x) => x.replace(/;$/, "").trim() !== "")
+                    .map((x) => `(${x.replace(/;$/, "")})`)
                 : copyFrom("__ret", result, v);
             returnLine(`(${[...made, "__ret"].join(", ")})`);
             return;
@@ -5181,12 +5227,14 @@ function raiseBody(
               : undefined;
           const fill =
             s0.kind === "InitListExpr" || s0.kind === "CompoundLiteralExpr"
-              ? initialize(out, result, lit).map((x) => `(${x.replace(/;$/, "")})`)
+              ? initialize(out, result, lit)
+                  .filter((x) => x.replace(/;$/, "").trim() !== "")
+                  .map((x) => `(${x.replace(/;$/, "")})`)
               : local?.k === "mem"
                 ? relocate(out, local.addr, result, true)
                 : copyFrom(out, result, s0);
           returnLine(
-            `((${out} = __ykAlloc(${sizeOf(result)}, ${alignOf(result)})), ${fill.join(", ")}, ${out})`,
+            `(${[`(${out} = __ykAlloc(${sizeOf(result)}, ${alignOf(result)}))`, ...fill, out].join(", ")})`,
           );
           return;
         }
@@ -6182,6 +6230,9 @@ export function shaveCUnit(
             (node as { completeDefinition?: boolean }).completeDefinition === true,
         );
         if (complete.length === 1) return complete[0];
+        // (Of several, a variadic one's of no arguments, `tuple<>`: the one whose are none.)
+        const none = complete.filter((node) => argsOf(node).length === 0);
+        if (none.length === 1) return none[0];
       }
       if (matching.length <= 1) return matching[0];
       // Several of these arguments without their namespaces: the one whose arguments have the
@@ -7131,7 +7182,8 @@ export function shaveCUnit(
         if (space === "" || indexed === undefined || n.id === undefined) return true;
         const d = indexed.byId.get(n.id);
         // (libstdc++'s inline namespaces, `std::__cxx11`, as the name leaves them out.)
-        const plain = (x: string): string => x.replace(/::__\w+/g, "");
+        // (libstdc++'s inline namespace, `std::__cxx11`; not its others, `std::__detail`.)
+        const plain = (x: string): string => x.replace(/::__cxx11\b/g, "");
         if (d === undefined) return true;
         const full = namespacesOf(indexed, d);
         // (Or written as far as it is qualified, `__detail::__unique_ptr_t` in std.)
@@ -7158,8 +7210,22 @@ export function shaveCUnit(
         const alias = (n.inner ?? []).find((c) => c.kind === "TypeAliasDecl");
         let t = alias?.type?.qualType;
         if (t === undefined) continue;
-        params.forEach((pn, i) => {
-          if (pn !== "" && args[i] !== undefined)
+        // (An alias of the template of its own name, `template <class... _Tp> using
+        // unordered_map = std::unordered_map<_Tp...>`: the class it names.)
+        if (new RegExp(`^(?:std::)?${bareAlias}<`).test(t.replace(/^(?:typename |::)/, "")))
+          continue;
+        paramDecls.forEach((c, i) => {
+          const pn = params[i] as string;
+          if (pn === "") return;
+          // (A pack, `_Tp...`: every argument from its place.)
+          if ((c as { isParameterPack?: boolean }).isParameterPack === true) {
+            t = (t as string).replace(
+              new RegExp(`\\b${pn}\\.\\.\\.`, "g"),
+              args.slice(i).join(", "),
+            );
+            return;
+          }
+          if (args[i] !== undefined)
             t = (t as string).replace(new RegExp(`\\b${pn}\\b`, "g"), args[i] as string);
         });
         return t;
@@ -7452,6 +7518,12 @@ export function shaveCUnit(
         }
       }
     }
+    // (A variadic template's instance of no arguments spelled without them, `std::tuple`: the
+    // dump's `tuple<>`.)
+    if (!name.includes("<")) {
+      const empty = layouts.get(recordKey(`${name}<>`));
+      if (empty !== undefined) return empty;
+    }
     // (A class template's instance spelled with its default arguments, which the dump omits.)
     // (And, last, an argument named in its class's scope, `__shared_ptr<BaseOptionField>`, the
     // dump's `__shared_ptr<OptionsParser<DebugOptions>::BaseOptionField>`: by the names without
@@ -7527,8 +7599,84 @@ export function shaveCUnit(
       layoutsByHead.set(head, byHead);
     }
     for (const k of byHead) if (argsPrefix(k, want)) return layouts.get(k);
+    // (Last: libstdc++'s default arguments at any depth left out, `basic_string<char,
+    // char_traits<char>, allocator<char>>` as `basic_string<char>`, and an argument that is an
+    // expression, `__hash_cached::value`, any: the one layout of these, `_Hash_node_value<pair<
+    // const basic_string<char>, Info>, 1>`.)
+    const noDefaults = (k: string): string => {
+      let x = k.replace(/\s+/g, "");
+      for (let prev = "", g = 0; prev !== x && g < 8; g++) {
+        prev = x;
+        x = x
+          .replace(/,char_traits<[^<>]*>(?=[,>])/g, "")
+          .replace(/,allocator<[^<>]*(?:<[^<>]*(?:<[^<>]*>[^<>]*)*>[^<>]*)*>(?=>)/g, "");
+      }
+      return x;
+    };
+    const tokens = (k: string): string[] =>
+      noDefaults(k)
+        .split(/([<>,])/)
+        .filter((t) => t !== "");
+    const wt = tokens(want);
+    // (recordKey leaves `__hash_cached::value` as `value`.)
+    const expression = (t: string | undefined): boolean =>
+      t === "value" || /::value$/.test(t ?? "");
+    if (wt.some(expression)) {
+      const hits = byHead.filter((k) => {
+        const kt = tokens(k);
+        return kt.length === wt.length && kt.every((t, i) => t === wt[i] || expression(wt[i]));
+      });
+      if (hits.length === 1) return layouts.get(hits[0] as string);
+    } else {
+      const nw = noDefaults(want);
+      const hits = byHead.filter((k) => noDefaults(k) === nw);
+      if (hits.length === 1) return layouts.get(hits[0] as string);
+    }
+    // (One code generation does not lay out, a type of a function it does not emit,
+    // `std::pair<__normal_iterator<char *, basic_string<char>>, bool>`: laid out as clang lays it
+    // out for its sizeof, in a unit of this one and that, once.)
+    const bare = name.replace(/^(?:struct|class|union) /, "");
+    if (/::/.test(bare) && !/\((?:unnamed|anonymous|lambda)/.test(bare) && !forced.has(bare)) {
+      forced.add(bare);
+      const work = mkdtempSync(join(tmpdir(), "yakcc-layout-"));
+      try {
+        const probe = join(work, "probe.cpp");
+        writeFileSync(
+          probe,
+          `#include ${JSON.stringify(file)}\nstatic_assert(sizeof(${bare}) > 0, "");\n`,
+        );
+        const more = recordLayouts(
+          execFileSync(
+            clang,
+            [...args, "-fsyntax-only", "-Xclang", "-fdump-record-layouts", probe],
+            {
+              encoding: "utf8",
+              maxBuffer: 1 << 30,
+              stdio: ["ignore", "pipe", "ignore"],
+            },
+          ),
+        );
+        let added = false;
+        for (const [k, l] of more)
+          if (!layouts.has(k)) {
+            layouts.set(k, l);
+            added = true;
+          }
+        if (added) {
+          layoutsByHead.clear();
+          looseLayouts = undefined;
+          return layout(name);
+        }
+      } catch {
+        // (Not a type clang can name there: none.)
+      } finally {
+        rmSync(work, { recursive: true, force: true });
+      }
+    }
     return undefined;
   };
+  // (Types laid out by their sizeof, each once: see layout.)
+  const forced = new Set<string>();
   const layoutsByHead = new Map<string, string[]>();
   // Module state: each static the atoms use, keyed and defined (when this unit defines it).
   const statics = new Map<string, StaticDef>();
