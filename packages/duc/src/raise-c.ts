@@ -22,6 +22,7 @@ import { createHash } from "node:crypto";
 import {
   closeSync,
   existsSync,
+  fstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -69,6 +70,11 @@ export interface ClangNode {
  */
 interface UnitIndex {
   readonly path: string;
+  /**
+   * The dump, open for as long as the index is used: another process's cache may remove the file
+   * (its least recently used), and an open file stays readable.
+   */
+  readonly fd: number;
   /** The top-level declarations, in order. */
   readonly decls: readonly IndexedDecl[];
   readonly byName: ReadonlyMap<string, readonly IndexedDecl[]>;
@@ -136,7 +142,7 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
     rmSync(k.file, { force: true });
     total -= k.size;
   }
-  if (!existsSync(path)) {
+  const dump = (): void => {
     const part = `${path}.${process.pid}.part`;
     const out = openSync(part, "w");
     try {
@@ -148,14 +154,24 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
       closeSync(out);
     }
     renameSync(part, path);
-  } else {
+  };
+  if (!existsSync(path)) dump();
+  else {
     // (Used now: kept before older ones.)
     const now = new Date();
     try {
       utimesSync(path, now, now);
     } catch {
-      // removed meanwhile by another process: read below fails as a missing dump would
+      // removed meanwhile by another process: made again below
     }
+  }
+  // (Opened once, and kept: removed by another process before this, made again.)
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch {
+    dump();
+    fd = openSync(path, "r");
   }
   const decls: IndexedDecl[] = [];
   const byName = new Map<string, IndexedDecl[]>();
@@ -183,9 +199,8 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
   // (a reference to one, `"referencedDecl": {"id", "kind", "name"}`, is not).
   const arrayKeys: (string | undefined)[] = [];
   let functions = 0; // open function declarations: their locals are not indexed
-  const fd = openSync(path, "r");
-  try {
-    const size = statSync(path).size;
+  {
+    const size = fstatSync(fd).size;
     const chunk = Buffer.alloc(1 << 24);
     let inString = false;
     let escaped = false;
@@ -308,19 +323,16 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
       }
       at += n;
     }
-  } finally {
-    closeSync(fd);
   }
 
-  return { path, decls, byName, byId, byMangled, next, previous };
+  return { path, fd, decls, byName, byId, byMangled, next, previous };
 }
 
 /** One indexed declaration, parsed. */
 function readDecl(ix: UnitIndex, d: IndexedDecl): ClangNode {
-  const fd = openSync(ix.path, "r");
-  try {
+  {
     const b = Buffer.alloc(d.end - d.start);
-    readSync(fd, b, 0, b.length, d.start);
+    readSync(ix.fd, b, 0, b.length, d.start);
     // (Documentation comments clang attaches to declarations are not code: left out.)
     const text = b.toString("utf8");
     if (!text.includes('"FullComment"')) return JSON.parse(text) as ClangNode;
@@ -329,8 +341,6 @@ function readDecl(ix: UnitIndex, d: IndexedDecl): ClangNode {
         ? v.filter((x) => (x as { kind?: string } | null)?.kind !== "FullComment")
         : v,
     ) as ClangNode;
-  } finally {
-    closeSync(fd);
   }
 }
 
