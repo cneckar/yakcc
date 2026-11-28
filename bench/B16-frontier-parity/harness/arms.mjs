@@ -4,6 +4,9 @@
 //   scratch   one call: the model writes the whole solution
 //   routed    B14's routed arm (15-line threshold): write at once if small, else search the
 //             library, pick a module or none, write glue around it
+//   search    B14's reuse arm: always search the library first (no route), pick a module or none,
+//             write glue around it; added after phase 1, where every routed miss was a task
+//             routed to write (PROTOCOL.md §3)
 //   oracle    the target module is handed over (its root source), the model writes glue only:
 //             the upper bound of the reuse path, so discovery losses can be told from glue losses
 import {
@@ -27,6 +30,7 @@ export const ARMS = [
   { id: "S-haiku", model: "haiku", effort: "high", strategy: "scratch", phase: 1 },
   { id: "S-haiku-max", model: "haiku", effort: "max", strategy: "scratch", phase: 1 },
   { id: "R-haiku", model: "haiku", effort: "high", strategy: "routed", phase: 1 },
+  { id: "A-haiku", model: "haiku", effort: "high", strategy: "search", phase: 1 },
   { id: "O-haiku", model: "haiku", effort: "high", strategy: "oracle", phase: 1 },
   { id: "S-sonnet", model: "sonnet", effort: "high", strategy: "scratch", phase: 2 },
   { id: "S-opus", model: "opus", effort: "high", strategy: "scratch", phase: 2 },
@@ -46,6 +50,15 @@ export async function runArm({ arm, task, client, library }) {
       search: library.search,
       rootSourceOf: library.rootSourceOf,
       route: true,
+      score: scoreSolution,
+    });
+  } else if (arm.strategy === "search") {
+    row = await runReuse({
+      task,
+      client,
+      search: library.search,
+      rootSourceOf: library.rootSourceOf,
+      route: false,
       score: scoreSolution,
     });
   } else if (arm.strategy === "oracle") {
