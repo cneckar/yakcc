@@ -106,7 +106,7 @@ const FUNCTION_KINDS = new Set([
 ]);
 
 /** Dump a unit's AST to a file and index its declarations. */
-function indexUnit(clang: string, args: readonly string[], file: string): UnitIndex {
+export function indexUnit(clang: string, args: readonly string[], file: string): UnitIndex {
   // One dump per unit (its command and its file, as last changed), kept in a shared cache and
   // reused: SQLite's is 725 MB, and a process that ends without its exit handlers (a test
   // worker) would leave one behind each run. Dumps unused for a day are removed.
@@ -194,6 +194,25 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
       const n = readSync(fd, chunk, 0, chunk.length, at);
       for (let i = 0; i < n; i++) {
         const c = chunk[i] as number;
+        // A string not read (most of a dump's bytes): to its closing quote at once.
+        if (inString && text === undefined && !escaped) {
+          let q = chunk.indexOf(0x22, i);
+          while (q !== -1) {
+            let k = q - 1;
+            while (k >= i && chunk[k] === 0x5c) k--;
+            if ((q - 1 - k) % 2 === 0) break;
+            q = chunk.indexOf(0x22, q + 1);
+          }
+          if (q === -1) {
+            let k = n - 1;
+            while (k >= i && chunk[k] === 0x5c) k--;
+            escaped = (n - 1 - k) % 2 === 1;
+            i = n;
+            continue;
+          }
+          i = q - 1;
+          continue;
+        }
         if (inString) {
           if (escaped) escaped = false;
           else if (c === 0x5c) escaped = true;
@@ -303,7 +322,9 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
             previous.set(d.id, f.previous);
           }
           if (top) decls.push(d);
-          byName.set(d.name, [...(byName.get(d.name) ?? []), d]);
+          const named = byName.get(d.name);
+          if (named === undefined) byName.set(d.name, [d]);
+          else named.push(d);
         }
       }
       at += n;
