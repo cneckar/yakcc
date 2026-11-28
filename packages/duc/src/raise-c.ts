@@ -140,8 +140,9 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
   let total = kept.reduce((n, k) => n + k.size, 0);
   for (const k of kept.sort((a, b) => a.used - b.used)) {
     if (total <= 12 * 2 ** 30) break;
-    // (Not one used in the last half hour: a process is likely reading it.)
-    if (k.file === path || Date.now() - k.used < 1_800_000) continue;
+    // (Not one used in the last minute: another process may be between finding it and opening
+    // it. Once open, it stays readable.)
+    if (k.file === path || Date.now() - k.used < 60_000) continue;
     rmSync(k.file, { force: true });
     total -= k.size;
   }
