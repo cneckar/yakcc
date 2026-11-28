@@ -495,6 +495,8 @@ export interface RecordLayout {
   /** C++: each base class's offset (by its record key), and the vtable pointer's. */
   readonly bases?: ReadonlyMap<string, number>;
   readonly vptr?: number;
+  /** A union (the dump's own tag: a name's spelled tag may be another, and a lookup ignores it). */
+  readonly union?: true;
   /** Each field's byte offset and type; a bit-field also its first bit (from the record's start) and width. */
   readonly fields: ReadonlyMap<
     string,
@@ -1832,9 +1834,9 @@ function isUnion(name: string): boolean {
   // (An unnamed record says which it is in its name, `(unnamed struct at ..)`; the layouts' keys
   // do not.)
   if (/\((?:unnamed|anonymous)/.test(name)) return /\((?:unnamed|anonymous) union\b/.test(name);
-  if (!/^(?:struct|class) /.test(name)) return false;
-  const u = unitLayout(`union ${name.replace(/^(?:struct|class) /, "")}`);
-  return u !== undefined && u === unitLayout(name);
+  // (Otherwise by its layout, which knows its tag whatever this name's is: a lookup finds a
+  // record under any tag, so two lookups' identity says nothing.)
+  return unitLayout(name)?.union === true;
 }
 
 function baseOffset(derived: string, base: string): number | undefined {
@@ -9601,6 +9603,7 @@ export function recordLayouts(dump: string): Map<string, RecordLayout> {
       fields,
       ...(bases.size > 0 ? { bases } : {}),
       ...(vptr !== undefined ? { vptr } : {}),
+      ...(/^union /.test((head[1] as string).trim()) ? { union: true as const } : {}),
     };
     out.set(recordKey((head[1] as string).trim()), record);
     // (And by its namespaces, `::class simdjson::dom::parser`, for a name that has them.)
