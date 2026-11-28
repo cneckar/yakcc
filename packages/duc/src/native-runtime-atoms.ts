@@ -107,10 +107,28 @@ function atomsSourcesKey(): string {
   const h = createHash("sha256");
   h.update(JSON.stringify([V8_BIGINT_ATOM_SOURCES, V8_NUMBERS_ATOM_SOURCES], big));
   h.update(JSON.stringify([V8_BIGINT_STATICS, V8_NUMBERS_STATICS], big));
+  // (The sources this module loads, its imports' closure: an edit elsewhere in the package, to
+  // the program record or another target's emitter, leaves the atoms as they are.)
   const src = dirname(fileURLToPath(import.meta.url));
-  for (const f of readdirSync(src).sort())
-    if (/\.(ts|js)$/.test(f) && !/\.test\.|^scratch/.test(f))
-      h.update(f).update(readFileSync(join(src, f)));
+  const self = fileURLToPath(import.meta.url);
+  const ext = self.endsWith(".ts") ? ".ts" : ".js";
+  const seen = new Set<string>();
+  const todo = [self];
+  while (todo.length > 0) {
+    const file = todo.pop() as string;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    const text = readFileSync(file, "utf8");
+    // (Value imports and re-exports of the package's own modules; a type-only one loads nothing.)
+    for (const m of text.matchAll(
+      /^(?:import|export)\s+(type\s+)?(?:[^;]*?\sfrom\s+)?"(\.{1,2}\/[^"]+)\.js";/gms,
+    )) {
+      if (m[1] !== undefined) continue;
+      const next = join(dirname(file), `${m[2] as string}${ext}`);
+      if (next.startsWith(src) && existsSync(next)) todo.push(next);
+    }
+  }
+  for (const f of [...seen].sort()) h.update(f.slice(src.length)).update(readFileSync(f));
   sourcesKey = h.digest("hex");
   return sourcesKey;
 }
