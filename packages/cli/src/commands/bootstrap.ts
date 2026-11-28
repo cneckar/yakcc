@@ -503,6 +503,8 @@ async function runVerify(
     },
     findByCanonicalAstHash: registry.findByCanonicalAstHash?.bind(registry),
     storeBlock: registry.storeBlock?.bind(registry),
+    // Each atom's graph beside its block (#1291): what the manifest's roots stand for.
+    storeDucImplementation: registry.storeDucImplementation?.bind(registry),
   };
 
   // Shave all files, tracking which source path produced each merkle root.
@@ -1116,6 +1118,8 @@ export async function bootstrap(argv: ReadonlyArray<string>, logger: Logger): Pr
       return row ?? undefined;
     },
     findByCanonicalAstHash: registry.findByCanonicalAstHash?.bind(registry),
+    // Each atom's graph beside its block (#1291): the bootstrap registry holds the DUC form.
+    storeDucImplementation: registry.storeDucImplementation?.bind(registry),
     storeBlock: async (row: Parameters<typeof registry.storeBlock>[0]): Promise<void> => {
       // Forward the store to the real registry first.
       await registry.storeBlock(row);

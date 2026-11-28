@@ -94,7 +94,15 @@ jobs:
         # bootstrap is additive (DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001):
         # prior entries are retained; new entries from this shave are merged in.
         # Output: "bootstrap: prior=N, shaved=M, added=K, total=N+K"
-        run: node packages/cli/dist/bin.js bootstrap
+        # The registry starts empty (#1291): the shave cache is keyed on a file's bytes alone, so a
+        # registry from an earlier lifter would keep that lifter's atoms for every unchanged file.
+        # The manifest (expected-roots.json) stays additive.
+        # YAKCC_AIRGAP=1: the bootstrap pushes no atom to the commons.
+        env:
+          YAKCC_AIRGAP: "1"
+        run: |
+          rm -f bootstrap/yakcc.registry.sqlite bootstrap/yakcc.registry.sqlite-wal bootstrap/yakcc.registry.sqlite-shm
+          node packages/cli/dist/bin.js bootstrap
 
       - name: Fail on silent-complete-failure (no atoms recorded AND bootstrap step errored)
         # @decision DEC-BOOTSTRAP-ACCUMULATE-SILENT-FAILURE-GATE-001 (#1110)
@@ -121,6 +129,58 @@ jobs:
           else
             echo "::warning::bootstrap step failed but some atoms were recorded — partial success per DEC-BOOTSTRAP-MANIFEST-ACCUMULATE-001"
           fi
+
+      - name: Compress the bootstrap registry
+        # @decision DEC-BOOTSTRAP-REGISTRY-RELEASE-001 (#1291)
+        # @title The bootstrap registry is kept outside git, saved only on request
+        # @status accepted
+        # @rationale
+        #   At the locked format the registry holds every atom's graph beside its block. It is
+        #   ~144 MB, over GitHub's 100 MB per-file limit, and it is regenerated from the sources.
+        #   So it is saved only when someone asks for it, by a manual run of this workflow
+        #   (Actions → bootstrap-accumulate → Run workflow), never by a merge: xz-compressed
+        #   (~53 MB), outside git history, so no clone downloads it. It is kept as
+        #   - the workflow artifact `bootstrap-registry` (90 days), which needs no write access:
+        #       gh run download <run id> -n bootstrap-registry -D bootstrap
+        #   - and the release asset `bootstrap-registry`, when the workflow token may write
+        #     releases (Settings → Actions → General → Workflow permissions: read and write):
+        #       gh release download bootstrap-registry -p 'yakcc.registry.sqlite.xz' -D bootstrap
+        #   Then: xz -d bootstrap/yakcc.registry.sqlite.xz
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          python3 -c "import sqlite3; c = sqlite3.connect('bootstrap/yakcc.registry.sqlite'); c.execute('VACUUM'); c.close()"
+          sha256sum bootstrap/yakcc.registry.sqlite | cut -d' ' -f1 > bootstrap/yakcc.registry.sqlite.sha256
+          xz -T0 -9 -k -f bootstrap/yakcc.registry.sqlite
+
+      - name: Keep the bootstrap registry as a workflow artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrap-registry
+          path: |
+            bootstrap/yakcc.registry.sqlite.xz
+            bootstrap/yakcc.registry.sqlite.sha256
+          retention-days: 90
+          compression-level: 0
+
+      - name: Publish the bootstrap registry as a release asset
+        # Best effort: the workflow token may not be allowed to write releases (HTTP 403); the
+        # artifact above is the copy then.
+        if: github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          commit=$(git rev-parse HEAD)
+          notes="yakcc bootstrap of main at ${commit}: bootstrap/yakcc.registry.sqlite, xz-compressed, with its sha256 (uncompressed). Replaced only by a manual run of bootstrap-accumulate."
+          gh release view bootstrap-registry >/dev/null 2>&1 \
+            || gh release create bootstrap-registry --title "Bootstrap registry" --notes "$notes" --prerelease --target "$commit"
+          gh release edit bootstrap-registry --notes "$notes"
+          gh release upload bootstrap-registry bootstrap/yakcc.registry.sqlite.xz bootstrap/yakcc.registry.sqlite.sha256 --clobber
+
+      - name: Remove the compressed copy
+        if: github.event_name == 'workflow_dispatch'
+        run: rm -f bootstrap/yakcc.registry.sqlite.xz bootstrap/yakcc.registry.sqlite.sha256
 
       - name: Push updated manifest to main if changed
         # @decision DEC-BOOTSTRAP-ACCUMULATE-PUSH-GATE-001

@@ -9,7 +9,8 @@
  * snprintf and strtod, both exact (a double's decimal digits from its integer value, a decimal's
  * double by rounding its exact value, half to even, with big integers); the math functions the
  * runtime and the lowered code call, on the bits of the doubles; setjmp and longjmp; the context
- * switch a coroutine runs on; and the process's entry, _start.
+ * switch a coroutine runs on; and the process's start (yk_nolibc_start, which _start calls). The
+ * system call itself and _start are the system module's, in LLVM (native-system.ts).
  *
  * For x86_64, AArch64, ARMv7 (EABI, hard float) and RISC-V 64 Linux: each its system calls' numbers
  * and calling convention, the registers a switch saves, and its _start.
@@ -32,58 +33,8 @@
 
 /* ---------------------------------------------------------------- system calls */
 
-static inline long yk_sys(long n, long a, long b, long c, long d, long e, long f) {
-#if defined(__x86_64__)
-  long r;
-  register long r10 __asm__("r10") = d;
-  register long r8 __asm__("r8") = e;
-  register long r9 __asm__("r9") = f;
-  __asm__ volatile("syscall"
-                   : "=a"(r)
-                   : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8), "r"(r9)
-                   : "rcx", "r11", "memory");
-  return r;
-#elif defined(__aarch64__)
-  register long x8 __asm__("x8") = n;
-  register long x0 __asm__("x0") = a;
-  register long x1 __asm__("x1") = b;
-  register long x2 __asm__("x2") = c;
-  register long x3 __asm__("x3") = d;
-  register long x4 __asm__("x4") = e;
-  register long x5 __asm__("x5") = f;
-  __asm__ volatile("svc 0"
-                   : "+r"(x0)
-                   : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5)
-                   : "memory", "cc");
-  return x0;
-#elif defined(__arm__)
-  register long r7 __asm__("r7") = n;
-  register long r0 __asm__("r0") = a;
-  register long r1 __asm__("r1") = b;
-  register long r2 __asm__("r2") = c;
-  register long r3 __asm__("r3") = d;
-  register long r4 __asm__("r4") = e;
-  register long r5 __asm__("r5") = f;
-  __asm__ volatile("svc 0"
-                   : "+r"(r0)
-                   : "r"(r7), "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r5)
-                   : "memory", "cc");
-  return r0;
-#else
-  register long a7 __asm__("a7") = n;
-  register long a0 __asm__("a0") = a;
-  register long a1 __asm__("a1") = b;
-  register long a2 __asm__("a2") = c;
-  register long a3 __asm__("a3") = d;
-  register long a4 __asm__("a4") = e;
-  register long a5 __asm__("a5") = f;
-  __asm__ volatile("ecall"
-                   : "+r"(a0)
-                   : "r"(a7), "r"(a1), "r"(a2), "r"(a3), "r"(a4), "r"(a5)
-                   : "memory");
-  return a0;
-#endif
-}
+/* The system call: the system module's (native-system.ts, in LLVM), per architecture. */
+long yk_sys(long n, long a, long b, long c, long d, long e, long f);
 /* Each architecture's numbers: x86_64's; the generic table's (AArch64, RISC-V); ARM EABI's. */
 #if defined(__x86_64__)
 enum { SYS_read = 0, SYS_write = 1, SYS_mmap = 9, SYS_munmap = 11, SYS_getpid = 39,
@@ -1242,12 +1193,14 @@ __asm__(".text\n.syntax unified\n.arm\n"
   "  fld fs0, 112(a0)\n  fld fs1, 120(a0)\n  fld fs2, 128(a0)\n  fld fs3, 136(a0)\n"               \
   "  fld fs4, 144(a0)\n  fld fs5, 152(a0)\n  fld fs6, 160(a0)\n  fld fs7, 168(a0)\n"               \
   "  fld fs8, 176(a0)\n  fld fs9, 184(a0)\n  fld fs10, 192(a0)\n  fld fs11, 200(a0)\n"
-__asm__(".text\n"
+/* The double registers by name whatever the file's features (bitcode's module asm is read with
+   the triple's defaults alone). */
+__asm__(".text\n.option push\n.option arch, +d\n"
         ".globl setjmp\n.type setjmp,@function\nsetjmp:\n" YK_SAVE "  li a0, 0\n  ret\n"
         ".globl longjmp\n.type longjmp,@function\nlongjmp:\n" YK_LOAD
         "  mv a0, a1\n  bnez a0, 1f\n  li a0, 1\n1:\n  ret\n"
         ".globl yk_switch\n.type yk_switch,@function\nyk_switch:\n" YK_SAVE "  mv a0, a1\n"
-        ".globl yk_resume\n.type yk_resume,@function\nyk_resume:\n" YK_LOAD "  ret\n");
+        ".globl yk_resume\n.type yk_resume,@function\nyk_resume:\n" YK_LOAD "  ret\n.option pop\n");
 #endif
 
 typedef struct {
@@ -1350,20 +1303,6 @@ YK_NOLIBC_API _Noreturn void yk_nolibc_start(uintptr_t *sp) {
   for (void (*const *f)(void) = __init_array_start; f != NULL && f < __init_array_end; f++) (*f)();
   exit(main(argc, argv));
 }
-/* _start: the initial stack (argc, argv, envp) to yk_nolibc_start, the stack aligned, no frame. */
-#if defined(__x86_64__)
-__asm__(".text\n.globl _start\n.type _start,@function\n_start:\n"
-        "  xor %ebp, %ebp\n  mov %rsp, %rdi\n  and $-16, %rsp\n  call yk_nolibc_start\n  hlt\n");
-#elif defined(__aarch64__)
-__asm__(".text\n.globl _start\n.type _start,%function\n_start:\n"
-        "  mov x29, #0\n  mov x30, #0\n  mov x0, sp\n  and sp, x0, #-16\n  bl yk_nolibc_start\n");
-#elif defined(__arm__)
-__asm__(".text\n.syntax unified\n.arm\n.globl _start\n.type _start,%function\n_start:\n"
-        "  mov fp, #0\n  mov lr, #0\n  mov r0, sp\n  bic sp, sp, #15\n  bl yk_nolibc_start\n");
-#else
-__asm__(".text\n.globl _start\n.type _start,@function\n_start:\n"
-        "  .option push\n  .option norelax\n  lla gp, __global_pointer$\n  .option pop\n"
-        "  mv a0, sp\n  andi sp, sp, -16\n  call yk_nolibc_start\n");
-#endif
+/* _start, which calls yk_nolibc_start with the initial stack, is the system module's (in LLVM). */
 
 #endif

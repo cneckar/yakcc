@@ -23,11 +23,15 @@
 import { createHash } from "node:crypto";
 import {
   type CallExpression,
+  type Identifier,
+  type KindToNodeMappings,
+  type LabeledStatement,
   Node,
   Project,
   ScriptKind,
   type SourceFile,
   SyntaxKind,
+  type VariableDeclaration,
   VariableDeclarationKind,
   ts,
 } from "ts-morph";
@@ -202,7 +206,7 @@ export function parseAtomSource(source: string): { project: Project; file: Sourc
     // call of a name `await`; as a module it is the await it means (#1297).
     if (
       /\bawait\b/.test(candidate) &&
-      sf.getDescendantsOfKind(SyntaxKind.Identifier).some((id) => id.getText() === "await")
+      descendantsOfKind(sf, SyntaxKind.Identifier).some((id) => id.getText() === "await")
     ) {
       // An empty export list makes the file a module, and lifts to nothing.
       const asModule = new Project({
@@ -221,9 +225,9 @@ export function parseAtomSource(source: string): { project: Project; file: Sourc
       // A fragment of a generator's body yields: outside a generator, `yield* g()` is a name
       // `yield` times g(), and `yield` is never a name in a module. It is the body of the
       // generator it was sliced from (#1330), async when it awaits too.
-      const asName = sf
-        .getDescendantsOfKind(SyntaxKind.Identifier)
-        .some((id) => id.getText() === "yield" && isValueRead(id));
+      const asName = descendantsOfKind(sf, SyntaxKind.Identifier).some(
+        (id) => id.getText() === "yield" && isValueRead(id),
+      );
       if (asName) {
         const generator = new Project({
           useInMemoryFileSystem: true,
@@ -585,7 +589,7 @@ function braceLoopBodies(sf: SourceFile): string | undefined {
  */
 function perPassForBinding(sf: SourceFile): string | undefined {
   const text = sf.getFullText();
-  for (const loop of sf.getDescendantsOfKind(SyntaxKind.ForStatement)) {
+  for (const loop of descendantsOfKind(sf, SyntaxKind.ForStatement)) {
     const init = loop.getInitializer();
     const body = loop.getStatement();
     if (
@@ -655,7 +659,7 @@ function perPassForBinding(sf: SourceFile): string | undefined {
     for (const part of header) {
       for (const id of [
         ...(Node.isIdentifier(part) ? [part] : []),
-        ...part.getDescendantsOfKind(SyntaxKind.Identifier),
+        ...descendantsOfKind(part, SyntaxKind.Identifier),
       ]) {
         const to = fresh.get(id.getText());
         if (to === undefined) continue;
@@ -668,7 +672,7 @@ function perPassForBinding(sf: SourceFile): string | undefined {
     }
     if (shorthand) continue;
     const copyBack = names.map((name) => `${fresh.get(name)} = ${name};`).join(" ");
-    for (const j of body.getDescendantsOfKind(SyntaxKind.ContinueStatement)) {
+    for (const j of descendantsOfKind(body, SyntaxKind.ContinueStatement)) {
       const label = j.getLabel()?.getText();
       const target =
         label === undefined
@@ -706,30 +710,41 @@ function perPassForBinding(sf: SourceFile): string | undefined {
  */
 function forUpdateAsTail(sf: SourceFile): string | undefined {
   const text = sf.getFullText();
-  for (const loop of sf.getDescendantsOfKind(SyntaxKind.ForStatement)) {
+  // Every loop at once (#1361): no loop's rewrite changes whether another needs one, and their edits
+  // are apart, so one round gives what a round per loop gave. A round per loop reparsed the whole
+  // source for each, and stopped at 64 (the TypeScript compiler's bundle has more).
+  const loops: Node[] = [];
+  const continues: Node[] = [];
+  forEachCompilerDescendant(sf.compilerNode, (n) => {
+    if (n.kind === SyntaxKind.ForStatement) loops.push(wrappedNode(sf, n));
+    else if (n.kind === SyntaxKind.ContinueStatement) continues.push(wrappedNode(sf, n));
+  });
+  // Each continue under the loop it continues, found once.
+  const ownContinues = new Map<ts.Node, Node[]>();
+  for (const j of continues) {
+    const label = (j as import("ts-morph").ContinueStatement).getLabel()?.getText();
+    const target =
+      label === undefined
+        ? ownLoop(j)
+        : (() => {
+            const l = labelTarget(j, label);
+            return l === undefined ? undefined : labelled(l);
+          })();
+    if (target === undefined) continue;
+    const list = ownContinues.get(target.compilerNode);
+    if (list === undefined) ownContinues.set(target.compilerNode, [j]);
+    else list.push(j);
+  }
+  const edits: { from: number; to: number; text: string }[] = [];
+  for (const node of loops) {
+    const loop = node as import("ts-morph").ForStatement;
     const update = loop.getIncrementor();
     const body = loop.getStatement();
     if (update === undefined || !Node.isBlock(body)) continue;
     // A closure in the body holds its pass's bindings: the update writes the next pass's copy, so it
     // stays in the header (the closure would see it otherwise). So does one in the update.
-    const closureIn = (n: Node): boolean =>
-      n
-        .getDescendants()
-        .some(
-          (d) => isFunctionLikeNode(d) || Node.isClassExpression(d) || Node.isClassDeclaration(d),
-        );
-    if (closureIn(update) || closureIn(body)) continue;
-    const own = body.getDescendantsOfKind(SyntaxKind.ContinueStatement).filter((j) => {
-      const label = j.getLabel()?.getText();
-      const target =
-        label === undefined
-          ? ownLoop(j)
-          : (() => {
-              const l = labelTarget(j, label);
-              return l === undefined ? undefined : labelled(l);
-            })();
-      return target?.compilerNode === loop.compilerNode;
-    });
+    if (holdsClosure(update) || holdsClosure(body)) continue;
+    const own = ownContinues.get(loop.compilerNode) ?? [];
     if (own.length === 0) continue;
     // A continue inside a try is a completion of the closures the try lowers to, which then
     // continues the loop itself (#1330): the update written there would be a closure's write of the
@@ -741,7 +756,7 @@ function forUpdateAsTail(sf: SourceFile): string | undefined {
     };
     if (own.some(inTry)) continue;
     const step = `${update.getText()};`;
-    const edits: { from: number; to: number; text: string }[] = [
+    edits.push(
       // The header's update goes, with the space before it: `for (a; b; c)` is `for (a; b; )`.
       { from: update.getStart(), to: update.getEnd(), text: "" },
       ...own.map((j) => ({
@@ -750,24 +765,55 @@ function forUpdateAsTail(sf: SourceFile): string | undefined {
         text: `{ ${step} ${j.getText()} }`,
       })),
       { from: body.getEnd() - 1, to: body.getEnd() - 1, text: ` ${step} ` },
-    ];
-    edits.sort((a, b) => b.from - a.from);
-    let out = text;
-    for (const e of edits) out = out.slice(0, e.from) + e.text + out.slice(e.to);
-    return out;
+    );
   }
-  return undefined;
+  if (edits.length === 0) return undefined;
+  // Last first; at one place, an insertion after the replacement that ends there.
+  edits.sort((a, b) => b.from - a.from || b.to - a.to);
+  let out = text;
+  for (const e of edits) out = out.slice(0, e.from) + e.text + out.slice(e.to);
+  return out;
+}
+
+/** Whether a function or class is written under a node, read from the compiler's nodes. */
+function holdsClosure(node: Node): boolean {
+  let found = false;
+  forEachCompilerDescendant(node.compilerNode, (d) => {
+    if (
+      !found &&
+      (ts.isFunctionDeclaration(d) ||
+        ts.isFunctionExpression(d) ||
+        ts.isArrowFunction(d) ||
+        ts.isMethodDeclaration(d) ||
+        ts.isConstructorDeclaration(d) ||
+        ts.isGetAccessorDeclaration(d) ||
+        ts.isSetAccessorDeclaration(d) ||
+        ts.isClassExpression(d) ||
+        ts.isClassDeclaration(d))
+    )
+      found = true;
+  });
+  return found;
 }
 
 function nextJumpRewrite(sf: SourceFile, round: number): string | undefined {
   const full = sf.getFullText();
+  // Read from the compiler's nodes, in getDescendantsOfKind's order (#1361).
+  const byKind = new Map<SyntaxKind, Node[]>([
+    [SyntaxKind.ReturnStatement, []],
+    [SyntaxKind.BreakStatement, []],
+    [SyntaxKind.ContinueStatement, []],
+    [SyntaxKind.LabeledStatement, []],
+  ]);
+  forEachCompilerDescendant(sf.compilerNode, (n) => byKind.get(n.kind)?.push(wrappedNode(sf, n)));
   const jumps = [
-    ...sf.getDescendantsOfKind(SyntaxKind.ReturnStatement),
-    ...sf.getDescendantsOfKind(SyntaxKind.BreakStatement),
-    ...sf.getDescendantsOfKind(SyntaxKind.ContinueStatement),
+    ...(byKind.get(SyntaxKind.ReturnStatement) ?? []),
+    ...(byKind.get(SyntaxKind.BreakStatement) ?? []),
+    ...(byKind.get(SyntaxKind.ContinueStatement) ?? []),
   ];
   // A label whose jumps are all of the loop it labels is dropped, and the labels from its jumps.
-  for (const l of sf.getDescendantsOfKind(SyntaxKind.LabeledStatement)) {
+  const labels = (byKind.get(SyntaxKind.LabeledStatement) ?? []) as LabeledStatement[];
+  for (const l of labels) {
     const name = l.getLabel().getText();
     const target = labelled(l);
     if (!isLoopStatement(target)) continue;
@@ -793,7 +839,12 @@ function nextJumpRewrite(sf: SourceFile, round: number): string | undefined {
     for (const e of edits) text = text.slice(0, e.from) + e.text + text.slice(e.to);
     return text;
   }
-  // A jump that leaves its own loop for one further out: lifted one loop out.
+  // A jump that leaves its own loop for one further out: lifted one loop out. Every such jump whose
+  // region (the loop or switch it leaves, with its labels) is apart from each earlier one's is
+  // lifted in this round (#1361): those edits commute, and a jump whose region holds or is held by
+  // an earlier one's waits for a later round, as one round per jump ordered them.
+  const regions: { start: number; end: number }[] = [];
+  const edits: { from: number; to: number; text: string }[] = [];
   for (const j of jumps) {
     const inner = ownLoop(j);
     if (inner === undefined) continue;
@@ -820,20 +871,35 @@ function nextJumpRewrite(sf: SourceFile, round: number): string | undefined {
     if (!needs) continue;
     let outer: Node = sw ?? inner;
     while (Node.isLabeledStatement(outer.getParent())) outer = outer.getParent() as Node;
-    const flag = `$jump${round}`;
-    const value = `$jumpv${round}`;
+    const start = outer.getStart();
+    const end = outer.getEnd();
+    const apart = regions.every((r) => end < r.start || start > r.end);
+    regions.push({ start, end });
+    if (!apart) continue;
+    const k = edits.length / 3;
+    const flag = `$jump${round}_${k}`;
+    const value = `$jumpv${round}_${k}`;
     const ret = Node.isReturnStatement(j) ? j : undefined;
     const expr = ret?.getExpression();
     const replaced = `{ ${flag} = true;${expr !== undefined ? ` ${value} = (${expr.getText()});` : ""} break; }`;
     const again =
       ret !== undefined ? (expr !== undefined ? `return ${value};` : "return;") : j.getText();
-    const start = outer.getStart();
-    const body =
-      full.slice(start, j.getStart()) + replaced + full.slice(j.getEnd(), outer.getEnd());
-    const wrapped = `{ let ${flag} = false;${expr !== undefined ? ` let ${value};` : ""}\n${body}\nif (${flag}) ${again} }`;
-    return full.slice(0, start) + wrapped + full.slice(outer.getEnd());
+    edits.push(
+      { from: end, to: end, text: `\nif (${flag}) ${again} }` },
+      { from: j.getStart(), to: j.getEnd(), text: replaced },
+      {
+        from: start,
+        to: start,
+        text: `{ let ${flag} = false;${expr !== undefined ? ` let ${value};` : ""}\n`,
+      },
+    );
   }
-  return undefined;
+  if (edits.length === 0) return undefined;
+  // Last first: the regions are apart, and each region's edits are in order within it.
+  edits.sort((a, b) => b.from - a.from || b.to - a.to);
+  let out = full;
+  for (const e of edits) out = out.slice(0, e.from) + e.text + out.slice(e.to);
+  return out;
 }
 
 /**
@@ -1097,7 +1163,7 @@ class Lifter {
         if (Node.isVariableDeclaration(n)) {
           const name = n.getNameNode();
           if (!Node.isIdentifier(name)) {
-            for (const id of name.getDescendantsOfKind(SyntaxKind.Identifier))
+            for (const id of descendantsOfKind(name, SyntaxKind.Identifier))
               write(keyOf(id), undefinedValue);
             continue;
           }
@@ -1118,7 +1184,7 @@ class Lifter {
           if (Node.isIdentifier(left))
             write(keyOf(left), k === SyntaxKind.EqualsToken ? n.getRight() : n);
           else if (Node.isArrayLiteralExpression(left) || Node.isObjectLiteralExpression(left))
-            for (const id of left.getDescendantsOfKind(SyntaxKind.Identifier))
+            for (const id of descendantsOfKind(left, SyntaxKind.Identifier))
               write(keyOf(id), undefinedValue);
         } else if (
           (Node.isPrefixUnaryExpression(n) || Node.isPostfixUnaryExpression(n)) &&
@@ -1260,7 +1326,7 @@ class Lifter {
     if (names.length === 0) return;
     const wanted = new Set(names);
     const free = new Map<string, boolean>();
-    for (const id of file.getDescendantsOfKind(SyntaxKind.Identifier)) {
+    for (const id of descendantsOfKind(file, SyntaxKind.Identifier)) {
       const name = id.getText();
       if (!wanted.has(name) || isPropertyKey(id)) continue;
       const parent = id.getParent();
@@ -1518,9 +1584,9 @@ class Lifter {
             if (at === undefined || at <= i || hoistedNames.has(read)) continue;
             // The list's own declaration only where no scope inside the statement declares the
             // name again (a block's own `const r` that the closure reads).
-            const outer = fn
-              .getDescendantsOfKind(SyntaxKind.Identifier)
-              .some((id) => id.getText() === read && isValueRead(id) && !declaredWithin(id, stmt));
+            const outer = descendantsOfKind(fn, SyntaxKind.Identifier).some(
+              (id) => id.getText() === read && isValueRead(id) && !declaredWithin(id, stmt),
+            );
             if (outer) this.hoistCell(read, cellsHere);
           }
       });
@@ -1941,8 +2007,8 @@ class Lifter {
     const copy = syntheticFile(file, "__class", text);
     const at = node.getStart();
     const cls = [
-      ...copy.getDescendantsOfKind(SyntaxKind.ClassDeclaration),
-      ...copy.getDescendantsOfKind(SyntaxKind.ClassExpression),
+      ...descendantsOfKind(copy, SyntaxKind.ClassDeclaration),
+      ...descendantsOfKind(copy, SyntaxKind.ClassExpression),
     ].find((c) => c.getStart() === at);
     if (cls === undefined) return undefined;
     const out = cls.getMembers().filter((m) => !isTypeOnlyMember(m));
@@ -1966,9 +2032,9 @@ class Lifter {
     const handler = t.getCatchClause();
     const finalizer = t.getFinallyBlock();
     const returns = parts.flatMap((part) =>
-      part
-        .getDescendantsOfKind(SyntaxKind.ReturnStatement)
-        .filter((r) => !isInsideNestedFunction(r, part)),
+      descendantsOfKind(part, SyntaxKind.ReturnStatement).filter(
+        (r) => !isInsideNestedFunction(r, part),
+      ),
     );
     const completes = returns.length > 0 || leaves.length > 0;
     const full = t.getSourceFile().getFullText();
@@ -1978,9 +2044,7 @@ class Lifter {
     const self = `$self${n}`;
     const receivers = yields
       ? parts.flatMap((part) =>
-          part
-            .getDescendantsOfKind(SyntaxKind.ThisKeyword)
-            .filter((k) => receiverOwner(k) === owner),
+          descendantsOfKind(part, SyntaxKind.ThisKeyword).filter((k) => receiverOwner(k) === owner),
         )
       : [];
     const rewrite = (block: import("ts-morph").Block): string => {
@@ -2003,7 +2067,7 @@ class Lifter {
         edits.push({ from: j.getStart(), to: j.getEnd(), text: `return [${code}];` });
       }
       // `var x = v` inside is the assignment `x = v` of the function's x, declared before the call.
-      for (const list of block.getDescendantsOfKind(SyntaxKind.VariableDeclarationList)) {
+      for (const list of descendantsOfKind(block, SyntaxKind.VariableDeclarationList)) {
         if (isInsideNestedFunction(list, block) || list.getDeclarationKind() !== "var") continue;
         const statement = list.getParent();
         const inFor = Node.isForStatement(statement);
@@ -2184,8 +2248,8 @@ class Lifter {
       let text = st.getText();
       const inside = [
         ...(Node.isContinueStatement(st) || Node.isReturnStatement(st) ? [st] : []),
-        ...st.getDescendantsOfKind(SyntaxKind.ContinueStatement),
-        ...st.getDescendantsOfKind(SyntaxKind.ReturnStatement),
+        ...descendantsOfKind(st, SyntaxKind.ContinueStatement),
+        ...descendantsOfKind(st, SyntaxKind.ReturnStatement),
       ]
         .filter((c) => leaving.has(c.compilerNode))
         .sort((a, b) => b.getStart() - a.getStart());
@@ -2275,7 +2339,7 @@ class Lifter {
    */
   private touchesHeap(node: Node): boolean {
     if (touchesHeap(node)) return true;
-    return [node, ...node.getDescendantsOfKind(SyntaxKind.Identifier)].some(
+    return [node, ...descendantsOfKind(node, SyntaxKind.Identifier)].some(
       (id) =>
         Node.isIdentifier(id) &&
         (this.bindings.has(id.getText()) ||
@@ -2289,7 +2353,7 @@ class Lifter {
    */
   private inert(node: Node): boolean {
     if (!isInert(node)) return false;
-    return ![node, ...node.getDescendantsOfKind(SyntaxKind.Identifier)].some(
+    return ![node, ...descendantsOfKind(node, SyntaxKind.Identifier)].some(
       (id) =>
         Node.isIdentifier(id) &&
         isValueRead(id) &&
@@ -2424,13 +2488,11 @@ class Lifter {
       Node.isConstructorDeclaration(fn) &&
       extendsSomething(fn.getParent() as import("ts-morph").ClassDeclaration);
     // Its own: one in a function or class inside it is that function's (#1330).
-    const supers = fn
-      .getDescendantsOfKind(SyntaxKind.SuperKeyword)
-      .filter(
-        (k) =>
-          receiverOwner(k) === fn ||
-          (Node.isArrowFunction(fn) && receiverOwner(k) === receiverOwner(fn)),
-      );
+    const supers = receiverKeywordsIn(fn).supers.filter(
+      (k) =>
+        receiverOwner(k) === fn ||
+        (Node.isArrowFunction(fn) && receiverOwner(k) === receiverOwner(fn)),
+    );
     // `super(..);`, or `const v = super(..);` as the TypeScript lowering writes it.
     const superStatement = (k: Node): boolean => {
       const call = k.getParent();
@@ -2517,7 +2579,7 @@ class Lifter {
     // `this` in an arrow is the enclosing receiver, captured like a name; in a function it is the
     // caller's receiver, so the closure is a `function` (#1276).
     const thisUses = [
-      ...fn.getDescendantsOfKind(SyntaxKind.ThisKeyword),
+      ...receiverKeywordsIn(fn).thises,
       // `super.name` reads with the receiver: it uses `this` as much as `this.name` does.
       ...supers.filter(superMember),
       // An arrow's `super(..)` writes the receiver's cell (#1330).
@@ -2531,15 +2593,13 @@ class Lifter {
     // it as it captures `this`. An arrow with no function around it has none.
     const argumentsUses = closureLocals(fn).has("arguments")
       ? []
-      : fn
-          .getDescendantsOfKind(SyntaxKind.Identifier)
-          .filter(
-            (id) =>
-              id.getText() === "arguments" &&
-              isValueRead(id) &&
-              (receiverOwner(id) === fn ||
-                (Node.isArrowFunction(fn) && receiverOwner(id) === receiverOwner(fn))),
-          );
+      : identifiersIn(fn).filter(
+          (id) =>
+            id.getText() === "arguments" &&
+            isValueRead(id) &&
+            (receiverOwner(id) === fn ||
+              (Node.isArrowFunction(fn) && receiverOwner(id) === receiverOwner(fn))),
+        );
     const lexicalArguments = Node.isArrowFunction(fn) && argumentsUses.length > 0;
     if (lexicalArguments && !this.env.has(ARGUMENTS) && !this.ownsArguments) return undefined;
     const lexicalThis = Node.isArrowFunction(fn) && thisUses.length > 0;
@@ -2561,9 +2621,7 @@ class Lifter {
       Node.isSetAccessorDeclaration(fn)
         ? fn.getNameNode().compilerNode
         : undefined;
-    const reads = fn
-      .getDescendantsOfKind(SyntaxKind.Identifier)
-      .filter((id) => id.compilerNode !== ownName);
+    const reads = identifiersIn(fn).filter((id) => id.compilerNode !== ownName);
     // A closure that rebinds a name outside itself needs a shared cell, which the graph does not
     // have. A write to a member of an outer object or of the receiver keeps the binding: it changes
     // the shared object, as a call that changes its argument does.
@@ -2577,17 +2635,19 @@ class Lifter {
       if (Node.isIdentifier(t)) return outer(t);
       // A destructuring rebinds the names it assigns, not its property names (#1330).
       const names = assignedNames(t);
-      return t
-        .getDescendantsOfKind(SyntaxKind.Identifier)
+      return descendantsOfKind(t, SyntaxKind.Identifier)
         .filter((id) => names.includes(id.getText()) && !isPropertyKey(id))
         .some(outer);
     };
     if (assignmentTargets(fn).some(rebindsOutside)) return undefined;
     const outerReads: string[] = [];
+    const seenReads = new Set<string>();
     for (const id of reads) {
       if (!isValueRead(id)) continue;
       const name = id.getText();
-      if (!declaredWithin(id, fn) && !outerReads.includes(name)) outerReads.push(name);
+      if (seenReads.has(name) || declaredWithin(id, fn)) continue;
+      seenReads.add(name);
+      outerReads.push(name);
     }
     // A class's own name in its members is the class (`class-self`), not a capture.
     if (classSelf !== undefined) {
@@ -2624,9 +2684,14 @@ class Lifter {
     // member keeps the same object, so the closure still holds it. A reassignment that is certainly
     // done before the closure is made (earlier, in the same function, not in another closure, with
     // the closure in no loop and not hoisted) is the value the closure captures.
-    const outside = assignmentTargets(fn.getSourceFile()).filter(
-      (t) => !t.getAncestors().some((a) => a.compilerNode === fn.compilerNode),
-    );
+    // Only a plain name the closure captures, or a destructuring, can change a capture
+    // (changesCapture): those are the targets looked at, found by name in the file's targets (#1361).
+    // Each closure filtered every target of the file, by walking its ancestors.
+    const index = targetIndexOf(fn.getSourceFile());
+    const outside = [
+      ...index.patterns,
+      ...captures.flatMap((name) => index.byName.get(name) ?? []),
+    ].filter((t) => !holds(fn, t));
     const scopeOf = (n: Node): Node | undefined =>
       n.getAncestors().find((a) => isFunctionLikeNode(a));
     const inLoop = (n: Node, scope: Node | undefined): boolean => {
@@ -2660,15 +2725,13 @@ class Lifter {
       // A destructuring assignment rebinds every name in it, under the same rules as a single
       // name: a shared one, or one rebound before the closure is made, does not change it (#1173).
       if (Node.isArrayLiteralExpression(t) || Node.isObjectLiteralExpression(t)) {
-        return t
-          .getDescendantsOfKind(SyntaxKind.Identifier)
-          .some(
-            (id) =>
-              captures.includes(id.getText()) &&
-              sameBinding(id, id.getText()) &&
-              !shared(id.getText()) &&
-              !doneBefore(t),
-          );
+        return descendantsOfKind(t, SyntaxKind.Identifier).some(
+          (id) =>
+            captures.includes(id.getText()) &&
+            sameBinding(id, id.getText()) &&
+            !shared(id.getText()) &&
+            !doneBefore(t),
+        );
       }
       const base = baseIdentifierOfTarget(t);
       if (base === undefined || !captures.includes(base)) return false;
@@ -2697,9 +2760,7 @@ class Lifter {
     };
     // Only the closure's own enclosing function can change a capture under it: an assignment in a
     // scope further out was settled there (a cell, or a value captured by the closure in between).
-    const withinScope = (t: Node): boolean =>
-      fnScope === undefined ||
-      t.getAncestors().some((a) => a.compilerNode === fnScope.compilerNode);
+    const withinScope = (t: Node): boolean => fnScope === undefined || holds(fnScope, t);
     if (outside.filter(withinScope).some(changesCapture)) return undefined;
 
     let graph: DucGraph;
@@ -2834,7 +2895,7 @@ class Lifter {
     // is read: a nested loop's own `m` does not hide the function's read of the outer one (#1330).
     const fn = isFunctionLikeNode(node);
     const names = new Set<string>();
-    for (const id of node.getDescendantsOfKind(SyntaxKind.Identifier)) {
+    for (const id of descendantsOfKind(node, SyntaxKind.Identifier)) {
       if (!isValueRead(id)) continue;
       const name = id.getText();
       if (fn ? !declaredWithin(id, node) : !locals.has(name)) names.add(name);
@@ -3980,9 +4041,9 @@ class Lifter {
     // bindings (loop variables, body-local declarations, parameters of nested
     // closures) in scope, bound to the region's output, so they are not reported as
     // free identifiers of the atom.
-    const returns = node
-      .getDescendantsOfKind(SyntaxKind.ReturnStatement)
-      .filter((ret) => ret.getExpression() !== undefined && !isInsideNestedFunction(ret, node));
+    const returns = descendantsOfKind(node, SyntaxKind.ReturnStatement).filter(
+      (ret) => ret.getExpression() !== undefined && !isInsideNestedFunction(ret, node),
+    );
     if (returns.length > 0) {
       const locals = collectRegionLocals(node);
       const scope =
@@ -4029,7 +4090,7 @@ class Lifter {
     for (const name of extraLocals) locals.add(name);
     const values: ValueId[] = [];
     const seen = new Set<ValueId>();
-    for (const id of node.getDescendantsOfKind(SyntaxKind.Identifier)) {
+    for (const id of descendantsOfKind(node, SyntaxKind.Identifier)) {
       if (!isValueRead(id)) continue;
       const name = id.getText();
       if (locals.has(name)) continue; // declared inside this region — not a read of outer scope
@@ -4066,7 +4127,7 @@ class Lifter {
     // The node itself counts too: a loop's incrementor is often a bare assignment (`i = i + 1`).
     const bins = [
       ...(Node.isBinaryExpression(node) ? [node] : []),
-      ...node.getDescendantsOfKind(SyntaxKind.BinaryExpression),
+      ...descendantsOfKind(node, SyntaxKind.BinaryExpression),
     ];
     // A destructuring assignment's targets are every name its pattern writes (`({ a: x, b } = o)`,
     // `[x, , ...y] = xs`, defaults and nested patterns included).
@@ -4107,8 +4168,8 @@ class Lifter {
     }
     const unaries = [
       ...(Node.isPostfixUnaryExpression(node) || Node.isPrefixUnaryExpression(node) ? [node] : []),
-      ...node.getDescendantsOfKind(SyntaxKind.PostfixUnaryExpression),
-      ...node.getDescendantsOfKind(SyntaxKind.PrefixUnaryExpression),
+      ...descendantsOfKind(node, SyntaxKind.PostfixUnaryExpression),
+      ...descendantsOfKind(node, SyntaxKind.PrefixUnaryExpression),
     ];
     // Only a step assigns its operand: `!x` and `-x` read it.
     for (const un of unaries) {
@@ -4585,7 +4646,7 @@ class Lifter {
     const text = node.getText();
     const order = new Map<string, number>();
     const spans: [number, number, string][] = [];
-    for (const id of node.getDescendantsOfKind(SyntaxKind.Identifier)) {
+    for (const id of descendantsOfKind(node, SyntaxKind.Identifier)) {
       if (!isValueRead(id)) continue;
       const name = id.getText();
       if (locals.has(name)) continue;
@@ -5328,7 +5389,7 @@ function scopeNames(scope: Node): Set<string> {
   // function is the module's (#1368: `var _a; (_a = globalThis).x`, a bundler's helper binding,
   // was a write to a name outside the atom).
   if (isFunctionLikeNode(scope) || Node.isSourceFile(scope)) {
-    for (const list of scope.getDescendantsOfKind(SyntaxKind.VariableDeclarationList)) {
+    for (const list of descendantsOfKind(scope, SyntaxKind.VariableDeclarationList)) {
       if (list.getDeclarationKind() !== "var" || isInsideNestedFunction(list, scope)) continue;
       for (const d of list.getDeclarations()) add(d.getNameNode());
     }
@@ -5339,11 +5400,21 @@ function scopeNames(scope: Node): Set<string> {
 }
 
 function closureLocals(fn: Node): Set<string> {
+  // Asked for again by each scope around the closure, and by the closure's own lift: memoized per
+  // node (#1361), a copy each time, since a caller deletes from it.
+  const cached = closureLocalsCache.get(fn.compilerNode);
+  if (cached !== undefined) return new Set(cached);
+  const locals = closureLocalsOf(fn);
+  closureLocalsCache.set(fn.compilerNode, locals);
+  return new Set(locals);
+}
+
+function closureLocalsOf(fn: Node): Set<string> {
   const locals = collectRegionLocals(fn);
   for (const decl of [
-    ...fn.getDescendantsOfKind(SyntaxKind.FunctionDeclaration),
-    ...fn.getDescendantsOfKind(SyntaxKind.ClassDeclaration),
-    ...fn.getDescendantsOfKind(SyntaxKind.FunctionExpression),
+    ...descendantsOfKind(fn, SyntaxKind.FunctionDeclaration),
+    ...descendantsOfKind(fn, SyntaxKind.ClassDeclaration),
+    ...descendantsOfKind(fn, SyntaxKind.FunctionExpression),
   ]) {
     const name = decl.getName();
     if (name !== undefined) locals.add(name);
@@ -5368,16 +5439,29 @@ function cellNames(scope: Node): Set<string> {
   // field's initializer, run with the instance when it is made (#1330: `id = ++ID` in minimatch).
   const fieldInit = (d: Node): boolean =>
     Node.isPropertyDeclaration(d) && d.getInitializer() !== undefined;
-  const nested = scope
-    .getDescendants()
-    .filter(
-      (d) =>
-        isFunctionLikeNode(d) ||
-        Node.isClassStaticBlockDeclaration(d) ||
-        fieldInit(d) ||
-        (Node.isBlock(d) && Node.isTryStatement(d.getParent())) ||
-        Node.isCatchClause(d),
-    );
+  // Found on the compiler's nodes, wrapping only those (#1361): a scope's descendants, each wrapped,
+  // were most of a large statement's lift (the TypeScript compiler's bundle, 9 MB).
+  const sf = scope.getSourceFile();
+  const nested: Node[] = [];
+  const declarations: VariableDeclaration[] = [];
+  forEachCompilerDescendant(scope.compilerNode, (d) => {
+    if (d.kind === SyntaxKind.VariableDeclaration)
+      declarations.push(wrappedNode(sf, d) as VariableDeclaration);
+    if (
+      ts.isFunctionDeclaration(d) ||
+      ts.isFunctionExpression(d) ||
+      ts.isArrowFunction(d) ||
+      ts.isMethodDeclaration(d) ||
+      ts.isConstructorDeclaration(d) ||
+      ts.isGetAccessorDeclaration(d) ||
+      ts.isSetAccessorDeclaration(d) ||
+      ts.isClassStaticBlockDeclaration(d) ||
+      (ts.isPropertyDeclaration(d) && d.initializer !== undefined) ||
+      (ts.isBlock(d) && ts.isTryStatement(d.parent)) ||
+      ts.isCatchClause(d)
+    )
+      nested.push(wrappedNode(sf, d));
+  });
   if (nested.length === 0) return new Set();
   const insideNested = (n: Node): boolean => {
     for (const a of n.getAncestors()) {
@@ -5398,7 +5482,7 @@ function cellNames(scope: Node): Set<string> {
   if (isFunctionLikeNode(scope))
     for (const p of (scope as FunctionLike).getParameters())
       for (const name of patternNames(p.getNameNode())) declared.add(name);
-  for (const decl of scope.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
+  for (const decl of declarations) {
     if (insideNested(decl)) continue;
     const list = decl.getParent();
     const header = list?.getParent();
@@ -5421,7 +5505,7 @@ function cellNames(scope: Node): Set<string> {
     const locals = closureLocals(fn);
     if (!isFunctionLikeNode(fn) && !Node.isClassStaticBlockDeclaration(fn) && !fieldInit(fn)) {
       // A var in a try statement's block is the function's: the block's closure assigns it.
-      for (const list of fn.getDescendantsOfKind(SyntaxKind.VariableDeclarationList)) {
+      for (const list of descendantsOfKind(fn, SyntaxKind.VariableDeclarationList)) {
         if (list.getDeclarationKind() !== "var" || isInsideNestedFunction(list, fn)) continue;
         for (const d of list.getDeclarations()) {
           for (const name of patternNames(d.getNameNode())) {
@@ -5453,8 +5537,7 @@ function cellNames(scope: Node): Set<string> {
     if (!isFunctionLikeNode(fn)) continue;
     const locals = closureLocals(fn);
     const reads = new Set(
-      fn
-        .getDescendantsOfKind(SyntaxKind.Identifier)
+      identifiersIn(fn)
         .filter((id) => isValueRead(id) && !declaredWithin(id, fn))
         .map((id) => id.getText()),
     );
@@ -5478,7 +5561,7 @@ function cellNames(scope: Node): Set<string> {
 function targetNames(t: Node): Node[] {
   if (Node.isIdentifier(t)) return [t];
   if (Node.isPropertyAccessExpression(t) || Node.isElementAccessExpression(t)) return [];
-  return t.getDescendantsOfKind(SyntaxKind.Identifier);
+  return descendantsOfKind(t, SyntaxKind.Identifier);
 }
 
 /** The targets of assignments, compound assignments and ++/-- in a subtree. */
@@ -5503,9 +5586,9 @@ function writtenFreeNames(file: Node): string[] {
     const names = assignedNames(t);
     const ids = Node.isIdentifier(t)
       ? [t]
-      : t
-          .getDescendantsOfKind(SyntaxKind.Identifier)
-          .filter((id) => names.includes(id.getText()) && !isPropertyKey(id));
+      : descendantsOfKind(t, SyntaxKind.Identifier).filter(
+          (id) => names.includes(id.getText()) && !isPropertyKey(id),
+        );
     for (const id of ids) {
       const name = id.getText();
       if (!declaredWithin(id, file) && !written.includes(name)) written.push(name);
@@ -5547,13 +5630,13 @@ function assignedNames(t: Node): string[] {
 
 function assignmentTargetsOf(node: Node): Node[] {
   const targets: Node[] = [];
-  for (const bin of node.getDescendantsOfKind(SyntaxKind.BinaryExpression)) {
+  for (const bin of descendantsOfKind(node, SyntaxKind.BinaryExpression)) {
     const op = bin.getOperatorToken().getKind();
     if (op === SyntaxKind.EqualsToken || COMPOUND_ASSIGN.has(op)) targets.push(bin.getLeft());
   }
   for (const un of [
-    ...node.getDescendantsOfKind(SyntaxKind.PostfixUnaryExpression),
-    ...node.getDescendantsOfKind(SyntaxKind.PrefixUnaryExpression),
+    ...descendantsOfKind(node, SyntaxKind.PostfixUnaryExpression),
+    ...descendantsOfKind(node, SyntaxKind.PrefixUnaryExpression),
   ]) {
     const op = un.getOperatorToken();
     if (op === SyntaxKind.PlusPlusToken || op === SyntaxKind.MinusMinusToken)
@@ -5700,10 +5783,10 @@ function isInsideNestedFunction(node: Node, boundary: Node): boolean {
  */
 function collectRegionLocals(node: Node): Set<string> {
   const locals = new Set<string>();
-  for (const decl of node.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
+  for (const decl of descendantsOfKind(node, SyntaxKind.VariableDeclaration)) {
     for (const name of patternNames(decl.getNameNode())) locals.add(name);
   }
-  for (const param of node.getDescendantsOfKind(SyntaxKind.Parameter)) {
+  for (const param of descendantsOfKind(node, SyntaxKind.Parameter)) {
     for (const name of patternNames(param.getNameNode())) locals.add(name);
   }
   return locals;
@@ -5824,6 +5907,20 @@ function forEachCompilerDescendant(node: ts.Node, visit: (n: ts.Node) => void): 
   ts.forEachChild(node, walk);
 }
 
+/**
+ * The descendants of a node of one kind, in order, read from the compiler's nodes (#1361): what
+ * getDescendantsOfKind gives, without the tokens and syntax lists ts-morph makes on its way, which
+ * were most of a large statement's lift.
+ */
+function descendantsOfKind<K extends SyntaxKind>(node: Node, kind: K): KindToNodeMappings[K][] {
+  const sf = node.getSourceFile();
+  const out: KindToNodeMappings[K][] = [];
+  forEachCompilerDescendant(node.compilerNode, (d) => {
+    if (d.kind === kind) out.push(wrappedNode(sf, d) as KindToNodeMappings[K]);
+  });
+  return out;
+}
+
 /** The ts-morph node of a compiler node of `sf`. */
 function wrappedNode(sf: SourceFile, node: ts.Node): Node {
   return (sf as unknown as { _getNodeFromCompilerNode(n: ts.Node): Node })._getNodeFromCompilerNode(
@@ -5834,7 +5931,7 @@ function wrappedNode(sf: SourceFile, node: ts.Node): Node {
 function patternNames(nameNode: Node): string[] {
   if (Node.isIdentifier(nameNode)) return [nameNode.getText()];
   const names: string[] = [];
-  for (const id of nameNode.getDescendantsOfKind(SyntaxKind.Identifier)) {
+  for (const id of descendantsOfKind(nameNode, SyntaxKind.Identifier)) {
     // Inside a binding pattern, an identifier is a bound name iff it is the
     // name-node of its binding element (excludes property keys, computed keys,
     // and default-value references to outer scope).
@@ -6108,11 +6205,11 @@ function hasJump(node: Node): boolean {
     return false;
   };
   const jumps = [
-    ...node.getDescendantsOfKind(SyntaxKind.BreakStatement).filter(leaves),
-    ...node.getDescendantsOfKind(SyntaxKind.ContinueStatement).filter(leaves),
-    ...node.getDescendantsOfKind(SyntaxKind.ReturnStatement),
+    ...descendantsOfKind(node, SyntaxKind.BreakStatement).filter(leaves),
+    ...descendantsOfKind(node, SyntaxKind.ContinueStatement).filter(leaves),
+    ...descendantsOfKind(node, SyntaxKind.ReturnStatement),
     // A throw leaves the loop too: the rest of the body would run unguarded (#1276).
-    ...node.getDescendantsOfKind(SyntaxKind.ThrowStatement),
+    ...descendantsOfKind(node, SyntaxKind.ThrowStatement),
   ];
   return jumps.some((jump) => !isInsideNestedFunction(jump, node));
 }
@@ -6194,9 +6291,9 @@ function switchPassShape(sw: import("ts-morph").SwitchStatement):
     }
     return false;
   };
-  const continues = sw
-    .getDescendantsOfKind(SyntaxKind.ContinueStatement)
-    .filter((c) => own(c) && !loopInside(c));
+  const continues = descendantsOfKind(sw, SyntaxKind.ContinueStatement).filter(
+    (c) => own(c) && !loopInside(c),
+  );
   if (
     continues.some(
       (c) => c.getLabel() !== undefined || nearestBreakable(c)?.compilerNode !== sw.compilerNode,
@@ -6204,9 +6301,9 @@ function switchPassShape(sw: import("ts-morph").SwitchStatement):
   )
     return undefined;
   if (
-    sw
-      .getDescendantsOfKind(SyntaxKind.BreakStatement)
-      .some((b) => b.getLabel() !== undefined && own(b))
+    descendantsOfKind(sw, SyntaxKind.BreakStatement).some(
+      (b) => b.getLabel() !== undefined && own(b),
+    )
   )
     return undefined;
   for (const clause of clauses) {
@@ -6223,16 +6320,15 @@ function switchPassShape(sw: import("ts-morph").SwitchStatement):
     const elsewhere = clauses
       .filter((c) => c !== clause)
       .flatMap((c) =>
-        c
-          .getDescendantsOfKind(SyntaxKind.Identifier)
+        descendantsOfKind(c, SyntaxKind.Identifier)
           .filter((id) => isValueRead(id))
           .map((id) => id.getText()),
       );
     if (declared.some((name) => elsewhere.includes(name))) return undefined;
   }
-  const returns = sw
-    .getDescendantsOfKind(SyntaxKind.ReturnStatement)
-    .filter((r) => own(r) && nearestBreakable(r)?.compilerNode === sw.compilerNode);
+  const returns = descendantsOfKind(sw, SyntaxKind.ReturnStatement).filter(
+    (r) => own(r) && nearestBreakable(r)?.compilerNode === sw.compilerNode,
+  );
   return { continues, returns };
 }
 
@@ -6291,9 +6387,9 @@ function switchArmsOf(sw: import("ts-morph").SwitchStatement): SwitchArm[] | und
     if (stmts.length === 1 && Node.isBlock(stmts[0] as Node))
       stmts = (stmts[0] as import("ts-morph").Block).getStatements();
     const last = stmts[stmts.length - 1];
-    const ownBreaks = clause
-      .getDescendantsOfKind(SyntaxKind.BreakStatement)
-      .filter((b) => b.getLabel() === undefined && breakTarget(b) === sw);
+    const ownBreaks = descendantsOfKind(clause, SyntaxKind.BreakStatement).filter(
+      (b) => b.getLabel() === undefined && breakTarget(b) === sw,
+    );
     if (last !== undefined && Node.isBreakStatement(last) && last.getLabel() === undefined) {
       if (ownBreaks.length !== 1) return undefined;
       stmts = stmts.slice(0, -1);
@@ -6463,7 +6559,7 @@ function iterateGuard(loop: Node): Node | undefined {
     : [init.getText()];
   const reads = (n: Node): boolean =>
     (Node.isIdentifier(n) && own.includes(n.getText())) ||
-    n.getDescendantsOfKind(SyntaxKind.Identifier).some((id) => own.includes(id.getText()));
+    descendantsOfKind(n, SyntaxKind.Identifier).some((id) => own.includes(id.getText()));
   if (reads(c)) return undefined;
   return c;
 }
@@ -6489,39 +6585,35 @@ function syntheticFile(near: Node, prefix: string, source: string): SourceFile {
 
 function syntheticFunction(node: Node): string {
   const own = (n: Node): boolean => !isInsideNestedFunction(n, node);
-  const yields = node.getDescendantsOfKind(SyntaxKind.YieldExpression).some(own);
+  const yields = descendantsOfKind(node, SyntaxKind.YieldExpression).some(own);
   const awaits =
-    node.getDescendantsOfKind(SyntaxKind.AwaitExpression).some(own) ||
-    node.getDescendantsOfKind(SyntaxKind.ForOfStatement).some((f) => own(f) && f.isAwaited());
+    descendantsOfKind(node, SyntaxKind.AwaitExpression).some(own) ||
+    descendantsOfKind(node, SyntaxKind.ForOfStatement).some((f) => own(f) && f.isAwaited());
   return `${awaits ? "async " : ""}function${yields ? "*" : ""}`;
 }
 
 /** Whether a constructor's `super(..)` call is in a try statement's block. */
 function superInTry(ctor: Node): boolean {
-  return ctor
-    .getDescendantsOfKind(SyntaxKind.CallExpression)
-    .some(
-      (c) =>
-        Node.isSuperExpression(c.getExpression()) &&
-        receiverOwner(c) === ctor &&
-        c.getAncestors().some((a) => Node.isTryStatement(a) && !isInsideNestedFunction(a, ctor)),
-    );
+  return descendantsOfKind(ctor, SyntaxKind.CallExpression).some(
+    (c) =>
+      Node.isSuperExpression(c.getExpression()) &&
+      receiverOwner(c) === ctor &&
+      c.getAncestors().some((a) => Node.isTryStatement(a) && !isInsideNestedFunction(a, ctor)),
+  );
 }
 
 /** Whether a constructor makes an arrow that reads `this` before its first `super(..)` call. */
 function arrowReadsThisBeforeSuper(ctor: Node): boolean {
-  const superCall = ctor
-    .getDescendantsOfKind(SyntaxKind.CallExpression)
-    .find((c) => Node.isSuperExpression(c.getExpression()) && receiverOwner(c) === ctor);
+  const superCall = descendantsOfKind(ctor, SyntaxKind.CallExpression).find(
+    (c) => Node.isSuperExpression(c.getExpression()) && receiverOwner(c) === ctor,
+  );
   if (superCall === undefined) return false;
-  return ctor
-    .getDescendantsOfKind(SyntaxKind.ArrowFunction)
-    .some(
-      (arrow) =>
-        arrow.getStart() < superCall.getStart() &&
-        receiverOwner(arrow) === ctor &&
-        arrow.getDescendantsOfKind(SyntaxKind.ThisKeyword).some((t) => receiverOwner(t) === ctor),
-    );
+  return descendantsOfKind(ctor, SyntaxKind.ArrowFunction).some(
+    (arrow) =>
+      arrow.getStart() < superCall.getStart() &&
+      receiverOwner(arrow) === ctor &&
+      descendantsOfKind(arrow, SyntaxKind.ThisKeyword).some((t) => receiverOwner(t) === ctor),
+  );
 }
 
 /** For `if (..) break;` (or with the break in a block), the break; undefined for anything else. */
@@ -6576,18 +6668,18 @@ function findLoopJumps(loop: Node): Node[] {
     return false;
   };
   return [
-    ...loop
-      .getDescendantsOfKind(SyntaxKind.BreakStatement)
-      .filter((b) => b.getLabel() === undefined && own(b)),
-    ...loop
-      .getDescendantsOfKind(SyntaxKind.ContinueStatement)
-      .filter((c) => c.getLabel() === undefined && own(c)),
-    ...loop
-      .getDescendantsOfKind(SyntaxKind.ReturnStatement)
-      .filter((r) => !isInsideNestedFunction(r, loop)),
+    ...descendantsOfKind(loop, SyntaxKind.BreakStatement).filter(
+      (b) => b.getLabel() === undefined && own(b),
+    ),
+    ...descendantsOfKind(loop, SyntaxKind.ContinueStatement).filter(
+      (c) => c.getLabel() === undefined && own(c),
+    ),
+    ...descendantsOfKind(loop, SyntaxKind.ReturnStatement).filter(
+      (r) => !isInsideNestedFunction(r, loop),
+    ),
     // A throw ends its path; one inside an inner loop is that loop's, and one inside a try is inside
     // the closures the try lowers to (#1330).
-    ...loop.getDescendantsOfKind(SyntaxKind.ThrowStatement).filter((t) => {
+    ...descendantsOfKind(loop, SyntaxKind.ThrowStatement).filter((t) => {
       if (isInsideNestedFunction(t, loop) || outermostTry(t, loop) !== undefined) return false;
       for (let p: Node | undefined = t.getParent(); p !== undefined; p = p.getParent())
         if (isLoopStatement(p)) return p === loop;
@@ -6645,7 +6737,7 @@ function tryShape(t: import("ts-morph").TryStatement):
   let awaits = false;
   for (const part of parts) {
     const own = (n: Node): boolean => !isInsideNestedFunction(n, part);
-    for (const list of part.getDescendantsOfKind(SyntaxKind.VariableDeclarationList)) {
+    for (const list of descendantsOfKind(part, SyntaxKind.VariableDeclarationList)) {
       if (!own(list) || list.getDeclarationKind() !== "var") continue;
       // A var belongs to the function: only a plain name can be declared there instead.
       const header = list.getParent();
@@ -6658,25 +6750,25 @@ function tryShape(t: import("ts-morph").TryStatement):
     // A yield moves into a generator closure, delegated to with yield* (#1330); an await moves into
     // an async one. A generator closure is a function: it does not see the receiver or arguments.
     // The receiver is passed in by name (lowerTry); `super` and `arguments` are not.
-    if (part.getDescendantsOfKind(SyntaxKind.YieldExpression).some(own)) {
+    if (descendantsOfKind(part, SyntaxKind.YieldExpression).some(own)) {
       if (!generator) return undefined;
-      const usesOwn = part
-        .getDescendantsOfKind(SyntaxKind.SuperKeyword)
-        .some((k) => receiverOwner(k) === owner);
-      const readsArguments = part
-        .getDescendantsOfKind(SyntaxKind.Identifier)
-        .some((id) => id.getText() === "arguments" && receiverOwner(id) === owner);
+      const usesOwn = descendantsOfKind(part, SyntaxKind.SuperKeyword).some(
+        (k) => receiverOwner(k) === owner,
+      );
+      const readsArguments = descendantsOfKind(part, SyntaxKind.Identifier).some(
+        (id) => id.getText() === "arguments" && receiverOwner(id) === owner,
+      );
       if (usesOwn || readsArguments) return undefined;
       yields = true;
     }
-    if (part.getDescendantsOfKind(SyntaxKind.AwaitExpression).some(own)) awaits = true;
-    if (part.getDescendantsOfKind(SyntaxKind.ForOfStatement).some((f) => own(f) && f.isAwaited()))
+    if (descendantsOfKind(part, SyntaxKind.AwaitExpression).some(own)) awaits = true;
+    if (descendantsOfKind(part, SyntaxKind.ForOfStatement).some((f) => own(f) && f.isAwaited()))
       awaits = true;
     const inside = (target: Node | undefined): boolean =>
       target?.getAncestors().some((a) => a.compilerNode === part.compilerNode) === true;
     for (const j of [
-      ...part.getDescendantsOfKind(SyntaxKind.BreakStatement),
-      ...part.getDescendantsOfKind(SyntaxKind.ContinueStatement),
+      ...descendantsOfKind(part, SyntaxKind.BreakStatement),
+      ...descendantsOfKind(part, SyntaxKind.ContinueStatement),
     ]) {
       if (!own(j)) continue;
       if (j.getLabel() !== undefined) return undefined;
@@ -6724,8 +6816,8 @@ function outermostTry(node: Node, boundary: Node): import("ts-morph").TryStateme
 function jumpsSupported(loop: Node): boolean {
   if (!isLoopStatement(loop)) return false;
   const labelled = [
-    ...loop.getDescendantsOfKind(SyntaxKind.BreakStatement),
-    ...loop.getDescendantsOfKind(SyntaxKind.ContinueStatement),
+    ...descendantsOfKind(loop, SyntaxKind.BreakStatement),
+    ...descendantsOfKind(loop, SyntaxKind.ContinueStatement),
   ].some((j) => j.getLabel() !== undefined && !isInsideNestedFunction(j, loop));
   if (labelled) return false;
   // Every loop statement has a body statement.
@@ -7033,9 +7125,9 @@ function alwaysReturns(node: Node): boolean {
       clauses.every(
         (c) => c.getStatements().length === 0 || c.getStatements().some(alwaysReturns),
       ) &&
-      !node
-        .getDescendantsOfKind(SyntaxKind.BreakStatement)
-        .some((b) => b.getLabel() === undefined && breakTarget(b) === node)
+      !descendantsOfKind(node, SyntaxKind.BreakStatement).some(
+        (b) => b.getLabel() === undefined && breakTarget(b) === node,
+      )
     );
   }
   return false;
@@ -7043,9 +7135,9 @@ function alwaysReturns(node: Node): boolean {
 
 /** True when the node has a return that is not inside a nested function, loop, switch or try. */
 function containsDirectReturn(node: Node): boolean {
-  return node
-    .getDescendantsOfKind(SyntaxKind.ReturnStatement)
-    .some((ret) => !insideOpaque(ret, node));
+  return descendantsOfKind(node, SyntaxKind.ReturnStatement).some(
+    (ret) => !insideOpaque(ret, node),
+  );
 }
 
 /** True when the node has a return or a throw that is not inside a nested function, loop, switch or try. */
@@ -7056,7 +7148,7 @@ function containsDirectExit(node: Node): boolean {
   if (known !== undefined) return known;
   const result =
     containsDirectReturn(node) ||
-    node.getDescendantsOfKind(SyntaxKind.ThrowStatement).some((t) => !insideOpaque(t, node));
+    descendantsOfKind(node, SyntaxKind.ThrowStatement).some((t) => !insideOpaque(t, node));
   exitCache.set(key, result);
   return result;
 }
@@ -7105,6 +7197,86 @@ const exitCache = new WeakMap<object, boolean>();
 const readNamesCache = new WeakMap<object, string[]>();
 const switchArmsCache = new WeakMap<object, SwitchArm[] | null>();
 const assignmentTargetsCache = new WeakMap<object, Node[]>();
+const closureLocalsCache = new WeakMap<object, Set<string>>();
+const identifiersCache = new WeakMap<object, readonly Identifier[]>();
+const targetIndexCache = new WeakMap<
+  object,
+  { readonly byName: ReadonlyMap<string, readonly Node[]>; readonly patterns: readonly Node[] }
+>();
+
+/** A file's assignment targets: its plain names by name, and its destructurings (#1361). */
+function targetIndexOf(sf: Node): {
+  readonly byName: ReadonlyMap<string, readonly Node[]>;
+  readonly patterns: readonly Node[];
+} {
+  const cached = targetIndexCache.get(sf.compilerNode);
+  if (cached !== undefined) return cached;
+  const byName = new Map<string, Node[]>();
+  const patterns: Node[] = [];
+  for (const t of assignmentTargets(sf)) {
+    if (Node.isIdentifier(t)) {
+      const list = byName.get(t.getText());
+      if (list === undefined) byName.set(t.getText(), [t]);
+      else list.push(t);
+    } else if (Node.isArrayLiteralExpression(t) || Node.isObjectLiteralExpression(t))
+      patterns.push(t);
+  }
+  const index = { byName, patterns };
+  targetIndexCache.set(sf.compilerNode, index);
+  return index;
+}
+
+/** Whether `node` is under `scope` in their tree: its range is inside the scope's (ranges nest). */
+function holds(scope: Node, node: Node): boolean {
+  return (
+    node.compilerNode !== scope.compilerNode &&
+    scope.compilerNode.pos <= node.compilerNode.pos &&
+    node.compilerNode.end <= scope.compilerNode.end
+  );
+}
+
+const receiverKeywordsCache = new WeakMap<
+  object,
+  { readonly thises: readonly Node[]; readonly supers: readonly Node[] }
+>();
+
+/**
+ * The `this` and `super` keywords under a closure, read from the compiler's nodes and memoized per
+ * node (#1361): ts-morph's getDescendantsOfKind made every token of the closure to find them.
+ */
+function receiverKeywordsIn(fn: Node): {
+  readonly thises: readonly Node[];
+  readonly supers: readonly Node[];
+} {
+  const cached = receiverKeywordsCache.get(fn.compilerNode);
+  if (cached !== undefined) return cached;
+  const sf = fn.getSourceFile();
+  const thises: Node[] = [];
+  const supers: Node[] = [];
+  forEachCompilerDescendant(fn.compilerNode, (d) => {
+    if (d.kind === SyntaxKind.ThisKeyword) thises.push(wrappedNode(sf, d));
+    else if (d.kind === SyntaxKind.SuperKeyword) supers.push(wrappedNode(sf, d));
+  });
+  const found = { thises, supers };
+  receiverKeywordsCache.set(fn.compilerNode, found);
+  return found;
+}
+
+/**
+ * The identifiers under a closure, read from the compiler's nodes and memoized per node (#1361): each
+ * scope around the closure asks again, and so does its own lift.
+ */
+function identifiersIn(fn: Node): readonly Identifier[] {
+  const cached = identifiersCache.get(fn.compilerNode);
+  if (cached !== undefined) return cached;
+  const sf = fn.getSourceFile();
+  const ids: Identifier[] = [];
+  forEachCompilerDescendant(fn.compilerNode, (d) => {
+    if (d.kind === SyntaxKind.Identifier) ids.push(wrappedNode(sf, d) as Identifier);
+  });
+  identifiersCache.set(fn.compilerNode, ids);
+  return ids;
+}
 
 function insideOpaque(ret: Node, root: Node): boolean {
   for (

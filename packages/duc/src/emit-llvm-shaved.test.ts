@@ -18,13 +18,22 @@ import * as zlib from "node:zlib";
 import fc from "fast-check";
 import { ts } from "ts-morph";
 import { afterAll, describe, expect, it } from "vitest";
+import { ADA_CASES } from "./__fixtures__/ada-cases.js";
 import { shaveCFiles } from "./__fixtures__/c-files.js";
 import { shaveMusl, withMuslInit } from "./__fixtures__/c-musl.js";
 import { canRun, decode, encode, same } from "./__fixtures__/native-harness.js";
+import { V8_BIGINT_METHODS, shaveV8BigInt } from "./atoms/shave-v8.js";
 import { emitNativeModules } from "./emit-llvm-boxed.js";
 import { liftAtom } from "./lift.js";
+import { withStatics } from "./native-statics.js";
 import { compileObject, compileRuntime } from "./native.js";
-import { C_LEAVES_JS, type ShavedUnit, createCMemory, shaveCUnit } from "./raise-c.js";
+import {
+  C_LEAVES_JS,
+  type ShavedUnit,
+  type StaticDef,
+  createCMemory,
+  shaveCUnit,
+} from "./raise-c.js";
 
 const here = (p: string): string => fileURLToPath(new URL(p, import.meta.url));
 const V8 = here("../vendor/v8/");
@@ -77,6 +86,7 @@ function nativeUnitWith(
   name: string,
   atoms: ReadonlyMap<string, { readonly source: string }>,
   extra: readonly [string, string][],
+  statics: ReadonlyMap<string, StaticDef> = new Map(),
 ): (calls: readonly [string, unknown[]][]) => unknown[] {
   const names = [...atoms.keys(), ...extra.map(([n]) => n)];
   const sources = new Map([...[...atoms].map(([n, a]) => [n, a.source] as const), ...extra]);
@@ -92,7 +102,9 @@ function nativeUnitWith(
       graph: liftAtom(`module.exports = { ${names.join(", ")} };`),
     },
   ];
-  const { ir, symbols } = emitNativeModules([{ id: `${name}.js`, statements }]);
+  const { ir, symbols } = emitNativeModules(
+    withStatics([{ id: `${name}.js`, statements }], statics),
+  );
   const dir = join(work, name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "m.ll"), ir);
@@ -235,6 +247,136 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
     expect(bad).toEqual([]);
   }, 900_000);
 
+  it("C's statics natively: globals, a static local, function pointers, strings, a static's address in another", () => {
+    const unit = shaveCUnit(
+      here("./__fixtures__/c/statics.c"),
+      ["statics_sum"],
+      ["-std=c11"],
+      "clang",
+    );
+    expect([...unit.refused]).toEqual([]);
+    const run = nativeUnitWith(
+      "statics",
+      unit.atoms,
+      [
+        [
+          "tS",
+          "export function f(i: number, k: number): number { return Number(statics_sum(i, k)); }",
+        ],
+      ],
+      unit.statics,
+    );
+    const calls: [string, unknown[]][] = Array.from({ length: 12 }, (_, j) => [
+      "tS",
+      [j * 7 + 1, j % 3],
+    ]);
+    const got = run(calls);
+    // The same calls, in order, of the C compiled natively.
+    const dir = join(work, "statics-c");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "main.c"),
+      `#include <stdio.h>\nlong long statics_sum(int i, int k);\nint main(void) { for (int j = 0; j < 12; j++) printf("%lld\\n", statics_sum(j * 7 + 1, j % 3)); return 0; }\n`,
+    );
+    execFileSync("clang", [
+      "-std=c11",
+      "-O0",
+      join(dir, "main.c"),
+      here("./__fixtures__/c/statics.c"),
+      "-o",
+      join(dir, "run"),
+    ]);
+    const want = execFileSync(join(dir, "run"), { encoding: "utf8" })
+      .trim()
+      .split("\n")
+      .map(Number);
+    expect(got).toEqual(want);
+  }, 600_000);
+
+  // About 20 minutes (833 atoms, ~300 MB of IR): run with YAKCC_NATIVE_SLOW=1.
+  it.skipIf(process.env.YAKCC_NATIVE_SLOW !== "1")(
+    "ada (Node's URL parser), shaved from C++ over musl, natively equals the C++ compiled by clang",
+    () => {
+      const ADA = here("../vendor/ada/");
+      const FIXTURE = here("./__fixtures__/c/ada-run.cpp");
+      const ARGS = ["-std=c++17", "-DNDEBUG", "-D_GLIBCXX_ASSERTIONS", `-I${ADA}`];
+      const unit = shaveCUnit(FIXTURE, ["yk_url"], ARGS, "clang++", "ada-run.cpp");
+      const externals = [...new Set([...unit.atoms.values()].flatMap((a) => a.externals))].filter(
+        (x) => !unit.atoms.has(x),
+      );
+      const musl = withMuslInit(shaveMusl(externals));
+      const statics = new Map([...musl.units, unit].flatMap((u) => [...u.statics]));
+      // The drivers' names are no C or C++ function's (ada's has a `put`).
+      const run = nativeUnitWith(
+        "ada",
+        new Map([...musl.atoms, ...unit.atoms]),
+        [
+          [
+            "yk$put",
+            "export function f(bytes: number[]): number { const a = __ykAlloc(bytes.length + 1, 16); for (let i = 0; i < bytes.length; i++) __ykStore8(a + i, bytes[i] as number); __ykStore8(a + bytes.length, 0); return a; }",
+          ],
+          [
+            "yk$url",
+            "export function f(u: number[], b: number[], hasBase: boolean): unknown { const pu = yk$put(u); const pb = yk$put(b); const cap = 65536; const out = __ykAlloc(cap, 16); const r = yk_url(pu, u.length, pb, hasBase ? b.length : -1, out, cap) as number; const o: number[] = []; for (let i = 0; i < r; i++) o.push(__ykLoad8(out + i)); return [r, o]; }",
+          ],
+          ["yk$init", "export function f(): number { yk_musl_init(); return 0; }"],
+        ],
+        statics,
+      );
+      const got = run([
+        ["yk$init", []],
+        ...ADA_CASES.map(([u, b]): [string, unknown[]] => [
+          "yk$url",
+          [
+            [...Buffer.from(u, "utf8")],
+            b === undefined ? [] : [...Buffer.from(b, "utf8")],
+            b !== undefined,
+          ],
+        ]),
+      ]).slice(1);
+      const dir = join(work, "ada-c");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "driver.c"),
+        `#include <stdio.h>
+#include <string.h>
+int yk_url(const char *in, int n, const char *base, int bn, char *out, int cap);
+static int unhex(const char *h, char *out) { int n = 0; unsigned v; for (; h[0] && h[0] != ' ' && h[0] != '\\n'; h += 2) { sscanf(h, "%2x", &v); out[n++] = (char)v; } return n; }
+int main(void) { static char line[1 << 16], in[1 << 14], base[1 << 14], out[1 << 16];
+  while (fgets(line, sizeof line, stdin)) { char *sp = strchr(line, ' '); int n = unhex(line + 1, in); int bn = line[0] == 'b' ? unhex(sp + 1, base) : -1;
+    int r = yk_url(in, n, base, bn, out, sizeof out); printf("%d:", r); for (int i = 0; i < r; i++) printf("%02x", (unsigned char)out[i]); putchar('\\n'); } return 0; }
+`,
+      );
+      execFileSync("clang++", [...ARGS, "-O2", "-c", FIXTURE, "-o", join(dir, "ada-run.o")], {
+        maxBuffer: 1 << 26,
+      });
+      execFileSync("clang++", [
+        "-x",
+        "c",
+        join(dir, "driver.c"),
+        "-x",
+        "none",
+        join(dir, "ada-run.o"),
+        "-o",
+        join(dir, "ref"),
+      ]);
+      const hexOf = (x: string): string => Buffer.from(x, "utf8").toString("hex");
+      const want = execFileSync(join(dir, "ref"), {
+        input: `${ADA_CASES.map(([u, b]) => (b === undefined ? `u${hexOf(u)} -` : `b${hexOf(u)} ${hexOf(b)}`)).join("\n")}\n`,
+        encoding: "utf8",
+      }).split("\n");
+      const bad = got.flatMap((g, i) => {
+        const [r, o] = g as [number, number[]];
+        const text = `${r}:${Buffer.from(o).toString("hex")}`;
+        return text === want[i]
+          ? []
+          : [`${JSON.stringify(ADA_CASES[i])}\n  native ${text}\n  clang  ${want[i]}`];
+      });
+      expect(bad).toEqual([]);
+    },
+    7_200_000,
+  );
+
   it("V8's Math, shaved from ieee754.cc, natively equals Node's Math bit for bit", () => {
     const v8: ShavedUnit = shaveCUnit(
       `${V8}src/base/ieee754.cc`,
@@ -368,6 +510,98 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
     expect(kept.length).toBeGreaterThan(2500);
   }, 900_000);
 
+  it("V8's BigInt arithmetic, shaved from src/bigint, natively equals Node's BigInt (#1516)", () => {
+    const unit = shaveV8BigInt();
+    expect([...unit.refused]).toEqual([]);
+    // What it calls of the C library (a struct's copy, an abort): musl's, shaved.
+    const libc = shaveMusl(["memcpy", "memset", "memmove", "abort"]);
+    expect(libc.refused).toEqual([]);
+    const atoms = new Map([...libc.atoms, ...unit.atoms]);
+    const statics = new Map([...libc.units.flatMap((u) => [...u.statics]), ...unit.statics]);
+    const M = V8_BIGINT_METHODS;
+    const DRIVERS: [string, string][] = [
+      // A BigInt's magnitude as V8's Digits ({ digits, len }, 64-bit digits), and back. Each driver
+      // calls the library as V8's src/objects/bigint.cc does (zero's string is "0" before it).
+      [
+        "mk",
+        "export function f(x: bigint): number { let m = x < 0n ? -x : x; let n = 0; let t = m; while (t > 0n) { n++; t = t >> 64n; } const d = __ykAlloc((n > 0 ? n : 1) * 8, 8); for (let i = 0; i < n; i++) { __ykStore64(d + 8 * i, m & 18446744073709551615n); m = m >> 64n; } const s = __ykAlloc(16, 8); __ykStore64(s, __ykNumToBig(d)); __ykStore32(s + 8, n); return s; }",
+      ],
+      [
+        "mkz",
+        "export function f(n: number): number { const d = __ykAlloc((n > 0 ? n : 1) * 8, 8); const s = __ykAlloc(16, 8); __ykStore64(s, __ykNumToBig(d)); __ykStore32(s + 8, n); return s; }",
+      ],
+      [
+        "val",
+        "export function f(s: number): bigint { const d = __ykBigToF64(__ykLoad64(s)); const n = __ykLoad32(s + 8) | 0; let r = 0n; for (let i = n - 1; i >= 0; i--) r = (r << 64n) | __ykLoad64(d + 8 * i); return r; }",
+      ],
+      [
+        "tMul",
+        `export function f(a: bigint, b: bigint): bigint { const p = yk_v8_bigint_processor(); const X = mk(a); const Y = mk(b); const Z = mkz(MultiplyResultLength(X, Y)); ${M.multiply}(p, Z, X, Y); const m = val(Z); return (a < 0n) !== (b < 0n) ? -m : m; }`,
+      ],
+      [
+        "tDiv",
+        `export function f(a: bigint, b: bigint): unknown { const p = yk_v8_bigint_processor(); const A = mk(a); const B = mk(b); if (Compare(A, B) < 0) return [0n, a]; const Q = mkz(DivideResultLength(A, B)); ${M.divide}(p, Q, A, B); const R = mkz(ModuloResultLength(B)); ${M.modulo}(p, R, A, B); const q = val(Q); const r = val(R); return [(a < 0n) !== (b < 0n) ? -q : q, a < 0n ? -r : r]; }`,
+      ],
+      [
+        "tAdd",
+        "export function f(a: bigint, b: bigint): bigint { const X = mk(a); const Y = mk(b); const Z = mkz(AddSignedResultLength(__ykLoad32(X + 8), __ykLoad32(Y + 8), (a < 0n) === (b < 0n))); const neg = AddSigned(Z, X, a < 0n, Y, b < 0n); const m = val(Z); return neg ? -m : m; }",
+      ],
+      [
+        "tStr",
+        `export function f(a: bigint, radix: number): string { if (a === 0n) return "0"; const p = yk_v8_bigint_processor(); const X = mk(a); const n = ToStringResultLength(X, radix, a < 0n); const out = __ykAlloc(n > 0 ? n : 1, 1); const len = __ykAlloc(4, 4); __ykStore32(len, n); ${M.toString}(p, out, len, X, radix, a < 0n); let s = ""; for (let i = 0; i < (__ykLoad32(len) | 0); i++) s += String.fromCharCode(__ykLoad8(out + i)); return s; }`,
+      ],
+      [
+        // (Its sign: V8's Compare gives the digits' difference when the lengths differ.)
+        "tCmp",
+        "export function f(a: bigint, b: bigint): number { const c = Compare(mk(a), mk(b)); return c > 0 ? 1 : c < 0 ? -1 : 0; }",
+      ],
+    ];
+    const run = nativeUnitWith("v8bigint", atoms, DRIVERS, statics);
+    const big = (seed: number, n: number) =>
+      fc.sample(
+        fc.oneof(
+          fc.bigInt({ min: -(2n ** 70n), max: 2n ** 70n }),
+          fc.bigInt({ min: -(2n ** 4000n), max: 2n ** 4000n }),
+          // (The harness reads a BigInt of at most 4095 characters: Karatsuba, Toom-Cook and
+          // Burnikel-Ziegler, not FFT or Barrett.)
+          fc.bigInt({ min: -(2n ** 12000n), max: 2n ** 12000n }),
+        ),
+        { numRuns: n, seed },
+      );
+    const xs = [0n, 1n, -1n, 2n ** 64n - 1n, 2n ** 64n, -(2n ** 128n), ...big(1516, 40)];
+    const ys = [1n, -1n, 3n, 2n ** 64n + 1n, -(2n ** 63n), ...big(1517, 40)].map((y) =>
+      y === 0n ? 7n : y,
+    );
+    const calls: [string, unknown[]][] = [];
+    const want: unknown[] = [];
+    xs.forEach((x, i) => {
+      const y = ys[i % ys.length] as bigint;
+      calls.push(["tMul", [x, y]]);
+      want.push(x * y);
+      calls.push(["tDiv", [x, y]]);
+      want.push([x / y, x % y]);
+      calls.push(["tAdd", [x, y]]);
+      want.push(x + y);
+      calls.push(["tCmp", [x, y]]);
+      const ax = x < 0n ? -x : x;
+      const ay = y < 0n ? -y : y;
+      want.push(ax < ay ? -1 : ax > ay ? 1 : 0);
+      for (const radix of [10, 16, 7]) {
+        calls.push(["tStr", [x, radix]]);
+        want.push(x.toString(radix));
+      }
+    });
+    const got = run(calls);
+    const bad = calls.flatMap(([f, a], i) =>
+      same(got[i], want[i])
+        ? []
+        : [
+            `${f}(${a.map(String).join(", ").slice(0, 80)}): ${String(got[i]).slice(0, 80)} vs ${String(want[i]).slice(0, 80)}`,
+          ],
+    );
+    expect(bad.slice(0, 8)).toEqual([]);
+  }, 900_000);
+
   it("musl's memcpy, memset, strlen, strcmp and qsort, shaved, natively over the memory leaves equal their raised source", () => {
     const MUSL_ARGS = [
       "-std=c99",
@@ -427,10 +661,10 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
       ],
       ["readAt", "export function f(p: number): number { return __ykLoad32(p); }"],
       [
-        // Accesses at constant offsets inside the function's own frame, before and after it is
-        // freed and its bytes reused, and one past its end (#1369).
+        // Accesses at constant offsets inside the function's own frame, and another block's after
+        // it is freed (#1369).
         "frameUse",
-        "export function f(n: number, past: boolean): unknown { const a = __ykAlloc(24, 8); __ykStoreF64(a + 8, n); __ykStore32(a + (2 * 8), n); const x = __ykLoadF64(a + (1 * 8)); const y = __ykLoad32(a + 16); if (past) return [x, y, __ykLoad8(a + 32)]; __ykFree(a); const b = __ykAlloc(24, 8); __ykStoreF64(b + 8, 1.5); return [x, y, b > a, __ykLoadF64(a + 8)]; }",
+        "export function f(n: number, past: boolean): unknown { const a = __ykAlloc(24, 8); __ykStoreF64(a + 8, n); __ykStore32(a + (2 * 8), n); const x = __ykLoadF64(a + (1 * 8)); const y = __ykLoad32(a + 16); if (past) return [x, y]; __ykFree(a); const b = __ykAlloc(24, 8); __ykStoreF64(b + 8, 1.5); const z = __ykLoadF64(b + 8); __ykFree(b); return [x, y, z]; }",
       ],
       [
         // A pointer parameter read and written at constant offsets: its span looked up on entry.
@@ -444,12 +678,6 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
       [
         "tFrame",
         "export function f(n: number, past: boolean): unknown { try { return frameUse(n, past); } catch (e) { return (e as Error).message; } }",
-      ],
-      [
-        // One access site, its cache holding a region that is freed and whose bytes are reused:
-        // the stale address still traps (#1369).
-        "tStale",
-        "export function f(n: number): unknown { const a = __ykAlloc(16, 8); __ykStore32(a, n); const d = __ykAlloc(16, 8); __ykStore32(d, n + 1); const x = readAt(a); const e = __ykAlloc(16, 8); const y = readAt(d) + readAt(a); __ykFree(a); const c = __ykAlloc(16, 8); __ykStore32(c, 7); try { return [x, y, e - d, readAt(a)]; } catch (err) { return [x, y, readAt(c), (err as Error).message]; } }",
       ],
       [
         // Blocks whose address never escapes (a C front end's spilled locals): a bit cast through
@@ -478,21 +706,6 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
       [
         "tRaw",
         "export function f(x: number, n: number): unknown { const y = __ykAlloc(16, 8); const a = rawPass(y, x); const r = [a, __ykLoadF64(y), __ykLoadF64(y + 8)]; let t = false; const z = __ykAlloc(12, 4); try { if (n > 0) rawOver(z); } catch (e) { t = true; } __ykFree(z); __ykFree(y); return [r, t]; }",
-      ],
-      [
-        // Accesses at a computed offset (each site's cache, not a span): a 4- and a 2-byte read and
-        // a 4-byte write at every offset to past the end of a 10-byte block, so the last that fits
-        // and the first that does not (#1369).
-        "readAtK",
-        "export function f(p: number, k: number, w: number): unknown { if (w === 4) return __ykLoad32(p + k); if (w === 2) return __ykLoad16(p + k); __ykStore32(p + k, 7); return __ykLoad8(p + k); }",
-      ],
-      [
-        "tEdge",
-        "export function f(n: number): unknown { const a = __ykAlloc(10, 2); for (let i = 0; i < 10; i++) __ykStore8(a + i, i + n); const out: unknown[] = []; for (const w of [4, 2, 1]) for (let k = 0; k < 12; k++) { try { out.push(readAtK(a, k, w)); } catch (e) { out.push((e as Error).name); } } __ykFree(a); return out; }",
-      ],
-      [
-        "tTrap",
-        "export function f(n: number): unknown { const a = __ykAlloc(8, 8); __ykFree(a); try { return __ykLoad8(a + n); } catch (e) { return [(e as Error).name, (e as Error).message]; } }",
       ],
     ];
     const run = nativeUnitWith("musl", atoms, DRIVERS);
@@ -546,19 +759,16 @@ describe.skipIf(!hasClang || !canRun("x86_64-linux"))("shaved C, natively (#1361
         ],
       ]);
     }
+    // Memory is the machine's natively (#1516): an access outside a live block (past its end, after
+    // its free, a store into constant data) is undefined, as in C, where the JavaScript definition
+    // traps; only the defined accesses are compared, and an address that is not a number traps in
+    // both.
     calls.push(
-      ["tTrap", [0]],
-      ["tTrap", [99]],
-      ["tEdge", [3]],
-      ["tEdge", [250]],
-      ["tStale", [5]],
-      ["tStale", [-3]],
-      ...[0, 1, 2, 3, 4].flatMap((kind) =>
-        [0, 1, 2].map((mode) => ["tSpan", [kind, mode]] as [string, unknown[]]),
-      ),
+      ["tSpan", [0, 0]],
+      ["tSpan", [0, 2]],
+      ...[0, 1, 2].map((mode) => ["tSpan", [2, mode]] as [string, unknown[]]),
       ["tFrame", [7, false]],
       ["tFrame", [-2.5, false]],
-      ["tFrame", [3, true]],
       ["tRaw", [1.25, 12]],
       ["tRaw", [-3, 0]],
       ["tRaw", [Number.NaN, 12]],
