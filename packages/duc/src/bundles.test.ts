@@ -35,15 +35,15 @@ out = [E.A, E.B, E[1]];`;
   });
 
   it("a shorthand property of a parameter keeps its key", () => {
-    const text = `((m) => { var o = { m }; out = [o.m, Object.keys(o)]; })(5);`;
+    const text = "((m) => { var o = { m }; out = [o.m, Object.keys(o)]; })(5);";
     const unwrapped = unwrapBundles(text);
     expect(unwrapped).not.toBe(text);
     expect(run(unwrapped)).toEqual([5, ["m"]]);
   });
 
   it("extra arguments are still evaluated, and a missing one is undefined", () => {
-    const text = `var log = []; ((a, b) => { out = [a, b, log]; })(log.push(1), );`;
-    const more = `var log = []; ((a) => { out = [a, log.slice()]; })(log.push(1), log.push(2));`;
+    const text = "var log = []; ((a, b) => { out = [a, b, log]; })(log.push(1), );";
+    const more = "var log = []; ((a) => { out = [a, log.slice()]; })(log.push(1), log.push(2));";
     expect(run(unwrapBundles(text))).toEqual(run(text));
     expect(unwrapBundles(more)).not.toBe(more);
     expect(run(unwrapBundles(more))).toEqual(run(more));
@@ -52,28 +52,29 @@ out = [E.A, E.B, E[1]];`;
   it("leaves a wrapper nothing outside could tell from its body only when that holds", () => {
     for (const text of [
       // A name the body declares is used outside: hoisted, it would be the body's.
-      `var x = 1; (() => { var x = 2; })(); out = x;`,
+      "var x = 1; (() => { var x = 2; })(); out = x;",
       // A function declared in the body, read outside before the call.
-      `out = typeof f; (() => { function f() {} })();`,
+      "out = typeof f; (() => { function f() {} })();",
       // A return of its own.
-      `(() => { if (out) return; out = 1; })();`,
+      "(() => { if (out) return; out = 1; })();",
       // A function expression's own receiver and arguments.
-      `(function () { this.a = 1; })();`,
-      `(function () { out = arguments.length; })(1, 2);`,
+      "(function () { this.a = 1; })();",
+      "(function () { out = arguments.length; })(1, 2);",
       // A parameter declared again inside.
-      `((m) => { function f(m) { return m; } out = f(m); })(1);`,
+      "((m) => { function f(m) { return m; } out = f(m); })(1);",
       // Async, a generator, a named function expression, a default parameter, a spread argument.
-      `(async () => { out = 1; })();`,
-      `(function* () { out = 1; })();`,
-      `(function named() { out = 1; })();`,
-      `((a = 1) => { out = a; })();`,
-      `((a) => { out = a; })(...[1]);`,
+      "(async () => { out = 1; })();",
+      "(function* () { out = 1; })();",
+      "(function named() { out = 1; })();",
+      "((a = 1) => { out = a; })();",
+      "((a) => { out = a; })(...[1]);",
     ])
       expect(unwrapBundles(text), text).toBe(text);
   });
 
   it("a `var` in a block of the body, or an arrow's `this`, are the body's as they were", () => {
-    const text = `var self = this; ((m) => { if (true) { var inner = m + 1; } out = [inner, this === self]; })(1);`;
+    const text =
+      "var self = this; ((m) => { if (true) { var inner = m + 1; } out = [inner, this === self]; })(1);";
     const unwrapped = unwrapBundles(text);
     expect(unwrapped).not.toBe(text);
     expect(new Function(`let out;\n${unwrapped}\nreturn out;`).call({ me: 1 })).toEqual(
