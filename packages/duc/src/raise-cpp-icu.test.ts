@@ -196,7 +196,7 @@ describe.skipIf(!hasClang)("Node's ICU, shaved from C++, against Node's Intl and
       1e21,
       -987654.3219,
       42,
-      3.14159,
+      1.23456,
       1e-7,
       123456789012,
       ...fc.sample(fc.double({ min: -1e9, max: 1e9, noNaN: true }), { numRuns: 20, seed: 1367 }),
