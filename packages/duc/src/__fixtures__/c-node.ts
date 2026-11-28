@@ -2,17 +2,44 @@
 // node/src's bindings shaved over V8's API (#1367): Node's own C++ (vendor/node/src, v22.23.5) as
 // node.gyp and node.gypi compile it for linux-x64, each file a unit linked by its symbols, V8's
 // API the boundary (raise-c's isV8Api; its leaves, raise-cpp-v8.ts), the C library musl.
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { type ShavedUnit, isV8Api, shaveCUnit } from "../raise-c.js";
+import { type ShavedUnit, createCMemory, createCSystem, isV8Api, shaveCUnit } from "../raise-c.js";
+import { type V8Host, createV8 } from "../raise-cpp-v8.js";
 import { type ShavedFiles, shaveCFiles } from "./c-files.js";
+import { type Fn, link, runInitializers } from "./c-link.js";
 import { shaveMusl, withMuslInit } from "./c-musl.js";
 
 export const NODE = fileURLToPath(new URL("../../vendor/node/", import.meta.url));
+/**
+ * libstdc++'s compiled sources a std::unordered_map calls (std::_Hash_bytes, its hash; the
+ * prime rehash policy), GCC 13's, as the headers clang uses are: not in the project (GPL-3.0
+ * with the GCC Runtime Library Exception), fetched beside it, not committed
+ * (packages/duc/vendor/gcc-libstdcxx/, from gcc-mirror/gcc's releases/gcc-13:
+ * libstdc++-v3/libsupc++/hash_bytes.cc, libstdc++-v3/src/c++11/hashtable_c++0x.cc and the
+ * src/shared/hashtable-aux.cc it includes). A binding that hashes strings needs them.
+ */
+export const LIBSTDCXX = fileURLToPath(new URL("../../vendor/gcc-libstdcxx/", import.meta.url));
+export const LIBSTDCXX_FILES = [
+  "hash_bytes.cc",
+  "src/c++11/hashtable_c++0x.cc",
+  "src/c++98/list.cc",
+  "src/c++11/shared_ptr.cc",
+].map((f) => `${LIBSTDCXX}${f}`);
+export const hasLibstdcxx = LIBSTDCXX_FILES.every((f) => existsSync(f));
 const FIXTURES = fileURLToPath(new URL("./c/", import.meta.url));
 
-/** node.gyp's and node.gypi's defines and include directories (Linux, x64, the bundled deps). */
+/**
+ * node.gyp's and node.gypi's defines and include directories (Linux, x64, the bundled deps), and
+ * common.gypi's flags for C++ on Linux (no RTTI, no exceptions, no strict aliasing; its
+ * -std=gnu++17 is configure.py's gnu++20 in Node 22, whose src/ needs it).
+ */
 export const NODE_ARGS: readonly string[] = [
   "-std=gnu++20",
+  "-fno-rtti",
+  "-fno-exceptions",
+  "-fno-strict-aliasing",
+  "-D__STDC_FORMAT_MACROS",
   "-DNODE_WANT_INTERNALS=1",
   '-DNODE_ARCH="x64"',
   '-DNODE_PLATFORM="linux"',
@@ -31,6 +58,13 @@ export const NODE_ARGS: readonly string[] = [
   "-DSIMDUTF_IMPLEMENTATION_WESTMERE=0",
   "-DSIMDUTF_IMPLEMENTATION_FALLBACK=1",
   "-Wno-invalid-offsetof",
+  // (ICU's configuration, as tools/icu/icu-generic.gyp's icu_uconfig gives its dependents: it
+  // changes ICU's classes' layouts.)
+  "-DUCONFIG_NO_SERVICE=1",
+  "-DU_ENABLE_DYLOAD=0",
+  "-DU_STATIC_IMPLEMENTATION=1",
+  "-DU_HAVE_STD_STRING=1",
+  "-DUCONFIG_NO_BREAK_ITERATION=0",
   ...[
     "src",
     "deps/v8/include",
@@ -57,6 +91,79 @@ export const NODE_ARGS: readonly string[] = [
   ].map((d) => `-I${NODE}${d}`),
 ];
 
+/**
+ * The arguments of a file of node/src's build: Node's; ICU's own sources (deps/icu-small) as
+ * icu-generic.gyp compiles them, with RTTI and their implementation defines.
+ */
+export const nodeArgsFor = (file: string): readonly string[] => {
+  // (libstdc++'s sources, as GCC builds them: its x86-64 interference sizes, which clang has not.)
+  if (file.startsWith(LIBSTDCXX))
+    return [...NODE_ARGS, "-D__GCC_DESTRUCTIVE_SIZE=64", "-D__GCC_CONSTRUCTIVE_SIZE=64"];
+  const icu = /deps\/icu-small\/source\/(common|i18n|stubdata)\//.exec(file);
+  if (icu === null) return NODE_ARGS;
+  return [
+    ...NODE_ARGS.filter((a) => a !== "-fno-rtti"),
+    "-frtti",
+    "-DU_ATTRIBUTE_DEPRECATED=",
+    "-Wno-deprecated-declarations",
+    icu[1] === "i18n" ? "-DU_I18N_IMPLEMENTATION=1" : "-DU_COMMON_IMPLEMENTATION=1",
+  ];
+};
+
+/** libuv as uv.gyp builds it for Linux (its common, posix and linux sources), C. */
+const UV = `${NODE}deps/uv/`;
+const UV_FILES = [
+  ...[
+    "fs-poll",
+    "idna",
+    "inet",
+    "random",
+    "strscpy",
+    "strtok",
+    "thread-common",
+    "threadpool",
+    "timer",
+    "uv-data-getter-setters",
+    "uv-common",
+    "version",
+  ].map((f) => `src/${f}.c`),
+  ...[
+    "async",
+    "core",
+    "dl",
+    "fs",
+    "getaddrinfo",
+    "getnameinfo",
+    "loop",
+    "loop-watcher",
+    "pipe",
+    "poll",
+    "process",
+    "random-devurandom",
+    "signal",
+    "stream",
+    "tcp",
+    "thread",
+    "tty",
+    "udp",
+    "proctitle",
+    "linux",
+    "procfs-exepath",
+    "random-getrandom",
+    "random-sysctl-linux",
+  ].map((f) => `src/unix/${f}.c`),
+].map((f) => `${UV}${f}`);
+const UV_ARGS = [
+  "-std=gnu11",
+  "-D_GNU_SOURCE",
+  "-D_LARGEFILE_SOURCE",
+  "-D_FILE_OFFSET_BITS=64",
+  "-D_POSIX_C_SOURCE=200112",
+  `-I${UV}include`,
+  `-I${UV}src`,
+  `-I${UV}src/unix`,
+];
+
 export interface ShavedBinding {
   /** The binding's own unit and node-env.cc's (Node's startup for its context). */
   readonly units: readonly ShavedUnit[];
@@ -76,10 +183,12 @@ export function shaveBinding(
   file: string,
   roots: readonly string[],
   others: readonly string[],
+  /** node-env.cc's parts it needs (yk_node_isolate_data, yk_node_icu_data). */
+  startup: readonly string[] = [],
 ): ShavedBinding {
   const env = shaveCUnit(
     `${FIXTURES}node-env.cc`,
-    ["yk_node_environment"],
+    ["yk_node_environment", ...startup],
     NODE_ARGS,
     "clang++",
     "node-env.cc",
@@ -92,16 +201,39 @@ export function shaveBinding(
     ...new Set([...env.atoms.values(), ...root.atoms.values()].flatMap((a) => a.externals)),
   ].filter((x) => !own.has(x));
   const files = shaveCFiles(
-    [...others.map((f) => `${NODE}${f}`), `${FIXTURES}libstdcxx-inst.cpp`],
+    [
+      // (The binding's own file too: its functions other files call, Buffer::Length.)
+      `${NODE}${file}`,
+      ...others.filter((f) => f !== file).map((f) => `${NODE}${f}`),
+      `${FIXTURES}libstdcxx-inst.cpp`,
+      `${FIXTURES}cxx-runtime.cpp`,
+      ...(hasLibstdcxx ? LIBSTDCXX_FILES : []),
+    ],
     wanted,
-    NODE_ARGS,
+    nodeArgsFor,
     "clang++",
+    undefined,
+    // (The statics the binding's unit and node-env.cc use that another file defines: env.cc's
+    // context tag.)
+    [env, root].flatMap((u) => [...u.staticRefs].filter((k) => !u.statics.has(k))),
   );
   const outside = [...new Set([...files.externals, ...wanted])].filter(
     (x) => !own.has(x) && !files.atoms.has(x),
   );
-  const libc = outside.filter((x) => !x.startsWith("_Z"));
+  // (C the binding calls: libuv's, shaved as C from its sources; the rest the C library's.)
+  const c = outside.filter((x) => !x.startsWith("_Z"));
+  const uv = shaveCFiles(
+    UV_FILES,
+    c.filter((x) => x.startsWith("uv_")),
+    UV_ARGS,
+    "clang",
+  );
+  const libc = [...new Set([...uv.externals, ...c])].filter((x) => !uv.atoms.has(x));
   const musl = withMuslInit(shaveMusl([...libc, "malloc", "free"]));
+  // (libuv's with the C++ files': one link.)
+  for (const [k, a] of uv.atoms) if (!files.atoms.has(k)) files.atoms.set(k, a);
+  files.units.push(...uv.units);
+  files.refused.push(...uv.refused);
   return {
     units: [env, root],
     files,
@@ -109,4 +241,57 @@ export function shaveBinding(
     v8: outside.filter(isV8Api),
     missing: outside.filter((x) => x.startsWith("_Z") && !isV8Api(x)),
   };
+}
+
+/**
+ * A shaved binding made ready as Node's startup makes it: its atoms linked over one memory with
+ * the system-call leaf and V8's API as leaves, musl's init and the C++ globals' constructors run,
+ * the context given Node's Environment and realm (node-env.cc), and the binding's initializer (a
+ * NODE_BINDING_CONTEXT_AWARE_INTERNAL one) run on a fresh object: that object, what
+ * internalBinding(name) gives Node's JavaScript.
+ */
+export function instantiateBinding(
+  shaved: ShavedBinding,
+  initializer: string | undefined,
+  options: {
+    /** A NODE_BINDING_PER_ISOLATE_INIT initializer, run first on an ObjectTemplate. */
+    readonly perIsolate?: string;
+    /** ICU's data, given as Node's startup gives it (yk_node_icu_data), first. */
+    readonly icuData?: Uint8Array;
+    /** node-env.cc's startup parts run on the Environment (yk_node_environment_options). */
+    readonly environment?: readonly string[];
+  } = {},
+): { binding: Record<string, unknown>; v8: V8Host } {
+  const memory = createCMemory();
+  const system = createCSystem(memory);
+  const v8 = createV8(memory, shaved.v8);
+  const env = link(
+    new Map([
+      ...shaved.musl.atoms,
+      ...shaved.files.atoms,
+      ...shaved.units.flatMap((u) => [...u.atoms]),
+    ]),
+    false,
+    memory,
+    [...shaved.musl.units, ...shaved.files.units, ...shaved.units],
+    { ...(system.leaves as unknown as Record<string, Fn>), ...v8.leaves },
+  );
+  env.yk_musl_init?.();
+  runInitializers(env, [...shaved.files.units, ...shaved.units]);
+  const context = memory.leaves.__ykAlloc(8, 8);
+  memory.leaves.__ykStore64(context, BigInt(v8.context));
+  const environment = (env.yk_node_environment as Fn)(v8.isolate, context);
+  for (const part of options.environment ?? []) (env[part] as Fn)(environment);
+  if (options.icuData !== undefined) (env.yk_node_icu_data as Fn)(memory.put(options.icuData));
+  // A per-isolate initializer's template made the binding's object (its methods), then the
+  // per-context one's properties on it, as Node's binding loader does.
+  let binding: Record<string, unknown> = {};
+  if (options.perIsolate !== undefined) {
+    const template = v8.objectTemplate();
+    (env[options.perIsolate] as Fn)((env.yk_node_isolate_data as Fn)(v8.isolate), template);
+    binding = v8.instance(template) as Record<string, unknown>;
+  }
+  if (initializer !== undefined)
+    (env[initializer] as Fn)(v8.local(binding), v8.local(undefined), context, 0);
+  return { binding, v8 };
 }

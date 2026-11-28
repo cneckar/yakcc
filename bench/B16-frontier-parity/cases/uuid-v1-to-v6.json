@@ -1,0 +1,221 @@
+{
+ "id": "uuid-v1-to-v6",
+ "cases": [
+  {
+   "args": [
+    "C232AB00-9414-11EC-B3C8-9F6BDECED846"
+   ],
+   "returns": "1ec9414c-232a-6b00-b3c8-9f6bdeced846"
+  },
+  {
+   "args": [
+    "c232ab00-9414-11ec-b3c8-9f6bdeced846"
+   ],
+   "returns": "1ec9414c-232a-6b00-b3c8-9f6bdeced846"
+  },
+  {
+   "args": [
+    "c232ab00941411ecb3c89f6bdeced846"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "c232ab00-9414-11ec-73c8-9f6bdeced846"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "c232ab00-9414-11ec-b3c8-9f6bdeced84"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "not a uuid"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "087FA698-99EB-1C6D-BBE0-1E06DFA33CAD"
+   ],
+   "returns": "c6d99eb0-87fa-6698-bbe0-1e06dfa33cad"
+  },
+  {
+   "args": [
+    "4122E02D-0F5B-1FAD-C063-960D4230AD1C"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "282bac13-4a3e-1b0a-7c1f-2ff8e88415ea"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "b09c7cfd-73d7-181b-b4f4-33df400dfb0f"
+   ],
+   "returns": "81b73d7b-09c7-6cfd-b4f4-33df400dfb0f"
+  },
+  {
+   "args": [
+    "d8f13ab957ab10ad801de19f36c451c5"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "164EE3F0-BB61-16CD-C545-713A9C12B91E"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "2148ce21-ebc5-1ea6-cf3d-40bff946277a"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "21f7ba81b2fd138fbeee3f9a1ec1ebf2"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "900e2ef8-01f6-1ea0-cd2c-dd976dd90d14"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "0d372d6dcb8512a9b390c3c6d6fc9a93"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "1F853F62-A0CB-1FE1-BF37-4025F70EAFB8"
+   ],
+   "returns": "fe1a0cb1-f853-6f62-bf37-4025f70eafb8"
+  },
+  {
+   "args": [
+    "7b9e7e2d-b4b9-1717-7143-bf023147faf1"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "53de3498-3a3d-1fd7-7e00-caef1748a28f"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "BE7949E5-2DB5-1205-BFC2-9DF7E63325EA"
+   ],
+   "returns": "2052db5b-e794-69e5-bfc2-9df7e63325ea"
+  },
+  {
+   "args": [
+    "2bdba630-70f6-131f-9017-24a762c9de08"
+   ],
+   "returns": "31f70f62-bdba-6630-9017-24a762c9de08"
+  },
+  {
+   "args": [
+    "60C9C4B3-ECFF-1CA5-C058-EFACEFA6867A"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "b2c4abbc-6375-1b3f-aa5a-7bd1ed023f0a"
+   ],
+   "returns": "b3f6375b-2c4a-6bbc-aa5a-7bd1ed023f0a"
+  },
+  {
+   "args": [
+    "059411F8-985A-13B0-C57D-A957FF0D2D6D"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "6d1bc183-52c1-1e98-a396-ea4e132b1e3a"
+   ],
+   "returns": "e9852c16-d1bc-6183-a396-ea4e132b1e3a"
+  },
+  {
+   "args": [
+    "6564620dbf0213cdb9dd189d8ec2efd4"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "eb4f79d7-90e2-157b-b622-b195df82315d"
+   ],
+   "returns": "57b90e2e-b4f7-69d7-b622-b195df82315d"
+  },
+  {
+   "args": [
+    "9249f635-8720-175d-8562-dad5545de4dc"
+   ],
+   "returns": "75d87209-249f-6635-8562-dad5545de4dc"
+  },
+  {
+   "args": [
+    "b16109f0-c5ac-1683-8ce0-0c3cf1dc9a9b"
+   ],
+   "returns": "683c5acb-1610-69f0-8ce0-0c3cf1dc9a9b"
+  },
+  {
+   "args": [
+    "21E9E763-1BBF-10EF-B489-9E2DAA239B92"
+   ],
+   "returns": "0ef1bbf2-1e9e-6763-b489-9e2daa239b92"
+  },
+  {
+   "args": [
+    "5531594b-ff01-165a-8c0c-0f936130fbf9"
+   ],
+   "returns": "65aff015-5315-694b-8c0c-0f936130fbf9"
+  },
+  {
+   "args": [
+    "6367825e-ad31-155d-755f-ac12e7fd8b8e"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "2b18d742-d82f-18bf-cfca-eba3153f08f8"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "1a68419d-87af-1c60-9707-1035647e1b14"
+   ],
+   "returns": "c6087af1-a684-619d-9707-1035647e1b14"
+  },
+  {
+   "args": [
+    "871e42ae-1f50-186a-7989-9c75cb3d70e3"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "d9e68401-861a-1fb1-ba50-40371adb4190"
+   ],
+   "returns": "fb1861ad-9e68-6401-ba50-40371adb4190"
+  }
+ ]
+}

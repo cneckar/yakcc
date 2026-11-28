@@ -1,0 +1,233 @@
+{
+ "id": "container-number-valid",
+ "cases": [
+  {
+   "args": [
+    "CSQU3054383"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "CSQU3054384"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "csqu3054383"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "CSQR3054383"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "CSQU305438"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "C5QU3054383"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "TOLU4734787"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "ABZJ1234565"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "YYWU9271283"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "QVRZ5613010"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "SYDZ9060342"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "UIVU3983572"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "ADLZ4918386"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "OWRR1374400"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "UCOR2380905"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "NAMJ4802302"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "VSSZ0729844"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "BXMR8624029"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "jmxz4841308"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "KUZU6728976"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "MKIU6364378"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "SZSZ6159943"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "JJJR1603202"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "RJMJ6369951"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "JQDU3247147"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "JWYU5009144"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "YQYR5005036"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "YCYU9575844"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "npbu6748045"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "LVRJ5160160"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "NJMU1054142"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "MZOR4433047"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "VWKU7587766"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "JLMR8059657"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "BRNZ2921846"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "wanr2523552"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "FVNR6947747"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "QUWU8623588"
+   ],
+   "returns": true
+  }
+ ]
+}

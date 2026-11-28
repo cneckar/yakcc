@@ -7,7 +7,7 @@
 // takes, the same strings and the same state bytes after every decode and the flush.
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { type Fn, link } from "./__fixtures__/c-link.js";
+import { type Fn, link, runInitializers } from "./__fixtures__/c-link.js";
 import { shaveBinding } from "./__fixtures__/c-node.js";
 import { createCMemory, createCSystem } from "./raise-c.js";
 import { createV8 } from "./raise-cpp-v8.js";
@@ -66,12 +66,10 @@ describe.skipIf(!hasClang)("Node's string_decoder binding, shaved from node/src"
       /^_ZNK?(?:4node28NativeSymbolDebuggingContext|St7__cxx1119basic_ostringstream|St7__cxx1115basic_stringbuf|St15__uniq_ptr_implIN4node28Native|St12__shared_ptrIN2v812BackingStore|St14__shared_count|St27__uninitialized_default_n_1)/;
     expect(shaved.files.refused.filter((r) => !fatal.test(r))).toEqual([]);
     expect(shaved.musl.refused).toEqual([]);
-    expect([...shaved.musl.missing].sort()).toEqual([
-      "__cxa_demangle",
-      "backtrace",
-      "uv_get_process_title",
-      "uv_os_getpid",
-    ]);
+    // (The C library's functions node::Assert's native backtrace calls, which musl has not.)
+    expect(shaved.musl.missing.filter((m) => !["__cxa_demangle", "backtrace"].includes(m))).toEqual(
+      [],
+    );
     expect(shaved.missing.every((m) => /^_ZN?K?St(?:6locale|8ios_base|9basic_ios)/.test(m))).toBe(
       true,
     );
@@ -93,6 +91,8 @@ describe.skipIf(!hasClang)("Node's string_decoder binding, shaved from node/src"
       { ...(system.leaves as unknown as Record<string, Fn>), ...v8.leaves },
     );
     env.yk_musl_init?.();
+    // (Node's C++ globals constructed, as its startup does.)
+    runInitializers(env, [...shaved.files.units, ...shaved.units]);
     // The context, tagged as Node's and given its Environment; the binding's initializer on it.
     const context = memory.leaves.__ykAlloc(8, 8);
     memory.leaves.__ykStore64(context, BigInt(v8.context));

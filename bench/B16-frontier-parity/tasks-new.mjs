@@ -14,6 +14,35 @@ const pick = (rng, xs) => xs[rng.int(xs.length)];
 const str = (rng, alphabet, min, max) =>
   Array.from({ length: min + rng.int(max - min + 1) }, () => pick(rng, alphabet)).join("");
 const TEXT = [..."abcxyzABC 019 -_.~/é漢😀\n\t\"'"];
+const LETTERS = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
+const DIGITS = [..."0123456789"];
+// (Generators' own check digits, from the standards, so a generated input can be valid; the
+// expected values are still the reference's.)
+const iso6346Value = (c) => {
+  if (/\d/.test(c)) return Number(c);
+  let v = 10;
+  for (let x = 65; x < c.charCodeAt(0); x++) if (++v % 11 === 0) v++;
+  return v;
+};
+const iso6346Check = (ten) =>
+  ([...ten.toUpperCase()].reduce((s, c, i) => s + iso6346Value(c) * 2 ** i, 0) % 11) % 10;
+const iso7064Check = (digits) => {
+  let p = 10;
+  for (const d of digits) {
+    let t = (Number(d) + p) % 10;
+    if (t === 0) t = 10;
+    p = (t * 2) % 11;
+  }
+  return (11 - p) % 10;
+};
+const shuffle = (rng, xs) => {
+  const a = [...xs];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = rng.int(i + 1);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
 const version = (rng) => {
   const core = `${rng.int(4)}.${rng.int(12)}.${rng.int(12)}`;
   return rng.int(3) === 0 ? `${core}-${pick(rng, ["alpha", "beta", "rc"])}.${rng.int(12)}` : core;
@@ -80,7 +109,7 @@ export const newTasks = [
     id: "coerce-version",
     family: "versioning",
     lib: { file: "semver-7.8.0/functions/coerce.js", name: "coerce" },
-    spec: "Write `export function solve(text: string): string | null` that finds the first version-like run in `text` and returns it as a full `major.minor.patch` string, or null if there is none. A version-like run is one to three dot-separated runs of digits (each at most 16 digits); missing minor or patch become 0, anything after the third number is ignored, and prerelease or build suffixes are dropped. Examples: `v2` gives `2.0.0`, `1.2.3.4` gives `1.2.3`, `version 3.4 beta` gives `3.4.0`.",
+    spec: "Write `export function solve(text: string): string | null` that finds the first version-like run in `text` and returns it as a full `major.minor.patch` string, or null if there is none. A version-like run is one to three dot-separated runs of digits (each at most 16 digits); missing minor or patch become 0, anything after the third number is ignored, and prerelease or build suffixes are dropped. If a number of the first run has a leading zero (`06`, `007`; a lone `0` is fine), the result is null: no later run is tried. Examples: `v2` gives `2.0.0`, `1.2.3.4` gives `1.2.3`, `version 3.4 beta` gives `3.4.0`.",
     referenceGlue:
       "export function solve(text: string) { const v = lib.coerce(text); return v ? v.version : null; }",
     inputs: [
@@ -508,7 +537,7 @@ export const newTasks = [
     id: "domain-name-valid",
     family: "validation",
     lib: { file: "validator-13.15.35/lib/isFQDN.js", name: "isFQDN" },
-    spec: "Write `export function solve(name: string): boolean` that returns true when `name` is a fully qualified domain name: at least two dot-separated labels and no trailing dot; each label 1–63 characters of letters, digits and hyphens (no underscores), not starting or ending with a hyphen; the last label (the TLD) is at least two characters and is either all letters (international letters allowed) or a punycode label starting with `xn--`, and contains no digits otherwise; the whole name is at most 253 characters. Other labels may be all digits.",
+    spec: "Write `export function solve(name: string): boolean` that returns true when `name` is a fully qualified domain name: at least two dot-separated labels and no trailing dot; each label 1–63 characters of letters (international letters allowed, `bücher`), digits and hyphens (no underscores), not starting or ending with a hyphen; the last label (the TLD) is at least two characters and is either all letters (international letters allowed) or a punycode label starting with `xn--`, and contains no digits otherwise; the whole name is at most 253 characters. Other labels may be all digits.",
     referenceGlue: "export function solve(name: string) { return lib.isFQDN(name); }",
     inputs: [
       ["example.com"],
@@ -619,5 +648,156 @@ export const newTasks = [
         str(rng, [..."abcde"], 0, 70),
         str(rng, [..."abcde"], 0, 70),
       ]),
+  },
+  // ---------------------------------------------------------------- standards with check digits
+  {
+    id: "container-number-valid",
+    family: "validation",
+    lib: { file: "validator-13.15.35/lib/isISO6346.js", name: "isISO6346" },
+    spec: "Write `export function solve(code: string): boolean` that returns true when `code` is a valid ISO 6346 freight container number: exactly 11 characters, a 3-letter owner code, an equipment category identifier (U, J or Z), a 6-digit serial number and the check digit; letters may be any case. The check digit is ISO 6346's: each of the first 10 characters has a value (a digit its own; a letter 10 for A and upward, skipping the multiples of 11, so B is 12 and L is 23), multiplied by 2 to the power of its position (0 to 9); the sum mod 11, with 10 counting as 0, must equal the last digit.",
+    referenceGlue: "export function solve(code: string) { return lib.isISO6346(code); }",
+    vectors: [{ args: ["CSQU3054383"], returns: true, source: "ISO 6346 example (BIC)" }],
+    inputs: [
+      ["CSQU3054383"],
+      ["CSQU3054384"],
+      ["csqu3054383"],
+      ["CSQR3054383"],
+      ["CSQU305438"],
+      ["C5QU3054383"],
+      ["TOLU4734787"],
+      ["ABZJ1234565"],
+    ],
+    gen: (rng) =>
+      Array.from({ length: 30 }, () => {
+        const ten = `${str(rng, LETTERS, 3, 3)}${pick(rng, ["U", "U", "J", "Z", "R"])}${str(rng, DIGITS, 6, 6)}`;
+        const check =
+          rng.int(3) === 0 ? (iso6346Check(ten) + 1 + rng.int(9)) % 10 : iso6346Check(ten);
+        const code = `${ten}${check}`;
+        return [rng.int(4) === 0 ? code.toLowerCase() : code];
+      }),
+  },
+  {
+    id: "german-tax-id-valid",
+    family: "validation",
+    lib: { file: "validator-13.15.35/lib/isTaxID.js", name: "isTaxID" },
+    spec: "Write `export function solve(id: string): boolean` that returns true when `id` is a valid German tax identification number (Steuerliche Identifikationsnummer): after removing any slashes and backslashes, 11 digits, the first not 0; among the first 10 digits, exactly one digit occurs more than once, either twice or three times (three times only if the three are not all next to each other), and every other digit at most once; the 11th digit is the ISO 7064 MOD 11,10 check digit of the first 10.",
+    referenceGlue: "export function solve(id: string) { return lib.isTaxID(id, 'de-DE'); }",
+    inputs: [
+      ["26954371827"],
+      ["26954371828"],
+      ["2695437/1827"],
+      ["06954371827"],
+      ["2695437182"],
+      ["11234567890"],
+      ["11145678908"],
+      ["12345678901"],
+    ],
+    gen: (rng) =>
+      Array.from({ length: 40 }, () => {
+        const kind = rng.int(5); // 0-1 double, 2 triple, 3 two doubles, 4 all distinct
+        const ds = shuffle(rng, DIGITS);
+        let ten;
+        if (kind <= 1) ten = [...ds.slice(0, 9), ds[rng.int(9)]];
+        else if (kind === 2) ten = [...ds.slice(0, 8), ds[0], ds[0]];
+        else if (kind === 3) ten = [...ds.slice(0, 8), ds[0], ds[1]];
+        else ten = ds;
+        ten = shuffle(rng, ten);
+        // (A triple, sometimes all three adjacent.)
+        if (kind === 2 && rng.int(2) === 0) {
+          const t = ten.filter((d) => d === ds[0]).length === 3 ? ds[0] : undefined;
+          if (t !== undefined) {
+            const rest = ten.filter((d) => d !== t);
+            const at = rng.int(rest.length - 1) + 1;
+            ten = [...rest.slice(0, at), t, t, t, ...rest.slice(at)];
+          }
+        }
+        if (ten[0] === "0" && rng.int(4) !== 0) ten = [...ten.slice(1), ten[0]];
+        const check =
+          rng.int(4) === 0 ? (iso7064Check(ten) + 1 + rng.int(9)) % 10 : iso7064Check(ten);
+        const id = `${ten.join("")}${check}`;
+        return [rng.int(6) === 0 ? `${id.slice(0, 5)}/${id.slice(5)}` : id];
+      }),
+  },
+  {
+    id: "bic-valid",
+    family: "validation",
+    lib: { file: "validator-13.15.35/lib/isBIC.js", name: "isBIC" },
+    spec: "Write `export function solve(code: string): boolean` that returns true when `code` is a valid BIC (ISO 9362, a SWIFT code): 4 letters (the institution), 2 letters that are an assigned ISO 3166-1 alpha-2 country code (or XK, Kosovo), 2 letters or digits (the location), and optionally 3 letters or digits (the branch); letters may be any case, and nothing else may appear.",
+    referenceGlue: "export function solve(code: string) { return lib.isBIC(code); }",
+    vectors: [{ args: ["DEUTDEFF"], returns: true, source: "Deutsche Bank's published BIC" }],
+    inputs: [
+      ["DEUTDEFF"],
+      ["DEUTDEFF500"],
+      ["deutdeff"],
+      ["DEUTXXFF"],
+      ["DEUTUKFF"],
+      ["DEUTDEFF50"],
+      ["DEU1DEFF"],
+      ["DEUTDE1F"],
+      ["BKENXKPR"],
+      ["DEUT DEFF"],
+    ],
+    gen: (rng) =>
+      Array.from({ length: 30 }, () => {
+        const country = pick(rng, [
+          "DE",
+          "FR",
+          "GB",
+          "US",
+          "JP",
+          "CH",
+          "BR",
+          "IN",
+          "XK",
+          "XX",
+          "QQ",
+          "AA",
+          "UK",
+          "EU",
+          "ZZ",
+        ]);
+        const bank =
+          rng.int(6) === 0 ? str(rng, [...LETTERS, ...DIGITS], 4, 4) : str(rng, LETTERS, 4, 4);
+        const loc = str(rng, [...LETTERS, ...DIGITS], 2, 2);
+        const branch = pick(rng, [
+          "",
+          "",
+          "XXX",
+          str(rng, [...LETTERS, ...DIGITS], 3, 3),
+          str(rng, DIGITS, 2, 2),
+        ]);
+        const code = `${bank}${country}${loc}${branch}`;
+        return [rng.int(4) === 0 ? code.toLowerCase() : code];
+      }),
+  },
+  {
+    id: "uuid-v1-to-v6",
+    family: "hashing",
+    lib: { file: "uuid-11.1.1/dist/cjs-browser/v1ToV6.js", name: "v1ToV6" },
+    spec: "Write `export function solve(uuid: string): string | null` that converts a version-1 UUID (RFC 9562), given as 8-4-4-4-12 hexadecimal digits with hyphens in either case, to the version-6 UUID with the same timestamp, clock sequence and node, in RFC 9562's version-6 field order, written in lowercase. Return null if `uuid` is not a UUID in that form with RFC 9562's variant (the variant digit 8, 9, a or b).",
+    referenceGlue:
+      "export function solve(uuid: string) { try { return lib.v1ToV6(uuid); } catch { return null; } }",
+    vectors: [
+      {
+        args: ["C232AB00-9414-11EC-B3C8-9F6BDECED846"],
+        returns: "1ec9414c-232a-6b00-b3c8-9f6bdeced846",
+        source: "RFC 9562 appendix A (v1 and v6 examples)",
+      },
+    ],
+    inputs: [
+      ["c232ab00-9414-11ec-b3c8-9f6bdeced846"],
+      ["c232ab00941411ecb3c89f6bdeced846"],
+      ["c232ab00-9414-11ec-73c8-9f6bdeced846"],
+      ["c232ab00-9414-11ec-b3c8-9f6bdeced84"],
+      ["not a uuid"],
+    ],
+    gen: (rng) =>
+      Array.from({ length: 30 }, () => {
+        const variant = pick(rng, ["8", "9", "a", "b", "b", "c", "7"]);
+        let u = `${hex(rng, 8)}-${hex(rng, 4)}-1${hex(rng, 3)}-${variant}${hex(rng, 3)}-${hex(rng, 12)}`;
+        if (rng.int(5) === 0) u = u.toUpperCase();
+        if (rng.int(8) === 0) u = u.replaceAll("-", "");
+        return [u];
+      }),
   },
 ];
