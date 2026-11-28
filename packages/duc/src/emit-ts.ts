@@ -230,6 +230,12 @@ function emitFunction(
     for (const v of node.outputs) producer.set(v, node);
     for (const v of node.inputs) consumers.set(v, [...(consumers.get(v) ?? []), node]);
   }
+  // Every value something reads: a node, a result, or a branch's condition.
+  const readAnywhere = new Set<ValueId>([
+    ...consumers.keys(),
+    ...g.obs,
+    ...branches.map((b) => b.cond),
+  ]);
   const owners = joinOwners(g);
   const loops = g.nodes.filter((n) => n.kind === "loop");
 
@@ -546,6 +552,9 @@ function emitFunction(
     if (node.kind !== "op") throw new EmitError(`a ${node.kind} is not a statement`);
     const arg = (i: number): string => ref(node.inputs[i] as ValueId);
     if (label === "throw") return [`throw ${arg(0)};`];
+    // A read of a binding outside the atom that nothing uses is the statement `name;`: the read is
+    // what it does (it may throw), and lifted again it is that read (test262).
+    if (label === "binding" && !readAnywhere.has(out as ValueId)) return [`${arg(0)};`];
     // A module statement's one result: written below, as its declared names.
     if (label.startsWith(DECLARES) || label.startsWith(COMPLETES)) return [];
     // A write to a binding outside the atom: `name = value` (#1276).
@@ -1017,7 +1026,8 @@ function emitFunction(
   for (const node of g.nodes) for (const v of node.inputs) used.add(v);
   const unread = g.nodes
     .filter((n) => n.kind === "diamond-source" && !used.has(n.outputs[0] as ValueId))
-    .map((n) => `${nameOf(n.outputs[0] as ValueId)};`);
+    // `void name;`: `name;` is a read of a binding in its place, which lifts differently (test262).
+    .map((n) => `void ${nameOf(n.outputs[0] as ValueId)};`);
 
   const params = g.nodes
     .filter((n) => n.kind === "param-source" && paramIndex(n.label) >= bound.length)
