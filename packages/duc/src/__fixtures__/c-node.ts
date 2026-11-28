@@ -170,6 +170,8 @@ export function instantiateBinding(
     readonly perIsolate?: string;
     /** ICU's data, given as Node's startup gives it (yk_node_icu_data), first. */
     readonly icuData?: Uint8Array;
+    /** node-env.cc's startup parts run on the Environment (yk_node_environment_options). */
+    readonly environment?: readonly string[];
   } = {},
 ): { binding: Record<string, unknown>; v8: V8Host } {
   const memory = createCMemory();
@@ -190,7 +192,8 @@ export function instantiateBinding(
   runInitializers(env, [...shaved.files.units, ...shaved.units]);
   const context = memory.leaves.__ykAlloc(8, 8);
   memory.leaves.__ykStore64(context, BigInt(v8.context));
-  (env.yk_node_environment as Fn)(v8.isolate, context);
+  const environment = (env.yk_node_environment as Fn)(v8.isolate, context);
+  for (const part of options.environment ?? []) (env[part] as Fn)(environment);
   if (options.icuData !== undefined) (env.yk_node_icu_data as Fn)(memory.put(options.icuData));
   // A per-isolate initializer's template made the binding's object (its methods), then the
   // per-context one's properties on it, as Node's binding loader does.

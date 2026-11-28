@@ -49,3 +49,14 @@ extern "C" int yk_node_icu_data(const void *data) {
   return static_cast<int>(err);
 }
 #endif
+
+// The Environment's options, as its constructor takes them from the per-process options
+// (node_options.cc's per_process::cli_options, built by its initializer), and bootstrapping done:
+// what the options binding reads (getCLIOptionsValues).
+#include "node_options.h"
+extern "C" void yk_node_environment_options(void *environment) {
+  auto *env = static_cast<node::Environment *>(environment);
+  ::new (&env->options_) std::shared_ptr<node::EnvironmentOptions>(
+      node::per_process::cli_options->per_isolate->per_env);
+  env->principal_realm_->has_run_bootstrapping_code_ = true;
+}
