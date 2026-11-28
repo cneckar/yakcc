@@ -118,13 +118,25 @@ helpers that differ only in a name are counted apart. Even if renaming merged ma
 between real packages is too small to matter. Content addressing does not cut bloat by
 deduplication across packages.
 
-**2. Does atom-level dead-code removal beat a bundler's?** Open, and not unique to atoms where
-it wins. esbuild tree-shakes ESM at the statement level, which is the granularity of a program
-record's statements, so on ESM there is little to gain. On CommonJS, esbuild keeps whole
-modules. Keeping only the `exports.X = …` statements a requirer reads would cut far more: semver's
+**2. Does atom-level dead-code removal beat a bundler's?** No more than statement-level
+tree-shaking does. A program record's atom is a top-level statement, the unit ESM tree-shaking
+removes, so atoms can match that shaking but never remove more. On CommonJS, where bundlers keep
+whole modules, the gap is real. Only uuid ships both builds in the corpus; esbuild (minified)
+bundling one function from each:
+
+| Function | CommonJS (browser) | ESM (browser) | ESM ÷ CommonJS |
+|---|---|---|---|
+| `md5` | 3,387 | 3,228 | 0.95 |
+| `sha1` | 1,387 | 1,228 | 0.89 |
+| `v3` | 6,086 | 4,892 | 0.80 |
+| `v5` | 4,082 | 2,892 | 0.71 |
+| `parse` | 984 | 625 | 0.64 |
+| `v1ToV6` | 2,002 | 1,259 | 0.63 |
+| `v4` | 2,095 | 1,050 | 0.50 |
+
+That gap is what any CommonJS-aware tree-shaker closes, and so the most atoms could claim on
+size. So a win there is not evidence for atoms. The gap can be large inside one module: semver's
 `coerce` reaches all 60 statements of `internal/re.js` for the few regular expressions it uses.
-That is CommonJS tree-shaking, which any CommonJS-aware tree-shaker can do, so a win there is not
-evidence for atoms. A fair arm must compare against such a tree-shaker, not esbuild alone.
 
 ---
 
