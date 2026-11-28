@@ -13,6 +13,8 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -134,11 +136,34 @@ function cachedObject(what: string, compile: () => Uint8Array): Uint8Array {
   const dir = join(tmpdir(), "yakcc-native-cache");
   const key = createHash("sha256").update(what).digest("hex");
   const path = join(dir, `${key}.o`);
-  if (existsSync(path)) return new Uint8Array(readFileSync(path));
-  const obj = compile();
   mkdirSync(dir, { recursive: true });
-  const part = `${path}.${process.pid}.part`;
-  writeFileSync(part, obj);
-  renameSync(part, path);
-  return obj;
+  // One process compiles it; the others wait for its object (a lock held past two hours is a
+  // crashed process's, and taken over).
+  const lock = `${path}.lock`;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (;;) {
+    if (existsSync(path)) return new Uint8Array(readFileSync(path));
+    try {
+      mkdirSync(lock);
+      break;
+    } catch {
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > 2 * 3600_000)
+          rmSync(lock, { recursive: true, force: true });
+      } catch {
+        // (released meanwhile)
+      }
+      Atomics.wait(pause, 0, 0, 2000);
+    }
+  }
+  try {
+    if (existsSync(path)) return new Uint8Array(readFileSync(path));
+    const obj = compile();
+    const part = `${path}.${process.pid}.part`;
+    writeFileSync(part, obj);
+    renameSync(part, path);
+    return obj;
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
+  }
 }
