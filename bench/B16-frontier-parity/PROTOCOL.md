@@ -204,7 +204,8 @@ A hypothesis that fails is reported as failed.
 | 0 | Build cases (vectors checked), offline validation, dry run | $0 | |
 | 1 | Haiku arms × 34 tasks × 5 seeds; spec audit | about $2 | $3 |
 | 1b | `A-haiku` on all 37 tasks; the other Haiku arms on the 3 added and the 3 re-specced ones (305 attempts; phase 1 spent $3.08 on 610) | about $1.50 | $2, needs the go-ahead |
-| 2 | Sonnet, Opus and Fable scratch × 37 × 5 | about $119 (Fable about $76) | needs the go-ahead |
+| 1c–1e, calibration | Haiku reuse arms on the promoted tasks, the forced arm, the card fix; one frontier attempt per model on hard tasks | $2.85 | each under $2 |
+| 2 | Sonnet, Opus and Fable scratch on the 12 tasks Haiku from scratch passes below 0.8, × 5; the Haiku reuse arms afresh on all 42 with the fixed index (PHASE2-PROPOSAL.md) | about $61 | $80, needs the go-ahead |
 
 The estimates assume generous output lengths (thinking included). The runner tracks actual
 spend and stops at the cap. Rows are written as they finish, so a stopped run resumes.
