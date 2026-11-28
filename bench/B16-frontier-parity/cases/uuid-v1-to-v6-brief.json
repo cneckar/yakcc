@@ -1,0 +1,221 @@
+{
+ "id": "uuid-v1-to-v6-brief",
+ "cases": [
+  {
+   "args": [
+    "C232AB00-9414-11EC-B3C8-9F6BDECED846"
+   ],
+   "returns": "1ec9414c-232a-6b00-b3c8-9f6bdeced846"
+  },
+  {
+   "args": [
+    "c232ab00-9414-11ec-b3c8-9f6bdeced846"
+   ],
+   "returns": "1ec9414c-232a-6b00-b3c8-9f6bdeced846"
+  },
+  {
+   "args": [
+    "c232ab00941411ecb3c89f6bdeced846"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "c232ab00-9414-11ec-73c8-9f6bdeced846"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "c232ab00-9414-11ec-b3c8-9f6bdeced84"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "not a uuid"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "ffa4c7ec-e6b8-118a-8836-2f2011fd31ca"
+   ],
+   "returns": "18ae6b8f-fa4c-67ec-8836-2f2011fd31ca"
+  },
+  {
+   "args": [
+    "92ef8bf7-b600-1705-9f2c-71907ec11f60"
+   ],
+   "returns": "705b6009-2ef8-6bf7-9f2c-71907ec11f60"
+  },
+  {
+   "args": [
+    "27BFD7B7D6951324C674FC9DC722FE7B"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "6E5F0F69-2856-1BBE-8ED2-A7E17D2E89A7"
+   ],
+   "returns": "bbe28566-e5f0-6f69-8ed2-a7e17d2e89a7"
+  },
+  {
+   "args": [
+    "2bc64621-0e84-17c1-9015-632111742901"
+   ],
+   "returns": "7c10e842-bc64-6621-9015-632111742901"
+  },
+  {
+   "args": [
+    "4954876DD7C811CA76C7BF93A58D4BFD"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "A2BC0D16-F829-14C8-BA80-A313C0AF8923"
+   ],
+   "returns": "4c8f829a-2bc0-6d16-ba80-a313c0af8923"
+  },
+  {
+   "args": [
+    "584d4b64-0e3f-1d87-74e3-3aff5565f246"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "3520765c-dcdf-137b-ce18-eb4ac279c3df"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "32be7d83-84c5-1e1e-71c1-9c75002cb9ba"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "2018e53f-80b7-10e3-b288-3983be8e5122"
+   ],
+   "returns": "0e380b72-018e-653f-b288-3983be8e5122"
+  },
+  {
+   "args": [
+    "e1df5f9c-4d1e-1066-bdb3-0f1a70f0fde4"
+   ],
+   "returns": "0664d1ee-1df5-6f9c-bdb3-0f1a70f0fde4"
+  },
+  {
+   "args": [
+    "BAD61F67-FDC6-1DB6-B815-868616BD73E8"
+   ],
+   "returns": "db6fdc6b-ad61-6f67-b815-868616bd73e8"
+  },
+  {
+   "args": [
+    "53cb32ef-fa85-1cf6-ad39-b571ad8f9fb3"
+   ],
+   "returns": "cf6fa855-3cb3-62ef-ad39-b571ad8f9fb3"
+  },
+  {
+   "args": [
+    "7c8950c1-c958-114c-9cc5-f4441b130433"
+   ],
+   "returns": "14cc9587-c895-60c1-9cc5-f4441b130433"
+  },
+  {
+   "args": [
+    "6dfa2ff0-79f6-123c-936e-002a9a79b815"
+   ],
+   "returns": "23c79f66-dfa2-6ff0-936e-002a9a79b815"
+  },
+  {
+   "args": [
+    "537467ea-315d-142e-7005-45be283ec7f5"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "b62bd418-062d-1220-76f1-7cf1e84c7e64"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "f2e0caf7-e470-123d-92b4-2c4be7894117"
+   ],
+   "returns": "23de470f-2e0c-6af7-92b4-2c4be7894117"
+  },
+  {
+   "args": [
+    "ce72c528-f59e-1e0b-72c6-d78e20dc1a71"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "a0095017-0ad8-19d8-8efe-cab1fdad9d54"
+   ],
+   "returns": "9d80ad8a-0095-6017-8efe-cab1fdad9d54"
+  },
+  {
+   "args": [
+    "b0f53ba0-d046-1a07-8e9e-afc6d5a8adf8"
+   ],
+   "returns": "a07d046b-0f53-6ba0-8e9e-afc6d5a8adf8"
+  },
+  {
+   "args": [
+    "e690bc4d-c71a-1586-a22a-4270c53aa760"
+   ],
+   "returns": "586c71ae-690b-6c4d-a22a-4270c53aa760"
+  },
+  {
+   "args": [
+    "b3db84e8-c178-1d1f-cb92-801164ad767b"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "8E3E24CA-5728-15A7-7894-81FBC9F7AF28"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "c8ad700f-5a93-185c-9420-e221202800ed"
+   ],
+   "returns": "85c5a93c-8ad7-600f-9420-e221202800ed"
+  },
+  {
+   "args": [
+    "e01b2851-a50c-1612-b5ee-6d464bb48b34"
+   ],
+   "returns": "612a50ce-01b2-6851-b5ee-6d464bb48b34"
+  },
+  {
+   "args": [
+    "c7b7f618-dba9-1f5d-c9d8-893f1e1526f5"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "43F2DA39-611E-1A2B-7782-2A6F86E131FF"
+   ],
+   "returns": null
+  },
+  {
+   "args": [
+    "09dd519a-31e9-10c1-801c-5105bff56c12"
+   ],
+   "returns": "0c131e90-9dd5-619a-801c-5105bff56c12"
+  }
+ ]
+}

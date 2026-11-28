@@ -64,12 +64,12 @@ preregistered hypotheses test; `A-haiku` is secondary (§6).
 
 ## 4. Tasks
 
-37 tasks in 5 families (34 in phase 1, see below):
+42 tasks in 5 families (34 in phase 1, see below):
 
 | Family | Tasks | Examples |
 |---|---|---|
-| Versioning | 9 | npm range matching, containment, overlap, lowest version, bump, diff, sort |
-| Validation | 14 | IBAN, ISBN, IPv6, payment cards, ISIN, EAN, ISSN, MAC, lat/long, FQDN, URLs, e-mail, container numbers, German tax IDs |
+| Versioning | 12 | npm range matching, containment, overlap, lowest version, bump, diff, sort |
+| Validation | 16 | IBAN, ISBN, IPv6, payment cards, ISIN, EAN, ISSN, MAC, lat/long, FQDN, URLs, e-mail, container numbers, German tax IDs, Czech birth numbers, Bulgarian EGNs |
 | Hashing and encodings | 6 | MD5, SHA-1, UUID v3, v5 and v1 to v6, base64 |
 | Data and algorithms | 6 | deep copy, path updates, JSON Pointer, edit distance, closest match, topological sort |
 | Dates | 2 | ISO 8601 parsing (week and ordinal dates), ISO formatting |
@@ -93,6 +93,48 @@ snapshot that no date of the standard matches, `SLL` current and `ZWG` absent. B
 was added and then dropped: `isBIC`'s code is under the index's 150-node floor, since its
 country list is data, so the routed arm could never find it and the oracle arm would get no
 module. It is left out for bcrypt's reason, §8.)
+
+**Screened after phase 1b (6 tasks promoted, 42 in all).** Phase 1b showed the hard set was
+5 tasks, 4 of one family. Candidates were then screened, each run under $2: Haiku from scratch
+(`S-haiku`) and with the module handed over (`O-haiku`), 5 seeds each (`results/screen-1` to
+`screen-5`, $0.84 in all). A candidate joins the set only when it is hard from scratch
+(pass@1 < 0.6) and `O-haiku` passes it, so its spec is not the cause. Where a module departs
+from its standard, the spec states the module's choice, or the inputs avoid the departure.
+Every validation candidate's expected values were also checked against an independent
+implementation of its standard.
+
+- **Specs that restate the algorithm make tasks easy.** With every table and rule spelled out,
+  Haiku from scratch passed all four national-ID candidates 5 of 5. The test is then of
+  transcription, not of the knowledge a developer's need leaves to the model. So candidates
+  were also screened with *brief* specs, as a developer states a need: the standard named, and
+  only the module's choices where it departs from the standard or the standard leaves one open.
+  This is the rule of §4 read strictly. The semver tasks were already written this way ("npm
+  range semantics").
+- **Promoted** (S-haiku pass@1, O-haiku pass@1):
+  - `normalize-range` (semver `validRange`): 0.0, 1.0;
+  - `below-range` (`ltr`): 0.0, 1.0;
+  - `lowest-satisfying` (`minSatisfying`): 0.2, 1.0;
+  - `czech-birth-number-valid-brief` (rodné číslo): 0.0, 1.0;
+  - `german-tax-id-valid-brief`: 0.0, 1.0. It replaces `german-tax-id-valid`, whose full spec
+    Haiku passed 5 of 5; that task is dropped;
+  - `bulgarian-egn-valid` (EGN, brief): 0.0, 1.0.
+- **Screened and left out as easy** (S-haiku 4 or 5 of 5), with full or brief specs:
+  - codice fiscale, Finnish HETU, Romanian CNP, Polish NIP and PESEL, Estonian isikukood,
+    Hungarian tax number, Danish CPR;
+  - lodash's path syntax;
+  - brief variants of the ISO 6346 container number, semver `inc`, `diff`, `coerce` and `sort`,
+    and UUID v1 to v6.
+- **Left out for a module quirk.** ISO timestamps (brief) failed from scratch only on
+  `2007-W53-2`, a week that does not exist (2007 has 52 ISO weeks) but that date-fns accepts.
+  With the choice stated, Haiku passed 5 of 5.
+- **Left out unscreened:**
+  - `isISO8601`'s strict mode, `isEmail` and `isMailtoURI`: chains of the module's own
+    conventions, which a spec could only transcribe;
+  - `isDate`: it throws on ordinary inputs;
+  - Swedish personnummer: its check depends on today's date;
+  - lodash `merge`: not a findable root.
+- **The hard set is now 11 tasks:** 8 versioning (semver) and 3 validation (national IDs).
+  Data, dates and hashing have none in this corpus.
 
 The 13 B14 tasks keep their hand-checked cases. The 21 new tasks are in `tasks-new.mjs`. Each
 task's held-out cases come from three places:
@@ -162,7 +204,8 @@ A hypothesis that fails is reported as failed.
 | 0 | Build cases (vectors checked), offline validation, dry run | $0 | |
 | 1 | Haiku arms × 34 tasks × 5 seeds; spec audit | about $2 | $3 |
 | 1b | `A-haiku` on all 37 tasks; the other Haiku arms on the 3 added and the 3 re-specced ones (305 attempts; phase 1 spent $3.08 on 610) | about $1.50 | $2, needs the go-ahead |
-| 2 | Sonnet, Opus and Fable scratch × 37 × 5 | about $119 (Fable about $76) | needs the go-ahead |
+| 1c–1e, calibration | Haiku reuse arms on the promoted tasks, the forced arm, the card fix; one frontier attempt per model on hard tasks | $2.85 | each under $2 |
+| 2 | Sonnet, Opus and Fable scratch on the 12 tasks Haiku from scratch passes below 0.8, × 5; the Haiku reuse arms afresh on all 42 with the fixed index (PHASE2-PROPOSAL.md) | about $61 | $80, needs the go-ahead |
 
 The estimates assume generous output lengths (thinking included). The runner tracks actual
 spend and stops at the cap. Rows are written as they finish, so a stopped run resumes.

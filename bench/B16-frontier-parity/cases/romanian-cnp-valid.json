@@ -1,0 +1,323 @@
+{
+ "id": "romanian-cnp-valid",
+ "cases": [
+  {
+   "args": [
+    "1960101123456"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1960101123457"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "9000123456789"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "5000229123458"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1000229123450"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "7000229123453"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "196010112345"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2961301123456"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "9920830278422"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "4990314740998"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "5110528457192"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "4950909396226"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "9600327714775"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2960125478571"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "5930625700448"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "6890609031006"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "3991223246855"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "9770926714558"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "9820625835518"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "5980725390601"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "9490928731744"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "3681120081849"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "3201226573636"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2130501608771"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1780707358521"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2101201920461"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "8481115909699"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "5420210794578"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "5840303754884"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "7981225497101"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "3481005757985"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1371222506971"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "9391210881720"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2470626451619"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2650931941058"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1901018051027"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1561115922428"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0611028592581"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1520726950967"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "5411109104344"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "9310612596411"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "3480626998302"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "3320126521466"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2180911499605"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2730709478456"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2620716620091"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "6430513084172"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2970908506692"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "6230718976929"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "3970309370684"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "7951008890487"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "5281120653547"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "6211303977103"
+   ],
+   "returns": false
+  }
+ ]
+}

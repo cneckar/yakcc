@@ -1,0 +1,305 @@
+{
+ "id": "estonian-id-code-valid",
+ "cases": [
+  {
+   "args": [
+    "37605030299"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "37605030298"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "50001010006"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "37605037119"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "77605030299"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "14404082929"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "43108173534"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "65709129794"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "52205193481"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "95609177927"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "87905052843"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "69810023754"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "19201023188"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "58303140199"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "30801013150"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "31905053549"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "99008166859"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "61104082571"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "53007080995"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "55112274789"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "31802142953"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "90111065919"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "87611221823"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "88612106676"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "88402126462"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "60310073798"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "60508111452"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "48704190674"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "35412044998"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "05709293740"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "59907186335"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "64401220427"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "65512057092"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "68703090873"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "69603273631"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "51908295798"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "38003224780"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "08104024600"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "63604069577"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "69108196229"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "14908105426"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "64603044259"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "12302021312"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "27402043765"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "47804021095"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "30510216688"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "46312246268"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "87510034725"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "05304212002"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "89001052423"
+   ],
+   "returns": false
+  }
+ ]
+}

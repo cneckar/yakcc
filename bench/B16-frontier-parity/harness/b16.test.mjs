@@ -122,7 +122,7 @@ describe("analysis", () => {
   it("the plan covers arms × tasks × seeds and prices phase 2 higher than phase 1", () => {
     const p1 = plan({ arms: ARMS.filter((a) => a.phase === 1), tasks, seeds: 5 });
     const p2 = plan({ arms: ARMS.filter((a) => a.phase === 2), tasks, seeds: 5 });
-    assert.equal(p1.attempts.length, 5 * tasks.length * 5);
+    assert.equal(p1.attempts.length, 6 * tasks.length * 5);
     assert.ok(p2.dollars > 10 * p1.dollars);
   });
 });

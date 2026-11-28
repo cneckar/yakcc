@@ -97,6 +97,14 @@ export function scratchPrompt(task) {
   return `Task: ${task.spec}\n\n${CODE_RULES}`;
 }
 
+/** The need prompt without its escape: a library is always searched (B16's forced arm). */
+export function forcedNeedPrompt(task) {
+  return needPrompt(task).replace(
+    /\s*If the task is small enough that no library would help, reply NONE\.$/,
+    " A library search will be run with what you say, so say it even if you would write the code yourself.",
+  );
+}
+
 export function needPrompt(task) {
   return `Task: ${task.spec}\n\nBefore writing any code, say what reusable library module would do the heavy lifting for this task, as one or two sentences for a code search: the capability, its inputs and outputs, the behavior that matters. No code. If the task is small enough that no library would help, reply NONE.`;
 }
@@ -196,6 +204,8 @@ export async function runReuse({
   rootSourceOf,
   k = 5,
   route = false,
+  // Always search: the need prompt has no NONE escape, and a NONE still given searches the task.
+  force = false,
   routeLines = ROUTE_LINES,
   // The scorer (task, code, reuse?) → { pass, ... }; B16 passes one that counts every case.
   score: scoreFn = scoreSolution,
@@ -212,7 +222,11 @@ export async function runReuse({
     return r.text;
   };
   const arm = route ? "routed" : "reuse";
-  const first = (await call(route ? routePrompt(task, routeLines) : needPrompt(task))).trim();
+  const first = (
+    await call(
+      route ? routePrompt(task, routeLines) : force ? forcedNeedPrompt(task) : needPrompt(task),
+    )
+  ).trim();
   if (route && /```/.test(first)) {
     const code = extractCode(first);
     const score = scoreFn(task, code);
@@ -232,7 +246,7 @@ export async function runReuse({
       pickedTarget: false,
     };
   }
-  const needText = first;
+  const needText = force && /^NONE\b/i.test(first) ? task.spec : first;
   let picked = null;
   let shown = [];
   if (!/^NONE\b/i.test(needText)) {

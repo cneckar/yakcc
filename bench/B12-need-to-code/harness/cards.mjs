@@ -51,7 +51,9 @@ export function docAbove(fileText, lineStart) {
   while (end >= 0 && lines[end].trim() === "") end--;
   if (end < 0 || !lines[end].trim().endsWith("*/")) return null;
   let start = end;
-  while (start >= 0 && !lines[start].includes("/**")) start--;
+  // (The comment's own opening, `/**` or `/*`: searching only for `/**` ran past a plain block
+  // comment to an earlier one, taking it and the code between, isTaxID's card being ukUaCheck's.)
+  while (start >= 0 && !lines[start].includes("/*")) start--;
   if (start < 0) return null;
   const body = lines.slice(start, end + 1).map((l) =>
     l
