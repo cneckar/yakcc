@@ -948,7 +948,21 @@ function parseType(spelled: string, depth = 0): CType {
   // (Its template's arguments spelled with typedefs, `optional<std::string_view>`: the types.)
   const parts = templateParts(raw);
   if (parts !== undefined && depth < 16) {
-    const args = parts.args.map((a) => unitTypedef(a) ?? a);
+    // (An argument a typedef with a pointer or qualifier, `DetachableVector<Address *>`: the
+    // typedef's type in it, `unsigned long *`.)
+    const argOf = (a: string): string => {
+      const whole = unitTypedef(a);
+      if (whole !== undefined) return whole;
+      const m = /^((?:const |volatile )*)([A-Za-z_][\w:]*)((?:\s*(?:\*|&|const|volatile))*)$/.exec(
+        a.trim(),
+      );
+      if (m === null) return a;
+      const base = unitTypedef(m[2] as string);
+      return base === undefined
+        ? a
+        : `${m[1]}${base}${(m[3] ?? "").startsWith(" ") ? "" : " "}${(m[3] ?? "").trim()}`.trim();
+    };
+    const args = parts.args.map(argOf);
     if (args.some((a, i) => a !== parts.args[i]))
       return parseType(`${parts.head}<${args.join(", ")}>${parts.tail}`, depth + 1);
   }
