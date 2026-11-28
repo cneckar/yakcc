@@ -69,6 +69,8 @@ export interface ClangNode {
  */
 interface UnitIndex {
   readonly path: string;
+  /** The dump, open while the index is: readable even when the cache removes the file. */
+  readonly fd: number;
   /** The top-level declarations, in order. */
   readonly decls: readonly IndexedDecl[];
   readonly byName: ReadonlyMap<string, readonly IndexedDecl[]>;
@@ -104,6 +106,15 @@ const FUNCTION_KINDS = new Set([
   "CXXDestructorDecl",
   "CXXConversionDecl",
 ]);
+
+/** Each index's open dump, closed once the index is collected. */
+const dumpsOpen = new FinalizationRegistry<number>((fd) => {
+  try {
+    closeSync(fd);
+  } catch {
+    // closed already
+  }
+});
 
 /** Dump a unit's AST to a file and index its declarations. */
 export function indexUnit(clang: string, args: readonly string[], file: string): UnitIndex {
@@ -184,6 +195,7 @@ export function indexUnit(clang: string, args: readonly string[], file: string):
   const arrayKeys: (string | undefined)[] = [];
   let functions = 0; // open function declarations: their locals are not indexed
   const fd = openSync(path, "r");
+  let ok = false;
   try {
     const size = statSync(path).size;
     const chunk = Buffer.alloc(1 << 24);
@@ -331,30 +343,27 @@ export function indexUnit(clang: string, args: readonly string[], file: string):
       }
       at += n;
     }
+    ok = true;
   } finally {
-    closeSync(fd);
+    if (!ok) closeSync(fd);
   }
-
-  return { path, decls, byName, byId, byMangled, next, previous };
+  const ix = { path, fd, decls, byName, byId, byMangled, next, previous };
+  dumpsOpen.register(ix, fd);
+  return ix;
 }
 
 /** One indexed declaration, parsed. */
 function readDecl(ix: UnitIndex, d: IndexedDecl): ClangNode {
-  const fd = openSync(ix.path, "r");
-  try {
-    const b = Buffer.alloc(d.end - d.start);
-    readSync(fd, b, 0, b.length, d.start);
-    // (Documentation comments clang attaches to declarations are not code: left out.)
-    const text = b.toString("utf8");
-    if (!text.includes('"FullComment"')) return JSON.parse(text) as ClangNode;
-    return JSON.parse(text, (_k, v: unknown) =>
-      Array.isArray(v) && v.some((x) => (x as { kind?: string } | null)?.kind === "FullComment")
-        ? v.filter((x) => (x as { kind?: string } | null)?.kind !== "FullComment")
-        : v,
-    ) as ClangNode;
-  } finally {
-    closeSync(fd);
-  }
+  const b = Buffer.alloc(d.end - d.start);
+  readSync(ix.fd, b, 0, b.length, d.start);
+  // (Documentation comments clang attaches to declarations are not code: left out.)
+  const text = b.toString("utf8");
+  if (!text.includes('"FullComment"')) return JSON.parse(text) as ClangNode;
+  return JSON.parse(text, (_k, v: unknown) =>
+    Array.isArray(v) && v.some((x) => (x as { kind?: string } | null)?.kind === "FullComment")
+      ? v.filter((x) => (x as { kind?: string } | null)?.kind !== "FullComment")
+      : v,
+  ) as ClangNode;
 }
 
 /** A declaration's definition (its body), through its redeclarations, by id. */
