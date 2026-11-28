@@ -8707,6 +8707,20 @@ function staticDefinition(
     readonly constInit?: (d: ClangNode) => ClangNode | undefined;
   },
 ): StaticDef {
+  // (An offsetof in the initializer is found in this declaration, not the function raised.)
+  const savedFn = raisingFn;
+  raisingFn = decl;
+  try {
+    return staticDefinitionOf(decl, hooks);
+  } finally {
+    raisingFn = savedFn;
+  }
+}
+
+function staticDefinitionOf(
+  decl: ClangNode,
+  hooks: Parameters<typeof staticDefinition>[1],
+): StaticDef {
   const t = ctype(decl.type);
   const init: StaticItem[] = [];
   const typeOf = (e: ClangNode): CType => ctype(e.type);
