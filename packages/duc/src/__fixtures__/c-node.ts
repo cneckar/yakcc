@@ -41,6 +41,13 @@ export const NODE_ARGS: readonly string[] = [
   "-DSIMDUTF_IMPLEMENTATION_WESTMERE=0",
   "-DSIMDUTF_IMPLEMENTATION_FALLBACK=1",
   "-Wno-invalid-offsetof",
+  // (ICU's configuration, as tools/icu/icu-generic.gyp's icu_uconfig gives its dependents: it
+  // changes ICU's classes' layouts.)
+  "-DUCONFIG_NO_SERVICE=1",
+  "-DU_ENABLE_DYLOAD=0",
+  "-DU_STATIC_IMPLEMENTATION=1",
+  "-DU_HAVE_STD_STRING=1",
+  "-DUCONFIG_NO_BREAK_ITERATION=0",
   ...[
     "src",
     "deps/v8/include",
@@ -66,6 +73,22 @@ export const NODE_ARGS: readonly string[] = [
     "deps/uvwasi/include",
   ].map((d) => `-I${NODE}${d}`),
 ];
+
+/**
+ * The arguments of a file of node/src's build: Node's; ICU's own sources (deps/icu-small) as
+ * icu-generic.gyp compiles them, with RTTI and their implementation defines.
+ */
+export const nodeArgsFor = (file: string): readonly string[] => {
+  const icu = /deps\/icu-small\/source\/(common|i18n|stubdata)\//.exec(file);
+  if (icu === null) return NODE_ARGS;
+  return [
+    ...NODE_ARGS.filter((a) => a !== "-fno-rtti"),
+    "-frtti",
+    "-DU_ATTRIBUTE_DEPRECATED=",
+    "-Wno-deprecated-declarations",
+    icu[1] === "i18n" ? "-DU_I18N_IMPLEMENTATION=1" : "-DU_COMMON_IMPLEMENTATION=1",
+  ];
+};
 
 export interface ShavedBinding {
   /** The binding's own unit and node-env.cc's (Node's startup for its context). */
@@ -112,7 +135,7 @@ export function shaveBinding(
       `${FIXTURES}cxx-runtime.cpp`,
     ],
     wanted,
-    NODE_ARGS,
+    nodeArgsFor,
     "clang++",
     // (The statics the binding's unit and node-env.cc use that another file defines: env.cc's
     // context tag.)

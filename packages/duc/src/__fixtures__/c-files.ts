@@ -18,9 +18,14 @@ export interface ShavedFiles {
 }
 
 /** The symbols each file defines, by its object's symbol table: name -> file (the first file's). */
+/** A file's arguments: one list for all, or each file's own (Node's src/ and its ICU, for one). */
+export type FileArgs = readonly string[] | ((file: string) => readonly string[]);
+const argsFor = (args: FileArgs, file: string): readonly string[] =>
+  typeof args === "function" ? args(file) : args;
+
 function definitions(
   files: readonly string[],
-  args: readonly string[],
+  args: FileArgs,
   clang = "clang",
 ): Map<string, string> {
   const out = new Map<string, string>();
@@ -34,7 +39,7 @@ function definitions(
       files
         .map(
           (f, i) =>
-            `clang ${args.map(q).join(" ")} -c ${q(f)} -o ${q(join(work, `${i}.o`))} 2>/dev/null`,
+            `clang ${argsFor(args, f).map(q).join(" ")} -c ${q(f)} -o ${q(join(work, `${i}.o`))} 2>/dev/null`,
         )
         .join("\n"),
     );
@@ -60,7 +65,7 @@ function definitions(
 export function shaveCFiles(
   files: readonly string[],
   roots: readonly string[],
-  args: readonly string[],
+  args: FileArgs,
   /** The compiler: clang (C), clang++ (C++, whose functions link by their mangled names). */
   clang = "clang",
   /** Statics the caller's own units use, for these files to define (by their keys). */
@@ -131,7 +136,7 @@ export function shaveCFiles(
       const t = Date.now();
       let unit: ShavedUnit;
       try {
-        unit = shaveCUnit(file, names, args, clang, basename(file), [], cxx);
+        unit = shaveCUnit(file, names, argsFor(args, file), clang, basename(file), [], cxx);
       } catch (e) {
         // (A unit that fails as a whole, a static it cannot lay out: refused, and the rest on.)
         refused.push(`${names.join(", ")} (${basename(file)}): ${(e as Error).message}`);
@@ -150,7 +155,7 @@ export function shaveCFiles(
     pendingStatics.clear();
     for (const [f, keys] of staticsByFile) {
       try {
-        take(shaveCUnit(f, [], args, clang, basename(f), keys, cxx), f);
+        take(shaveCUnit(f, [], argsFor(args, f), clang, basename(f), keys, cxx), f);
       } catch (e) {
         refused.push(`${keys.join(", ")} (${basename(f)}): ${(e as Error).message}`);
       }
