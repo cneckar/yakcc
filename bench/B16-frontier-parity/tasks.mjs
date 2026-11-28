@@ -140,6 +140,13 @@ const EXTRA = {
     Array.from({ length: 20 }, () => [Math.floor(rng.next() * 4102444800000)]),
 };
 
+// Spec fixes from the phase 1 audit (PROTOCOL.md §4): a B14 task's spec as B16 states it, B14's
+// own left as its run recorded it.
+const SPEC = {
+  "canonical-emails":
+    "Write `export function solve(emails: string[]): string[]` that canonicalizes email addresses for deduplication and returns the distinct canonical forms in first-seen order. Lowercase the whole address. For gmail.com and googlemail.com, also remove any `+suffix` and every single dot from the local part (a run of two or more dots is kept as it is), and use the domain gmail.com. For outlook.com, hotmail.com and live.com, remove any `+suffix`. Leave other domains lowercased only.",
+};
+
 export const tasks = [
   ...b14.map((t) => {
     const family = {
@@ -157,7 +164,8 @@ export const tasks = [
       "md5-hex": "hashing",
       "base64-decode": "hashing",
     }[t.id];
-    return EXTRA[t.id] ? { ...t, family, gen: EXTRA[t.id] } : { ...t, family };
+    const spec = SPEC[t.id] ?? t.spec;
+    return EXTRA[t.id] ? { ...t, spec, family, gen: EXTRA[t.id] } : { ...t, spec, family };
   }),
   ...newTasks,
 ];
