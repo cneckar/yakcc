@@ -5,6 +5,7 @@
 // hand cases but wrong on the general behavior fails. Held-out cases are built by
 // harness/build-cases.mjs into cases/<id>.json; see PROTOCOL.md.
 import { tasks as b14 } from "../B14-module-reuse/tasks.mjs";
+import { DROPPED, PROMOTED, briefOfExisting, candidateTasks } from "./tasks-candidates.mjs";
 import { newTasks } from "./tasks-new.mjs";
 
 const pick = (rng, xs) => xs[rng.int(xs.length)];
@@ -169,4 +170,19 @@ export const tasks = [
   }),
   ...newTasks,
 ];
+// The candidates (tasks-candidates.mjs), and the brief specs of tasks in the set; the promoted
+// ones join the set, the rest only screening runs (B16_CANDIDATES=1).
+const briefs = Object.entries(briefOfExisting).flatMap(([id, spec]) => {
+  const base = tasks.find((t) => t.id === id);
+  return base ? [{ ...base, id: `${id}-brief`, spec, briefOf: id }] : [];
+});
+const extra = [...candidateTasks, ...briefs];
+for (const id of DROPPED)
+  tasks.splice(
+    tasks.findIndex((t) => t.id === id),
+    1,
+  );
+tasks.push(
+  ...(process.env.B16_CANDIDATES === "1" ? extra : extra.filter((t) => PROMOTED.includes(t.id))),
+);
 export const FAMILIES = [...new Set(tasks.map((t) => t.family))];

@@ -1,0 +1,299 @@
+{
+ "id": "bulgarian-egn-valid",
+ "cases": [
+  {
+   "args": [
+    "7523169263"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "7523169264"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0041010006"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "7552010005"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "3506111920"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "6408205105"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0805085695"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "8842100059"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "4268114054"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1703094220"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "9227162087"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "4032268856"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "8331287567"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1948262280"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "4205162978"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2812228094"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "6742204040"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "5722074290"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "7270283093"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "9902247724"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2427159239"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "6723251700"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "4305242350"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1910188820"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "8212081318"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "8512144814"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1345174667"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2847261853"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0427183387"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "6331090893"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "7364068834"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0202134639"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "3762236745"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0732107696"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "6927235179"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "9812267112"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2145109156"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "5766109070"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "7208164675"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "4509214875"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "8044055461"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "6323083984"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1021266820"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1912084023"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1808111742"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "9447048006"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "7246288402"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "4205060901"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1803048675"
+   ],
+   "returns": false
+  }
+ ]
+}

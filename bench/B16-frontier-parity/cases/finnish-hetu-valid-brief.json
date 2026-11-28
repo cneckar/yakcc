@@ -1,0 +1,287 @@
+{
+ "id": "finnish-hetu-valid-brief",
+ "cases": [
+  {
+   "args": [
+    "131052-308T"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "131052A308T"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "131052-308U"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "131052B308T"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "290200A123J"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "290201A123X"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "131052-308t"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "130372+869D"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "090413-401A"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "170471+2685"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "281113a728s"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "080317-259A"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "061143-1921"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "140611b209e"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "080401-127R"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "150873B082L"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "270275-574W"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "200921+679F"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "161161A153D"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "130915b816u"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "250194-080S"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "140810+7143"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "240848B159E"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "270185-342R"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "220985-4618"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "240320-6246"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "220340+4571"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "110225b3072"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "140956A7575"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "280421-307L"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "100816A087U"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "161094-677d"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "100355+709f"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "100461B197S"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "260745A8072"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "130469-836s"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "200771a515f"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "031206A055X"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "200657-5495"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "050219b118y"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "140381+4252"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "240902A673X"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "191118A0690"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "220794a906a"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "221255-511k"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "251206A037J"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "051012-226N"
+   ],
+   "returns": true
+  }
+ ]
+}

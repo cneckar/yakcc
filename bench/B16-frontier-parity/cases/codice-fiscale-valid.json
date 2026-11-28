@@ -1,0 +1,305 @@
+{
+ "id": "codice-fiscale-valid",
+ "cases": [
+  {
+   "args": [
+    "RSSMRA85T10A562S"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "rssmra85t10a562s"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "RSSMRA85T10A562T"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "RSSMRA85T50A562W"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "RSSMRA85B30A562S"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "RSSMRA84B29A562W"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "RSSMRA85T10A56NH"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "RSSMRAURT10A562S"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "RSXMRA85T10A562S"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "RSSMRA85T10A562"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "FBRHCL52E58H115K"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "EOXQRA51E73A714J"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "EUXOOX01P21F148H"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "NAUGXQ49T67H396U"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "HDWJYF59M23F834J"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "CQIGAU25T50G257A"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "HVOZPA90S11L366U"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "FOUMLL40A68M522V"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "VEEHCU42H69G273F"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "FUOGBU89L28M210M"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "BBUPCU99S08D498C"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "MWYAEX04C64G156R"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "TXIOUX47P05A716S"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "XQACSL86P26E327M"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "beewie51l47m644h"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "HOIKHU57R56G541M"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "AUXRIE78P17M433U"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "AUXDOI64P69D108J"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "TGBHIO37H31MN35J"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "XUUDTO63D61I943U"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "yjioox32p67b163e"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "XAOIIX22L62B071N"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "DOIUEX18H03E129V"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "ffpxhdp0l67f712w"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "fvnuax8sb60a398j"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "DOIVRO42S41C372B"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "AIXRPE92M24L367W"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "JIIJIUT5T54B553Q"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "EAXWQA65A64A2S4O"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "naasnu20s43c660b"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "NIEBEE76R52A429U"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "FUIUIX45AN4I856F"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "XZEBWM07A07G364D"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "HRHUUX21B19E371B"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "mwutfi82m09l441y"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "DFAFRE64MQ3B294Y"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "zbamfh09mr7g078k"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "QJIOUX53A11F054V"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "TYONVAN5T19F766F"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "KSCPDA1MT03F882C"
+   ],
+   "returns": true
+  }
+ ]
+}

@@ -1,0 +1,233 @@
+{
+ "id": "container-number-valid-brief",
+ "cases": [
+  {
+   "args": [
+    "CSQU3054383"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "CSQU3054384"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "csqu3054383"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "CSQR3054383"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "CSQU305438"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "C5QU3054383"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "TOLU4734787"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "ABZJ1234565"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "lgvr3441114"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "ODNR7627185"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "TPPU8096659"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "ZQOR5665360"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "URKJ7040570"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "AOQR4434149"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "BHDZ6525928"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "OIHJ2720420"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "DBQU5768496"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "jwsu7636889"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "mzau3881647"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "koyr2666277"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "VMXU2925543"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "RQRJ7305632"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "nylu2875930"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "ipkj2229550"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "XPHR9499455"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "IRZU1599044"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "GJSJ7265352"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "BIAZ9787327"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "ffej5252101"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "GTQU4604330"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "NZGZ5509460"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "CHKZ4724465"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "ingj2128330"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "QBHU9182107"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "EIFZ6621517"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "TOXU6475486"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "mbvj5692136"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "thqz1566917"
+   ],
+   "returns": true
+  }
+ ]
+}

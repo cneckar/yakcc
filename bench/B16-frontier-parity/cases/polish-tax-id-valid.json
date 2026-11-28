@@ -1,0 +1,341 @@
+{
+ "id": "polish-tax-id-valid",
+ "cases": [
+  {
+   "args": [
+    "44051401359"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "44051401358"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "5260250995"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "5260250996"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "02270803628"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "99923112349"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "14451757801"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "64110718396"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "44412483883"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "70722285861"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "7092233897"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "6424881496"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2655477238"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "51641382376"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "31112041702"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "16211505783"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2144504230"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "44020748852"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "98281405157"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "68842557803"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "52471167924"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "78712610202"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1045628566"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "70090354777"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "6351609072"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2559729482"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "3383217592"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "3573957300"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "6365917240"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "29832790835"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "4529161144"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "26091852144"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0963527669"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "35270652059"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "74271866379"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "94250618423"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "05261876924"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "30860106543"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "11700776091"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "26872279782"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "43501108233"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "32041984029"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "68450539635"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "36021434292"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "70822273814"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1037349767"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "4274042504"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "26111560075"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "25012432695"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "85490102076"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "67410207279"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "73121235921"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "3778743459"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "7804015512"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "95250400753"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "44022212218"
+   ],
+   "returns": true
+  }
+ ]
+}

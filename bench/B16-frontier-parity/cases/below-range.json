@@ -1,0 +1,292 @@
+{
+ "id": "below-range",
+ "cases": [
+  {
+   "args": [
+    "1.0.0",
+    "^1.0.1"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1.0.0",
+    "^1.0.0"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0.9.9",
+    ">=1.0.0 || <0.5.0"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1.2.3-beta.1",
+    "^1.2.3"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0.0.1",
+    "*"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2.0.0",
+    "1.x"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1.1.0-alpha.2",
+    "<=0.0"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0.2.1",
+    "*"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0.1.3",
+    "0.0.1-alpha.2 - 2.1.3"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2.0.2",
+    "<=1.3"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1.0.3",
+    "2.2.2-rc.0 - 1.3.1"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2.2.2",
+    ">=0.1.3 <2.3.0-beta.2"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0.3.3-rc.1",
+    "2.2"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0.2.3",
+    ">=0.2.2 <1.3.2"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0.2.2",
+    "<=2.0"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1.2.0",
+    "<=0.0"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0.3.2",
+    "~0.2.1"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1.2.1",
+    "1.3"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0.3.0",
+    "1.x"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0.3.2",
+    "2.3.2 - 1.1.1"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2.0.0",
+    "2.2"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0.3.2-rc.1",
+    "<=0.2"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0.0.1",
+    "^0.1.1 || ~2.3.3"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2.1.2",
+    "<=1.3"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1.1.2-beta.2",
+    "<=0.0"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2.1.3-beta.2",
+    "<=2.1"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1.1.3-beta.1",
+    "^1.2.3 || ~2.1.0-rc.1"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0.2.3",
+    ">1.3.2"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2.1.3",
+    ">1.3.3"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2.3.1",
+    ">0.3.3"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2.0.0",
+    "2.1.0 - 0.3.1-beta.1"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2.0.0",
+    ">=1.1.0 <0.2.3"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "2.3.1",
+    "2.x"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1.3.3",
+    "^1.2.1-alpha.0 || ~2.3.2"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0.0.0",
+    ">=2.2.0-rc.1 <2.3.0"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2.1.2",
+    "^0.1.0-rc.1 || ~0.2.1-alpha.2"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0.3.0",
+    "^1.3.1 || ~0.0.0-alpha.1"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "0.3.0",
+    "<=1.3"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1.3.1-rc.1",
+    "^2.0.2-alpha.0"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "2.1.1",
+    "2.x"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "1.1.2-rc.1",
+    "1.x"
+   ],
+   "returns": true
+  }
+ ]
+}

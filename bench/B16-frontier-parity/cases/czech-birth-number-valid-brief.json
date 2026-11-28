@@ -1,0 +1,335 @@
+{
+ "id": "czech-birth-number-valid-brief",
+ "cases": [
+  {
+   "args": [
+    "7103192745"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "710319/2745"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "5502281234"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "736028/5163"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "0451010004"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "535231/000"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "535231/001"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "8562310011"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "8562315014"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "7103192746"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "078110/7910"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "580309863"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "7752207860"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "7411216065"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "6430170681"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "437213285"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "066203092"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "370109580"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "392413/0683"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "607207/0345"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "9555323900"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "186125/5645"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "285308/159"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "050917227"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "087310610"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "800814/3539"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "352220/4170"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "6373095848"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "690307/1637"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "7778266034"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "008110/166"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "775402/9833"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "370506/344"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "200904/9584"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "7962045828"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "8201220852"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "4475147644"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1381018949"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "100404/3117"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "771127/0193"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "997719/7351"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "110206/433"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "300303/2593"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "4007054513"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "6605013118"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "525403/3378"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "9303182174"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "590217/6737"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "591024/000"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "3751259237"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "822716/5144"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "257926987"
+   ],
+   "returns": false
+  },
+  {
+   "args": [
+    "775911/6618"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "775201/1784"
+   ],
+   "returns": true
+  },
+  {
+   "args": [
+    "1312158448"
+   ],
+   "returns": false
+  }
+ ]
+}
