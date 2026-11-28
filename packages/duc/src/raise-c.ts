@@ -579,7 +579,9 @@ let unitCxx: CxxUnit | undefined;
  */
 let contextSpaces = "";
 /** The unit's offsetof values (UnitTypes.offsetOf). */
-let unitOffsetOf: (e: ClangNode) => number | undefined = () => undefined;
+let unitOffsetOf: (e: ClangNode, fn?: ClangNode) => number | undefined = () => undefined;
+/** The function raiseCFunction is raising (an offsetof's, in a large unit, is found by it). */
+let raisingFn: ClangNode | undefined;
 
 /** A node's source range as offsets only (clang's JSON leaves out a location's repeated parts). */
 export function rangeKey(e: ClangNode): string {
@@ -1429,8 +1431,9 @@ export interface UnitTypes {
   /** An enumeration constant's value, by its declaration's id when known (C++'s scoped
    * enumerations reuse names: `state::FILE`, `scheme::FILE`), else by its name. */
   readonly enumValue?: (name: string, id?: string) => bigint | undefined;
-  /** An offsetof expression's value (clang's JSON does not say which member). */
-  readonly offsetOf?: (e: ClangNode) => number | undefined;
+  /** An offsetof expression's value (clang's JSON does not say which member), in the function
+   * being raised. */
+  readonly offsetOf?: (e: ClangNode, fn?: ClangNode) => number | undefined;
   /** C++: a unit's classes (an indexed unit's). */
   readonly cxx?: CxxUnit;
 }
@@ -1988,12 +1991,15 @@ export function raiseCFunction(
   unitCxx = types.cxx;
   unitEnumValue = types.enumValue ?? (() => undefined);
   unitOffsetOf = types.offsetOf ?? (() => undefined);
+  const savedFn = raisingFn;
+  raisingFn = fn;
   localTypedefs.clear();
   try {
     return raiseBody(fn, resolve, externals, resolveGlobal, types.static);
   } finally {
     [unitTypedef, unitLayout, unitLongDouble64] = saved;
     [unitEnumValue, unitOffsetOf, unitCxx] = savedEnum;
+    raisingFn = savedFn;
     localTypedefs.clear();
     localScopes = [];
   }
@@ -3021,7 +3027,7 @@ function raiseBody(
       case "CXXRewrittenBinaryOperator":
         return expr(k0);
       case "OffsetOfExpr": {
-        const v = unitOffsetOf(e);
+        const v = unitOffsetOf(e, raisingFn);
         if (v === undefined) throw new RaiseCError("an offsetof whose member is not known");
         return wide(typeOf(e)) ? `${v}n` : String(v);
       }
@@ -7271,7 +7277,88 @@ function shaveUnit(
   };
   // offsetof: clang's -ast-print writes each one's member, in the order of the unit's nodes.
   let offsets: Map<string, [string, string]> | undefined;
-  const offsetOf = (e: ClangNode): number | undefined => {
+  const designators = (printed: string): [string, string][] =>
+    // (A type may be an unnamed record's, `struct (unnamed struct at f.c:110:51)`.)
+    [...printed.matchAll(/__builtin_offsetof\(((?:[^,()]|\([^()]*\))+),([^()]*)\)/g)].map(
+      (m) => [m[1] as string, m[2] as string] as [string, string],
+    );
+  const offsetNodes = (root: unknown): ClangNode[] => {
+    const nodes: ClangNode[] = [];
+    const walk = (v: unknown): void => {
+      if (Array.isArray(v)) for (const x of v) walk(x);
+      else if (v !== null && typeof v === "object") {
+        if ((v as ClangNode).kind === "OffsetOfExpr") nodes.push(v as ClangNode);
+        for (const x of Object.values(v)) walk(x);
+      }
+    };
+    walk(root);
+    return nodes;
+  };
+  // A large unit's (V8's: its whole printing is more than a string holds): the function's own,
+  // printed alone (-ast-dump-filter selects -ast-print's declarations too), each match under its
+  // `Printing <qualified name>:` header. Of those named as the function is, with as many offsetofs,
+  // the members they write, when all agree; else none.
+  const byFunction = new Map<string, Map<string, [string, string]>>();
+  const offsetInFunction = (e: ClangNode, fn: ClangNode): [string, string] | undefined => {
+    const key = fn.id ?? rangeKey(fn);
+    let found = byFunction.get(key);
+    if (found === undefined) {
+      found = new Map();
+      byFunction.set(key, found);
+      const name = fn.name ?? "";
+      const nodes = offsetNodes(fn);
+      if (name !== "" && nodes.length > 0) {
+        const printed = execFileSync(
+          clang,
+          [
+            ...args,
+            "-fsyntax-only",
+            "-Xclang",
+            "-ast-print",
+            "-Xclang",
+            `-ast-dump-filter=${name}`,
+            file,
+          ],
+          { encoding: "utf8", maxBuffer: 1 << 30, stdio: ["ignore", "pipe", "ignore"] },
+        );
+        const blocks = printed.split(/^Printing (.*):$/m);
+        // Its qualified name, from the index: its namespaces, the classes it is a member of.
+        let full: string | undefined;
+        const at = fn.id === undefined ? undefined : indexed?.byId.get(fn.id);
+        if (at !== undefined && indexed !== undefined) {
+          const classes: string[] = [];
+          for (let x = at, k = 0; x.parent !== undefined && k < 8; k++) {
+            const up = indexed.byId.get(x.parent);
+            if (up === undefined || !RECORD_KINDS.has(up.kind)) break;
+            classes.unshift(up.name);
+            x = up;
+          }
+          full = [namespacesOf(indexed, at), ...classes, name].filter((p) => p !== "").join("::");
+        }
+        const exact: [string, string][][] = [];
+        const named: [string, string][][] = [];
+        for (let i = 1; i + 1 < blocks.length; i += 2) {
+          const header = (blocks[i] as string).replace(/<[^:]*>/g, "");
+          if (header.split("::").pop() !== name) continue;
+          const ds = designators(blocks[i + 1] as string);
+          if (ds.length !== nodes.length) continue;
+          (header === full ? exact : named).push(ds);
+        }
+        const candidates = exact.length > 0 ? exact : named;
+        const same = (a: [string, string][], b: [string, string][]): boolean =>
+          a.every(([t, p], i) => t === b[i]?.[0] && p === b[i]?.[1]);
+        const first = candidates[0];
+        if (first !== undefined && candidates.every((c) => same(c, first)))
+          nodes.forEach((n, i) => found?.set(rangeKey(n), first[i] as [string, string]));
+      }
+    }
+    return found.get(rangeKey(e));
+  };
+  const offsetOf = (e: ClangNode, fn?: ClangNode): number | undefined => {
+    if (indexed !== undefined && fn !== undefined) {
+      const d = offsetInFunction(e, fn);
+      return d === undefined ? undefined : offsetOfDesignator(...d);
+    }
     if (offsets === undefined) {
       const printed = execFileSync(
         clang,
@@ -8609,7 +8696,7 @@ function staticDefinition(
         return { k: "v", v: BigInt(e.name === "sizeof" ? sizeOf(at) : alignOf(at)) };
       }
       case "OffsetOfExpr": {
-        const v = unitOffsetOf(e);
+        const v = unitOffsetOf(e, raisingFn);
         if (v === undefined) throw new RaiseCError("an offsetof whose member is not known");
         return { k: "v", v: BigInt(v) };
       }
@@ -8715,8 +8802,39 @@ function staticDefinition(
   };
   /** The bytes of the bit-fields initialized: offset -> its bits. */
   const bitBytes = new Map<number, number>();
+  // The static's end: past its type, the arrays its std::initializer_lists hold.
+  let end = sizeOf(t);
+  let endAlign = alignOf(t);
   const put = (e: ClangNode | undefined, ty: CType, offset: number): void => {
-    const n = e === undefined || e.kind === "ImplicitValueInitExpr" ? undefined : stripParens(e);
+    let n = e === undefined || e.kind === "ImplicitValueInitExpr" ? undefined : stripParens(e);
+    while (n !== undefined && /^(ExprWithCleanups|ConstantExpr)$/.test(n.kind))
+      n = stripParens((n.inner ?? [])[0] as ClangNode);
+    if (n?.kind === "CXXStdInitializerListExpr" && ty.k === "rec") {
+      // A std::initializer_list (C++, `constexpr std::initializer_list<T> table{..}`, V8's string
+      // tables): its array is the static's too, laid out after it, and the list its address and
+      // length (libstdc++'s _M_array and _M_len; libc++'s __begin_ and __size_).
+      let arr = (n.inner ?? [])[0] as ClangNode | undefined;
+      while (arr !== undefined && arr.kind !== "InitListExpr")
+        arr = (arr.inner ?? [])[0] as ClangNode | undefined;
+      const self = hooks.staticKey(decl);
+      if (arr === undefined || self === undefined)
+        throw new RaiseCError("the initializer CXXStdInitializerListExpr");
+      const at = ctype(arr.type);
+      const l = layoutOf(ty);
+      const ptr = l.fields.get("_M_array") ?? l.fields.get("__begin_");
+      const len = l.fields.get("_M_len") ?? l.fields.get("__size_");
+      if (at.k !== "arr" || ptr === undefined || len === undefined)
+        throw new RaiseCError("the initializer CXXStdInitializerListExpr");
+      const a = alignOf(at);
+      const where = Math.ceil(end / a) * a;
+      end = where + sizeOf(at);
+      endAlign = Math.max(endAlign, a);
+      init.push({ offset: offset + ptr.offset, static: self, addend: where });
+      if ((at.size ?? 0) !== 0)
+        init.push({ offset: offset + len.offset, kind: "u64", value: BigInt(at.size ?? 0) });
+      put(arr, at, where);
+      return;
+    }
     if (ty.k === "arr") {
       const count = ty.size ?? 0;
       const size = sizeOf(ty.of);
@@ -8774,7 +8892,7 @@ function staticDefinition(
   };
   put(initOf(decl), t, 0);
   for (const [at, value] of bitBytes) init.push({ offset: at, kind: "u8", value });
-  return { size: sizeOf(t), align: alignOf(t), init };
+  return { size: end, align: endAlign, init };
 }
 
 /**
