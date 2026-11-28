@@ -212,6 +212,7 @@ export function shaveBinding(
     wanted,
     nodeArgsFor,
     "clang++",
+    undefined,
     // (The statics the binding's unit and node-env.cc use that another file defines: env.cc's
     // context tag.)
     [env, root].flatMap((u) => [...u.staticRefs].filter((k) => !u.statics.has(k))),

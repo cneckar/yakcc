@@ -668,7 +668,7 @@ describe("boxed values on other architectures, under QEMU (#1292)", () => {
         });
         expect(disagreements(source, inputs, target)).toEqual([]);
       },
-      180_000,
+      3_600_000,
     );
   for (const target of ["aarch64-linux", "arm-linux", "riscv64-linux"])
     it.skipIf(!canRun(target))(
@@ -688,7 +688,7 @@ describe("boxed values on other architectures, under QEMU (#1292)", () => {
         expect(stderr).toBe("");
         expect(results.every((r, i) => same(r, wants[i]))).toBe(true);
       },
-      180_000,
+      3_600_000,
     );
 });
 

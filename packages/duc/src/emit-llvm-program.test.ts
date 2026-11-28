@@ -368,6 +368,7 @@ describe.skipIf(!canRun("x86_64-linux"))("programs, natively (#1333)", () => {
         expect([nolibc.status, nolibc.stderr.toString()]).toEqual([0, ""]);
         expect(nolibc.stdout.toString().split("\n").slice(0, -1)).toEqual(want);
       },
-      900_000,
+      // (The first build for a target compiles the runtime's atoms, once, cached.)
+      3_600_000,
     );
 });

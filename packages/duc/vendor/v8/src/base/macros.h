@@ -173,7 +173,7 @@ namespace base {
 // base::is_trivially_copyable will differ for these cases.
 template <typename T>
 struct is_trivially_copyable {
-#if V8_CC_MSVC
+#if V8_CC_MSVC || (__GNUC__ == 12 && __GNUC_MINOR__ <= 2)
   // Unfortunately, MSVC 2015 is broken in that std::is_trivially_copyable can
   // be false even though it should be true according to the standard.
   // (status at 2018-02-26, observed on the msvc waterfall bot).
@@ -181,6 +181,11 @@ struct is_trivially_copyable {
   // intended, so we reimplement this according to the standard.
   // See also https://developercommunity.visualstudio.com/content/problem/
   //          170883/msvc-type-traits-stdis-trivial-is-bugged.html.
+  //
+  // GCC 12.1 and 12.2 are broken too, they are shipped by some stable Linux
+  // distributions, so the same polyfill is also used.
+  // See
+  // https://gcc.gnu.org/git/?p=gcc.git;a=commitdiff;h=aeba3e009b0abfccaf01797556445dbf891cc8dc
   static constexpr bool value =
       // Copy constructor is trivial or deleted.
       (std::is_trivially_copy_constructible<T>::value ||
@@ -368,9 +373,9 @@ bool is_inbounds(float_t v) {
 // Setup for Windows shared library export.
 #define V8_EXPORT_ENUM
 #ifdef BUILDING_V8_SHARED_PRIVATE
-#define V8_EXPORT_PRIVATE __declspec(dllexport)
+#define V8_EXPORT_PRIVATE
 #elif USING_V8_SHARED_PRIVATE
-#define V8_EXPORT_PRIVATE __declspec(dllimport)
+#define V8_EXPORT_PRIVATE
 #else
 #define V8_EXPORT_PRIVATE
 #endif  // BUILDING_V8_SHARED
@@ -380,8 +385,8 @@ bool is_inbounds(float_t v) {
 // Setup for Linux shared library export.
 #if V8_HAS_ATTRIBUTE_VISIBILITY
 #ifdef BUILDING_V8_SHARED_PRIVATE
-#define V8_EXPORT_PRIVATE __attribute__((visibility("default")))
-#define V8_EXPORT_ENUM V8_EXPORT_PRIVATE
+#define V8_EXPORT_PRIVATE
+#define V8_EXPORT_ENUM
 #else
 #define V8_EXPORT_PRIVATE
 #define V8_EXPORT_ENUM

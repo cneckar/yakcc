@@ -18,9 +18,10 @@ const doc = join(here, "../../../docs/duc/runtime-inventory-1516.md");
  * this); none raises it: no built-in or engine feature is added to the runtime (#1361's direction,
  * 2026-11-27). 15,008 when the inventory was made (main at #1521); 15,219 when the leaves left
  * runtime/ for LLVM (native-leaves.ts, native-system.ts): 698 lines deleted, and 211 lines of
- * BigInt()'s and the C library's code that had sat in the leaves' sections counted as what they are.
+ * BigInt()'s and the C library's code that had sat in the leaves' sections counted as what they are;
+ * 15,206 when BigInt's arithmetic became V8's own (src/bigint, shaved).
  */
-const CEILING = 15_219;
+const CEILING = 15_206;
 
 describe("the native runtime's inventory (#1516)", () => {
   const sections = runtimeInventory(runtime);

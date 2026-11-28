@@ -73,8 +73,8 @@ export interface ClangNode {
 interface UnitIndex {
   readonly path: string;
   /**
-   * The dump, open for as long as the index is used (the shave of its unit): another process's
-   * cache may remove the file (its least recently used), and an open file stays readable.
+   * The dump, open while the index is (the shave of its unit, or until the index is collected):
+   * readable even when another process's cache removes the file.
    */
   readonly fd: number;
   /** The top-level declarations, in order. */
@@ -113,8 +113,17 @@ const FUNCTION_KINDS = new Set([
   "CXXConversionDecl",
 ]);
 
+/** Each index's open dump, closed once the index is collected. */
+const dumpsOpen = new FinalizationRegistry<number>((fd) => {
+  try {
+    closeSync(fd);
+  } catch {
+    // closed already
+  }
+});
+
 /** Dump a unit's AST to a file and index its declarations. */
-function indexUnit(clang: string, args: readonly string[], file: string): UnitIndex {
+export function indexUnit(clang: string, args: readonly string[], file: string): UnitIndex {
   // One dump per unit (its command and its file, as last changed), kept in a shared cache and
   // reused: SQLite's is 725 MB, and a process that ends without its exit handlers (a test
   // worker) would leave one behind each run. Dumps unused for a day are removed.
@@ -204,7 +213,8 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
   // (a reference to one, `"referencedDecl": {"id", "kind", "name"}`, is not).
   const arrayKeys: (string | undefined)[] = [];
   let functions = 0; // open function declarations: their locals are not indexed
-  {
+  let ok = false;
+  try {
     const size = fstatSync(fd).size;
     const chunk = Buffer.alloc(1 << 24);
     let inString = false;
@@ -214,6 +224,27 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
       const n = readSync(fd, chunk, 0, chunk.length, at);
       for (let i = 0; i < n; i++) {
         const c = chunk[i] as number;
+        // A string not read (most of a dump's bytes): to its closing quote at once.
+        if (inString && text === undefined && !escaped) {
+          let q = chunk.indexOf(0x22, i);
+          while (q !== -1) {
+            let k = q - 1;
+            while (k >= i && chunk[k] === 0x5c) k--;
+            if ((q - 1 - k) % 2 === 0) break;
+            q = chunk.indexOf(0x22, q + 1);
+          }
+          if (q === -1) {
+            let k = n - 1;
+            while (k >= i && chunk[k] === 0x5c) k--;
+            escaped = (n - 1 - k) % 2 === 1;
+            i = n;
+            continue;
+          }
+          // (Its closing quote: the string ends, nothing of it kept.)
+          inString = false;
+          i = q;
+          continue;
+        }
         if (inString) {
           if (escaped) escaped = false;
           else if (c === 0x5c) escaped = true;
@@ -323,32 +354,37 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
             previous.set(d.id, f.previous);
           }
           if (top) decls.push(d);
-          byName.set(d.name, [...(byName.get(d.name) ?? []), d]);
+          const named = byName.get(d.name);
+          if (named === undefined) byName.set(d.name, [d]);
+          else named.push(d);
         }
       }
       at += n;
     }
+    ok = true;
+  } finally {
+    if (!ok) closeSync(fd);
   }
-
-  // (Closed when the shave that opened it is done: see shaveCUnit.)
-  openIndexes.push(fd);
-  return { path, fd, decls, byName, byId, byMangled, next, previous };
+  const ix = { path, fd, decls, byName, byId, byMangled, next, previous };
+  // (Closed when the shave that opened it is done, see shaveCUnit; one made outside a shave, when
+  // it is collected. Never both: an fd closed twice may be another file's by then.)
+  dumpsOpen.register(ix, fd, ix);
+  openIndexes.push(ix);
+  return ix;
 }
 
 /** One indexed declaration, parsed. */
 function readDecl(ix: UnitIndex, d: IndexedDecl): ClangNode {
-  {
-    const b = Buffer.alloc(d.end - d.start);
-    readSync(ix.fd, b, 0, b.length, d.start);
-    // (Documentation comments clang attaches to declarations are not code: left out.)
-    const text = b.toString("utf8");
-    if (!text.includes('"FullComment"')) return JSON.parse(text) as ClangNode;
-    return JSON.parse(text, (_k, v: unknown) =>
-      Array.isArray(v) && v.some((x) => (x as { kind?: string } | null)?.kind === "FullComment")
-        ? v.filter((x) => (x as { kind?: string } | null)?.kind !== "FullComment")
-        : v,
-    ) as ClangNode;
-  }
+  const b = Buffer.alloc(d.end - d.start);
+  readSync(ix.fd, b, 0, b.length, d.start);
+  // (Documentation comments clang attaches to declarations are not code: left out.)
+  const text = b.toString("utf8");
+  if (!text.includes('"FullComment"')) return JSON.parse(text) as ClangNode;
+  return JSON.parse(text, (_k, v: unknown) =>
+    Array.isArray(v) && v.some((x) => (x as { kind?: string } | null)?.kind === "FullComment")
+      ? v.filter((x) => (x as { kind?: string } | null)?.kind !== "FullComment")
+      : v,
+  ) as ClangNode;
 }
 
 /** A declaration's definition (its body), through its redeclarations, by id. */
@@ -863,6 +899,8 @@ function parseType(spelled: string, depth = 0): CType {
   }
   // An anonymous member record (C++), desugared (`std::basic_string<char>::(anonymous union at
   // f.h:204:7)`): the record, tagged as its spelling says.
+  // (C++: a name qualified from the global scope, `::v8::base::Use`: the name.)
+  if (raw.startsWith("::")) return parseType(raw.slice(2), depth + 1);
   const anon = /\((?:anonymous|unnamed) (struct|union|class) at [^()]*\)$/.exec(raw);
   if (anon !== null) return { k: "rec", name: `${anon[1]} ${raw}` };
   if (/\)$/.test(raw)) return { k: "fn" };
@@ -3119,7 +3157,9 @@ function raiseBody(
         )
           return (place(e) as Place & { k: "mem" }).addr;
         // (A record cast to void, `(void)u.minor;`, is not read.)
-        if (ck === "ToVoid") return typeOf(k0).k === "rec" ? "undefined" : expr(k0);
+        // (A record's or an array's value is not read: `(void)arr`, V8's USE().)
+        if (ck === "ToVoid")
+          return typeOf(k0).k === "rec" || typeOf(k0).k === "arr" ? "undefined" : expr(k0);
         if (
           [
             "IntegralCast",
@@ -3606,6 +3646,14 @@ function raiseBody(
         // returned. (`_mm_shuffle_epi32` is a macro of `__builtin_ia32_pshufd`.)
         // std::addressof's builtin: its operand's address.
         if (name === "__builtin_addressof" && kids.length === 2) return argOf(kids[1] as ClangNode);
+        // fpclassify's builtin (`__builtin_fpclassify(FP_NAN, FP_INFINITE, FP_NORMAL, FP_SUBNORMAL,
+        // FP_ZERO, x)`): the class of x, by its value.
+        if (name === "__builtin_fpclassify" && kids.length === 7) {
+          const [nan, inf, normal, sub, zero, x] = kids.slice(1).map((k) => expr(k as ClangNode));
+          const v = `__fpc${temps++}`;
+          top.push(`let ${v} = 0;`);
+          return `((${v} = (${x})), (${v} !== ${v} ? ${nan} : ${v} === Infinity || ${v} === -Infinity ? ${inf} : ${v} === 0 ? ${zero} : (${v} < 0 ? -${v} : ${v}) < 2.2250738585072014e-308 ? ${sub} : ${normal}))`;
+        }
         const vec = vectorIntrinsic(name, kids.slice(1), ret);
         if (vec !== undefined) return vec;
         // (A record argument is passed by address: see argOf.)
@@ -3632,7 +3680,9 @@ function raiseBody(
           const to = typeOf(e);
           const from = typeOf(kids[1] as ClangNode);
           if (to.k === "u64" && from.k === "f64") return `__ykF64Bits(${args[0]})`;
+          if (to.k === "i64" && from.k === "f64") return `__ykI64(__ykF64Bits(${args[0]}))`;
           if (to.k === "f64" && from.k === "u64") return `__ykF64FromBits(${args[0]})`;
+          if (to.k === "f64" && from.k === "i64") return `__ykF64FromBits(__ykU64(${args[0]}))`;
           // Between integers of one width: the same bits, read as the other signedness.
           if (
             sizeOf(to) === sizeOf(from) &&
@@ -5996,16 +6046,18 @@ export function shaveCUnit(
   try {
     return shaveUnit(file, filters, args, clang, unit, defineStatics, bySymbol);
   } finally {
-    for (const fd of openIndexes.splice(opened))
+    for (const ix of openIndexes.splice(opened)) {
+      dumpsOpen.unregister(ix);
       try {
-        closeSync(fd);
+        closeSync(ix.fd);
       } catch {
         // closed already
       }
+    }
   }
 }
-/** The dumps indexes have open, in the order opened (see shaveCUnit). */
-const openIndexes: number[] = [];
+/** The indexes open, in the order opened (see shaveCUnit). */
+const openIndexes: UnitIndex[] = [];
 
 function shaveUnit(
   file: string,
@@ -7275,10 +7327,16 @@ function shaveUnit(
         }
         for (const k of n.inner ?? []) walk(k);
       };
-      for (const d of eachDecl(
-        new Set(["EnumDecl", "TypedefDecl", "NamespaceDecl", "LinkageSpecDecl"]),
-      ))
-        walk(d);
+      // (An indexed unit's enumerations each by itself, in order: a namespace's whole extent can be
+      // larger than a string holds, V8's v8::internal.)
+      if (indexed !== undefined)
+        for (const e of [...enumDecls()].sort((a, b) => a.start - b.start))
+          walk(readDecl(indexed, e));
+      else
+        for (const d of eachDecl(
+          new Set(["EnumDecl", "TypedefDecl", "NamespaceDecl", "LinkageSpecDecl"]),
+        ))
+          walk(d);
       enums = values;
     }
     return enums.get(name);
