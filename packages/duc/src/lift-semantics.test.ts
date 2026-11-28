@@ -344,7 +344,7 @@ describe("8. test262: a read of a name outside the atom where it is written, and
 
   it("in order after the calls before it", () => {
     agrees(
-      "export function f(a) { const log = [a]; try { log.push(1); void zzzUnresolvedC; } catch (e) { log.push(2); } return log; }",
+      "export function f(a) { const log = [a]; try { log.push(1); zzzUnresolvedC; } catch (e) { log.push(2); } return log; }",
       [[0]],
     );
   });

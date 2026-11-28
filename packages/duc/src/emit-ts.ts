@@ -1024,7 +1024,8 @@ function emitFunction(
   for (const node of g.nodes) for (const v of node.inputs) used.add(v);
   const unread = g.nodes
     .filter((n) => n.kind === "diamond-source" && !used.has(n.outputs[0] as ValueId))
-    .map((n) => `${nameOf(n.outputs[0] as ValueId)};`);
+    // `void name;`: `name;` is a read of a binding in its place, which lifts differently (test262).
+    .map((n) => `void ${nameOf(n.outputs[0] as ValueId)};`);
 
   const params = g.nodes
     .filter((n) => n.kind === "param-source" && paramIndex(n.label) >= bound.length)

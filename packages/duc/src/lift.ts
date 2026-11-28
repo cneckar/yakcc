@@ -2999,10 +2999,21 @@ class Lifter {
       return;
     }
     if (Node.isExpressionStatement(node)) {
-      // `void name;` of a binding outside the atom is the statement `name;`: the read is all it does.
-      let e: Node = node.getExpression();
-      while (Node.isParenthesizedExpression(e) || Node.isVoidExpression(e)) e = e.getExpression();
-      this.liftExpr(Node.isIdentifier(e) && this.isBinding(e.getText()) ? e : node.getExpression());
+      // `void name;` of a free name is its value, read on entry and unused: the form the TypeScript
+      // emitter writes for a free name nothing uses, so it lifts back to the same graph. (`name;` is
+      // a read in its place: bareReadFreeNames.)
+      let inner: Node = node.getExpression();
+      while (Node.isParenthesizedExpression(inner)) inner = inner.getExpression();
+      if (Node.isVoidExpression(inner)) {
+        let operand: Node = inner.getExpression();
+        while (Node.isParenthesizedExpression(operand)) operand = operand.getExpression();
+        const name = operand.getText();
+        if (Node.isIdentifier(operand) && !this.env.has(name) && !this.isBinding(name)) {
+          this.liftExpr(operand);
+          return;
+        }
+      }
+      this.liftExpr(node.getExpression());
       return;
     }
     if (Node.isReturnStatement(node)) {
@@ -5634,9 +5645,10 @@ function bareReadFreeNames(file: Node): string[] {
   forEachCompilerDescendant(file.compilerNode, (d) => {
     if (d.kind !== SyntaxKind.ExpressionStatement) return;
     let e = (d as ts.ExpressionStatement).expression;
-    // `name;`, `(name);` and `void name;`: the statement is the read.
-    while (e.kind === SyntaxKind.ParenthesizedExpression || e.kind === SyntaxKind.VoidExpression)
-      e = (e as ts.ParenthesizedExpression | ts.VoidExpression).expression;
+    // `name;` and `(name);`: the statement is the read. (`void name;` is the value read on entry, as
+    // the TypeScript form writes a free name nothing uses: see liftStatement.)
+    while (e.kind === SyntaxKind.ParenthesizedExpression)
+      e = (e as ts.ParenthesizedExpression).expression;
     if (e.kind !== SyntaxKind.Identifier) return;
     const id = wrappedNode(file.getSourceFile(), e);
     const name = id.getText();
