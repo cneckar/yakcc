@@ -580,8 +580,17 @@ let unitCxx: CxxUnit | undefined;
 let contextSpaces = "";
 /** The unit's offsetof values (UnitTypes.offsetOf). */
 let unitOffsetOf: (e: ClangNode, fn?: ClangNode) => number | undefined = () => undefined;
-/** The function raiseCFunction is raising (an offsetof's, in a large unit, is found by it). */
+/** The declarations being raised, innermost last (a function, a static in it): an offsetof's, in a
+ * large unit, is found in the innermost that has it. */
 let raisingFn: ClangNode | undefined;
+let raisingOuter: ClangNode[] = [];
+const offsetInContexts = (e: ClangNode): number | undefined => {
+  for (const fn of [raisingFn, ...[...raisingOuter].reverse()]) {
+    const v = unitOffsetOf(e, fn);
+    if (v !== undefined) return v;
+  }
+  return undefined;
+};
 
 /** A node's source range as offsets only (clang's JSON leaves out a location's repeated parts). */
 export function rangeKey(e: ClangNode): string {
@@ -3078,7 +3087,7 @@ function raiseBody(
       case "CXXRewrittenBinaryOperator":
         return expr(k0);
       case "OffsetOfExpr": {
-        const v = unitOffsetOf(e, raisingFn);
+        const v = offsetInContexts(e);
         if (v === undefined) throw new RaiseCError("an offsetof whose member is not known");
         return wide(typeOf(e)) ? `${v}n` : String(v);
       }
@@ -8709,11 +8718,14 @@ function staticDefinition(
 ): StaticDef {
   // (An offsetof in the initializer is found in this declaration, not the function raised.)
   const savedFn = raisingFn;
+  const savedOuter = raisingOuter;
+  if (savedFn !== undefined) raisingOuter = [...raisingOuter, savedFn];
   raisingFn = decl;
   try {
     return staticDefinitionOf(decl, hooks);
   } finally {
     raisingFn = savedFn;
+    raisingOuter = savedOuter;
   }
 }
 
@@ -8791,7 +8803,7 @@ function staticDefinitionOf(
         return { k: "v", v: BigInt(e.name === "sizeof" ? sizeOf(at) : alignOf(at)) };
       }
       case "OffsetOfExpr": {
-        const v = unitOffsetOf(e, raisingFn);
+        const v = offsetInContexts(e);
         if (v === undefined) throw new RaiseCError("an offsetof whose member is not known");
         return { k: "v", v: BigInt(v) };
       }
