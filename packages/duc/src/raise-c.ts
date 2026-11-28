@@ -1505,6 +1505,8 @@ export interface CxxUnit {
   readonly typedefsOf: (fnId: string) => ReadonlyMap<string, string>;
   /** A member's default initializer (`bool has = false;`), by the member's id. */
   readonly fieldInitOf: (fieldId: string) => ClangNode | undefined;
+  /** A static data member (a class's static variable, V8's read-only flags), by its id. */
+  readonly staticMemberOf?: (memberId: string) => ClangNode | undefined;
   /**
    * A class's move constructor (`move`) or copy constructor, when not trivial: an object moved or
    * copied to another place runs it (std::string's points into itself).
@@ -2691,6 +2693,21 @@ function raiseBody(
                   : pun.word,
             t,
           };
+        // A static data member (`v8_flags.single_generation`, a read-only flag V8 declares
+        // `static constexpr FlagValue<bool>`): the class's variable, the object's never read.
+        const staticMember = unitCxx?.staticMemberOf?.(
+          (e as { referencedMemberDecl?: string }).referencedMemberDecl ?? "",
+        );
+        if (staticMember !== undefined) {
+          if (!/^(DeclRefExpr|MemberExpr|CXXThisExpr|ImplicitCastExpr|ParenExpr)$/.test(k0.kind))
+            throw new RaiseCError(`the static member ${e.name} of a ${k0.kind}`);
+          return place({
+            kind: "DeclRefExpr",
+            referencedDecl: staticMember,
+            type: e.type,
+            valueCategory: "lvalue",
+          } as ClangNode);
+        }
         const arrow = (e as { isArrow?: boolean }).isArrow === true;
         let baseT = arrow ? (typeOf(k0) as CType & { k: "ptr" }).to : typeOf(k0);
         // (A base whose type clang leaves as a member typedef of a template's instance,
@@ -6814,6 +6831,12 @@ function shaveUnit(
             }
             const f = (rec?.inner ?? []).find((c) => c.kind === "FieldDecl" && c.name === field);
             return f?.id === undefined ? undefined : cxx?.fieldInitOf(f.id);
+          },
+          staticMemberOf: (memberId) => {
+            const d = indexed.byId.get(memberId);
+            if (d?.kind !== "VarDecl") return undefined;
+            const v = readDecl(indexed, d);
+            return { id: v.id, kind: "VarDecl", name: v.name, type: v.type } as ClangNode;
           },
           fieldInitOf: (fieldId) => {
             const d = indexed.byId.get(fieldId);

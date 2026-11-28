@@ -37,3 +37,22 @@ int g(int i) { return static_cast<int>(OFF(a::S, in.d) + offsetof(a::S, arr[2]))
 }  // namespace b
 int g(long i) { return static_cast<int>(offsetof(a::S, x) + offsetof(a::S, in)) + static_cast<int>(i); }
 int offsets(int i) { return b::g(i) * 1000 + g(static_cast<long>(i)); }
+
+// V8's flags (src/flags/flag-definitions.h): a read-only flag is a static constexpr member of
+// FlagValues, read through the object as the others are (`v8_flags.single_generation`).
+template <typename T>
+struct FlagValue {
+  constexpr FlagValue(T v) : value_(v) {}
+  constexpr operator T() const { return value_; }
+  T value_;
+};
+struct FlagValues {
+  FlagValue<int> full{5};
+  static constexpr FlagValue<bool> single_generation{true};
+  static constexpr FlagValue<int> limit{40};
+};
+FlagValues v8_flags;
+int flags_read(int i) {
+  if (v8_flags.single_generation) return v8_flags.full + v8_flags.limit + i;
+  return -1;
+}
