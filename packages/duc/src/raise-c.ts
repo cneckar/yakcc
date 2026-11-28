@@ -126,7 +126,8 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
     .digest("hex")
     .slice(0, 32);
   const path = join(dir, `${key}.json`);
-  // (And past 12 GB in all, the least recently used: ICU's 456 dumps are 80 MB each.)
+  // (And past 8 GB in all, the least recently used: ICU's 456 dumps are 80 MB each, node/src's
+  // up to 350 MB, and two shaves at once must fit a session's disk.)
   const kept: { file: string; size: number; used: number }[] = [];
   for (const old of readdirSync(dir))
     try {
@@ -139,7 +140,7 @@ function indexUnit(clang: string, args: readonly string[], file: string): UnitIn
     }
   let total = kept.reduce((n, k) => n + k.size, 0);
   for (const k of kept.sort((a, b) => a.used - b.used)) {
-    if (total <= 12 * 2 ** 30) break;
+    if (total <= 8 * 2 ** 30) break;
     // (Not one used in the last minute: another process may be between finding it and opening
     // it. Once open, it stays readable.)
     if (k.file === path || Date.now() - k.used < 60_000) continue;
