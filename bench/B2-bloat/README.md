@@ -96,6 +96,38 @@ will show the reduction curve climbing toward the directional target.
 
 ---
 
+## What the Slice 1 result measures (audit, 2026-11-28)
+
+Slice 1's numbers stand (90.3% raw and 90.2% gzipped, 156/156 cases, the same on Linux; the
+"N/A" pass rate in `results-2026-05-18.json` was the Windows import bug the harness notes). But
+arm A is one hand-written 910-line validator, not atoms from the registry. So the 90% is a
+minimal hand-written validator against Ajv, which generates code at run time. It says nothing
+about yakcc yet. Two questions decide whether atoms themselves cut bloat.
+
+**1. Do packages share code that content addressing would store once?** Measured, and no.
+`harness/cross-package-dedup.ts` lifts the 19 real corpus packages from their entry points.
+It uses yakcc's own program record: every module reached, each top-level statement a graph.
+It then counts each graph's identity across packages:
+
+| Graphs | Shared by 2+ packages | Graph bytes | Saved by storing each once |
+|---|---|---|---|
+| 2,027 | 4 | 19.8 MB | 4.5 KB (0.02%) |
+
+Results are in `results-cross-package-dedup-2026-11-28.txt`. The identity is exact, so two
+helpers that differ only in a name are counted apart. Even if renaming merged many more, sharing
+between real packages is too small to matter. Content addressing does not cut bloat by
+deduplication across packages.
+
+**2. Does atom-level dead-code removal beat a bundler's?** Open, and not unique to atoms where
+it wins. esbuild tree-shakes ESM at the statement level, which is the granularity of a program
+record's statements, so on ESM there is little to gain. On CommonJS, esbuild keeps whole
+modules. Keeping only the `exports.X = …` statements a requirer reads would cut far more: semver's
+`coerce` reaches all 60 statements of `internal/re.js` for the few regular expressions it uses.
+That is CommonJS tree-shaking, which any CommonJS-aware tree-shaker can do, so a win there is not
+evidence for atoms. A fair arm must compare against such a tree-shaker, not esbuild alone.
+
+---
+
 ## Test Suite
 
 The fixture test suite (`fixtures/test-cases.json`) covers:
