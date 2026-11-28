@@ -210,7 +210,9 @@ export function indexUnit(clang: string, args: readonly string[], file: string):
             i = n;
             continue;
           }
-          i = q - 1;
+          // (Its closing quote: the string ends, nothing of it kept.)
+          inString = false;
+          i = q;
           continue;
         }
         if (inString) {
