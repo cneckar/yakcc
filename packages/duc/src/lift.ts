@@ -2489,13 +2489,11 @@ class Lifter {
       Node.isConstructorDeclaration(fn) &&
       extendsSomething(fn.getParent() as import("ts-morph").ClassDeclaration);
     // Its own: one in a function or class inside it is that function's (#1330).
-    const supers = fn
-      .getDescendantsOfKind(SyntaxKind.SuperKeyword)
-      .filter(
-        (k) =>
-          receiverOwner(k) === fn ||
-          (Node.isArrowFunction(fn) && receiverOwner(k) === receiverOwner(fn)),
-      );
+    const supers = receiverKeywordsIn(fn).supers.filter(
+      (k) =>
+        receiverOwner(k) === fn ||
+        (Node.isArrowFunction(fn) && receiverOwner(k) === receiverOwner(fn)),
+    );
     // `super(..);`, or `const v = super(..);` as the TypeScript lowering writes it.
     const superStatement = (k: Node): boolean => {
       const call = k.getParent();
@@ -2582,7 +2580,7 @@ class Lifter {
     // `this` in an arrow is the enclosing receiver, captured like a name; in a function it is the
     // caller's receiver, so the closure is a `function` (#1276).
     const thisUses = [
-      ...fn.getDescendantsOfKind(SyntaxKind.ThisKeyword),
+      ...receiverKeywordsIn(fn).thises,
       // `super.name` reads with the receiver: it uses `this` as much as `this.name` does.
       ...supers.filter(superMember),
       // An arrow's `super(..)` writes the receiver's cell (#1330).
@@ -7193,15 +7191,45 @@ const switchArmsCache = new WeakMap<object, SwitchArm[] | null>();
 const assignmentTargetsCache = new WeakMap<object, Node[]>();
 const closureLocalsCache = new WeakMap<object, Set<string>>();
 const identifiersCache = new WeakMap<object, readonly Identifier[]>();
+const receiverKeywordsCache = new WeakMap<
+  object,
+  { readonly thises: readonly Node[]; readonly supers: readonly Node[] }
+>();
 
 /**
- * The identifiers under a closure, as getDescendantsOfKind gives them, memoized per node (#1361):
- * each scope around the closure asks again, and so does its own lift.
+ * The `this` and `super` keywords under a closure, read from the compiler's nodes and memoized per
+ * node (#1361): ts-morph's getDescendantsOfKind made every token of the closure to find them.
+ */
+function receiverKeywordsIn(fn: Node): {
+  readonly thises: readonly Node[];
+  readonly supers: readonly Node[];
+} {
+  const cached = receiverKeywordsCache.get(fn.compilerNode);
+  if (cached !== undefined) return cached;
+  const sf = fn.getSourceFile();
+  const thises: Node[] = [];
+  const supers: Node[] = [];
+  forEachCompilerDescendant(fn.compilerNode, (d) => {
+    if (d.kind === SyntaxKind.ThisKeyword) thises.push(wrappedNode(sf, d));
+    else if (d.kind === SyntaxKind.SuperKeyword) supers.push(wrappedNode(sf, d));
+  });
+  const found = { thises, supers };
+  receiverKeywordsCache.set(fn.compilerNode, found);
+  return found;
+}
+
+/**
+ * The identifiers under a closure, read from the compiler's nodes and memoized per node (#1361): each
+ * scope around the closure asks again, and so does its own lift.
  */
 function identifiersIn(fn: Node): readonly Identifier[] {
   const cached = identifiersCache.get(fn.compilerNode);
   if (cached !== undefined) return cached;
-  const ids = fn.getDescendantsOfKind(SyntaxKind.Identifier);
+  const sf = fn.getSourceFile();
+  const ids: Identifier[] = [];
+  forEachCompilerDescendant(fn.compilerNode, (d) => {
+    if (d.kind === SyntaxKind.Identifier) ids.push(wrappedNode(sf, d) as Identifier);
+  });
   identifiersCache.set(fn.compilerNode, ids);
   return ids;
 }
