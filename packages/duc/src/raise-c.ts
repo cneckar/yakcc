@@ -5622,13 +5622,26 @@ function raiseBody(
     thisRecord !== undefined &&
     unitCxx?.trivialAssign(thisRecord) === true &&
     params.length === 1
-  )
-    for (const step of copyBytes(
-      "__this",
-      declName(params[0] as ClangNode),
-      copiedSize({ k: "rec", name: thisRecord }),
-    ))
+  ) {
+    // (An unnamed one's class has no name to look up, `union IntegerWidth::(unnamed)`: its
+    // parameter's type, which clang spells with its location, names its layout.)
+    const spelled = (params[0] as ClangNode).type?.qualType ?? "";
+    const unnamed = /\((?:anonymous|unnamed) (struct|union|class) at [^()]*\)/.exec(spelled);
+    // (Or a typedef's, `typedef struct { .. } decContext;`: the type it names.)
+    const named = parseType(
+      spelled.replace(/^(?:const\s+|volatile\s+)+/, "").replace(/\s*&+$/, ""),
+    );
+    const rec: CType =
+      unitLayout(thisRecord) !== undefined
+        ? { k: "rec", name: thisRecord }
+        : unnamed !== null
+          ? { k: "rec", name: `${unnamed[1]} ${unnamed[0]}` }
+          : named.k === "rec" && unitLayout(named.name) !== undefined
+            ? named
+            : { k: "rec", name: thisRecord };
+    for (const step of copyBytes("__this", declName(params[0] as ClangNode), copiedSize(rec)))
       entry.push(`${step};`);
+  }
   for (const init of fn.kind === "CXXConstructorDecl" ? baseFirst : []) {
     if (init === undefined) {
       if (vptrAt !== undefined) entry.push(setVptr());

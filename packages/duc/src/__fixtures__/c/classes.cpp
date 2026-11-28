@@ -144,6 +144,11 @@ struct Settings : Counted {
     double real;
     long whole;
   } value{};
+  // (And an unnamed one: its assignment's class has no name, only its type's location.)
+  union {
+    int count;
+    float ratio;
+  } extra{};
   int tail = 0;
 };
 } // namespace yk
@@ -240,12 +245,13 @@ int yk_unions(int a, int b) {
   s.value.pair.lo = static_cast<short>(b);
   s.value.pair.hi = static_cast<short>(a - b);
   s.tail = b;
+  s.extra.count = a * b;
   t = s;
   yk::Settings u;
   u.value.real = a * 0.5;
   t.tail += static_cast<int>(u.value.real);
   u = t;
-  return u.kind * 3 + u.value.pair.lo * 5 + u.value.pair.hi * 7 + u.tail;
+  return u.kind * 3 + u.value.pair.lo * 5 + u.value.pair.hi * 7 + u.tail + u.extra.count;
 }
 
 }
