@@ -715,7 +715,10 @@ export class Writer {
           break;
         }
         case "expr":
-          out.push(`${indent}${this.e(st.e)};`);
+          // A name read for itself is `void name;`, the TypeScript form of an unused value (#1361).
+          out.push(
+            `${indent}${/^[A-Za-z_$][\w$]*$/.test(this.e(st.e)) ? "void " : ""}${this.e(st.e)};`,
+          );
           break;
         case "if":
           out.push(`${indent}if (${this.e(st.c)}) {`, ...this.stmts(st.then, `${indent}  `));
