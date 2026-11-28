@@ -9,7 +9,7 @@ leaves in LLVM (`src/native-leaves.ts`; the system call, the thread pointer and 
 entry per target in `src/native-system.ts`). Every other section is hand-written scaffolding,
 deleted as the atom shaved from its source replaces it.
 
-**Lines to replace: 15214** of 15652 (kept: leaf 0, control 438).
+**Lines to replace: 15206** of 15644 (kept: leaf 0, control 438).
 
 Also hand-written, outside `runtime/`: the boot program's `runtime.*` bindings in
 `packages/duc/src/program.ts` (contextify, task_queue, async_wrap, messaging, worker, …), V8's and
@@ -17,8 +17,8 @@ node/src's part of Node's bindings, replaced as #1367 shaves node/src over V8's 
 
 | kind | lines |
 |---|---|
-| builtin | 10546 |
-| object-model | 2172 |
+| builtin | 10537 |
+| object-model | 2173 |
 | libc | 1110 |
 | node | 667 |
 | collector | 583 |
@@ -27,50 +27,50 @@ node/src's part of Node's bindings, replaced as #1367 shaves node/src over V8's 
 
 | where | section | lines | kind | replaced by |
 |---|---|---|---|---|
-| `yk.c:1` | (the file's opening) | 172 | object-model | V8's tagged values (src/objects/objects.h, smi.h): #1366's DEC |
-| `yk.c:173` | The heap and its collector | 543 | collector | V8's heap (src/heap/), or atoms over the memory leaves |
-| `yk.c:716` | arrays | 128 | object-model | src/objects/js-array.h, elements.cc |
-| `yk.c:844` | ToString | 194 | builtin | src/numbers/conversions.cc, src/base/numbers/dtoa.cc; ConsString (src/objects/string.cc) |
-| `yk.c:1038` | symbols | 161 | builtin | src/objects/symbol.h, src/builtins/builtins-symbol.cc |
-| `yk.c:1199` | ToNumber | 71 | builtin | src/numbers/conversions.cc (StringToDouble) |
-| `yk.c:1270` | operators | 225 | builtin | src/objects/objects.cc (Object::Add, Compare, Equals), src/builtins/number.tq |
-| `yk.c:1495` | properties | 819 | object-model | src/objects/lookup.cc, src/ic/ (the site caches) |
-| `yk.c:2314` | objects | 126 | object-model | src/objects/js-objects.cc |
-| `yk.c:2440` | accessors, prototypes, classes | 131 | object-model | src/objects/js-objects.cc, src/runtime/runtime-classes.cc |
-| `yk.c:2571` | private names | 384 | object-model | src/runtime/runtime-classes.cc, private symbols |
-| `yk.c:2955` | exceptions | 176 | control | a throw unwound to its handler (the graph's try) |
-| `yk.c:3131` | the intrinsics | 422 | builtin | src/init/bootstrapper.cc (the intrinsic objects) |
-| `yk.c:3553` | reflection | 370 | builtin | src/builtins/builtins-reflect.cc, builtins-object.cc, builtins-function.cc |
-| `yk.c:3923` | keys, in the order | 81 | object-model | src/objects/keys.cc |
-| `yk.c:4004` | iteration | 144 | builtin | src/builtins/builtins-iterator-gen.cc, array-iterator; src/runtime/runtime-forin.cc |
-| `yk.c:4148` | functions | 331 | object-model | src/objects/js-function.h, src/builtins/builtins-function.cc |
-| `yk.c:4479` | bitwise operators | 52 | builtin | src/objects/objects.cc, src/numbers/conversions.cc (ToInt32) |
-| `yk.c:4531` | BigInt (ECMA-262 | 544 | builtin | src/bigint/, src/objects/bigint.cc, src/builtins/bigint.tq |
-| `yk.c:5075` | Map and Set | 293 | builtin | src/builtins/builtins-collections-gen.cc, src/objects/ordered-hash-table.cc |
-| `yk.c:5368` | JSON.stringify | 178 | builtin | src/json/json-stringifier.cc |
-| `yk.c:5546` | Array.from, Array.isArray | 235 | builtin | src/builtins/array-from.tq, builtins-object.cc, builtins-collections-gen.cc |
-| `yk.c:5781` | RegExp | 282 | builtin | src/regexp/ (Irregexp), src/builtins/regexp-*.tq |
-| `yk.c:6063` | the global functions, as values | 48 | builtin | src/init/bootstrapper.cc |
-| `yk.c:6111` | WeakMap, WeakSet | 42 | builtin | src/builtins/builtins-weak-refs.cc, builtins-collections-gen.cc |
-| `yk.c:6153` | Date | 429 | builtin | src/builtins/builtins-date.cc, src/date/ |
-| `yk.c:6582` | case mapping | 65 | builtin | src/builtins/builtins-string.cc, src/strings/unicode.cc |
-| `yk.c:6647` | URI handling | 242 | builtin | src/strings/uri.cc, src/builtins/builtins-global.cc |
-| `yk.c:6889` | promises, async functions and generators | 255 | builtin | src/builtins/promise-*.tq, builtins-microtask-queue-gen.cc |
-| `yk.c:7144` | coroutines | 104 | control | a coroutine's switch (a generator's or an async function's own stack) |
-| `yk.c:7248` | async functions | 24 | builtin | src/builtins/builtins-async-function-gen.cc |
-| `yk.c:7272` | async generators | 74 | builtin | src/builtins/builtins-async-generator-gen.cc |
-| `yk.c:7346` | generators | 158 | builtin | src/builtins/builtins-generator-gen.cc |
-| `yk.c:7504` | the methods of promises and generators | 94 | builtin | src/builtins/promise-*.tq, builtins-generator-gen.cc |
-| `yk.c:7598` | the Promise constructor and its statics | 260 | builtin | src/builtins/promise-constructor.tq, promise-all.tq, promise-race.tq, promise-any.tq |
-| `yk.c:7858` | ArrayBuffer, the typed arrays | 608 | builtin | src/builtins/typed-array-*.tq, builtins-arraybuffer.cc, builtins-dataview.cc; TextEncoder: node/src/encoding_binding.cc |
-| `yk.c:8466` | a program's entry: process, console | 206 | node | node/src's process and console, over V8's API (#1367) |
-| `yk.c:8672` | JSON.parse | 259 | builtin | src/json/json-parser.cc |
-| `yk.c:8931` | BigInt(), and the buffers' | 116 | builtin | src/builtins/bigint.tq, builtins-typed-array.cc; src/init/bootstrapper.cc (the constructors) |
-| `yk.c:9047` | the runtime's own internalBinding layer | 461 | node | node/src's bindings, over V8's API as atoms (#1367) |
-| `yk.c:9508` | Proxy | 247 | builtin | src/builtins/proxy-*.tq, src/objects/js-proxy.h |
-| `yk.c:9755` | spread | 320 | builtin | src/builtins/builtins-call-gen.cc (CallWithSpread), iteration |
-| `yk.c:10075` | Math, with JavaScript's results | 35 | builtin | src/builtins/math.tq, src/base/ieee754.cc (#1362's Math atoms) |
-| `yk.c:10110` | the host boundary | 136 | host | the test harnesses' text form of values |
+| `yk.c:1` | (the file's opening) | 173 | object-model | V8's tagged values (src/objects/objects.h, smi.h): #1366's DEC |
+| `yk.c:174` | The heap and its collector | 543 | collector | V8's heap (src/heap/), or atoms over the memory leaves |
+| `yk.c:717` | arrays | 128 | object-model | src/objects/js-array.h, elements.cc |
+| `yk.c:845` | ToString | 194 | builtin | src/numbers/conversions.cc, src/base/numbers/dtoa.cc; ConsString (src/objects/string.cc) |
+| `yk.c:1039` | symbols | 161 | builtin | src/objects/symbol.h, src/builtins/builtins-symbol.cc |
+| `yk.c:1200` | ToNumber | 71 | builtin | src/numbers/conversions.cc (StringToDouble) |
+| `yk.c:1271` | operators | 225 | builtin | src/objects/objects.cc (Object::Add, Compare, Equals), src/builtins/number.tq |
+| `yk.c:1496` | properties | 819 | object-model | src/objects/lookup.cc, src/ic/ (the site caches) |
+| `yk.c:2315` | objects | 126 | object-model | src/objects/js-objects.cc |
+| `yk.c:2441` | accessors, prototypes, classes | 131 | object-model | src/objects/js-objects.cc, src/runtime/runtime-classes.cc |
+| `yk.c:2572` | private names | 384 | object-model | src/runtime/runtime-classes.cc, private symbols |
+| `yk.c:2956` | exceptions | 176 | control | a throw unwound to its handler (the graph's try) |
+| `yk.c:3132` | the intrinsics | 422 | builtin | src/init/bootstrapper.cc (the intrinsic objects) |
+| `yk.c:3554` | reflection | 370 | builtin | src/builtins/builtins-reflect.cc, builtins-object.cc, builtins-function.cc |
+| `yk.c:3924` | keys, in the order | 81 | object-model | src/objects/keys.cc |
+| `yk.c:4005` | iteration | 144 | builtin | src/builtins/builtins-iterator-gen.cc, array-iterator; src/runtime/runtime-forin.cc |
+| `yk.c:4149` | functions | 331 | object-model | src/objects/js-function.h, src/builtins/builtins-function.cc |
+| `yk.c:4480` | bitwise operators | 52 | builtin | src/objects/objects.cc, src/numbers/conversions.cc (ToInt32) |
+| `yk.c:4532` | BigInt (ECMA-262 | 522 | builtin | src/bigint/, src/objects/bigint.cc, src/builtins/bigint.tq |
+| `yk.c:5054` | Map and Set | 293 | builtin | src/builtins/builtins-collections-gen.cc, src/objects/ordered-hash-table.cc |
+| `yk.c:5347` | JSON.stringify | 178 | builtin | src/json/json-stringifier.cc |
+| `yk.c:5525` | Array.from, Array.isArray | 235 | builtin | src/builtins/array-from.tq, builtins-object.cc, builtins-collections-gen.cc |
+| `yk.c:5760` | RegExp | 282 | builtin | src/regexp/ (Irregexp), src/builtins/regexp-*.tq |
+| `yk.c:6042` | the global functions, as values | 48 | builtin | src/init/bootstrapper.cc |
+| `yk.c:6090` | WeakMap, WeakSet | 42 | builtin | src/builtins/builtins-weak-refs.cc, builtins-collections-gen.cc |
+| `yk.c:6132` | Date | 429 | builtin | src/builtins/builtins-date.cc, src/date/ |
+| `yk.c:6561` | case mapping | 65 | builtin | src/builtins/builtins-string.cc, src/strings/unicode.cc |
+| `yk.c:6626` | URI handling | 242 | builtin | src/strings/uri.cc, src/builtins/builtins-global.cc |
+| `yk.c:6868` | promises, async functions and generators | 255 | builtin | src/builtins/promise-*.tq, builtins-microtask-queue-gen.cc |
+| `yk.c:7123` | coroutines | 104 | control | a coroutine's switch (a generator's or an async function's own stack) |
+| `yk.c:7227` | async functions | 24 | builtin | src/builtins/builtins-async-function-gen.cc |
+| `yk.c:7251` | async generators | 74 | builtin | src/builtins/builtins-async-generator-gen.cc |
+| `yk.c:7325` | generators | 158 | builtin | src/builtins/builtins-generator-gen.cc |
+| `yk.c:7483` | the methods of promises and generators | 94 | builtin | src/builtins/promise-*.tq, builtins-generator-gen.cc |
+| `yk.c:7577` | the Promise constructor and its statics | 260 | builtin | src/builtins/promise-constructor.tq, promise-all.tq, promise-race.tq, promise-any.tq |
+| `yk.c:7837` | ArrayBuffer, the typed arrays | 608 | builtin | src/builtins/typed-array-*.tq, builtins-arraybuffer.cc, builtins-dataview.cc; TextEncoder: node/src/encoding_binding.cc |
+| `yk.c:8445` | a program's entry: process, console | 206 | node | node/src's process and console, over V8's API (#1367) |
+| `yk.c:8651` | JSON.parse | 259 | builtin | src/json/json-parser.cc |
+| `yk.c:8910` | BigInt(), and the buffers' | 129 | builtin | src/builtins/bigint.tq, builtins-typed-array.cc; src/init/bootstrapper.cc (the constructors) |
+| `yk.c:9039` | the runtime's own internalBinding layer | 461 | node | node/src's bindings, over V8's API as atoms (#1367) |
+| `yk.c:9500` | Proxy | 247 | builtin | src/builtins/proxy-*.tq, src/objects/js-proxy.h |
+| `yk.c:9747` | spread | 320 | builtin | src/builtins/builtins-call-gen.cc (CallWithSpread), iteration |
+| `yk.c:10067` | Math, with JavaScript's results | 35 | builtin | src/builtins/math.tq, src/base/ieee754.cc (#1362's Math atoms) |
+| `yk.c:10102` | the host boundary | 136 | host | the test harnesses' text form of values |
 | `rx.h:1` | (the file's opening) | 477 | builtin | src/regexp/ (Irregexp's parser): new RegExp(string) compiled at run time |
 | `rx.h:478` | matching | 270 | builtin | src/regexp/ (Irregexp's backtracking matcher) |
 | `case.h:1` | (the file's opening) | 3076 | builtin | src/strings/unicode.cc (unibrow's case tables) |

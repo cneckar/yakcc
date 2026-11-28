@@ -6353,7 +6353,7 @@ function lowerFunction(
         emit(`${both} = and i1 ${ok}, ${c}`);
         ok = both;
       }
-      // Each speculated BigInt: a BigInt (its tag), then of at most two 32-bit limbs.
+      // Each speculated BigInt: a BigInt (its tag), then of at most one 64-bit digit (V8's layout).
       for (const p of speculatedBig) {
         const tag = fresh();
         emit(`${tag} = lshr i64 ${operand(p.outputs[0] as ValueId)}, 48`);
@@ -6380,7 +6380,7 @@ function lowerFunction(
           const len = fresh();
           emit(`${len} = load i32, ptr ${ptr}`);
           const c = fresh();
-          emit(`${c} = icmp ule i32 ${len}, 2`);
+          emit(`${c} = icmp ule i32 ${len}, 1`);
           const both = fresh();
           emit(`${both} = and i1 ${fits}, ${c}`);
           fits = both;
