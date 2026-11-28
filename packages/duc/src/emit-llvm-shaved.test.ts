@@ -11,8 +11,9 @@
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as zlib from "node:zlib";
 import fc from "fast-check";
@@ -32,6 +33,7 @@ import {
   type ShavedUnit,
   type StaticDef,
   createCMemory,
+  recordLayouts,
   shaveCUnit,
 } from "./raise-c.js";
 
@@ -601,6 +603,219 @@ int main(void) { static char line[1 << 16], in[1 << 14], base[1 << 14], out[1 <<
     );
     expect(bad.slice(0, 8)).toEqual([]);
   }, 900_000);
+
+  it("SQLite's record helpers (varints, serial values, text to numbers), shaved, natively equal the native C (#1363)", () => {
+    // The SQLite yakcc runs on (better-sqlite3's amalgamation), as raise-c-sqlite.test.ts shaves it.
+    let sqlite: string;
+    try {
+      const req = createRequire(here("../../registry/package.json"));
+      sqlite = join(dirname(req.resolve("better-sqlite3/package.json")), "deps/sqlite3/sqlite3.c");
+    } catch {
+      return;
+    }
+    const ARGS = [
+      "-std=c11",
+      "-DSQLITE_THREADSAFE=0",
+      "-DSQLITE_OMIT_LOAD_EXTENSION",
+      "-DSQLITE_DISABLE_INTRINSIC",
+    ];
+    const ROOTS = [
+      "sqlite3PutVarint",
+      "sqlite3GetVarint",
+      "sqlite3GetVarint32",
+      "sqlite3VarintLen",
+      "sqlite3VdbeSerialTypeLen",
+      "sqlite3VdbeSerialGet",
+      "sqlite3Atoi64",
+      "sqlite3GetInt32",
+      "sqlite3AtoF",
+    ];
+    const unit = shaveCUnit(sqlite, ROOTS, ARGS, "clang");
+    const libc = shaveMusl(["memcpy", "memset", "strlen", "strcmp"]);
+    expect([...unit.refused, ...libc.refused]).toEqual([]);
+    const atoms = new Map([...libc.atoms, ...unit.atoms]);
+    const statics = new Map([...libc.units.flatMap((u) => [...u.statics]), ...unit.statics]);
+    const mem = recordLayouts(
+      execFileSync(
+        "clang",
+        [...ARGS, "-fsyntax-only", "-Xclang", "-fdump-record-layouts-complete", sqlite],
+        {
+          encoding: "utf8",
+          maxBuffer: 1 << 30,
+        },
+      ),
+    ).get("struct sqlite3_value");
+    if (mem === undefined) throw new Error("no layout of sqlite3_value");
+    const off = (f: string): number => (mem.fields.get(f) as { offset: number }).offset;
+    // The oracle: the same helpers compiled natively from the amalgamation.
+    const dir = join(work, "sqlite");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "oracle.c"),
+      `#include "${sqlite}"
+#include <stdio.h>
+static char h[1 << 14];
+static unsigned char b[1 << 13];
+static int fill(void) { int n = 0; for (; h[2 * n]; n++) { unsigned v; sscanf(h + 2 * n, "%2x", &v); b[n] = (unsigned char)v; } b[n] = 0; return n; }
+int main(void) {
+  char op[32];
+  while (scanf("%31s", op) == 1) {
+    if (!strcmp(op, "put")) { unsigned long long v; scanf("%llx", &v); unsigned char o[16] = {0}; int n = sqlite3PutVarint(o, v); printf("%d ", n); for (int i = 0; i < 16; i++) printf("%02x", o[i]); printf("\\n"); }
+    else if (!strcmp(op, "get")) { scanf("%s", h); fill(); u64 v = 0; int n = sqlite3GetVarint(b, &v); printf("%d %llx\\n", n, (unsigned long long)v); }
+    else if (!strcmp(op, "get32")) { scanf("%s", h); fill(); u32 v = 0; int n = sqlite3GetVarint32(b, &v); printf("%d %x\\n", n, v); }
+    else if (!strcmp(op, "len")) { unsigned long long v; scanf("%llx", &v); printf("%d\\n", sqlite3VarintLen(v)); }
+    else if (!strcmp(op, "tlen")) { unsigned t; scanf("%u", &t); printf("%u\\n", sqlite3VdbeSerialTypeLen(t)); }
+    else if (!strcmp(op, "serial")) { unsigned t; scanf("%u %s", &t, h); fill(); Mem m; memset(&m, 0, sizeof m);
+      sqlite3VdbeSerialGet(b, t, &m); unsigned long long u; memcpy(&u, &m.u, 8);
+      printf("%x %d %llx %ld\\n", m.flags, m.n, u, m.z ? (long)((unsigned char *)m.z - b) : -1L); }
+    else if (!strcmp(op, "atoi")) { int len; scanf("%d %s", &len, h); fill(); i64 v = 0; int rc = sqlite3Atoi64((char *)b, &v, len, SQLITE_UTF8); printf("%d %llx\\n", rc, (unsigned long long)v); }
+    else if (!strcmp(op, "int32")) { scanf("%s", h); fill(); int v = 0; int rc = sqlite3GetInt32((char *)b, &v); printf("%d %d\\n", rc, v); }
+    else if (!strcmp(op, "atof")) { scanf("%s", h); fill(); double v = 0; int rc = sqlite3AtoF((char *)b, &v); unsigned long long u; memcpy(&u, &v, 8); printf("%d %llx\\n", rc, u); }
+  }
+  return 0;
+}
+`,
+    );
+    execFileSync(
+      "clang",
+      [...ARGS, "-O0", "-fwrapv", "-ffp-contract=off", "oracle.c", "-o", "oracle", "-lm"],
+      { cwd: dir, stdio: "ignore" },
+    );
+    // The drivers: buffers made and read through the leaves; each prints as the oracle does.
+    const DRIVERS: [string, string][] = [
+      [
+        "put",
+        "export function f(bytes: number[]): number { const a = __ykAlloc(bytes.length > 0 ? bytes.length : 1, 16); for (let i = 0; i < bytes.length; i++) __ykStore8(a + i, bytes[i] as number); return a; }",
+      ],
+      [
+        "hexOf",
+        'export function f(p: number, n: number): string { let s = ""; for (let i = 0; i < n; i++) { const b = __ykLoad8(p + i); s += (b < 16 ? "0" : "") + b.toString(16); } return s; }',
+      ],
+      [
+        "zeros",
+        "export function f(n: number): number[] { const z: number[] = []; for (let i = 0; i < n; i++) z.push(0); return z; }",
+      ],
+      [
+        "dPut",
+        "export function f(v: bigint): string { const p = put(zeros(16)); const n = sqlite3PutVarint(p, v); return `${n} ${hexOf(p, 16)}`; }",
+      ],
+      ["dLen", "export function f(v: bigint): string { return String(sqlite3VarintLen(v)); }"],
+      [
+        "dGet",
+        "export function f(bytes: number[]): string { const p = put(bytes); const pv = put(zeros(8)); const n = sqlite3GetVarint(p, pv); return `${n} ${__ykLoad64(pv).toString(16)}`; }",
+      ],
+      [
+        "dGet32",
+        "export function f(bytes: number[]): string { const p = put(bytes); const pv = put(zeros(8)); const n = sqlite3GetVarint32(p, pv); return `${n} ${__ykLoad32(pv).toString(16)}`; }",
+      ],
+      [
+        "dTlen",
+        "export function f(t: number): string { return String(sqlite3VdbeSerialTypeLen(t)); }",
+      ],
+      [
+        "dSerial",
+        `export function f(t: number, bytes: number[]): string { const p = put(bytes); const pm = put(zeros(${mem.size})); sqlite3VdbeSerialGet(p, t, pm); const flags = __ykLoad16(pm + ${off("flags")}); const n = __ykLoad32(pm + ${off("n")}) | 0; const u = __ykLoad64(pm + ${off("u")}); const z = __ykBigToF64(__ykLoad64(pm + ${off("z")})); return \`\${flags.toString(16)} \${n} \${u.toString(16)} \${z === 0 ? -1 : z - p}\`; }`,
+      ],
+      [
+        "dAtoi",
+        "export function f(bytes: number[], len: number): string { const p = put([...bytes, 0]); const pv = put(zeros(8)); const rc = sqlite3Atoi64(p, pv, len, 1); return `${rc} ${__ykLoad64(pv).toString(16)}`; }",
+      ],
+      [
+        "dInt32",
+        "export function f(bytes: number[]): string { const p = put([...bytes, 0]); const pv = put(zeros(8)); const rc = sqlite3GetInt32(p, pv); return `${rc} ${__ykLoad32(pv) | 0}`; }",
+      ],
+      [
+        "dAtoF",
+        "export function f(bytes: number[]): string { const p = put([...bytes, 0]); const pv = put(zeros(8)); const rc = sqlite3AtoF(p, pv); return `${rc} ${__ykLoad64(pv).toString(16)}`; }",
+      ],
+    ];
+    const run = nativeUnitWith("sqlite", atoms, DRIVERS, statics);
+    const hex = (b: readonly number[]): string =>
+      b.map((x) => x.toString(16).padStart(2, "0")).join("");
+    const utf8 = (t: string): number[] => [...Buffer.from(t, "utf8")];
+    const calls: [string, unknown[]][] = [];
+    const lines: string[] = [];
+    const u64s = [
+      0n,
+      1n,
+      127n,
+      128n,
+      240n,
+      2287n,
+      2288n,
+      67823n,
+      67824n,
+      (1n << 56n) - 1n,
+      1n << 56n,
+      2n ** 64n - 1n,
+      ...fc.sample(fc.bigInt({ min: 0n, max: 2n ** 64n - 1n }), { numRuns: 80, seed: 1363 }),
+    ];
+    for (const v of u64s) {
+      calls.push(["dPut", [v]], ["dLen", [v]]);
+      lines.push(`put ${v.toString(16)}`, `len ${v.toString(16)}`);
+    }
+    for (const bytes of fc.sample(
+      fc.array(fc.integer({ min: 0, max: 255 }), { minLength: 9, maxLength: 12 }),
+      { numRuns: 80, seed: 1364 },
+    )) {
+      calls.push(["dGet", [bytes]], ["dGet32", [bytes]]);
+      lines.push(`get ${hex(bytes)}`, `get32 ${hex(bytes)}`);
+    }
+    for (const t of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13, 14, 20, 33]) {
+      calls.push(["dTlen", [t]]);
+      lines.push(`tlen ${t}`);
+      for (const bytes of fc.sample(
+        fc.array(fc.integer({ min: 0, max: 255 }), { minLength: 16, maxLength: 16 }),
+        { numRuns: 3, seed: 1365 + t },
+      )) {
+        calls.push(["dSerial", [t, bytes]]);
+        lines.push(`serial ${t} ${hex(bytes)}`);
+      }
+    }
+    const texts = [
+      "0",
+      "-0",
+      "+5",
+      "  12",
+      "12abc",
+      "9223372036854775807",
+      "9223372036854775808",
+      "-9223372036854775808",
+      "-9223372036854775809",
+      "2147483648",
+      "-2147483649",
+      "1e10",
+      "1.5e-300",
+      "1e-400",
+      "1e999",
+      ".5",
+      "-.5e+3",
+      "3.14159265358979323846",
+      "0.1",
+      "2.2250738585072014e-308",
+      "4.9e-324",
+      "  -1.25E2  ",
+      "nan",
+      "1e+",
+      ...fc.sample(fc.double({ noNaN: true }).map(String), { numRuns: 40, seed: 1366 }),
+    ];
+    for (const text of texts) {
+      const bytes = utf8(text);
+      calls.push(["dAtoi", [bytes, bytes.length]], ["dInt32", [bytes]], ["dAtoF", [bytes]]);
+      lines.push(`atoi ${bytes.length} ${hex(bytes)}`, `int32 ${hex(bytes)}`, `atof ${hex(bytes)}`);
+    }
+    const want = execFileSync(join(dir, "oracle"), {
+      input: `${lines.join("\n")}\n`,
+      encoding: "utf8",
+    })
+      .trim()
+      .split("\n");
+    const got = run(calls);
+    const bad = got.flatMap((g, i) =>
+      g === want[i] ? [] : [`${lines[i]}: native ${String(g)}, C ${want[i]}`],
+    );
+    expect(bad.slice(0, 10)).toEqual([]);
+  }, 1_800_000);
 
   it("musl's memcpy, memset, strlen, strcmp and qsort, shaved, natively over the memory leaves equal their raised source", () => {
     const MUSL_ARGS = [
