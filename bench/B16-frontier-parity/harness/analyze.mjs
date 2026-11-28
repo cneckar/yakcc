@@ -192,6 +192,27 @@ export function analyze(rows) {
       .map((id) => C[id]["O-haiku"].pass1 - C[id]["R-haiku"].pass1);
     H.discoveryLoss = { tasks: d.length, meanOracleMinusRouted: mean(d), ci: bootstrap(d, mean) };
   }
+  // Routing loss (secondary, added after phase 1): what always searching passes that the routed
+  // arm does not, on the hard tasks and on all; and the hard tasks' parity for the search arm.
+  if (has("A-haiku") && has("R-haiku")) {
+    const loss = (pool) => {
+      const d = pool
+        .filter((id) => C[id]["A-haiku"] && C[id]["R-haiku"])
+        .map((id) => C[id]["A-haiku"].pass1 - C[id]["R-haiku"].pass1);
+      return { tasks: d.length, meanSearchMinusRouted: mean(d), ci: bootstrap(d, mean) };
+    };
+    H.routingLoss = { hard: loss(byTier("hard")), all: loss(ids) };
+    if (FRONTIER.some(has)) {
+      const d = diff(byTier("hard"), "A-haiku", bestScratch);
+      const ci = bootstrap(d, mean);
+      H.H1_searchArm = {
+        tasks: d.length,
+        meanDiff: mean(d),
+        ci,
+        holds: d.length > 0 && mean(d) >= -0.05 && ci[0] > -0.1,
+      };
+    }
+  }
   // H4 generality: the parity and cost directions per family (≥ 4 tasks).
   const families = [...new Set(perTask.map((t) => t.family))];
   H.H4_byFamily = Object.fromEntries(

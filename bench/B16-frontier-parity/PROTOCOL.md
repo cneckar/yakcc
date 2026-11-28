@@ -44,6 +44,7 @@ Every arm gets the same task text. Scratch arms make one call. All arms run at e
 | `S-haiku` | Haiku 5.5 | scratch | 1 |
 | `S-haiku-max` | Haiku 5.5 (effort max) | scratch | 1 |
 | `R-haiku` | Haiku 5.5 | routed reuse (B14, 15-line threshold): write at once if small, else search, confirm, glue | 1 |
+| `A-haiku` | Haiku 5.5 | search reuse (B14's reuse arm): always search first, confirm, glue (added after phase 1) | 1b |
 | `O-haiku` | Haiku 5.5 | oracle reuse: the target module is handed over, glue only | 1 |
 | `S-sonnet` | Sonnet 5.5 | scratch | 2 |
 | `S-opus` | Opus 5.5 | scratch | 2 |
@@ -52,19 +53,28 @@ Every arm gets the same task text. Scratch arms make one call. All arms run at e
 `O-haiku` is the reuse path's upper bound. The gap between `O-haiku` and `R-haiku` is the
 discovery loss (search and confirm).
 
+**`A-haiku`, added after phase 1.** Phase 1 showed where `R-haiku` loses. When it searched (59
+of 136 attempts), the target was among the 5 shown 56 times and picked 50 times. Every hard task
+it failed, it had routed to write: `canonical-emails`, `coerce-version` and `domain-name-valid`,
+4 attempts each, all failed. Their specs are short, so they read as small. Searched offline with
+needs worded as Haiku words them, all three targets and the three added tasks' targets are found:
+11 of 12 queries first, the twelfth second. So the routed arm's loss on these is its routing rule,
+not discovery. `A-haiku` always searches, to measure that loss. `R-haiku` stays the arm the
+preregistered hypotheses test; `A-haiku` is secondary (§6).
+
 ## 4. Tasks
 
-38 tasks in 5 families (34 in phase 1, see below):
+37 tasks in 5 families (34 in phase 1, see below):
 
 | Family | Tasks | Examples |
 |---|---|---|
 | Versioning | 9 | npm range matching, containment, overlap, lowest version, bump, diff, sort |
-| Validation | 15 | IBAN, ISBN, IPv6, payment cards, ISIN, EAN, ISSN, MAC, lat/long, FQDN, URLs, e-mail, container numbers, German tax IDs, BIC |
+| Validation | 14 | IBAN, ISBN, IPv6, payment cards, ISIN, EAN, ISSN, MAC, lat/long, FQDN, URLs, e-mail, container numbers, German tax IDs |
 | Hashing and encodings | 6 | MD5, SHA-1, UUID v3, v5 and v1 to v6, base64 |
 | Data and algorithms | 6 | deep copy, path updates, JSON Pointer, edit distance, closest match, topological sort |
 | Dates | 2 | ISO 8601 parsing (week and ordinal dates), ISO formatting |
 
-**Added after phase 1 (4 tasks, 38 in all).** Phase 1 found 7 hard tasks, too few for H1 and
+**Added after phase 1 (3 tasks, 37 in all).** Phase 1 found 7 hard tasks, too few for H1 and
 H5, and 5 of them semver range algebra, one family. Three of the 7 were hard partly because
 their spec left out a rule the module follows (the audit below), so the hard set may shrink
 once fixed. The added tasks are hard by their standard, not by a module's choice, with inputs
@@ -75,12 +85,14 @@ an independent implementation of its standard):
 |---|---|---|---|
 | `container-number-valid` | Validation | ISO 6346 | letter values skipping multiples of 11, weights 2^i, mod 11 |
 | `german-tax-id-valid` | Validation | the Steuer-IdNr rules, ISO 7064 MOD 11,10 | the digit-repetition rule (one digit twice or three times, never three adjacent) |
-| `bic-valid` | Validation | ISO 9362, ISO 3166-1 | the assigned country codes |
 | `uuid-v1-to-v6` | Hashing and encodings | RFC 9562 | the v6 field order |
 
 Their tiers are not known until Haiku's scratch arms run on them (about $0.15): they join phase 1
 before phase 2. (ISO 4217 currency codes were considered and left out: the module's list is a
-snapshot that no date of the standard matches, `SLL` current and `ZWG` absent.)
+snapshot that no date of the standard matches, `SLL` current and `ZWG` absent. BIC (ISO 9362)
+was added and then dropped: `isBIC`'s code is under the index's 150-node floor, since its
+country list is data, so the routed arm could never find it and the oracle arm would get no
+module. It is left out for bcrypt's reason, §8.)
 
 The 13 B14 tasks keep their hand-checked cases. The 21 new tasks are in `tasks-new.mjs`. Each
 task's held-out cases come from three places:
@@ -133,9 +145,13 @@ Phase 1's audit (run `phase1-haiku`), with each failure's cause checked against 
 | H4 generality | H1 and H5 hold in direction in every family with at least 4 tasks | per family |
 | H5 lift | On hard tasks, `R-haiku` beats `S-haiku` | mean lift ≥ 0.30 and the interval's lower end > 0.15 |
 
-The analysis also reports two things:
+The analysis also reports these:
 - **Tasks solved only by reuse:** no scratch arm reaches 0.8, but `R-haiku` does.
 - **The discovery loss:** pass@1 of `O-haiku` minus that of `R-haiku`.
+- **The routing loss** (secondary, added after phase 1): pass@1 of `A-haiku` minus that of
+  `R-haiku`, on the hard tasks and on all. Also H1's rule for `A-haiku` in place of `R-haiku`
+  (`H1_searchArm`). It is reported, not used to decide H1: picking whichever reuse arm did better
+  after the fact would overstate it.
 
 A hypothesis that fails is reported as failed.
 
@@ -145,8 +161,8 @@ A hypothesis that fails is reported as failed.
 |---|---|---|---|
 | 0 | Build cases (vectors checked), offline validation, dry run | $0 | |
 | 1 | Haiku arms × 34 tasks × 5 seeds; spec audit | about $2 | $3 |
-| 1b | Haiku arms on the 4 added tasks and the 3 re-specced ones | about $0.30 | $1, needs the go-ahead |
-| 2 | Sonnet, Opus and Fable scratch × 38 × 5 | about $122 (Fable about $78) | needs the go-ahead |
+| 1b | `A-haiku` on all 37 tasks; the other Haiku arms on the 3 added and the 3 re-specced ones (305 attempts; phase 1 spent $3.08 on 610) | about $1.50 | $2, needs the go-ahead |
+| 2 | Sonnet, Opus and Fable scratch × 37 × 5 | about $119 (Fable about $76) | needs the go-ahead |
 
 The estimates assume generous output lengths (thinking included). The runner tracks actual
 spend and stops at the cap. Rows are written as they finish, so a stopped run resumes.

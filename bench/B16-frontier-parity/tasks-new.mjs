@@ -719,58 +719,6 @@ export const newTasks = [
       }),
   },
   {
-    id: "bic-valid",
-    family: "validation",
-    lib: { file: "validator-13.15.35/lib/isBIC.js", name: "isBIC" },
-    spec: "Write `export function solve(code: string): boolean` that returns true when `code` is a valid BIC (ISO 9362, a SWIFT code): 4 letters (the institution), 2 letters that are an assigned ISO 3166-1 alpha-2 country code (or XK, Kosovo), 2 letters or digits (the location), and optionally 3 letters or digits (the branch); letters may be any case, and nothing else may appear.",
-    referenceGlue: "export function solve(code: string) { return lib.isBIC(code); }",
-    vectors: [{ args: ["DEUTDEFF"], returns: true, source: "Deutsche Bank's published BIC" }],
-    inputs: [
-      ["DEUTDEFF"],
-      ["DEUTDEFF500"],
-      ["deutdeff"],
-      ["DEUTXXFF"],
-      ["DEUTUKFF"],
-      ["DEUTDEFF50"],
-      ["DEU1DEFF"],
-      ["DEUTDE1F"],
-      ["BKENXKPR"],
-      ["DEUT DEFF"],
-    ],
-    gen: (rng) =>
-      Array.from({ length: 30 }, () => {
-        const country = pick(rng, [
-          "DE",
-          "FR",
-          "GB",
-          "US",
-          "JP",
-          "CH",
-          "BR",
-          "IN",
-          "XK",
-          "XX",
-          "QQ",
-          "AA",
-          "UK",
-          "EU",
-          "ZZ",
-        ]);
-        const bank =
-          rng.int(6) === 0 ? str(rng, [...LETTERS, ...DIGITS], 4, 4) : str(rng, LETTERS, 4, 4);
-        const loc = str(rng, [...LETTERS, ...DIGITS], 2, 2);
-        const branch = pick(rng, [
-          "",
-          "",
-          "XXX",
-          str(rng, [...LETTERS, ...DIGITS], 3, 3),
-          str(rng, DIGITS, 2, 2),
-        ]);
-        const code = `${bank}${country}${loc}${branch}`;
-        return [rng.int(4) === 0 ? code.toLowerCase() : code];
-      }),
-  },
-  {
     id: "uuid-v1-to-v6",
     family: "hashing",
     lib: { file: "uuid-11.1.1/dist/cjs-browser/v1ToV6.js", name: "v1ToV6" },
