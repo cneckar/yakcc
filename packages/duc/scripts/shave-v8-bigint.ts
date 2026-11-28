@@ -11,8 +11,6 @@ import {
 
 const lib = shaveV8BigIntLibrary();
 if (lib.refused.length > 0) throw new Error(`refused: ${lib.refused.join("; ")}`);
-writeFileSync(
-  fileURLToPath(new URL("../src/atoms/v8-bigint.ts", import.meta.url)),
-  v8BigIntLibrarySource(lib),
-);
+for (const [file, text] of v8BigIntLibrarySource(lib))
+  writeFileSync(fileURLToPath(new URL(`../src/atoms/${file}`, import.meta.url)), text);
 console.log(`${lib.atoms.size} atoms, ${lib.statics.size} statics`);

@@ -11,10 +11,8 @@ import {
 
 const lib = shaveV8NumbersLibrary();
 if (lib.refused.length > 0) throw new Error(`refused: ${lib.refused.join("; ")}`);
-writeFileSync(
-  fileURLToPath(new URL("../src/atoms/v8-numbers.ts", import.meta.url)),
-  v8NumbersLibrarySource(lib),
-);
+for (const [file, text] of v8NumbersLibrarySource(lib))
+  writeFileSync(fileURLToPath(new URL(`../src/atoms/${file}`, import.meta.url)), text);
 console.log(
   `${lib.atoms.size} atoms, ${lib.statics.size} statics; left: ${lib.externals.join(" ")}`,
 );
