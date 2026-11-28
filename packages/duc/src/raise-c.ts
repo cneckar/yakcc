@@ -116,6 +116,9 @@ const dumpsOpen = new FinalizationRegistry<number>((fd) => {
   }
 });
 
+/** The indexes whose dumps are open. */
+const openIndexes = new Set<UnitIndex>();
+
 /** Dump a unit's AST to a file and index its declarations. */
 export function indexUnit(clang: string, args: readonly string[], file: string): UnitIndex {
   // One dump per unit (its command and its file, as last changed), kept in a shared cache and
@@ -348,7 +351,8 @@ export function indexUnit(clang: string, args: readonly string[], file: string):
     if (!ok) closeSync(fd);
   }
   const ix = { path, fd, decls, byName, byId, byMangled, next, previous };
-  dumpsOpen.register(ix, fd);
+  dumpsOpen.register(ix, fd, ix);
+  openIndexes.add(ix);
   return ix;
 }
 
@@ -5656,7 +5660,27 @@ export interface ShavedUnit {
  * clang has (a header's inline function, a template's instance), each an atom. A callee with no body
  * is an external reference.
  */
-export function shaveCUnit(
+export function shaveCUnit(...a: Parameters<typeof shaveCUnitOnce>): ShavedUnit {
+  // (The dumps it indexed, closed once it is shaved: a removed one's space is freed then, not
+  // when its index is collected. V8's are 5-7 GB each.)
+  const before = new Set(openIndexes);
+  try {
+    return shaveCUnitOnce(...a);
+  } finally {
+    for (const ix of [...openIndexes])
+      if (!before.has(ix)) {
+        openIndexes.delete(ix);
+        dumpsOpen.unregister(ix);
+        try {
+          closeSync(ix.fd);
+        } catch {
+          // closed already
+        }
+      }
+  }
+}
+
+function shaveCUnitOnce(
   file: string,
   filters: readonly string[],
   args: readonly string[] = [],
@@ -5930,7 +5954,17 @@ export function shaveCUnit(
    * A class's definition by its record type (`struct v8::base::Magic<uint32_t>`): the record of
    * its name; a class template's instance, the one with its arguments.
    */
+  const foundRecords = new Map<string, ClangNode | undefined>();
   const findRecord = (record: string): ClangNode | undefined => {
+    if (indexed === undefined) return undefined;
+    // (Once per record type: each candidate is read from the dump and parsed, and V8's classes
+    // have thousands of instances.)
+    if (foundRecords.has(record)) return foundRecords.get(record);
+    const found = findRecordUncached(record);
+    foundRecords.set(record, found);
+    return found;
+  };
+  const findRecordUncached = (record: string): ClangNode | undefined => {
     if (indexed === undefined) return undefined;
     const bare = record.replace(/^(struct|class|union) /, "");
     // (An integer argument without its suffix: `256UL` is `256`; a bool as clang's dump has it,
