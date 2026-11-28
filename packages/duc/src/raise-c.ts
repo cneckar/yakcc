@@ -1787,6 +1787,17 @@ function vptrOf(record: string): number | undefined {
 }
 
 /** A base class's offset in a derived one (C++), through intermediate bases. */
+/**
+ * Whether a record is a union: by its tag, or by its layout whatever tag its name was spelled with
+ * (a type's `struct icu_78::Locale::Payload` for ICU's `union Payload`).
+ */
+function isUnion(name: string): boolean {
+  if (/^union /.test(name)) return true;
+  if (!/^(?:struct|class) /.test(name)) return false;
+  const u = unitLayout(`union ${name.replace(/^(?:struct|class) /, "")}`);
+  return u !== undefined && u === unitLayout(name);
+}
+
 function baseOffset(derived: string, base: string): number | undefined {
   // (One record whatever its tag is spelled: the dump's `class`, a type's `struct`.)
   const untagged = (n: string): string => recordKey(n).replace(/^(?:struct|class|union) /, "");
@@ -3770,7 +3781,7 @@ function raiseBody(
       }
       // (One defined by default, with no body in the unit: its bytes, then each base and member
       // that is not trivially copyable moved or copied in turn; a union's bytes alone.)
-      if (!/^union /.test(t.name)) {
+      if (!isUnion(t.name)) {
         const l = layoutOf(t);
         const out = copyBytes(to, from, copiedSize(t));
         const at = (b: string, o: number): string => (o === 0 ? b : `(${b} + ${o})`);
@@ -3988,7 +3999,7 @@ function raiseBody(
       // member (its default initializer, or its class's default constructor); a copy or move,
       // each in turn (see relocate).
       if (args.length === 0) {
-        if (unitCxx === undefined || /^union /.test(t.name)) return "undefined";
+        if (unitCxx === undefined || isUnion(t.name)) return "undefined";
         const l = layoutOf(t);
         const at = (o: number): string => (o === 0 ? to : `(${to} + ${o})`);
         const steps: string[] = [];
@@ -4015,7 +4026,7 @@ function raiseBody(
             steps.push(
               ...initialize(at(f.offset), ft, given).map((x) => `(${x.replace(/;$/, "")})`),
             );
-          else if (ft.k === "rec" && !/^union /.test(ft.name))
+          else if (ft.k === "rec" && !isUnion(ft.name))
             steps.push(construct(at(f.offset), dflt(ft.name)));
         }
         return steps.length === 0
@@ -4073,8 +4084,9 @@ function raiseBody(
       if (key !== undefined) out.push(`${key}(${addr})`);
     }
     const at = (o: number): string => (o === 0 ? addr : `(${addr} + ${o})`);
-    // (A union's members are not destroyed with it: its owner knows which one lives.)
-    if (/^union /.test(t.name)) return out;
+    // (A union's members are not destroyed with it: its owner knows which one lives. A union
+    // by its layout, whatever tag its name was spelled with: `struct icu_78::Locale::Payload`.)
+    if (isUnion(t.name)) return out;
     for (const [, f] of [...l.fields].reverse()) {
       const ft = isReferenceType(f.type) ? undefined : parseType(f.type);
       if (ft?.k === "rec") out.push(...destroy(at(f.offset), ft));
@@ -4323,7 +4335,7 @@ function raiseBody(
       const out: string[] = [];
       // A union's initializer is the member clang names (else its first).
       const member = (s as { field?: { name?: string } } | undefined)?.field?.name;
-      if (/^union /.test(t.name) && member !== undefined && l.fields.has(member)) {
+      if (isUnion(t.name) && member !== undefined && l.fields.has(member)) {
         const f = l.fields.get(member) as { offset: number; type: string };
         return initialize(
           f.offset === 0 ? addr : `(${addr} + ${f.offset})`,
@@ -4357,7 +4369,7 @@ function raiseBody(
         } else
           out.push(...initialize(f.offset === 0 ? addr : `(${addr} + ${f.offset})`, ft, items[i]));
         i++;
-        if (/^union /.test(t.name)) break; // a union's initializer is its first member's
+        if (isUnion(t.name)) break; // a union's initializer is its first member's
       }
       return out;
     }
@@ -8247,7 +8259,7 @@ function staticDefinition(
           }
         } else put(item, parseType(f.type), offset + f.offset);
         i++;
-        if (/^union /.test(ty.name)) break;
+        if (isUnion(ty.name)) break;
       }
       return;
     }
