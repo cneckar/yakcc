@@ -7,9 +7,17 @@
  * by name, where it has replaced its own code with V8's.
  */
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { V8_BIGINT_ATOM_SOURCES, V8_BIGINT_STATICS } from "./atoms/v8-bigint.js";
 import { V8_NUMBERS_ATOM_SOURCES, V8_NUMBERS_STATICS } from "./atoms/v8-numbers.js";
 import { emitNativeModules } from "./emit-llvm-boxed.js";
@@ -84,13 +92,47 @@ function ownSymbols(ir: string, entry: string): string {
   });
 }
 
+/** The atoms' module's entry: its id's (the emitter names a module's entry by its id). */
+export const RUNTIME_ATOMS_ENTRY = "yk_module_yk_v8_bigint_js";
+
 /**
- * An object compiled from IR for a target, cached on disk by the IR's and the target's hash: the
- * atoms' module takes minutes to compile, and is the same for every program.
+ * What the atoms' object is made of: the libraries' atoms, and the lowering's own code (every
+ * source of this package that is not a test), for a key that needs no lowering to compute.
  */
-export function cachedObject(ir: string, triple: string, compile: () => Uint8Array): Uint8Array {
+let sourcesKey: string | undefined;
+function atomsSourcesKey(): string {
+  if (sourcesKey !== undefined) return sourcesKey;
+  const h = createHash("sha256");
+  h.update(JSON.stringify([V8_BIGINT_ATOM_SOURCES, V8_NUMBERS_ATOM_SOURCES], big));
+  h.update(JSON.stringify([V8_BIGINT_STATICS, V8_NUMBERS_STATICS], big));
+  const src = dirname(fileURLToPath(import.meta.url));
+  for (const f of readdirSync(src).sort())
+    if (/\.(ts|js)$/.test(f) && !/\.test\.|^scratch/.test(f))
+      h.update(f).update(readFileSync(join(src, f)));
+  sourcesKey = h.digest("hex");
+  return sourcesKey;
+}
+
+/**
+ * The atoms' object for a target, cached on disk by what makes it (atomsSourcesKey) and the
+ * target: lowering and compiling it takes minutes, and it is the same for every program.
+ */
+export function runtimeAtomsObject(
+  triple: string,
+  compile: (ir: string) => Uint8Array,
+): Uint8Array {
+  return cachedObject(`${triple}\0${atomsSourcesKey()}`, () => {
+    const atoms = runtimeAtomsModule();
+    if (atoms.entry !== RUNTIME_ATOMS_ENTRY)
+      throw new Error(`the runtime's atoms' entry is ${atoms.entry}, not ${RUNTIME_ATOMS_ENTRY}`);
+    return compile(atoms.ir);
+  });
+}
+
+/** An object cached on disk by a key's hash. */
+function cachedObject(what: string, compile: () => Uint8Array): Uint8Array {
   const dir = join(tmpdir(), "yakcc-native-cache");
-  const key = createHash("sha256").update(triple).update("\0").update(ir).digest("hex");
+  const key = createHash("sha256").update(what).digest("hex");
   const path = join(dir, `${key}.o`);
   if (existsSync(path)) return new Uint8Array(readFileSync(path));
   const obj = compile();

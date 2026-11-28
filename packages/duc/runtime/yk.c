@@ -922,8 +922,11 @@ static yk number_to_string(double d) {
 
 static yk to_string(yk v);
 
-/* Number::toString(radix) for a radix other than 10: V8's DoubleToRadixCString. */
+/* Number::toString(radix) for a radix other than 10 (NumberPrototypeToString): NaN and the
+   infinities their names, any other V8's DoubleToRadixCString. */
 static yk number_to_radix(double value, int radix) {
+  if (value != value) return ascii("NaN");
+  if (isinf(value)) return ascii(value < 0 ? "-Infinity" : "Infinity");
   char *p = v8str(V8_(V8_DOUBLE_TO_RADIX_CSTRING, yk_number(value), v8i(radix)));
   yk r = ascii(p);
   v8_delete_array(p);

@@ -14,7 +14,7 @@ import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { LlvmModule } from "./emit-llvm.js";
-import { cachedObject, runtimeAtomsModule } from "./native-runtime-atoms.js";
+import { RUNTIME_ATOMS_ENTRY, runtimeAtomsObject } from "./native-runtime-atoms.js";
 import { systemModuleIr } from "./native-system.js";
 
 export class NativeToolError extends Error {
@@ -178,9 +178,8 @@ export function compileRuntime(
   const target = [`--target=${triple}`, ...(CLANG_TARGET[triple] ?? [])];
   const clang = options.clang ?? "clang";
   // The atoms the runtime calls (V8's BigInt library), compiled once per target and cached.
-  const atoms = runtimeAtomsModule();
-  const atomsObject = cachedObject(atoms.ir, triple, () =>
-    compileObject({ ir: atoms.ir, symbol: "", params: [], result: "i64" }, { target: triple }),
+  const atomsObject = runtimeAtomsObject(triple, (ir) =>
+    compileObject({ ir, symbol: "", params: [], result: "i64" }, { target: triple }),
   );
   const dir = mkdtempSync(join(tmpdir(), "yakcc-rt-"));
   try {
@@ -203,7 +202,7 @@ export function compileRuntime(
         "-O2",
         // Position-independent code is an ELF and Mach-O notion; a COFF target has no -fPIC (#1296).
         ...pic,
-        `-DYK_V8_BIGINT_ENTRY=${atoms.entry}`,
+        `-DYK_V8_BIGINT_ENTRY=${RUNTIME_ATOMS_ENTRY}`,
         "-emit-llvm",
         "-c",
         RUNTIME_SOURCE,
