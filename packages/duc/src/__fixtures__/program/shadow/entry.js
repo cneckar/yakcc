@@ -47,6 +47,5 @@ console.log(
     bump(),
     bump(),
     TextEncoder,
-    typeof globalThis.MessageChannel,
   ]),
 );
