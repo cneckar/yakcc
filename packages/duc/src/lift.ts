@@ -706,30 +706,41 @@ function perPassForBinding(sf: SourceFile): string | undefined {
  */
 function forUpdateAsTail(sf: SourceFile): string | undefined {
   const text = sf.getFullText();
-  for (const loop of sf.getDescendantsOfKind(SyntaxKind.ForStatement)) {
+  // Every loop at once (#1361): no loop's rewrite changes whether another needs one, and their edits
+  // are apart, so one round gives what a round per loop gave. A round per loop reparsed the whole
+  // source for each, and stopped at 64 (the TypeScript compiler's bundle has more).
+  const loops: Node[] = [];
+  const continues: Node[] = [];
+  forEachCompilerDescendant(sf.compilerNode, (n) => {
+    if (n.kind === SyntaxKind.ForStatement) loops.push(wrappedNode(sf, n));
+    else if (n.kind === SyntaxKind.ContinueStatement) continues.push(wrappedNode(sf, n));
+  });
+  // Each continue under the loop it continues, found once.
+  const ownContinues = new Map<ts.Node, Node[]>();
+  for (const j of continues) {
+    const label = (j as import("ts-morph").ContinueStatement).getLabel()?.getText();
+    const target =
+      label === undefined
+        ? ownLoop(j)
+        : (() => {
+            const l = labelTarget(j, label);
+            return l === undefined ? undefined : labelled(l);
+          })();
+    if (target === undefined) continue;
+    const list = ownContinues.get(target.compilerNode);
+    if (list === undefined) ownContinues.set(target.compilerNode, [j]);
+    else list.push(j);
+  }
+  const edits: { from: number; to: number; text: string }[] = [];
+  for (const node of loops) {
+    const loop = node as import("ts-morph").ForStatement;
     const update = loop.getIncrementor();
     const body = loop.getStatement();
     if (update === undefined || !Node.isBlock(body)) continue;
     // A closure in the body holds its pass's bindings: the update writes the next pass's copy, so it
     // stays in the header (the closure would see it otherwise). So does one in the update.
-    const closureIn = (n: Node): boolean =>
-      n
-        .getDescendants()
-        .some(
-          (d) => isFunctionLikeNode(d) || Node.isClassExpression(d) || Node.isClassDeclaration(d),
-        );
-    if (closureIn(update) || closureIn(body)) continue;
-    const own = body.getDescendantsOfKind(SyntaxKind.ContinueStatement).filter((j) => {
-      const label = j.getLabel()?.getText();
-      const target =
-        label === undefined
-          ? ownLoop(j)
-          : (() => {
-              const l = labelTarget(j, label);
-              return l === undefined ? undefined : labelled(l);
-            })();
-      return target?.compilerNode === loop.compilerNode;
-    });
+    if (holdsClosure(update) || holdsClosure(body)) continue;
+    const own = ownContinues.get(loop.compilerNode) ?? [];
     if (own.length === 0) continue;
     // A continue inside a try is a completion of the closures the try lowers to, which then
     // continues the loop itself (#1330): the update written there would be a closure's write of the
@@ -741,7 +752,7 @@ function forUpdateAsTail(sf: SourceFile): string | undefined {
     };
     if (own.some(inTry)) continue;
     const step = `${update.getText()};`;
-    const edits: { from: number; to: number; text: string }[] = [
+    edits.push(
       // The header's update goes, with the space before it: `for (a; b; c)` is `for (a; b; )`.
       { from: update.getStart(), to: update.getEnd(), text: "" },
       ...own.map((j) => ({
@@ -750,24 +761,56 @@ function forUpdateAsTail(sf: SourceFile): string | undefined {
         text: `{ ${step} ${j.getText()} }`,
       })),
       { from: body.getEnd() - 1, to: body.getEnd() - 1, text: ` ${step} ` },
-    ];
-    edits.sort((a, b) => b.from - a.from);
-    let out = text;
-    for (const e of edits) out = out.slice(0, e.from) + e.text + out.slice(e.to);
-    return out;
+    );
   }
-  return undefined;
+  if (edits.length === 0) return undefined;
+  // Last first; at one place, an insertion after the replacement that ends there.
+  edits.sort((a, b) => b.from - a.from || b.to - a.to);
+  let out = text;
+  for (const e of edits) out = out.slice(0, e.from) + e.text + out.slice(e.to);
+  return out;
+}
+
+/** Whether a function or class is written under a node, read from the compiler's nodes. */
+function holdsClosure(node: Node): boolean {
+  let found = false;
+  forEachCompilerDescendant(node.compilerNode, (d) => {
+    if (
+      !found &&
+      (ts.isFunctionDeclaration(d) ||
+        ts.isFunctionExpression(d) ||
+        ts.isArrowFunction(d) ||
+        ts.isMethodDeclaration(d) ||
+        ts.isConstructorDeclaration(d) ||
+        ts.isGetAccessorDeclaration(d) ||
+        ts.isSetAccessorDeclaration(d) ||
+        ts.isClassExpression(d) ||
+        ts.isClassDeclaration(d))
+    )
+      found = true;
+  });
+  return found;
 }
 
 function nextJumpRewrite(sf: SourceFile, round: number): string | undefined {
   const full = sf.getFullText();
+  // Read from the compiler's nodes, in getDescendantsOfKind's order (#1361).
+  const byKind = new Map<SyntaxKind, Node[]>([
+    [SyntaxKind.ReturnStatement, []],
+    [SyntaxKind.BreakStatement, []],
+    [SyntaxKind.ContinueStatement, []],
+    [SyntaxKind.LabeledStatement, []],
+  ]);
+  forEachCompilerDescendant(sf.compilerNode, (n) => byKind.get(n.kind)?.push(wrappedNode(sf, n)));
   const jumps = [
-    ...sf.getDescendantsOfKind(SyntaxKind.ReturnStatement),
-    ...sf.getDescendantsOfKind(SyntaxKind.BreakStatement),
-    ...sf.getDescendantsOfKind(SyntaxKind.ContinueStatement),
+    ...(byKind.get(SyntaxKind.ReturnStatement) ?? []),
+    ...(byKind.get(SyntaxKind.BreakStatement) ?? []),
+    ...(byKind.get(SyntaxKind.ContinueStatement) ?? []),
   ];
   // A label whose jumps are all of the loop it labels is dropped, and the labels from its jumps.
-  for (const l of sf.getDescendantsOfKind(SyntaxKind.LabeledStatement)) {
+  for (const l of (byKind.get(SyntaxKind.LabeledStatement) ?? []) as import(
+    "ts-morph",
+  ).LabeledStatement[]) {
     const name = l.getLabel().getText();
     const target = labelled(l);
     if (!isLoopStatement(target)) continue;
@@ -793,7 +836,12 @@ function nextJumpRewrite(sf: SourceFile, round: number): string | undefined {
     for (const e of edits) text = text.slice(0, e.from) + e.text + text.slice(e.to);
     return text;
   }
-  // A jump that leaves its own loop for one further out: lifted one loop out.
+  // A jump that leaves its own loop for one further out: lifted one loop out. Every such jump whose
+  // region (the loop or switch it leaves, with its labels) is apart from each earlier one's is
+  // lifted in this round (#1361): those edits commute, and a jump whose region holds or is held by
+  // an earlier one's waits for a later round, as one round per jump ordered them.
+  const regions: { start: number; end: number }[] = [];
+  const edits: { from: number; to: number; text: string }[] = [];
   for (const j of jumps) {
     const inner = ownLoop(j);
     if (inner === undefined) continue;
@@ -820,20 +868,35 @@ function nextJumpRewrite(sf: SourceFile, round: number): string | undefined {
     if (!needs) continue;
     let outer: Node = sw ?? inner;
     while (Node.isLabeledStatement(outer.getParent())) outer = outer.getParent() as Node;
-    const flag = `$jump${round}`;
-    const value = `$jumpv${round}`;
+    const start = outer.getStart();
+    const end = outer.getEnd();
+    const apart = regions.every((r) => end < r.start || start > r.end);
+    regions.push({ start, end });
+    if (!apart) continue;
+    const k = edits.length / 3;
+    const flag = `$jump${round}_${k}`;
+    const value = `$jumpv${round}_${k}`;
     const ret = Node.isReturnStatement(j) ? j : undefined;
     const expr = ret?.getExpression();
     const replaced = `{ ${flag} = true;${expr !== undefined ? ` ${value} = (${expr.getText()});` : ""} break; }`;
     const again =
       ret !== undefined ? (expr !== undefined ? `return ${value};` : "return;") : j.getText();
-    const start = outer.getStart();
-    const body =
-      full.slice(start, j.getStart()) + replaced + full.slice(j.getEnd(), outer.getEnd());
-    const wrapped = `{ let ${flag} = false;${expr !== undefined ? ` let ${value};` : ""}\n${body}\nif (${flag}) ${again} }`;
-    return full.slice(0, start) + wrapped + full.slice(outer.getEnd());
+    edits.push(
+      { from: end, to: end, text: `\nif (${flag}) ${again} }` },
+      { from: j.getStart(), to: j.getEnd(), text: replaced },
+      {
+        from: start,
+        to: start,
+        text: `{ let ${flag} = false;${expr !== undefined ? ` let ${value};` : ""}\n`,
+      },
+    );
   }
-  return undefined;
+  if (edits.length === 0) return undefined;
+  // Last first: the regions are apart, and each region's edits are in order within it.
+  edits.sort((a, b) => b.from - a.from || b.to - a.to);
+  let out = full;
+  for (const e of edits) out = out.slice(0, e.from) + e.text + out.slice(e.to);
+  return out;
 }
 
 /**
