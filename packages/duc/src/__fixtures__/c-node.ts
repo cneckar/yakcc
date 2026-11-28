@@ -86,10 +86,12 @@ export function shaveBinding(
   file: string,
   roots: readonly string[],
   others: readonly string[],
+  /** node-env.cc's parts it needs (yk_node_isolate_data, yk_node_icu_data). */
+  startup: readonly string[] = [],
 ): ShavedBinding {
   const env = shaveCUnit(
     `${FIXTURES}node-env.cc`,
-    ["yk_node_environment"],
+    ["yk_node_environment", ...startup],
     NODE_ARGS,
     "clang++",
     "node-env.cc",
@@ -139,7 +141,13 @@ export function shaveBinding(
  */
 export function instantiateBinding(
   shaved: ShavedBinding,
-  initializer: string,
+  initializer: string | undefined,
+  options: {
+    /** A NODE_BINDING_PER_ISOLATE_INIT initializer, run first on an ObjectTemplate. */
+    readonly perIsolate?: string;
+    /** ICU's data, given as Node's startup gives it (yk_node_icu_data), first. */
+    readonly icuData?: Uint8Array;
+  } = {},
 ): { binding: Record<string, unknown>; v8: V8Host } {
   const memory = createCMemory();
   const system = createCSystem(memory);
@@ -160,7 +168,16 @@ export function instantiateBinding(
   const context = memory.leaves.__ykAlloc(8, 8);
   memory.leaves.__ykStore64(context, BigInt(v8.context));
   (env.yk_node_environment as Fn)(v8.isolate, context);
-  const binding: Record<string, unknown> = {};
-  (env[initializer] as Fn)(v8.local(binding), v8.local(undefined), context, 0);
+  if (options.icuData !== undefined) (env.yk_node_icu_data as Fn)(memory.put(options.icuData));
+  // A per-isolate initializer's template made the binding's object (its methods), then the
+  // per-context one's properties on it, as Node's binding loader does.
+  let binding: Record<string, unknown> = {};
+  if (options.perIsolate !== undefined) {
+    const template = v8.objectTemplate();
+    (env[options.perIsolate] as Fn)((env.yk_node_isolate_data as Fn)(v8.isolate), template);
+    binding = v8.instance(template) as Record<string, unknown>;
+  }
+  if (initializer !== undefined)
+    (env[initializer] as Fn)(v8.local(binding), v8.local(undefined), context, 0);
   return { binding, v8 };
 }

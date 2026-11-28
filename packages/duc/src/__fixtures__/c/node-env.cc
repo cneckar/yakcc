@@ -30,3 +30,22 @@ extern "C" void *yk_node_environment(v8::Isolate *isolate, v8::Local<v8::Context
   (*context)->SetAlignedPointerInEmbedderData(node::ContextEmbedderIndex::kEnvironment, env);
   return env;
 }
+
+// The per-isolate data a binding's per-isolate initializer reads (NODE_BINDING_PER_ISOLATE_INIT,
+// its IsolateData*): of IsolateData's size, its isolate set, its templates empty, until env.cc's
+// IsolateData is shaved.
+extern "C" void *yk_node_isolate_data(v8::Isolate *isolate) {
+  alignas(node::IsolateData) static char storage[sizeof(node::IsolateData)];
+  std::memcpy(storage + __builtin_offsetof(node::IsolateData, isolate_), &isolate, sizeof isolate);
+  return storage;
+}
+
+#if NODE_HAVE_I18N_SUPPORT
+#include <unicode/udata.h>
+// ICU's data, as Node's startup gives it (InitializeICUDirectory: the icudt it links in).
+extern "C" int yk_node_icu_data(const void *data) {
+  UErrorCode err = U_ZERO_ERROR;
+  udata_setCommonData(data, &err);
+  return static_cast<int>(err);
+}
+#endif

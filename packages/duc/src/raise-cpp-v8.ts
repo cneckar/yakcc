@@ -57,6 +57,10 @@ export interface V8Host {
   local(v: unknown): number;
   /** The names given that no leaf implements (demangled). */
   readonly unimplemented: readonly string[];
+  /** A fresh ObjectTemplate (a per-isolate binding's target): a Local's record, its address. */
+  objectTemplate(): number;
+  /** An ObjectTemplate's object, from its Local's record (NewInstance). */
+  instance(local: number): object;
 }
 
 /** Demangled names, by c++filt. */
@@ -124,6 +128,33 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
       throw error;
     }
     return info.ret;
+  };
+  interface ObjectTemplate {
+    readonly props: [PropertyKey, unknown, number][];
+    fields: number;
+  }
+  const newObjectTemplate = (): ObjectTemplate => ({ props: [], fields: 0 });
+  const functionOf = (tpl: Template): ((this: unknown, ...args: unknown[]) => unknown) => {
+    tpl.fn ??= function (this: unknown, ...args: unknown[]) {
+      return call(tpl, this, args);
+    };
+    return tpl.fn;
+  };
+  const instanceOf = (t: ObjectTemplate): object => {
+    const o: Record<PropertyKey, unknown> = {};
+    for (const [k, v, a] of t.props)
+      Object.defineProperty(o, k, {
+        value:
+          v !== null && typeof v === "object" && "callback" in (v as object)
+            ? functionOf(v as Template)
+            : v !== null && typeof v === "object" && "props" in (v as object)
+              ? instanceOf(v as ObjectTemplate)
+              : v,
+        writable: (a & 1) === 0,
+        enumerable: (a & 2) === 0,
+        configurable: (a & 4) === 0,
+      });
+    return o;
   };
   const infoOf = (rec: number): CallInfo => {
     const i = infos.get(ld64(rec));
@@ -678,13 +709,40 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
         const h = ld64(data as number);
         put(ret as number, { callback: cb as number, data: h === 0 ? undefined : value(h) });
       });
+    // Object templates (a per-isolate binding's, its methods Set on it): a template is its
+    // properties, each a value or a template, made into an object by NewInstance; a function
+    // template's instance template, one per function template.
+    if (d === "v8::ObjectTemplate::New(v8::Isolate*, v8::Local<v8::FunctionTemplate>)")
+      return R((ret) => put(ret as number, newObjectTemplate()));
+    if (d === "v8::Template::Set(v8::Local<v8::Name>, v8::Local<v8::Data>, v8::PropertyAttribute)")
+      return (self, k, v, attrs) => {
+        (value(self as number) as ObjectTemplate).props.push([
+          at(k as number) as PropertyKey,
+          at(v as number),
+          attrs as number,
+        ]);
+      };
+    if (d === "v8::ObjectTemplate::NewInstance(v8::Local<v8::Context>)")
+      return R((ret, self) =>
+        put(ret as number, instanceOf(value(self as number) as ObjectTemplate)),
+      );
+    if (d === "v8::FunctionTemplate::InstanceTemplate()")
+      return R((ret, self) => {
+        const tpl = value(self as number) as Template & { instance?: ObjectTemplate };
+        tpl.instance ??= newObjectTemplate();
+        put(ret as number, tpl.instance);
+      });
+    if (d === "v8::ObjectTemplate::SetInternalFieldCount(int)")
+      return (self, n) => {
+        (value(self as number) as ObjectTemplate).fields = n as number;
+      };
+    if (d === "v8::FunctionTemplate::SetClassName(v8::Local<v8::String>)")
+      return (self, n) => {
+        (value(self as number) as Template & { className?: unknown }).className = at(n as number);
+      };
     if (d === "v8::FunctionTemplate::GetFunction(v8::Local<v8::Context>)")
       return R((ret, self) => {
-        const tpl = value(self as number) as Template;
-        tpl.fn ??= function (this: unknown, ...args: unknown[]) {
-          return call(tpl, this, args);
-        };
-        put(ret as number, tpl.fn);
+        put(ret as number, functionOf(value(self as number) as Template));
       });
     if (d === "v8::Function::SetName(v8::Local<v8::String>)")
       return (self, n) => {
@@ -745,5 +803,7 @@ export function createV8(memory: CMemory, names: readonly string[]): V8Host {
     value,
     local,
     unimplemented,
+    objectTemplate: () => local(newObjectTemplate()),
+    instance: (l) => instanceOf(at(l) as ObjectTemplate),
   };
 }
