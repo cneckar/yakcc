@@ -138,7 +138,9 @@ export function indexUnit(clang: string, args: readonly string[], file: string):
     try {
       const o = statSync(join(dir, old));
       const used = Math.max(o.atimeMs, o.mtimeMs);
-      if (Date.now() - used > 86_400_000) rmSync(join(dir, old), { force: true });
+      // (A partial dump an hour old is a killed process's: one takes under a minute.)
+      if (Date.now() - used > (old.endsWith(".part") ? 3_600_000 : 86_400_000))
+        rmSync(join(dir, old), { force: true });
       else if (old.endsWith(".json")) kept.push({ file: join(dir, old), size: o.size, used });
     } catch {
       // another process's, gone
