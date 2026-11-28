@@ -60,3 +60,14 @@ export function link(
   memory.resolveFunctions((name) => fns.get(name));
   return new Proxy(env, { get: (t, p: string) => fns.get(p) ?? t[p] });
 }
+
+/**
+ * C++: the units' initializer atoms (their globals constructed, ShavedUnit.initializers), each
+ * unit's in its order, as a program's startup runs them after the C library's (yk_musl_init).
+ */
+export function runInitializers(
+  env: Record<string, Fn>,
+  units: readonly Pick<ShavedUnit, "initializers">[],
+): void {
+  for (const u of units) for (const k of u.initializers ?? []) (env[k] as Fn)();
+}

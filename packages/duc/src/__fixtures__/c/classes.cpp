@@ -97,6 +97,62 @@ constexpr Table build() {
 static constexpr Table table = build();
 } // namespace yk
 
+// Multiple inheritance: a second polymorphic base, its own vtable pointer in the object, its
+// entries thunks back to the whole object (ICU's MutablePatternModifier is a Modifier so).
+namespace yk {
+struct Two {
+  int x, y;
+};
+struct Left {
+  virtual ~Left() {}
+  virtual int left() const { return 1; }
+  int l = 3;
+};
+struct Right {
+  virtual ~Right() {}
+  virtual int right(int v) const = 0;
+  virtual Two pair(int v) const { return {v, -v}; }
+  int r = 5;
+};
+int destroyed = 0;
+struct Both : Left, Right {
+  int own;
+  explicit Both(int o) : own(o) {}
+  ~Both() override { destroyed += own; }
+  int left() const override { return own + l; }
+  int right(int v) const override { return v * own + r; }
+  Two pair(int v) const override { return {v + own, r}; }
+};
+struct More : Both {
+  explicit More(int o) : Both(o + 1) {}
+  int right(int v) const override { return Both::right(v) - 1; }
+};
+} // namespace yk
+
+// A union member of a class whose assignment is not trivial (ICU's Precision): the class's
+// implicit assignment assigns the union, whose own trivial assignment is its bytes.
+namespace yk {
+struct Counted {
+  Counted &operator=(const Counted &) { return *this; }
+};
+struct Settings : Counted {
+  int kind = 0;
+  union Value {
+    struct {
+      short lo, hi;
+    } pair;
+    double real;
+    long whole;
+  } value{};
+  // (And an unnamed one: its assignment's class has no name, only its type's location.)
+  union {
+    int count;
+    float ratio;
+  } extra{};
+  int tail = 0;
+};
+} // namespace yk
+
 extern "C" {
 
 int yk_point(int a, int b) {
@@ -166,6 +222,36 @@ int yk_modern(int a, int b) {
   sum += __builtin_add_overflow(a & 0xff, 200, &small) ? 1000 : small;
   yk::Derived d(a, b);
   return sum + d.get() + yk::add3(a) + yk::table.v[(a & 63)];
+}
+
+
+int yk_multi(int a, int b) {
+  yk::destroyed = 0;
+  yk::Right *r = new yk::Both(a);
+  yk::Right *m = new yk::More(b);
+  yk::Left *l = new yk::More(a - b);
+  yk::Two p = r->pair(b), q = m->pair(a);
+  int out = r->right(b) * 7 + m->right(a) + l->left() + p.x * 3 + p.y + q.x - q.y;
+  delete r;
+  delete m;
+  delete l;
+  return out + yk::destroyed * 11;
+}
+
+
+int yk_unions(int a, int b) {
+  yk::Settings s, t;
+  s.kind = a;
+  s.value.pair.lo = static_cast<short>(b);
+  s.value.pair.hi = static_cast<short>(a - b);
+  s.tail = b;
+  s.extra.count = a * b;
+  t = s;
+  yk::Settings u;
+  u.value.real = a * 0.5;
+  t.tail += static_cast<int>(u.value.real);
+  u = t;
+  return u.kind * 3 + u.value.pair.lo * 5 + u.value.pair.hi * 7 + u.tail + u.extra.count;
 }
 
 }
